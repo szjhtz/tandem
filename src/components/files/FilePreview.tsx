@@ -24,7 +24,7 @@ interface FilePreviewProps {
   onAddToChat?: (file: FileEntry) => void;
 }
 
-type PreviewType = "code" | "markdown" | "image" | "text" | "binary";
+type PreviewType = "code" | "markdown" | "image" | "pdf" | "text" | "binary";
 
 const CODE_EXTENSIONS = new Set([
   "ts",
@@ -122,7 +122,7 @@ export function FilePreview({ file, onClose, onAddToChat }: FilePreviewProps) {
   const previewType = getPreviewType(file);
 
   useEffect(() => {
-    if (previewType === "image" || previewType === "binary") {
+    if (previewType === "image" || previewType === "pdf" || previewType === "binary") {
       setIsLoading(false);
       return;
     }
@@ -172,7 +172,7 @@ export function FilePreview({ file, onClose, onAddToChat }: FilePreviewProps) {
               src={convertFileSrc(file.path)}
               alt={file.name}
               className="max-h-full max-w-full object-contain rounded"
-              onError={(e) => {
+              onError={() => {
                 console.error("Image failed to load:", file.path);
                 console.error("Converted src:", convertFileSrc(file.path));
                 setError(`Failed to load image: ${file.name}`);
@@ -277,6 +277,8 @@ export function FilePreview({ file, onClose, onAddToChat }: FilePreviewProps) {
     switch (previewType) {
       case "image":
         return ImageIcon;
+      case "pdf":
+        return FileText;
       case "code":
         return FileCode;
       default:
