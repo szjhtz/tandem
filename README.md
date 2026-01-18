@@ -9,15 +9,46 @@ A local-first, privacy-focused AI workspace. Your AI coworker that runs entirely
 
 Inspired by [Claude Cowork](https://claude.com/blog/cowork-research-preview), but open source and provider-agnostic.
 
+## Why Tandem?
+
+**🔒 Privacy First**: Unlike cloud-based AI tools, Tandem runs on your machine. Your code, documents, and API keys never touch our servers because we don't have any.
+
+**💰 Bring Your Own Key (BYOK)**: Use any LLM provider - don't get locked into one vendor. Switch between OpenRouter, Anthropic, OpenAI, or run models locally with Ollama.
+
+**🛡️ Zero Trust**: Every file operation requires explicit approval. AI agents are powerful but Tandem treats them as "untrusted contractors" with supervised access.
+
+**🌐 True Cross-Platform**: Native apps for Windows, macOS (Intel & Apple Silicon), and Linux. No Electron bloat - built on Tauri for fast, lightweight performance.
+
+**📖 Open Source**: MIT licensed. Review the code, contribute features, or fork it for your needs.
+
 ## Features
 
-- **Zero telemetry** - No data leaves your machine except to your chosen LLM provider
-- **Provider freedom** - Use OpenRouter, Anthropic, OpenAI, Ollama, or any OpenAI-compatible API
-- **Secure by design** - API keys stored in encrypted vault, never in plaintext
-- **Cross-platform** - Windows, macOS, and Linux from day one
-- **Visual permissions** - Approve every file access and action
-- **Full undo** - Rollback any AI operation with operation journaling
-- **Execution Planning** - Review and batch-approve multi-step AI operations before execution
+### Core Capabilities
+
+- **🔒 Zero telemetry** - No data leaves your machine except to your chosen LLM provider
+- **🔄 Provider freedom** - Use OpenRouter, Anthropic, OpenAI, Ollama, or any OpenAI-compatible API
+- **🛡️ Secure by design** - API keys stored in encrypted vault using AES-256-GCM, never in plaintext
+- **🌐 Cross-platform** - Native installers for Windows, macOS (Intel & Apple Silicon), and Linux
+- **👁️ Visual permissions** - Approve every file access and action with granular control
+- **⏪ Full undo** - Rollback any AI operation with comprehensive operation journaling
+- **📋 Execution Planning** - Review and batch-approve multi-step AI operations before execution
+- **🔄 Auto-updates** - Seamless updates with code-signed releases (when using installers)
+
+### AI Agent Modes
+
+Tandem supports multiple specialized agent modes powered by OpenCode:
+
+- **💬 Chat Mode** - Interactive conversation with context-aware file operations
+- **📝 Plan Mode** - Batch file changes with review before execution
+- **🔍 Ask Mode** - Read-only exploration and analysis without making changes
+- **🐛 Debug Mode** - Systematic debugging with runtime evidence
+
+### Project Management
+
+- **📁 Multi-project support** - Manage multiple workspaces with separate contexts
+- **🔐 Per-project permissions** - Fine-grained file access control
+- **📊 Project switching** - Quick navigation between different codebases
+- **💾 Persistent history** - Chat history saved per project
 
 ## Quick Start
 
@@ -79,22 +110,39 @@ pnpm tauri build
 
 ### Setting Up Your LLM Provider
 
+Tandem supports multiple LLM providers. Configure them in Settings:
+
 1. Launch Tandem
 2. Click the **Settings** icon (gear) in the sidebar
-3. Choose your provider:
-   - **OpenRouter** (recommended) - Get key at [openrouter.ai](https://openrouter.ai/keys)
-   - **Anthropic** - Get key at [console.anthropic.com](https://console.anthropic.com/settings/keys)
-   - **OpenAI** - Get key at [platform.openai.com](https://platform.openai.com/api-keys)
-   - **Ollama** - No key needed, just run Ollama locally
-4. Enter your API key (stored securely in encrypted vault)
+3. Choose and configure your provider:
+
+**Supported Providers:**
+
+| Provider          | Description                                      | Get API Key                                                          |
+| ----------------- | ------------------------------------------------ | -------------------------------------------------------------------- |
+| **OpenRouter** ⭐ | Access 100+ models through one API (recommended) | [openrouter.ai/keys](https://openrouter.ai/keys)                     |
+| **Anthropic**     | Claude models (Sonnet, Opus, Haiku)              | [console.anthropic.com](https://console.anthropic.com/settings/keys) |
+| **OpenAI**        | GPT-4, GPT-3.5 and other OpenAI models           | [platform.openai.com](https://platform.openai.com/api-keys)          |
+| **Ollama**        | Run models locally (no API key needed)           | [ollama.com](https://ollama.com)                                     |
+| **Custom**        | Any OpenAI-compatible API endpoint               | Configure endpoint URL                                               |
+
+4. Enter your API key - it's encrypted with AES-256-GCM and stored securely in the local vault
+5. (Optional) Configure model preferences and endpoints
 
 ### Granting Folder Access
 
-Tandem can only access folders you explicitly grant:
+Tandem operates on a **zero-trust model** - it can only access folders you explicitly grant permission to:
 
-1. Click **Select Workspace** in Settings
-2. Choose a folder via the native file picker
-3. Tandem can now read/write files in that folder only
+1. Click **Projects** in the sidebar
+2. Click **+ New Project** or **Select Workspace**
+3. Choose a folder via the native file picker
+4. Tandem can now read/write files in that folder (with your approval)
+
+You can manage multiple projects and switch between them easily. Each project maintains its own:
+
+- Chat history
+- Permission settings
+- File access scope
 
 ## Architecture
 
@@ -103,11 +151,23 @@ Tandem can only access folders you explicitly grant:
 │                    Tandem Desktop App                        │
 ├─────────────────┬───────────────────┬───────────────────────┤
 │  React Frontend │   Tauri Core      │  OpenCode Sidecar     │
-│  (WebView)      │   (Rust)          │  (AI Agent)           │
+│  (TypeScript)   │   (Rust)          │  (AI Agent Runtime)   │
+│  - Modern UI    │   - Security      │  - Multi-mode agents  │
+│  - File browser │   - Permissions   │  - Tool execution     │
+│  - Chat interface│  - State mgmt    │  - Context awareness  │
 ├─────────────────┴───────────────────┴───────────────────────┤
 │                SecureKeyStore (AES-256-GCM)                  │
+│              Encrypted API keys • Secure vault               │
 └─────────────────────────────────────────────────────────────┘
 ```
+
+**Tech Stack:**
+
+- **Frontend**: React 18, TypeScript, Tailwind CSS, Framer Motion
+- **Backend**: Rust, Tauri 2.0
+- **Agent Runtime**: OpenCode CLI (TypeScript-based sidecar)
+- **Encryption**: AES-256-GCM for API key storage
+- **IPC**: Tauri's secure command system
 
 ### Supervised Agent Pattern
 
@@ -156,12 +216,25 @@ Toggle between modes using the button in the chat header.
 
 ## Security
 
-- **API keys**: Encrypted with AES-256-GCM in SecureKeyStore
-- **File access**: Scoped to user-selected directories only
-- **Network**: Only connects to localhost + allowlisted LLM endpoints
-- **No telemetry**: Zero analytics, zero tracking, zero call home
+Tandem is built with security and privacy as core principles:
 
-See [SECURITY.md](SECURITY.md) for our full security model.
+- **🔐 API keys**: Encrypted with AES-256-GCM in SecureKeyStore, never stored in plaintext
+- **📁 File access**: Scoped to user-selected directories only - zero-trust model
+- **🌐 Network**: Only connects to localhost (sidecar) + user-configured LLM endpoints
+- **🚫 No telemetry**: Zero analytics, zero tracking, zero call home
+- **✅ Code-signed releases**: All installers are signed for security (Windows, macOS)
+- **🔒 Sandboxed**: Tauri security model with CSP and permission system
+- **💾 Local-first**: All data stays on your machine unless sent to your LLM provider
+
+**Denied by default:**
+
+- `.env` files and environment variables
+- `.pem`, `.key` files
+- SSH keys (`.ssh/*`)
+- Secrets folders
+- Password databases
+
+See [SECURITY.md](SECURITY.md) for our complete security model and threat analysis.
 
 ## Contributing
 
@@ -198,18 +271,29 @@ tandem/
 
 ## Roadmap
 
-- [x] Phase 1: Security Foundation
-- [x] Phase 2: Sidecar Integration
-- [x] Phase 3: Glass UI
-- [x] Phase 4: BYOK Provider Routing
-- [x] Phase 5: Agent Capabilities
-- [ ] Browser integration
-- [ ] Connectors & Skills
-- [ ] Multi-workspace support
+- [x] **Phase 1: Security Foundation** - Encrypted vault, permission system
+- [x] **Phase 2: Sidecar Integration** - OpenCode agent runtime
+- [x] **Phase 3: Glass UI** - Modern, polished interface
+- [x] **Phase 4: BYOK Provider Routing** - Multi-provider support
+- [x] **Phase 5: Agent Capabilities** - Multi-mode agents, execution planning
+- [x] **Phase 6: Project Management** - Multi-workspace support
+- [ ] **Phase 7: Browser Integration** - Web content access
+- [ ] **Phase 8: Connectors & Skills** - Extensibility system
+- [ ] **Phase 9: Team Features** - Collaboration tools
+- [ ] **Phase 10: Mobile Companion** - iOS/Android apps
+
+See [docs/todo_specialists.md](docs/todo_specialists.md) for ideas on specialized AI assistants for non-technical users.
 
 ## Why Tandem?
 
-For a deeper dive into why we built Tandem and how it compares to other tools, see our [Marketing Guide](docs/marketing.md).
+For developers and teams who want:
+
+- **Control**: Your data, your keys, your rules
+- **Flexibility**: Any LLM provider, any model
+- **Security**: Encrypted storage, sandboxed execution, zero telemetry
+- **Transparency**: Open source, auditable code
+
+For a deeper dive into Tandem's philosophy and how it compares to other tools, see our [Marketing Guide](docs/marketing.md).
 
 ## Support This Project
 
