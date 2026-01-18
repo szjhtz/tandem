@@ -182,7 +182,7 @@ export function ChatInput({
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
     >
-      <div className="mx-auto max-w-3xl">
+      <div className="mx-auto w-full max-w-5xl">
         {/* Drag overlay */}
         <AnimatePresence>
           {isDragging && (

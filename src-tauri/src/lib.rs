@@ -64,15 +64,44 @@ impl VaultState {
     }
 }
 
-/// Initialize tracing for logging
-fn init_tracing() {
+/// Initialize tracing for logging (console + file)
+fn init_tracing(app_data_dir: &std::path::Path) {
+    use std::fs;
+    
+    // Create logs directory
+    let logs_dir = app_data_dir.join("logs");
+    fs::create_dir_all(&logs_dir).ok();
+    
+    // Log file path (rotate daily)
+    let log_file = logs_dir.join(format!(
+        "tandem-{}.log",
+        chrono::Local::now().format("%Y-%m-%d")
+    ));
+    
+    // Create file appender
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_file)
+        .expect("Failed to open log file");
+    
+    // Set up both console and file logging
+    let file_layer = tracing_subscriber::fmt::layer()
+        .with_writer(file)
+        .with_ansi(false); // No ANSI colors in file
+    
+    let console_layer = tracing_subscriber::fmt::layer();
+    
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| "tandem=debug,tauri=info".into()),
         )
-        .with(tracing_subscriber::fmt::layer())
+        .with(console_layer)
+        .with(file_layer)
         .init();
+    
+    tracing::info!("Logging to file: {:?}", log_file);
 }
 
 /// Initialize keystore with the given master key and load API keys
@@ -136,7 +165,19 @@ fn initialize_keystore_and_keys(app: &tauri::AppHandle, master_key: &[u8]) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    init_tracing();
+    // Get app data directory early for logging
+    let app_data_dir = tauri::Builder::default()
+        .build(tauri::generate_context!())
+        .ok()
+        .and_then(|app| app.path().app_data_dir().ok())
+        .unwrap_or_else(|| {
+            // Fallback to temp dir if we can't get app data
+            std::env::temp_dir().join("tandem")
+        });
+    
+    std::fs::create_dir_all(&app_data_dir).ok();
+    
+    init_tracing(&app_data_dir);
 
     tracing::info!("Starting Tandem application");
 
