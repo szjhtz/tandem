@@ -607,6 +607,14 @@ impl SidecarManager {
         // Build the command
         let mut cmd = Command::new(sidecar_path);
 
+        // Hide console window on Windows
+        #[cfg(target_os = "windows")]
+        {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x08000000;
+            cmd.creation_flags(CREATE_NO_WINDOW);
+        }
+
         // OpenCode 'serve' subcommand starts a headless server
         // Use --hostname and --port flags
         cmd.args([
