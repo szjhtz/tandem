@@ -53,14 +53,28 @@ struct GitHubAsset {
 }
 
 /// Get the sidecar binary path for the current platform
+/// Checks for updated version in AppData first, falls back to bundled version
 pub fn get_sidecar_binary_path(app: &AppHandle) -> Result<PathBuf> {
+    let binary_name = get_binary_name();
+    
+    // First, check if there's an updated version in AppData
+    if let Ok(app_data_dir) = app.path().app_data_dir() {
+        let updated_binary = app_data_dir.join("binaries").join(binary_name);
+        if updated_binary.exists() {
+            tracing::info!("Using updated sidecar from AppData: {:?}", updated_binary);
+            return Ok(updated_binary);
+        }
+    }
+    
+    // Fall back to bundled version in resources (read-only)
     let resource_dir = app
         .path()
         .resource_dir()
         .map_err(|e| TandemError::Sidecar(format!("Failed to get resource dir: {}", e)))?;
 
-    let binary_name = get_binary_name();
-    Ok(resource_dir.join("binaries").join(binary_name))
+    let bundled_binary = resource_dir.join("binaries").join(binary_name);
+    tracing::info!("Using bundled sidecar from resources: {:?}", bundled_binary);
+    Ok(bundled_binary)
 }
 
 /// Get the binary name for the current platform
@@ -266,14 +280,20 @@ pub async fn download_sidecar(app: AppHandle) -> Result<()> {
 
     tracing::info!("Downloading OpenCode {} from {}", version, download_url);
 
-    // Create binaries directory
-    let binary_path = get_sidecar_binary_path(&app)?;
-    if let Some(parent) = binary_path.parent() {
-        fs::create_dir_all(parent).map_err(|e| {
-            emit_state("error", Some(&e.to_string()));
-            TandemError::Sidecar(format!("Failed to create binaries dir: {}", e))
-        })?;
-    }
+    // Download to AppData (writable), not resources (read-only)
+    let app_data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| TandemError::Sidecar(format!("Failed to get app data dir: {}", e)))?;
+    
+    let binaries_dir = app_data_dir.join("binaries");
+    fs::create_dir_all(&binaries_dir).map_err(|e| {
+        emit_state("error", Some(&e.to_string()));
+        TandemError::Sidecar(format!("Failed to create binaries dir: {}", e))
+    })?;
+    
+    let binary_name = get_binary_name();
+    let binary_path = binaries_dir.join(binary_name);
 
     // Download the archive
     let archive_path = binary_path.with_extension("download");
