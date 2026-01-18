@@ -23,6 +23,9 @@ const BINARIES_DIR = join(ROOT_DIR, "src-tauri", "binaries");
 const OPENCODE_REPO = "anomalyco/opencode";
 const GITHUB_API = "https://api.github.com";
 
+// GitHub token for API authentication (avoids rate limiting in CI)
+const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
+
 // Platform mappings - maps Node.js platform/arch to OpenCode binary names
 // Updated to match new naming convention: opencode-{os}-{arch}.{ext}
 const PLATFORM_MAP = {
@@ -67,12 +70,17 @@ function getTauriBinaryName(target) {
 
 function httpsGet(url, options = {}) {
   return new Promise((resolve, reject) => {
-    const reqOptions = {
-      headers: {
-        "User-Agent": "Tandem-Sidecar-Downloader",
-        ...options.headers,
-      },
+    const headers = {
+      "User-Agent": "Tandem-Sidecar-Downloader",
+      ...options.headers,
     };
+
+    // Add GitHub token for authentication (avoids rate limiting)
+    if (GITHUB_TOKEN) {
+      headers["Authorization"] = `Bearer ${GITHUB_TOKEN}`;
+    }
+
+    const reqOptions = { headers };
 
     https.get(url, reqOptions, (response) => {
       // Handle redirects
@@ -113,9 +121,11 @@ async function downloadFile(url, destPath) {
     const file = createWriteStream(destPath);
 
     const request = (downloadUrl) => {
-      https.get(downloadUrl, {
-        headers: { "User-Agent": "Tandem-Sidecar-Downloader" },
-      }, (response) => {
+      const headers = { "User-Agent": "Tandem-Sidecar-Downloader" };
+      if (GITHUB_TOKEN) {
+        headers["Authorization"] = `Bearer ${GITHUB_TOKEN}`;
+      }
+      https.get(downloadUrl, { headers }, (response) => {
         // Handle redirects
         if (response.statusCode === 302 || response.statusCode === 301) {
           const redirectUrl = response.headers.location;
@@ -182,6 +192,11 @@ async function extractArchive(archivePath, destDir, isWindows) {
 
 async function fetchReleases() {
   console.log(`📡 Fetching releases from ${OPENCODE_REPO}...`);
+  if (GITHUB_TOKEN) {
+    console.log(`   Using authenticated GitHub API request`);
+  } else {
+    console.log(`   ⚠️  No GITHUB_TOKEN found, using unauthenticated request (may be rate limited)`);
+  }
   
   const url = `${GITHUB_API}/repos/${OPENCODE_REPO}/releases`;
   const releases = await httpsGet(url, { json: true });
