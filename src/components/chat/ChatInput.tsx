@@ -98,7 +98,7 @@ export function ChatInput({
     });
   };
 
-  const processImage = async (file: File | Blob): Promise<{ dataUrl: string, size: number }> => {
+  const processImage = async (file: File | Blob): Promise<{ dataUrl: string; size: number }> => {
     return new Promise((resolve, reject) => {
       const img = new Image();
       const url = URL.createObjectURL(file);
@@ -131,7 +131,7 @@ export function ChatInput({
         const dataUrl = canvas.toDataURL("image/jpeg", 0.8);
 
         // Approximate size of base64 content
-        const size = Math.round((dataUrl.length - "data:image/jpeg;base64,".length) * 3 / 4);
+        const size = Math.round(((dataUrl.length - "data:image/jpeg;base64,".length) * 3) / 4);
 
         resolve({ dataUrl, size });
       };
@@ -168,7 +168,7 @@ export function ChatInput({
       id: generateId(),
       type: isImage ? "image" : "file",
       name: file.name,
-      mime: isImage ? "image/jpeg" : (file.type || "application/octet-stream"),
+      mime: isImage ? "image/jpeg" : file.type || "application/octet-stream",
       url: dataUrl,
       size: size,
       preview: isImage ? dataUrl : undefined,
@@ -180,15 +180,15 @@ export function ChatInput({
   // Linux clipboard fallback: Use Tauri native clipboard when paste event doesn't work
   useEffect(() => {
     const handleKeyDown = async (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key === 'v') {
-        console.log('[Clipboard] Ctrl+V pressed, trying Tauri native clipboard...');
+      if ((e.ctrlKey || e.metaKey) && e.key === "v") {
+        console.log("[Clipboard] Ctrl+V pressed, trying Tauri native clipboard...");
         try {
           // Dynamic import to avoid errors if plugin not available
-          const clipboard = await import('@tauri-apps/plugin-clipboard-manager');
-          console.log('[Clipboard] Plugin loaded, reading image...');
+          const clipboard = await import("@tauri-apps/plugin-clipboard-manager");
+          console.log("[Clipboard] Plugin loaded, reading image...");
 
           const imageBytes = await clipboard.readImage();
-          console.log('[Clipboard] Read result:', imageBytes ? 'Got image data' : 'No image data');
+          console.log("[Clipboard] Read result:", imageBytes ? "Got image data" : "No image data");
 
           if (imageBytes) {
             e.preventDefault();
@@ -196,13 +196,20 @@ export function ChatInput({
             // Get RGBA bytes and dimensions from the image
             const rgbaBytes = await imageBytes.rgba();
             const originalSize = await imageBytes.size();
-            console.log('[Clipboard] Image dimensions:', originalSize.width, 'x', originalSize.height, ', RGBA bytes:', rgbaBytes.length);
+            console.log(
+              "[Clipboard] Image dimensions:",
+              originalSize.width,
+              "x",
+              originalSize.height,
+              ", RGBA bytes:",
+              rgbaBytes.length
+            );
 
             // Convert RGBA bytes to PNG using Canvas
-            const canvas = document.createElement('canvas');
+            const canvas = document.createElement("canvas");
             canvas.width = originalSize.width;
             canvas.height = originalSize.height;
-            const ctx = canvas.getContext('2d');
+            const ctx = canvas.getContext("2d");
 
             if (ctx) {
               // Create ImageData from RGBA bytes
@@ -231,20 +238,20 @@ export function ChatInput({
                   console.log(`[Clipboard] Compressed size: ${processed.size} bytes`);
                   setAttachments((prev) => [...prev, attachment]);
                 }
-              }, 'image/png');
+              }, "image/png");
             }
           } else {
-            console.log('[Clipboard] No image in clipboard, falling through to web API');
+            console.log("[Clipboard] No image in clipboard, falling through to web API");
           }
         } catch (err) {
-          console.error('[Clipboard] Error reading from Tauri clipboard:', err);
+          console.error("[Clipboard] Error reading from Tauri clipboard:", err);
           // Fall through to web clipboard handler
         }
       }
     };
 
-    document.addEventListener('keydown', handleKeyDown);
-    return () => document.removeEventListener('keydown', handleKeyDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
   }, [addFile]);
 
   const handlePaste = useCallback(
@@ -530,7 +537,7 @@ export function ChatInput({
           selectedAgent={selectedAgent}
           onAgentChange={onAgentChange}
           enabledToolCategories={enabledToolCategories || new Set()}
-          onToolCategoriesChange={onToolCategoriesChange || (() => { })}
+          onToolCategoriesChange={onToolCategoriesChange || (() => {})}
           selectedModel={selectedModel}
           onModelChange={onModelChange}
           availableModels={availableModels}

@@ -67,10 +67,18 @@ export function ActivityPanel({ activities, isVisible, onToggle }: ActivityPanel
       if (toolLower.includes("read") || toolLower.includes("file")) {
         return <FileText className="h-4 w-4" />;
       }
-      if (toolLower.includes("search") || toolLower.includes("grep") || toolLower.includes("find")) {
+      if (
+        toolLower.includes("search") ||
+        toolLower.includes("grep") ||
+        toolLower.includes("find")
+      ) {
         return <Search className="h-4 w-4" />;
       }
-      if (toolLower.includes("bash") || toolLower.includes("shell") || toolLower.includes("command")) {
+      if (
+        toolLower.includes("bash") ||
+        toolLower.includes("shell") ||
+        toolLower.includes("command")
+      ) {
         return <Terminal className="h-4 w-4" />;
       }
       if (toolLower.includes("browse") || toolLower.includes("web")) {
@@ -137,20 +145,24 @@ export function ActivityPanel({ activities, isVisible, onToggle }: ActivityPanel
   const formatArgs = (args: Record<string, unknown>) => {
     // Show relevant args in a readable format
     const relevantKeys = ["path", "file", "query", "pattern", "command", "cmd", "url", "content"];
-    const entries = Object.entries(args).filter(([key]) => 
-      relevantKeys.some(k => key.toLowerCase().includes(k))
+    const entries = Object.entries(args).filter(([key]) =>
+      relevantKeys.some((k) => key.toLowerCase().includes(k))
     );
-    
+
     if (entries.length === 0) {
       // Show first few args if no relevant ones found
-      return Object.entries(args).slice(0, 2).map(([k, v]) => 
-        `${k}: ${typeof v === 'string' ? v.slice(0, 100) : JSON.stringify(v).slice(0, 100)}`
-      ).join(", ");
+      return Object.entries(args)
+        .slice(0, 2)
+        .map(
+          ([k, v]) =>
+            `${k}: ${typeof v === "string" ? v.slice(0, 100) : JSON.stringify(v).slice(0, 100)}`
+        )
+        .join(", ");
     }
-    
-    return entries.map(([k, v]) => 
-      `${k}: ${typeof v === 'string' ? v : JSON.stringify(v).slice(0, 200)}`
-    ).join("\n");
+
+    return entries
+      .map(([k, v]) => `${k}: ${typeof v === "string" ? v : JSON.stringify(v).slice(0, 200)}`)
+      .join("\n");
   };
 
   if (!isVisible) {
@@ -161,7 +173,7 @@ export function ActivityPanel({ activities, isVisible, onToggle }: ActivityPanel
       >
         <Activity className="h-4 w-4 text-primary" />
         <span className="text-sm font-medium">Activity</span>
-        {activities.filter(a => a.status === "running").length > 0 && (
+        {activities.filter((a) => a.status === "running").length > 0 && (
           <span className="flex h-2 w-2">
             <span className="absolute inline-flex h-2 w-2 animate-ping rounded-full bg-primary opacity-75" />
             <span className="relative inline-flex h-2 w-2 rounded-full bg-primary" />
@@ -177,9 +189,7 @@ export function ActivityPanel({ activities, isVisible, onToggle }: ActivityPanel
       animate={{ opacity: 1, x: 0 }}
       exit={{ opacity: 0, x: 20 }}
       className={`fixed right-4 z-50 bg-surface-elevated rounded-xl shadow-2xl border border-border overflow-hidden transition-all ${
-        isExpanded 
-          ? "bottom-4 top-20 w-[500px]" 
-          : "bottom-24 w-80 max-h-96"
+        isExpanded ? "bottom-4 top-20 w-[500px]" : "bottom-24 w-80 max-h-96"
       }`}
     >
       {/* Header */}
@@ -187,9 +197,9 @@ export function ActivityPanel({ activities, isVisible, onToggle }: ActivityPanel
         <div className="flex items-center gap-2">
           <Activity className="h-4 w-4 text-primary" />
           <span className="font-medium text-sm">AI Activity</span>
-          {activities.filter(a => a.status === "running").length > 0 && (
+          {activities.filter((a) => a.status === "running").length > 0 && (
             <span className="text-xs text-primary bg-primary/10 px-2 py-0.5 rounded-full">
-              {activities.filter(a => a.status === "running").length} running
+              {activities.filter((a) => a.status === "running").length} running
             </span>
           )}
         </div>
@@ -214,7 +224,7 @@ export function ActivityPanel({ activities, isVisible, onToggle }: ActivityPanel
       </div>
 
       {/* Activity List */}
-      <div 
+      <div
         ref={scrollRef}
         className={`overflow-y-auto ${isExpanded ? "h-[calc(100%-48px)]" : "max-h-72"}`}
       >
@@ -253,9 +263,7 @@ export function ActivityPanel({ activities, isVisible, onToggle }: ActivityPanel
                         {getStatusIcon(activity.status)}
                       </div>
                       {activity.detail && (
-                        <p className="text-xs text-text-muted mt-0.5 truncate">
-                          {activity.detail}
-                        </p>
+                        <p className="text-xs text-text-muted mt-0.5 truncate">{activity.detail}</p>
                       )}
                       <p className="text-xs text-text-subtle mt-1">
                         {formatTime(activity.timestamp)}

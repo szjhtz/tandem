@@ -81,19 +81,25 @@ pub fn get_sidecar_binary_path(app: &AppHandle) -> Result<PathBuf> {
     {
         // Try to find the source root by looking up from the current executable or CWD
         if let Ok(current_dir) = std::env::current_dir() {
-             // We assume we are running from 'src-tauri' or project root
-             let dev_binary = current_dir.join("binaries").join(binary_name);
-             if dev_binary.exists() {
-                 tracing::info!("Using dev sidecar from CWD/binaries: {:?}", dev_binary);
-                 return Ok(dev_binary);
-             }
-             
-             // Try src-tauri/binaries if we are in the project root
-             let dev_binary_nested = current_dir.join("src-tauri").join("binaries").join(binary_name);
-             if dev_binary_nested.exists() {
-                 tracing::info!("Using dev sidecar from src-tauri/binaries: {:?}", dev_binary_nested);
-                 return Ok(dev_binary_nested);
-             }
+            // We assume we are running from 'src-tauri' or project root
+            let dev_binary = current_dir.join("binaries").join(binary_name);
+            if dev_binary.exists() {
+                tracing::info!("Using dev sidecar from CWD/binaries: {:?}", dev_binary);
+                return Ok(dev_binary);
+            }
+
+            // Try src-tauri/binaries if we are in the project root
+            let dev_binary_nested = current_dir
+                .join("src-tauri")
+                .join("binaries")
+                .join(binary_name);
+            if dev_binary_nested.exists() {
+                tracing::info!(
+                    "Using dev sidecar from src-tauri/binaries: {:?}",
+                    dev_binary_nested
+                );
+                return Ok(dev_binary_nested);
+            }
         }
     }
 
@@ -171,7 +177,7 @@ pub async fn check_sidecar_status(app: &AppHandle) -> Result<SidecarStatus> {
             .metadata()
             .map(|m| m.len() >= MIN_BINARY_SIZE)
             .unwrap_or(false);
-            
+
     let binary_path = binary_path_result.ok();
 
     let version = if installed {
@@ -587,7 +593,7 @@ pub async fn download_sidecar(app: AppHandle) -> Result<()> {
         if let Some(e) = last_error {
             emit_state("error", Some(&e.to_string()));
             return Err(TandemError::Sidecar(format!(
-                "Failed to rename binary after 5 attempts. The process may still be running. Please close Tandem completely and try again: {}", 
+                "Failed to rename binary after 5 attempts. The process may still be running. Please close Tandem completely and try again: {}",
                 e
             )));
         }

@@ -21,7 +21,7 @@ use crate::error::{Result, TandemError};
 
 /// Minimum PIN length
 pub const MIN_PIN_LENGTH: usize = 4;
-/// Maximum PIN length  
+/// Maximum PIN length
 pub const MAX_PIN_LENGTH: usize = 8;
 
 /// Vault status returned to frontend

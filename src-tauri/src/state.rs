@@ -88,8 +88,6 @@ fn default_ollama() -> ProviderConfig {
     }
 }
 
-
-
 impl Default for ProvidersConfig {
     fn default() -> Self {
         Self {

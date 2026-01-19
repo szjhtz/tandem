@@ -105,37 +105,37 @@ export function Settings({ onClose, onProjectChange, onProviderChange }: Setting
     // When enabling a provider, disable all others
     const updated = enabled
       ? {
-        openrouter: {
-          ...providers.openrouter,
-          enabled: provider === "openrouter",
-          default: provider === "openrouter",
-        },
-        opencode_zen: {
-          ...providers.opencode_zen,
-          enabled: provider === "opencode_zen",
-          default: provider === "opencode_zen",
-        },
-        anthropic: {
-          ...providers.anthropic,
-          enabled: provider === "anthropic",
-          default: provider === "anthropic",
-        },
-        openai: {
-          ...providers.openai,
-          enabled: provider === "openai",
-          default: provider === "openai",
-        },
-        ollama: {
-          ...providers.ollama,
-          enabled: provider === "ollama",
-          default: provider === "ollama",
-        },
-        custom: providers.custom,
-      }
+          openrouter: {
+            ...providers.openrouter,
+            enabled: provider === "openrouter",
+            default: provider === "openrouter",
+          },
+          opencode_zen: {
+            ...providers.opencode_zen,
+            enabled: provider === "opencode_zen",
+            default: provider === "opencode_zen",
+          },
+          anthropic: {
+            ...providers.anthropic,
+            enabled: provider === "anthropic",
+            default: provider === "anthropic",
+          },
+          openai: {
+            ...providers.openai,
+            enabled: provider === "openai",
+            default: provider === "openai",
+          },
+          ollama: {
+            ...providers.ollama,
+            enabled: provider === "ollama",
+            default: provider === "ollama",
+          },
+          custom: providers.custom,
+        }
       : {
-        ...providers,
-        [provider]: { ...providers[provider], enabled: false, default: false },
-      };
+          ...providers,
+          [provider]: { ...providers[provider], enabled: false, default: false },
+        };
 
     setProviders(updated);
     await setProvidersConfig(updated);

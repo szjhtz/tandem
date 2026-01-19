@@ -82,9 +82,7 @@ export function FileBrowser({ rootPath, onFileSelect, selectedPath }: FileBrowse
 
         const [first, ...rest] = currentPath;
         return nodes.map((n) =>
-          n.name === first && n.children
-            ? { ...n, children: updateNode(n.children, rest) }
-            : n
+          n.name === first && n.children ? { ...n, children: updateNode(n.children, rest) } : n
         );
       };
 
@@ -106,16 +104,12 @@ export function FileBrowser({ rootPath, onFileSelect, selectedPath }: FileBrowse
       // Collapse
       const collapseNode = (nodes: TreeNode[], currentPath: string[]): TreeNode[] => {
         if (currentPath.length === 0) {
-          return nodes.map((n) =>
-            n.path === node.path ? { ...n, isExpanded: false } : n
-          );
+          return nodes.map((n) => (n.path === node.path ? { ...n, isExpanded: false } : n));
         }
 
         const [first, ...rest] = currentPath;
         return nodes.map((n) =>
-          n.name === first && n.children
-            ? { ...n, children: collapseNode(n.children, rest) }
-            : n
+          n.name === first && n.children ? { ...n, children: collapseNode(n.children, rest) } : n
         );
       };
 
@@ -124,16 +118,12 @@ export function FileBrowser({ rootPath, onFileSelect, selectedPath }: FileBrowse
       // Expand - mark as loading first
       const markLoading = (nodes: TreeNode[], currentPath: string[]): TreeNode[] => {
         if (currentPath.length === 0) {
-          return nodes.map((n) =>
-            n.path === node.path ? { ...n, isLoading: true } : n
-          );
+          return nodes.map((n) => (n.path === node.path ? { ...n, isLoading: true } : n));
         }
 
         const [first, ...rest] = currentPath;
         return nodes.map((n) =>
-          n.name === first && n.children
-            ? { ...n, children: markLoading(n.children, rest) }
-            : n
+          n.name === first && n.children ? { ...n, children: markLoading(n.children, rest) } : n
         );
       };
 
@@ -222,9 +212,7 @@ export function FileBrowser({ rootPath, onFileSelect, selectedPath }: FileBrowse
               exit={{ opacity: 0, height: 0 }}
               transition={{ duration: 0.2 }}
             >
-              {node.children.map((child) =>
-                renderNode(child, depth + 1, [...path, node.name])
-              )}
+              {node.children.map((child) => renderNode(child, depth + 1, [...path, node.name]))}
             </motion.div>
           </AnimatePresence>
         )}

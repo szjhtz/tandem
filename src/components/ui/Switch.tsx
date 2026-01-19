@@ -9,7 +9,13 @@ export interface SwitchProps extends Omit<InputHTMLAttributes<HTMLInputElement>,
 const Switch = forwardRef<HTMLInputElement, SwitchProps>(
   ({ className, label, checked, onChange, disabled, ...props }, ref) => {
     return (
-      <label className={cn("inline-flex cursor-pointer items-center gap-3", disabled && "cursor-not-allowed opacity-50", className)}>
+      <label
+        className={cn(
+          "inline-flex cursor-pointer items-center gap-3",
+          disabled && "cursor-not-allowed opacity-50",
+          className
+        )}
+      >
         <div className="relative">
           <input
             type="checkbox"

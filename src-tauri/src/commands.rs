@@ -225,10 +225,10 @@ pub fn log_frontend_error(message: String, details: Option<String>) {
 #[tauri::command]
 pub async fn get_app_state(app: AppHandle, state: State<'_, AppState>) -> Result<AppStateInfo> {
     let mut info = AppStateInfo::from(state.inner());
-    
+
     // Dynamically populate has_key status
     populate_provider_keys(&app, &mut info.providers_config);
-    
+
     Ok(info)
 }
 
@@ -727,12 +727,15 @@ pub fn set_user_theme(app: AppHandle, theme_id: String) -> Result<()> {
 /// Get the providers configuration
 /// Get the providers configuration (with key status)
 #[tauri::command]
-pub async fn get_providers_config(app: AppHandle, state: State<'_, AppState>) -> Result<ProvidersConfig> {
+pub async fn get_providers_config(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<ProvidersConfig> {
     let mut config = state.providers_config.read().unwrap().clone();
-    
+
     // Dynamically populate has_key status
     populate_provider_keys(&app, &mut config);
-    
+
     Ok(config)
 }
 
@@ -745,13 +748,29 @@ fn populate_provider_keys(app: &AppHandle, config: &mut ProvidersConfig) {
         let opencode_zen_key = ApiKeyType::OpenCodeZen.to_key_name();
         let anthropic_key = ApiKeyType::Anthropic.to_key_name();
         let openai_key = ApiKeyType::OpenAI.to_key_name();
-        
+
         tracing::info!("[populate_provider_keys] Checking for keys:");
-        tracing::info!("  OpenRouter key '{}': {}", openrouter_key, keystore.has(&openrouter_key));
-        tracing::info!("  OpenCodeZen key '{}': {}", opencode_zen_key, keystore.has(&opencode_zen_key));
-        tracing::info!("  Anthropic key '{}': {}", anthropic_key, keystore.has(&anthropic_key));
-        tracing::info!("  OpenAI key '{}': {}", openai_key, keystore.has(&openai_key));
-        
+        tracing::info!(
+            "  OpenRouter key '{}': {}",
+            openrouter_key,
+            keystore.has(&openrouter_key)
+        );
+        tracing::info!(
+            "  OpenCodeZen key '{}': {}",
+            opencode_zen_key,
+            keystore.has(&opencode_zen_key)
+        );
+        tracing::info!(
+            "  Anthropic key '{}': {}",
+            anthropic_key,
+            keystore.has(&anthropic_key)
+        );
+        tracing::info!(
+            "  OpenAI key '{}': {}",
+            openai_key,
+            keystore.has(&openai_key)
+        );
+
         config.openrouter.has_key = keystore.has(&openrouter_key);
         config.opencode_zen.has_key = keystore.has(&opencode_zen_key);
         config.anthropic.has_key = keystore.has(&anthropic_key);
@@ -2141,7 +2160,8 @@ pub async fn export_presentation(json_path: String, output_path: String) -> Resu
     <p:spTree>
       <p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>
       <p:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/><a:chOff x="0" y="0"/><a:chExt cx="0" cy="0"/></a:xfrm></p:grpSpPr>
-"#);
+"#,
+        );
 
         // Background shape
         slide_xml.push_str(&format!(
@@ -2189,8 +2209,8 @@ pub async fn export_presentation(json_path: String, output_path: String) -> Resu
           </a:p>
         </p:txBody>
       </p:sp>
-"#, 
-                shape_id, 
+"#,
+                shape_id,
                 to_emu(x, SLIDE_WIDTH), to_emu(y, SLIDE_HEIGHT),
                 to_emu(w, SLIDE_WIDTH), to_emu(h, SLIDE_HEIGHT),
                 if matches!(slide.layout, SlideLayout::Title | SlideLayout::Section) { "ctr" } else { "l" },
@@ -2231,8 +2251,8 @@ pub async fn export_presentation(json_path: String, output_path: String) -> Resu
           </a:p>
         </p:txBody>
       </p:sp>
-"#, 
-                shape_id, 
+"#,
+                shape_id,
                 to_emu(x, SLIDE_WIDTH), to_emu(y, SLIDE_HEIGHT),
                 to_emu(w, SLIDE_WIDTH), to_emu(h, SLIDE_HEIGHT),
                 if matches!(slide.layout, SlideLayout::Title | SlideLayout::Section) { "ctr" } else { "l" },
@@ -2268,7 +2288,10 @@ pub async fn export_presentation(json_path: String, output_path: String) -> Resu
               <a:t>{}</a:t>
             </a:r>
           </a:p>
-"#, ppt_theme.text, escape_xml(bullet)));
+"#,
+                            ppt_theme.text,
+                            escape_xml(bullet)
+                        ));
                     }
                 }
                 ElementContent::Text(t) => {
@@ -2281,7 +2304,10 @@ pub async fn export_presentation(json_path: String, output_path: String) -> Resu
               <a:t>{}</a:t>
             </a:r>
           </a:p>
-"#, ppt_theme.text, escape_xml(t)));
+"#,
+                        ppt_theme.text,
+                        escape_xml(t)
+                    ));
                 }
             }
 
@@ -2298,8 +2324,8 @@ pub async fn export_presentation(json_path: String, output_path: String) -> Resu
           <a:lstStyle/>
 {}        </p:txBody>
       </p:sp>
-"#, 
-                shape_id, 
+"#,
+                shape_id,
                 to_emu(x, SLIDE_WIDTH), to_emu(y, SLIDE_HEIGHT),
                 to_emu(w, SLIDE_WIDTH), to_emu(h, SLIDE_HEIGHT),
                 content_xml
@@ -2311,7 +2337,8 @@ pub async fn export_presentation(json_path: String, output_path: String) -> Resu
             r#"    </p:spTree>
   </p:cSld>
   <p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr>
-</p:sld>"#);
+</p:sld>"#,
+        );
 
         zip.start_file(format!("ppt/slides/slide{}.xml", slide_num), options)
             .map_err(|e| TandemError::Io(std::io::Error::other(e)))?;

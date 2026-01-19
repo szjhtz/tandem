@@ -14,7 +14,12 @@ const AGENTS: Agent[] = [
   { id: undefined, label: "Immediate", icon: Zap, description: "Execute changes directly" },
   { id: "plan", label: "Plan", icon: ListChecks, description: "Propose changes for review" },
   { id: "coder", label: "Coder", icon: Code, description: "Focus on code generation" },
-  { id: "general", label: "Ask", icon: MessageCircleQuestion, description: "Q&A without making changes" },
+  {
+    id: "general",
+    label: "Ask",
+    icon: MessageCircleQuestion,
+    description: "Q&A without making changes",
+  },
   { id: "explore", label: "Explore", icon: Search, description: "Analyze and explore code" },
 ];
 
@@ -101,7 +106,9 @@ export function AgentSelector({ selectedAgent, onAgentChange, disabled }: AgentS
                     <AgentIcon className="h-3.5 w-3.5 flex-shrink-0" />
                     <div className="flex-1 min-w-0">
                       <div className="text-xs font-medium">{agent.label}</div>
-                      <div className="text-[10px] text-text-muted leading-tight">{agent.description}</div>
+                      <div className="text-[10px] text-text-muted leading-tight">
+                        {agent.description}
+                      </div>
                     </div>
                   </button>
                 );

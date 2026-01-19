@@ -132,15 +132,22 @@ function App() {
   const [view, setView] = useState<View>(() => "sidecar-setup");
 
   // Check if any provider is fully configured (enabled + has key)
-  const hasConfiguredProvider = !!state?.providers_config &&
+  const hasConfiguredProvider =
+    !!state?.providers_config &&
     ((state.providers_config.openrouter?.enabled && state.providers_config.openrouter?.has_key) ||
       (state.providers_config.anthropic?.enabled && state.providers_config.anthropic?.has_key) ||
       (state.providers_config.openai?.enabled && state.providers_config.openai?.has_key) ||
-      (state.providers_config.opencode_zen?.enabled && state.providers_config.opencode_zen?.has_key) ||
+      (state.providers_config.opencode_zen?.enabled &&
+        state.providers_config.opencode_zen?.has_key) ||
       (state.providers_config.ollama?.enabled && state.providers_config.ollama?.has_key));
 
   // Debug: Log provider state
-  console.log("[App] hasConfiguredProvider:", hasConfiguredProvider, "state:", state?.providers_config);
+  console.log(
+    "[App] hasConfiguredProvider:",
+    hasConfiguredProvider,
+    "state:",
+    state?.providers_config
+  );
 
   // Update view based on workspace state after loading
   const effectiveView =
@@ -148,7 +155,9 @@ function App() {
       ? "sidecar-setup"
       : !sidecarReady
         ? "sidecar-setup"
-        : (!state?.has_workspace || !hasConfiguredProvider) && view !== "settings" && view !== "about"
+        : (!state?.has_workspace || !hasConfiguredProvider) &&
+            view !== "settings" &&
+            view !== "about"
           ? "onboarding"
           : view;
 
@@ -557,20 +566,22 @@ function App() {
 
             <button
               onClick={() => setView("chat")}
-              className={`flex h-10 w-10 items-center justify-center rounded-lg transition-colors ${effectiveView === "chat"
-                ? "bg-primary/20 text-primary"
-                : "text-text-muted hover:bg-surface-elevated hover:text-text"
-                }`}
+              className={`flex h-10 w-10 items-center justify-center rounded-lg transition-colors ${
+                effectiveView === "chat"
+                  ? "bg-primary/20 text-primary"
+                  : "text-text-muted hover:bg-surface-elevated hover:text-text"
+              }`}
               title="Chat"
             >
               <MessageSquare className="h-5 w-5" />
             </button>
             <button
               onClick={() => setView("settings")}
-              className={`flex h-10 w-10 items-center justify-center rounded-lg transition-colors ${effectiveView === "settings"
-                ? "bg-primary/20 text-primary"
-                : "text-text-muted hover:bg-surface-elevated hover:text-text"
-                }`}
+              className={`flex h-10 w-10 items-center justify-center rounded-lg transition-colors ${
+                effectiveView === "settings"
+                  ? "bg-primary/20 text-primary"
+                  : "text-text-muted hover:bg-surface-elevated hover:text-text"
+              }`}
               title="Settings"
             >
               <SettingsIcon className="h-5 w-5" />
@@ -586,10 +597,11 @@ function App() {
             </button>
             <button
               onClick={() => setView("about")}
-              className={`flex h-10 w-10 items-center justify-center rounded-lg transition-colors ${effectiveView === "about"
-                ? "bg-primary/20 text-primary"
-                : "text-text-muted hover:bg-surface-elevated hover:text-text"
-                }`}
+              className={`flex h-10 w-10 items-center justify-center rounded-lg transition-colors ${
+                effectiveView === "about"
+                  ? "bg-primary/20 text-primary"
+                  : "text-text-muted hover:bg-surface-elevated hover:text-text"
+              }`}
               title="About"
             >
               <Info className="h-5 w-5" />
@@ -599,10 +611,11 @@ function App() {
             {(usePlanMode || todosData.todos.length > 0) && (
               <button
                 onClick={() => setTaskSidebarOpen(!taskSidebarOpen)}
-                className={`flex h-10 w-10 items-center justify-center rounded-lg transition-colors ${taskSidebarOpen
-                  ? "bg-primary/20 text-primary"
-                  : "text-text-muted hover:bg-surface-elevated hover:text-text"
-                  }`}
+                className={`flex h-10 w-10 items-center justify-center rounded-lg transition-colors ${
+                  taskSidebarOpen
+                    ? "bg-primary/20 text-primary"
+                    : "text-text-muted hover:bg-surface-elevated hover:text-text"
+                }`}
                 title="Tasks"
               >
                 <ListTodo className="h-5 w-5" />
@@ -919,9 +932,7 @@ function OnboardingView({ onComplete, hasConfiguredProvider, hasWorkspace }: Onb
           <div
             className={cn(
               "rounded-lg border p-4 text-left transition-colors",
-              hasConfiguredProvider
-                ? "border-border bg-surface"
-                : "border-primary/50 bg-primary/5"
+              hasConfiguredProvider ? "border-border bg-surface" : "border-primary/50 bg-primary/5"
             )}
           >
             <div className="flex items-start gap-3">

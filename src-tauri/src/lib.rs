@@ -176,7 +176,7 @@ pub fn run() {
                 .path()
                 .app_data_dir()
                 .expect("Failed to get app data directory");
-            
+
             std::fs::create_dir_all(&app_data_dir).ok();
             init_tracing(&app_data_dir);
             tracing::info!("Starting Tandem application");

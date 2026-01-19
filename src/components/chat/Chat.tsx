@@ -362,12 +362,13 @@ Start with task #1 and continue through each one. Let me know when each task is 
               const filename = (partObj.filename as string) || "file";
               const mime = (partObj.mime as string) || "application/octet-stream";
               const url = (partObj.url as string) || "";
-              const isImage = mime.startsWith("image/") || /\.(jpg|jpeg|png|gif|webp|svg)$/i.test(filename);
+              const isImage =
+                mime.startsWith("image/") || /\.(jpg|jpeg|png|gif|webp|svg)$/i.test(filename);
 
               attachments.push({
                 name: filename,
                 type: isImage ? "image" : "file",
-                preview: isImage && url ? url : undefined
+                preview: isImage && url ? url : undefined,
               } as any);
 
               // Only add a text placeholder if there's no other text or if we want to explicitly record it
@@ -678,8 +679,8 @@ Start with task #1 and continue through each one. Let me know when each task is 
               reasoning: (args.reasoning as string) || "AI wants to perform this action",
               riskLevel:
                 event.tool === "delete_file" ||
-                  event.tool === "run_command" ||
-                  event.tool === "bash"
+                event.tool === "run_command" ||
+                event.tool === "bash"
                   ? "high"
                   : "medium",
               tool: event.tool,
@@ -714,10 +715,10 @@ Start with task #1 and continue through each one. Let me know when each task is 
               const toolCalls = lastMessage.toolCalls.map((tc) =>
                 tc.id === event.part_id
                   ? {
-                    ...tc,
-                    result: event.error || String(event.result || ""),
-                    status: (event.error ? "failed" : "completed") as "failed" | "completed",
-                  }
+                      ...tc,
+                      result: event.error || String(event.result || ""),
+                      status: (event.error ? "failed" : "completed") as "failed" | "completed",
+                    }
                   : tc
               );
               return [...prev.slice(0, -1), { ...lastMessage, toolCalls }];
@@ -1081,7 +1082,8 @@ ${g.example}
 
         if (attachments && attachments.length > 0) {
           for (const attachment of attachments) {
-            const isImage = attachment.type.startsWith("image/") || attachment.mime.startsWith("image/");
+            const isImage =
+              attachment.type.startsWith("image/") || attachment.mime.startsWith("image/");
 
             if (attachment.url.startsWith("data:")) {
               if (isImage) {
@@ -1100,12 +1102,15 @@ ${g.example}
                   // Use a generic format that won't trigger OpenCode to look for files
                   messageContent += `\n\nHere is the attached content from ${attachment.name}:\n\`\`\`\n${decodedContent}\n\`\`\`\n`;
                 } catch (e) {
-                  console.warn(`Failed to decode attachment ${attachment.name}, sending as file`, e);
+                  console.warn(
+                    `Failed to decode attachment ${attachment.name}, sending as file`,
+                    e
+                  );
                   // Fallback: send as attachment if decoding fails
                   attachmentsToSend.push({
                     mime: attachment.mime,
                     filename: attachment.name,
-                    url: attachment.url
+                    url: attachment.url,
                   });
                 }
               }
@@ -1114,14 +1119,19 @@ ${g.example}
               attachmentsToSend.push({
                 mime: attachment.mime,
                 filename: attachment.name,
-                url: attachment.url
+                url: attachment.url,
               });
             }
           }
         }
 
         // Send message and stream response, with selected agent
-        await sendMessageStreaming(sessionId, messageContent, attachmentsToSend.length > 0 ? attachmentsToSend : undefined, agentToUse);
+        await sendMessageStreaming(
+          sessionId,
+          messageContent,
+          attachmentsToSend.length > 0 ? attachmentsToSend : undefined,
+          agentToUse
+        );
       } catch (e) {
         const errorMessage = e instanceof Error ? e.message : String(e);
         setError(`Failed to send message: ${errorMessage}`);
@@ -1383,12 +1393,13 @@ ${g.example}
 
           <div className="flex items-center gap-2">
             <div
-              className={`h-2 w-2 rounded-full ${sidecarStatus === "running"
-                ? "bg-primary"
-                : sidecarStatus === "starting"
-                  ? "bg-warning animate-pulse"
-                  : "bg-text-subtle"
-                }`}
+              className={`h-2 w-2 rounded-full ${
+                sidecarStatus === "running"
+                  ? "bg-primary"
+                  : sidecarStatus === "starting"
+                    ? "bg-warning animate-pulse"
+                    : "bg-text-subtle"
+              }`}
             />
             <span className="text-xs text-text-muted">
               {sidecarStatus === "running"
