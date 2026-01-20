@@ -2133,15 +2133,18 @@ Use the `write` tool to create a single standalone `{filename}.slides.html` file
 - **NO Vertical Scrolling**: Slides MUST NOT appear below each other.
 - **Absolute Stacking**: All `.slide` elements must be stacked on top of each other (usually via `position: absolute` or `grid`).
 - **Visibility**: Only the `.active` slide should be visible (`display: flex` or `block`); all others MUST be `display: none !important`.
+- **Content Containment**: Add `overflow: hidden` to `.slide` to prevent content from spilling outside bounds.
 
 ### 2. Layout & Scaling
 - **16:9 Aspect Ratio**: Use 1920x1080 as the base dimensions.
+- **Safe Margins**: Keep all important content at least 100px from slide edges to prevent cutoff.
 - **Scale to Fit**: Use a container that scales the entire deck to fit the viewport while maintaining aspect ratio.
 
 ### 3. PDF Export
-Add a `@media print` style block that:
-- Forces each slide to be visible and occupy exactly one page.
-- Hides all interactive UI (buttons, counters).
+- Add a dedicated "Export to PDF" button that calls `window.print()`.
+- Add a `@media print` style block that:
+  - Forces each slide to be visible and occupy exactly one page.
+  - Hides all interactive UI (buttons, counters).
 
 ## SLIDESHOW HTML TEMPLATE:
 ```html
@@ -2163,14 +2166,15 @@ Add a `@media print` style block that:
         .slide { 
             position: absolute; inset: 0; 
             display: none; 
-            padding: 80px;
+            padding: 100px;
             flex-direction: column;
+            overflow: hidden;
         }
         .slide.active { display: flex; }
         @media print {
             body { background: white; overflow: visible; height: auto; }
             #viewport, #deck { width: 100%; height: auto; transform: none !important; display: block; }
-            .slide { position: relative; display: block !important; break-after: page; width: 100%; height: auto; aspect-ratio: 16/9; page-break-after: always; }
+            .slide { position: relative; display: block !important; break-after: page; width: 100%; height: auto; aspect-ratio: 16/9; page-break-after: always; overflow: visible; }
             .no-print { display: none !important; }
         }
     </style>
@@ -2187,6 +2191,8 @@ Add a `@media print` style block that:
     </div>
     <!-- Nav buttons -->
     <div class="no-print fixed bottom-8 right-8 flex gap-4 items-center bg-black/40 backdrop-blur-xl p-4 rounded-2xl border border-white/10">
+        <button onclick="window.print()" class="w-12 h-12 flex items-center justify-center rounded-xl bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-400" title="Export to PDF"><i class="fas fa-file-pdf"></i></button>
+        <div class="w-px h-8 bg-white/10"></div>
         <button onclick="prev()" class="w-12 h-12 flex items-center justify-center rounded-xl bg-white/10 hover:bg-white/20"><i class="fas fa-chevron-left"></i></button>
         <span id="counter" class="text-white font-mono min-w-[60px] text-center">1 / X</span>
         <button onclick="next()" class="w-12 h-12 flex items-center justify-center rounded-xl bg-white/10 hover:bg-white/20"><i class="fas fa-chevron-right"></i></button>
@@ -2217,9 +2223,10 @@ Add a `@media print` style block that:
                     json_schema: serde_json::json!({
                         "file_type": "HTML Slideshow",
                         "scaling": "Auto-fit viewport",
-                        "navigation": "Arrows, Space, Click"
+                        "navigation": "Arrows, Space, Click",
+                        "pdf_export": "Print button with optimized layout"
                     }),
-                    example: "Generate 'strategic_path.slides.html' with 6 absolutely stacked slides and a scale-to-fit script.".to_string(),
+                    example: "Generate 'strategic_path.slides.html' with 6 absolutely stacked slides, overflow:hidden, and a Print to PDF button.".to_string(),
                 });
             }
             "canvas" => {
