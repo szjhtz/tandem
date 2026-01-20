@@ -1065,17 +1065,42 @@ pub async fn send_message_streaming(
     state.sidecar.send_message(&session_id, request).await?;
 
     let target_session_id = session_id.clone();
+    let sidecar_manager = state.sidecar.clone();
 
     // Process the stream and emit events to frontend
     tokio::spawn(async move {
         futures::pin_mut!(stream);
+
+        // Safety limit: 100k characters (approx 25k tokens) to prevent infinite loops
+        const MAX_RESPONSE_CHARS: usize = 100_000;
 
         while let Some(result) = stream.next().await {
             match result {
                 Ok(event) => {
                     // Filter events for our session
                     let is_our_session = match &event {
-                        StreamEvent::Content { session_id, .. } => session_id == &target_session_id,
+                        StreamEvent::Content { session_id, content, .. } => {
+                            if session_id == &target_session_id && content.len() > MAX_RESPONSE_CHARS {
+                                tracing::warn!(
+                                    "Response exceeded safety limit ({} chars), cancelling session {}",
+                                    MAX_RESPONSE_CHARS,
+                                    target_session_id
+                                );
+                                let _ = sidecar_manager.cancel_generation(&target_session_id).await;
+                                let _ = app.emit(
+                                    "sidecar_event",
+                                    &StreamEvent::SessionError {
+                                        session_id: target_session_id.clone(),
+                                        error: format!(
+                                            "Response stopped: exceeded safety limit of {} characters.",
+                                            MAX_RESPONSE_CHARS
+                                        ),
+                                    },
+                                );
+                                break;
+                            }
+                            session_id == &target_session_id
+                        }
                         StreamEvent::ToolStart { session_id, .. } => {
                             session_id == &target_session_id
                         }

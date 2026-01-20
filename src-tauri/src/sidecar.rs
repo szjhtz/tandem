@@ -1205,24 +1205,41 @@ impl SidecarManager {
     pub async fn cancel_generation(&self, session_id: &str) -> Result<()> {
         self.check_circuit_breaker().await?;
 
-        let url = format!("{}/sessions/{}/cancel", self.base_url().await?, session_id);
-
+        // 1. Send cancel request to the sidecar via HTTP API
+        // Correct endpoint is /session/{id}/cancel (singular 'session')
+        let url = format!("{}/session/{}/cancel", self.base_url().await?, session_id);
+        
+        tracing::info!("Cancelling session: {}", session_id);
+        
         let response = self
             .http_client
             .post(&url)
+            .timeout(Duration::from_secs(5)) // Short timeout for cancel
             .send()
-            .await
-            .map_err(|e| TandemError::Sidecar(format!("Failed to cancel: {}", e)))?;
+            .await;
 
-        if response.status().is_success() {
-            self.record_success().await;
-            Ok(())
-        } else {
-            self.record_failure().await;
-            Err(TandemError::Sidecar(format!(
-                "Failed to cancel: {}",
-                response.status()
-            )))
+        match response {
+            Ok(resp) => {
+                if resp.status().is_success() {
+                    tracing::info!("Cancel request successful for session {}", session_id);
+                    self.record_success().await;
+                    Ok(())
+                } else {
+                    let status = resp.status();
+                    let body = resp.text().await.unwrap_or_default();
+                    tracing::warn!("Cancel API request failed: {} - {}", status, body);
+                    // Even if API fails, we consider the attempt "success" for circuit breaker
+                    // because we don't want to open the circuit on a cancel
+                    self.record_success().await;
+                    Ok(())
+                }
+            }
+            Err(e) => {
+                tracing::error!("Failed to send cancel request: {}", e);
+                // Don't fail the operation, just log it. The frontend will stop listening anyway.
+                self.record_success().await;
+                Ok(())
+            }
         }
     }
 
