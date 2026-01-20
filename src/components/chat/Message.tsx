@@ -19,6 +19,7 @@ import {
   Check,
   X,
   ExternalLink,
+  ChevronDown,
 } from "lucide-react";
 import { useState, ReactNode } from "react";
 
@@ -429,6 +430,8 @@ export function Message({
 }
 
 function ToolCallCard({ tool, args, status, result }: ToolCall) {
+  const [isExpanded, setIsExpanded] = useState(false);
+
   // Don't render completed technical tools (redundant if Chat.tsx filters them,
   // but good for safety)
   // if (isTechnical && status === "completed") return null; // ALWAYS SHOW TOOLS PER USER REQUEST
@@ -437,6 +440,7 @@ function ToolCallCard({ tool, args, status, result }: ToolCall) {
     switch (tool) {
       case "read_file":
       case "write_file":
+      case "todowrite":
         return <FileText className="h-4 w-4" />;
       case "run_command":
         return <Terminal className="h-4 w-4" />;
@@ -458,31 +462,90 @@ function ToolCallCard({ tool, args, status, result }: ToolCall) {
     }
   };
 
+  // Helper to summarizing args for specific tools
+  const getArgsSummary = () => {
+    if (!args) return null;
+
+    // For tools that take file content, just show the filename and size
+    if (args.TargetFile || args.file_path || args.path) {
+      const filename = (args.TargetFile || args.file_path || args.path) as string;
+      const content = (args.CodeContent || args.content || args.text) as string;
+      if (content) {
+        return (
+          <div className="flex items-center gap-2 text-xs text-text-subtle">
+            <span className="font-medium">{filename}</span>
+            <span className="text-text-muted">({content.length} chars)</span>
+          </div>
+        );
+      }
+      return <div className="text-xs text-text-subtle">{filename}</div>;
+    }
+
+    // Default: truncated JSON
+    const json = JSON.stringify(args, null, 2);
+    if (json.length > 100) {
+      return <div className="text-xs text-text-subtle">{json.substring(0, 100)}...</div>;
+    }
+    return <pre className="font-mono text-xs text-text-subtle">{json}</pre>;
+  };
+
+  const hasContent = (args && Object.keys(args).length > 0) || result;
+
   return (
     <motion.div
       className={cn("rounded-lg border p-3 transition-colors", getStatusColor())}
       initial={{ opacity: 0, scale: 0.95 }}
       animate={{ opacity: 1, scale: 1 }}
     >
-      <div className="flex items-center gap-2">
+      <div
+        className={cn("flex items-center gap-2", hasContent && "cursor-pointer")}
+        onClick={() => hasContent && setIsExpanded(!isExpanded)}
+      >
         <div className="text-text-muted">{getIcon()}</div>
         <span className="font-mono text-sm text-text">{tool}</span>
         {status === "running" && (
           <div className="ml-auto h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent" />
         )}
+        {hasContent && (
+          <ChevronDown
+            className={cn(
+              "ml-auto h-4 w-4 text-text-muted transition-transform",
+              isExpanded && "rotate-180"
+            )}
+          />
+        )}
       </div>
 
-      {args && Object.keys(args).length > 0 && (
-        <div className="mt-2 rounded bg-surface p-2">
-          <pre className="font-mono text-xs text-text-subtle">{JSON.stringify(args, null, 2)}</pre>
-        </div>
-      )}
+      <AnimatePresence>
+        {isExpanded && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            className="overflow-hidden"
+          >
+            {args && Object.keys(args).length > 0 && (
+              <div className="mt-2 rounded bg-surface p-2 overflow-x-auto">
+                <p className="mb-1 text-[10px] uppercase font-bold text-text-muted">Arguments</p>
+                <pre className="font-mono text-xs text-text-subtle whitespace-pre-wrap">
+                  {JSON.stringify(args, null, 2)}
+                </pre>
+              </div>
+            )}
 
-      {result && (
-        <div className="mt-2 rounded bg-surface p-2">
-          <pre className="font-mono text-xs text-text-muted">{result}</pre>
-        </div>
-      )}
+            {result && (
+              <div className="mt-2 rounded bg-surface p-2 overflow-x-auto">
+                <p className="mb-1 text-[10px] uppercase font-bold text-text-muted">Result</p>
+                <pre className="font-mono text-xs text-text-muted whitespace-pre-wrap">
+                  {result}
+                </pre>
+              </div>
+            )}
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {!isExpanded && hasContent && <div className="mt-2 pl-6">{getArgsSummary()}</div>}
     </motion.div>
   );
 }

@@ -311,10 +311,19 @@ function App() {
     // Navigate to appropriate view
     if (state?.has_workspace) {
       setView("chat");
+
+      // If there's a saved session, trigger Chat to reload it now that sidecar is ready
+      // We do this by briefly clearing and restoring the session ID
+      if (currentSessionId) {
+        const savedId = currentSessionId;
+        setCurrentSessionId(null);
+        // Use setTimeout to ensure state update is processed before restoring
+        setTimeout(() => setCurrentSessionId(savedId), 50);
+      }
     } else {
       setView("onboarding");
     }
-  }, [state?.has_workspace]);
+  }, [state?.has_workspace, currentSessionId]);
 
   const handleSwitchProject = async (projectId: string) => {
     setProjectSwitcherLoading(true);

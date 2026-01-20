@@ -229,6 +229,16 @@ export type StreamEvent =
       question: string;
       options: QuestionOption[];
     }
+  | {
+      type: "todo_updated";
+      session_id: string;
+      todos: TodoItem[];
+    }
+  | {
+      type: "file_edited";
+      session_id: string;
+      file_path: string;
+    }
   | { type: "raw"; event_type: string; data: unknown };
 
 // ============================================================================

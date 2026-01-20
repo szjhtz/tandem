@@ -25,9 +25,10 @@ export function HtmlPreview({ content, className = "" }: HtmlPreviewProps) {
         // allow-scripts: Required for Chart.js / interactive elements
         // allow-same-origin: CAREFUL - needed if the HTML tries to fetch local assets, but we should test if it's strictly required for CDNs.
         // For now, we omit allow-same-origin to be safer unless CDNs break.
-        // allow-popups: Maybe needed for links?
+        // allow-popups: Needed for links with target="_blank"
+        // allow-popups-to-escape-sandbox: Allows popup windows to not be sandboxed (e.g., open in system browser)
         // allow-forms: Probably not needed for reports.
-        sandbox="allow-scripts allow-popups allow-forms"
+        sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox allow-forms"
         referrerPolicy="no-referrer"
       />
     </div>

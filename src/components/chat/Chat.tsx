@@ -811,55 +811,71 @@ Start with task #1 and continue through each one. Let me know when each task is 
           console.log("Session status:", event.status);
           break;
 
-        case "session_idle":
+        case "session_idle": {
           console.log("[StreamEvent] Session idle - completing generation");
 
-          // Generation complete - ensure final message content is saved before clearing
+          // Capture final content before any async operations
+          const finalContent = currentAssistantMessageRef.current;
+          const finalMessageId = currentAssistantMessageIdRef.current;
+
+          console.log(
+            "[StreamEvent] Final content captured:",
+            finalContent.length,
+            "chars, messageId:",
+            finalMessageId
+          );
+
+          // Clear generation timeout first
+          if (generationTimeoutRef.current) {
+            clearTimeout(generationTimeoutRef.current);
+            generationTimeoutRef.current = null;
+          }
+
+          // Stop generating early to prevent further updates
+          setIsGenerating(false);
+
+          // Apply final content - ensure the last assistant message has the complete content
           setMessages((prev) => {
             const lastMessage = prev[prev.length - 1];
-            if (
-              lastMessage &&
-              lastMessage.role === "assistant" &&
-              currentAssistantMessageRef.current
-            ) {
-              console.log("[StreamEvent] Applying final content to assistant message");
-              // Ensure the final content is applied with the correct ID
+            if (lastMessage && lastMessage.role === "assistant") {
+              // Use captured finalContent, or fall back to existing content if empty
+              const contentToApply = finalContent || lastMessage.content;
+              console.log(
+                "[StreamEvent] Applying final content to assistant message:",
+                contentToApply.length,
+                "chars"
+              );
               return [
                 ...prev.slice(0, -1),
                 {
                   ...lastMessage,
-                  id: currentAssistantMessageIdRef.current || lastMessage.id,
-                  content: currentAssistantMessageRef.current,
+                  id: finalMessageId || lastMessage.id,
+                  content: contentToApply,
                 },
               ];
             }
             return prev;
           });
 
-          // Wait 500ms before clearing references, giving time for final message.updated events
+          // Wait longer before clearing references to ensure React has processed the update
+          // Also move backfill check into this timeout so messagesRef is synced
           setTimeout(() => {
             if (!isGeneratingRef.current) {
               currentAssistantMessageRef.current = "";
               currentAssistantMessageIdRef.current = null;
             }
-          }, 500);
 
-          // If we never received a content event, backfill from session history.
-          if (!currentAssistantMessageRef.current.trim()) {
-            const lastMessage = messagesRef.current[messagesRef.current.length - 1];
+            // Check if we need to backfill from session history (content was empty)
+            const lastMsg = messagesRef.current[messagesRef.current.length - 1];
             const needsBackfill =
-              !lastMessage || lastMessage.role !== "assistant" || !lastMessage.content?.trim();
+              !lastMsg || lastMsg.role !== "assistant" || !lastMsg.content?.trim();
             if (needsBackfill && currentSessionIdRef.current) {
-              console.log("[Chat] Backfilling assistant content from history");
-              void loadSessionHistory(currentSessionIdRef.current);
+              console.log("[Chat] Backfilling empty assistant content from history");
+              loadSessionHistory(currentSessionIdRef.current);
             }
-          }
+          }, 1000);
 
-          setIsGenerating(false);
-          if (generationTimeoutRef.current) {
-            clearTimeout(generationTimeoutRef.current);
-            generationTimeoutRef.current = null;
-          }
+          // Handle deferred session loads
           if (deferredSessionLoadRef.current) {
             const deferredId = deferredSessionLoadRef.current;
             deferredSessionLoadRef.current = null;
@@ -873,19 +889,27 @@ Start with task #1 and continue through each one. Let me know when each task is 
               currentAssistantMessageRef.current = "";
             }
           }
-          // Force re-render to ensure final content displays
-          setTimeout(() => forceUpdate({}), 50);
-          break;
 
-        case "session_error":
+          // Force re-render after a longer delay to ensure React has batched all updates
+          setTimeout(() => forceUpdate({}), 200);
+          break;
+        }
+
+        case "session_error": {
           console.error("[StreamEvent] Session error:", event.error);
 
           // Display the error to the user
           setError(`Session error: ${event.error}`);
 
+          // Capture any content we had before the error
+          const errorTimeContent = currentAssistantMessageRef.current;
+          console.log("[StreamEvent] Content before error:", errorTimeContent.length, "chars");
+
           // Stop generation and clean up
           setIsGenerating(false);
-          currentAssistantMessageRef.current = "";
+
+          // DON'T clear the content ref - we want to preserve what was streamed
+          // currentAssistantMessageRef.current = "";
 
           // Clear generation timeout
           if (generationTimeoutRef.current) {
@@ -893,20 +917,32 @@ Start with task #1 and continue through each one. Let me know when each task is 
             generationTimeoutRef.current = null;
           }
 
-          // Update the last assistant message with the error if it exists
+          // Update the last assistant message - preserve existing content and append error
           setMessages((prev) => {
             const lastMessage = prev[prev.length - 1];
-            if (lastMessage && lastMessage.role === "assistant" && !lastMessage.content) {
+            if (lastMessage && lastMessage.role === "assistant") {
+              // Use existing content from ref, or message content, or empty string
+              const existingContent = errorTimeContent || lastMessage.content || "";
+              const errorSuffix = existingContent
+                ? `\n\n**Error:** ${event.error}`
+                : `Error: ${event.error}`;
               const updated = [...prev];
               updated[updated.length - 1] = {
                 ...lastMessage,
-                content: `Error: ${event.error}`,
+                content: existingContent + errorSuffix,
               };
               return updated;
             }
             return prev;
           });
+
+          // Clear refs after updating messages
+          setTimeout(() => {
+            currentAssistantMessageRef.current = "";
+            currentAssistantMessageIdRef.current = null;
+          }, 500);
           break;
+        }
 
         case "permission_asked": {
           // Handle permission requests from OpenCode

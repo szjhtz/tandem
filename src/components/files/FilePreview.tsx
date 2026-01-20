@@ -14,7 +14,9 @@ import {
   AlertCircle,
   MessageSquarePlus,
   LayoutTemplate,
+  ExternalLink,
 } from "lucide-react";
+import { openPath } from "@tauri-apps/plugin-opener";
 import { readFileContent, readBinaryFile, type FileEntry, logFrontendError } from "@/lib/tauri";
 import { PresentationPreview } from "./PresentationPreview";
 import { HtmlPreview } from "./HtmlPreview";
@@ -401,6 +403,16 @@ export function FilePreview({ file, onClose, onAddToChat }: FilePreviewProps) {
           </div>
         </div>
         <div className="flex items-center gap-2 flex-shrink-0">
+          {previewType === "html" && (
+            <button
+              onClick={() => openPath(file.path)}
+              className="flex items-center gap-2 rounded-lg bg-surface-elevated px-3 py-1.5 text-sm font-medium text-text transition-colors hover:bg-surface-elevated/80 border border-border"
+              title="Open in default browser"
+            >
+              <ExternalLink className="h-4 w-4" />
+              <span>Open in Browser</span>
+            </button>
+          )}
           {onAddToChat && (
             <button
               onClick={() => onAddToChat(file)}

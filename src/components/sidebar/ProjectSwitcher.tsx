@@ -78,7 +78,7 @@ export function ProjectSwitcher({
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -10 }}
               transition={{ duration: 0.15 }}
-              className="glass border-glass absolute left-0 right-0 top-full z-50 mt-2 max-h-96 overflow-y-auto rounded-lg shadow-lg ring-1 ring-white/5"
+              className="bg-surface-elevated border border-border absolute left-0 right-0 top-full z-50 mt-2 max-h-96 overflow-y-auto rounded-lg shadow-2xl ring-1 ring-white/5"
             >
               {/* Projects List */}
               {projects.length > 0 ? (

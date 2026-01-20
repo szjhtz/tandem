@@ -2,9 +2,7 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "main-window",
   "description": "Main window permissions for Tandem - Security-first configuration",
-  "windows": [
-    "main"
-  ],
+  "windows": ["main"],
   "permissions": [
     "core:default",
     "core:event:default",
@@ -12,6 +10,14 @@
     "core:app:default",
     "core:path:default",
     "opener:default",
+    {
+      "identifier": "opener:allow-open-path",
+      "allow": [
+        {
+          "path": "**"
+        }
+      ]
+    },
     "dialog:allow-open",
     "dialog:allow-save",
     "dialog:allow-message",
@@ -33,9 +39,5 @@
     "clipboard-manager:allow-read-image",
     "process:allow-restart"
   ],
-  "platforms": [
-    "linux",
-    "macOS",
-    "windows"
-  ]
+  "platforms": ["linux", "macOS", "windows"]
 }
