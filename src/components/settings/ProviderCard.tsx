@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { cn } from "@/lib/utils";
 import { motion, AnimatePresence } from "framer-motion";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
@@ -274,7 +275,7 @@ export function ProviderCard({
           >
             <CardContent className="space-y-4">
               {/* Model Selection - Text Input for OpenRouter/Ollama */}
-              {isTextInputProvider && (
+              {isTextInputProvider && id !== "ollama" && (
                 <div className="space-y-2">
                   <label className="text-xs font-medium text-text-subtle">Model</label>
                   <div className="relative">
@@ -356,7 +357,7 @@ export function ProviderCard({
                       )}
                     </AnimatePresence>
                   </div>
-                  {model && (
+                  {model && id !== "ollama" && (
                     <p className="text-xs text-text-muted">
                       Current: <span className="font-mono text-text">{model}</span>
                     </p>
@@ -411,23 +412,42 @@ export function ProviderCard({
                       <div className="grid grid-cols-2 gap-2">
                         {discoveredModels.map((m) => {
                           const isRunning = runningModels.some((rm) => rm.id === m.id);
+                          const isSelected = model === m.id;
                           return (
-                            <div key={m.id} className="flex items-center justify-between rounded border border-border bg-surface/50 p-1.5 text-xs">
-                              <span className="truncate pr-1 font-mono">{m.name}</span>
-                              {!isRunning && (
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  onClick={() => handleRunModel(m.id)}
-                                  className="h-6 w-6 p-0 text-primary hover:bg-primary/10"
-                                  title="Load into memory"
-                                >
-                                  <Play className="h-3 w-3 fill-current" />
-                                </Button>
+                            <div
+                              key={m.id}
+                              onClick={() => onModelChange?.(m.id)}
+                              className={cn(
+                                "flex items-center justify-between rounded border p-1.5 text-xs cursor-pointer transition-all",
+                                isSelected
+                                  ? "border-primary bg-primary/10 ring-1 ring-primary/30"
+                                  : "border-border bg-surface/50 hover:border-border-subtle hover:bg-surface-elevated"
                               )}
-                              {isRunning && (
-                                <span className="flex h-2 w-2 rounded-full bg-success ring-4 ring-success/20" title="Running" />
-                              )}
+                            >
+                              <span className={cn(
+                                "truncate pr-1 font-mono",
+                                isSelected ? "text-primary font-medium" : "text-text"
+                              )}>{m.name}</span>
+                              <div className="flex items-center gap-1.5">
+                                {!isRunning && (
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleRunModel(m.id);
+                                      onModelChange?.(m.id);
+                                    }}
+                                    className="h-6 w-6 p-0 text-primary hover:bg-primary/20"
+                                    title="Load into memory & select"
+                                  >
+                                    <Play className="h-3 w-3 fill-current" />
+                                  </Button>
+                                )}
+                                {isRunning && (
+                                  <span className="flex h-2 w-2 rounded-full bg-success ring-4 ring-success/20" title="Running" />
+                                )}
+                              </div>
                             </div>
                           );
                         })}

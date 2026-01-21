@@ -55,12 +55,26 @@ export interface ToolCall {
   isTechnical?: boolean;
 }
 
+const FILE_EXTENSIONS =
+  "json|ts|tsx|js|jsx|md|txt|py|rs|go|java|cpp|c|h|css|scss|html|xml|yaml|yml|toml|pptx|ppt|docx|doc|xlsx|xls|pdf|png|jpg|jpeg|gif|svg|webp";
+const FILE_PATH_BASE = String.raw`@?(?:` +
+  String.raw`(?:[A-Za-z]:[\\/]|\.{1,2}[\\/]|\/)[\w\-./\\]+` +
+  String.raw`|` +
+  String.raw`(?:[\w.-]+[\\/])[\w\-./\\]+` +
+  String.raw`)` +
+  String.raw`\.${FILE_EXTENSIONS}`;
+const FILE_PATH_EXACT = new RegExp(`^${FILE_PATH_BASE}$`, "i");
+
+const normalizeFilePath = (rawPath: string) =>
+  rawPath.startsWith("@") ? rawPath.slice(1) : rawPath;
+
 /**
  * FilePathParser - Detects file paths in text and renders them as clickable links
  * Matches common file path patterns:
  * - Windows: C:\path\to\file.ext or c:/path/to/file.ext
  * - Unix: /path/to/file.ext or ./relative/path.ext or ../relative/path.ext
- * - Relative: path/to/file.ext or file.ext
+ * - Relative: path/to/file.ext
+ * - Optional @ prefix for context mentions
  * - Extensions: .json, .ts, .tsx, .js, .jsx, .md, .txt, .pptx, etc.
  */
 function FilePathParser({
@@ -70,17 +84,15 @@ function FilePathParser({
   text: string;
   onFileOpen?: (filePath: string) => void;
 }) {
-  // Comprehensive regex for file paths with extensions
-  // Matches: /abs/path/file.ext, C:\path\file.ext, ./rel/file.ext, ../rel/file.ext
-  const filePathRegex =
-    /(?:\/[\w\-./_]+|[A-Za-z]:[/\\][\w\-.:/_\\]+|\.\.\/[\w\-./_]+|\.\/[\w\-./_]+)\.(json|ts|tsx|js|jsx|md|txt|py|rs|go|java|cpp|c|h|css|scss|html|xml|yaml|yml|toml|pptx|ppt|docx|doc|xlsx|xls|pdf|png|jpg|jpeg|gif|svg|webp)\b/g;
+  const filePathRegex = new RegExp(`${FILE_PATH_BASE}\\b`, "gi");
 
   const parts: (string | ReactNode)[] = [];
   let lastIndex = 0;
   let match;
 
   while ((match = filePathRegex.exec(text)) !== null) {
-    const filePath = match[0]; // Full matched path
+    const rawPath = match[0]; // Full matched path (may include @)
+    const filePath = normalizeFilePath(rawPath);
     const matchStart = match.index;
 
     // Add text before the match
@@ -95,13 +107,14 @@ function FilePathParser({
         onClick={() => onFileOpen?.(filePath)}
         className="inline-flex items-center gap-1 text-primary hover:text-primary/80 hover:underline transition-colors font-mono text-sm"
         title={`Open ${filePath}`}
+        type="button"
       >
         <ExternalLink className="h-3 w-3" />
-        {filePath}
+        {rawPath}
       </button>
     );
 
-    lastIndex = matchStart + filePath.length;
+    lastIndex = matchStart + rawPath.length;
   }
 
   // Add remaining text
@@ -323,15 +336,13 @@ export function Message({
                   a({ href, children, ...props }) {
                     // Treat markdown links to local files as "open in file browser"
                     // instead of navigating the SPA (which refreshes the app).
-                    const filePathPattern =
-                      /^(?:(?:[A-Za-z]:[\\/])|(?:\.\.?[\\/])|[^:/]+[\\/])?[^\s<>:"|?*]+\.(json|ts|tsx|js|jsx|md|txt|py|rs|go|java|cpp|c|h|css|scss|html|xml|yaml|yml|toml|pptx|ppt|docx|doc|xlsx|xls|pdf|png|jpg|jpeg|gif|svg|webp)$/;
-
-                    if (href && filePathPattern.test(href)) {
+                    if (href && FILE_PATH_EXACT.test(href)) {
+                      const normalizedHref = normalizeFilePath(href);
                       return (
                         <button
-                          onClick={() => onFileOpen?.(href)}
+                          onClick={() => onFileOpen?.(normalizedHref)}
                           className="inline-flex items-center gap-1 text-primary hover:text-primary/80 hover:underline transition-colors font-mono text-sm"
-                          title={`Open ${href}`}
+                          title={`Open ${normalizedHref}`}
                           type="button"
                         >
                           <ExternalLink className="h-3 w-3" />
@@ -353,7 +364,7 @@ export function Message({
                       </a>
                     );
                   },
-                  code({ className, children, ...props }) {
+                  code({ className, children, inline, ...props }: any) {
                     const match = /language-(\w+)/.exec(className || "");
                     if (match) {
                       return (
@@ -375,6 +386,21 @@ export function Message({
                             {String(children).replace(/\n$/, "")}
                           </SyntaxHighlighter>
                         </div>
+                      );
+                    }
+                    const inlineText = String(children).trim();
+                    if (inline && FILE_PATH_EXACT.test(inlineText)) {
+                      const normalizedInline = normalizeFilePath(inlineText);
+                      return (
+                        <button
+                          onClick={() => onFileOpen?.(normalizedInline)}
+                          className="inline-flex items-center gap-1 text-primary hover:text-primary/80 hover:underline transition-colors font-mono text-sm"
+                          title={`Open ${normalizedInline}`}
+                          type="button"
+                        >
+                          <ExternalLink className="h-3 w-3" />
+                          {inlineText}
+                        </button>
                       );
                     }
                     return (

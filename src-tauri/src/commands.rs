@@ -848,15 +848,33 @@ pub fn populate_provider_keys(app: &AppHandle, config: &mut ProvidersConfig) {
     }
 }
 
+async fn sync_ollama_env(state: &AppState, config: &ProvidersConfig) {
+    if config.ollama.enabled {
+        let endpoint = config.ollama.endpoint.trim();
+        if !endpoint.is_empty() {
+            state.sidecar.set_env("OLLAMA_HOST", endpoint).await;
+        }
+    } else {
+        state.sidecar.remove_env("OLLAMA_HOST").await;
+    }
+}
+
 /// Set the providers configuration
 #[tauri::command]
-pub fn set_providers_config(
+pub async fn set_providers_config(
     app: AppHandle,
     config: ProvidersConfig,
     state: State<'_, AppState>,
 ) -> Result<()> {
-    let mut providers = state.providers_config.write().unwrap();
-    *providers = config.clone();
+    let previous_config = {
+        let providers = state.providers_config.read().unwrap();
+        providers.clone()
+    };
+
+    {
+        let mut providers = state.providers_config.write().unwrap();
+        *providers = config.clone();
+    }
 
     tracing::info!("Providers configuration updated");
 
@@ -867,6 +885,20 @@ pub fn set_providers_config(
             serde_json::to_value(&config).unwrap_or_default(),
         );
         let _ = store.save();
+    }
+
+    let ollama_changed = previous_config.ollama.enabled != config.ollama.enabled
+        || previous_config.ollama.endpoint != config.ollama.endpoint;
+
+    if ollama_changed {
+        sync_ollama_env(&state, &config).await;
+        if matches!(state.sidecar.state().await, SidecarState::Running) {
+            let sidecar_path = sidecar_manager::get_sidecar_binary_path(&app)?;
+            state
+                .sidecar
+                .restart(sidecar_path.to_string_lossy().as_ref())
+                .await?;
+        }
     }
 
     Ok(())
@@ -896,6 +928,9 @@ pub async fn start_sidecar(app: AppHandle, state: State<'_, AppState>) -> Result
         let config = state.providers_config.read().unwrap();
         config.clone()
     };
+
+    // Configure Ollama endpoint env (local models)
+    sync_ollama_env(&state, &providers).await;
 
     // Set API key for the default/enabled provider
     if providers.openrouter.enabled {
