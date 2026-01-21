@@ -15,10 +15,10 @@ use crate::VaultState;
 use futures::StreamExt;
 use std::fs;
 use std::path::PathBuf;
+use std::process::Command;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_store::StoreExt;
 use uuid::Uuid;
-use std::process::Command;
 
 // ============================================================================
 // Updater helpers
@@ -1408,10 +1408,12 @@ pub async fn list_providers_from_sidecar(state: State<'_, AppState>) -> Result<V
 /// List models installed locally via Ollama
 #[tauri::command]
 pub async fn list_ollama_models() -> Result<Vec<ModelInfo>> {
-    let output = Command::new("ollama")
-        .arg("list")
-        .output()
-        .map_err(|e| TandemError::Sidecar(format!("Failed to execute 'ollama list': {}. Is Ollama installed?", e)))?;
+    let output = Command::new("ollama").arg("list").output().map_err(|e| {
+        TandemError::Sidecar(format!(
+            "Failed to execute 'ollama list': {}. Is Ollama installed?",
+            e
+        ))
+    })?;
 
     if !output.status.success() {
         return Ok(Vec::new());
