@@ -48,19 +48,28 @@ A rushes into the coffee shop. Scans the room. Spots B in the corner.
 
 ### Character Names
 
-Use initial-based naming for flexibility:
+### Character Names
+
+Use full names or descriptive roles for clarity.
+
+**Option 1: Full Names (Preferred)**
 
 ```
-A:
+SARAH:
 Dialogue goes here.
 ```
 
-For multiple characters of same initial:
+**Option 2: Descriptive Roles**
 
 ```
-AA:
+MOTHER:
 Dialogue here.
+
+BOSS:
+Get back to work.
 ```
+
+Avoid single letters (A, B) unless the characters are intentionally anonymous.
 
 ### Dialogue
 
@@ -237,13 +246,16 @@ When generating scripts via LLM, use standard Markdown formatting to ensure the 
     *   **Left-Aligned**: This micro-drama format is strictly left-aligned. Do not attempt to center character names or dialogue using spaces, as this breaks on different screen sizes.
     *   **Vertical Separation**: Use a full empty line between distinct elements (e.g., between Action and Character, or between Dialogue and next Character) to ensure clear paragraph rendering.
     *   **Tight Dialogue**: To keep the Character Name and Dialogue visually connected, you may use a single line break if the renderer supports it, but standard double-newline paragraphs are safest for compatibility.
-4.  **Code Blocks**: You may wrap the script in a markdown code block for easy copying, but plain markdown is preferred for direct rendering.
+4.  **Character Naming**:
+    *   **Random Generation**: If character names are not provided, automatically generate suitable, random names based on the character's gender and role (e.g., **SARAH**, **MIKE**).
+    *   **Avoid Placeholders**: Do not use generic "A", "B", or "C" unless explicitly requested.
+5.  **Code Blocks**: You may wrap the script in a markdown code block for easy copying, but plain markdown is preferred for direct rendering.
 
 ### Prompting Information
 
 To get the best results, instruct the LLM with:
 
-> "Format the script in Markdown. Use bold for Scene Headings (e.g., **INT. ROOM - DAY**) and Character Names (e.g., **JOHN**). Italicize parentheticals. Keep dialogue as plain text."
+> "Format the script in Markdown. Use bold for Scene Headings (e.g., **INT. ROOM - DAY**) and Character Names (e.g., **JOHN**). Italicize parentheticals. Keep dialogue as plain text. If names are not provided, generate random, suitable names for all characters."
 
 ### Example Markdown Render
 

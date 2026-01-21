@@ -1,7 +1,6 @@
 import { AgentSelector } from "./AgentSelector";
 import { ToolCategoryPicker } from "./ToolCategoryPicker";
 import { ModelSelector } from "./ModelSelector";
-import type { ModelInfo } from "@/lib/tauri";
 import { ShieldCheck, ShieldOff } from "lucide-react";
 
 interface ContextToolbarProps {
@@ -11,10 +10,6 @@ interface ContextToolbarProps {
   // Tools
   enabledToolCategories: Set<string>;
   onToolCategoriesChange: (categories: Set<string>) => void;
-  // Model (optional for future use)
-  selectedModel?: string;
-  onModelChange?: (model: string) => void;
-  availableModels?: ModelInfo[];
   // Provider indicator
   activeProviderLabel?: string;
   activeModelLabel?: string;
@@ -32,9 +27,6 @@ export function ContextToolbar({
   onAgentChange,
   enabledToolCategories,
   onToolCategoriesChange,
-  selectedModel,
-  onModelChange,
-  availableModels,
   activeProviderLabel,
   activeModelLabel,
   allowAllTools,

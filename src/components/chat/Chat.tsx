@@ -1240,8 +1240,8 @@ ${g.example}
 
       if (effectivePlanMode) {
         finalContent = `${finalContent}
-
-(Please use the todowrite tool to create a structured task list for tracking this work, then explain your plan.)`;
+        
+(Please use the todowrite tool to create a structured task list. Then, ask for user approval before starting execution/completing the tasks.)`;
         console.log("[PlanMode] Using OpenCode's Plan agent with todowrite guidance");
       }
 

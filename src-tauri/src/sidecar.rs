@@ -2161,7 +2161,11 @@ fn convert_opencode_event(event: OpenCodeEvent) -> Option<StreamEvent> {
         }
         _ => {
             // Return as raw event for other types
-            tracing::warn!("Unhandled event type: {} - data: {:?}", event.event_type, event.properties);
+            tracing::warn!(
+                "Unhandled event type: {} - data: {:?}",
+                event.event_type,
+                event.properties
+            );
             Some(StreamEvent::Raw {
                 event_type: event.event_type,
                 data: event.properties,

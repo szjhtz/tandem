@@ -4,7 +4,6 @@ import { Send, Paperclip, StopCircle, X, FileText } from "lucide-react";
 import { Button } from "@/components/ui";
 import { cn } from "@/lib/utils";
 import { ContextToolbar } from "./ContextToolbar";
-import type { ModelInfo } from "@/lib/tauri";
 
 export interface FileAttachment {
   id: string;
@@ -29,9 +28,6 @@ interface ChatInputProps {
   // New props for Context Toolbar
   enabledToolCategories?: Set<string>;
   onToolCategoriesChange?: (categories: Set<string>) => void;
-  selectedModel?: string;
-  onModelChange?: (model: string) => void;
-  availableModels?: ModelInfo[];
   activeProviderLabel?: string;
   activeModelLabel?: string;
   allowAllTools?: boolean;
@@ -52,9 +48,6 @@ export function ChatInput({
   onExternalAttachmentProcessed,
   enabledToolCategories,
   onToolCategoriesChange,
-  selectedModel,
-  onModelChange,
-  availableModels,
   activeProviderLabel,
   activeModelLabel,
   allowAllTools,
@@ -552,9 +545,6 @@ export function ChatInput({
           onAgentChange={onAgentChange}
           enabledToolCategories={enabledToolCategories || new Set()}
           onToolCategoriesChange={onToolCategoriesChange || (() => { })}
-          selectedModel={selectedModel}
-          onModelChange={onModelChange}
-          availableModels={availableModels}
           activeProviderLabel={activeProviderLabel}
           activeModelLabel={activeModelLabel}
           allowAllTools={allowAllTools}
