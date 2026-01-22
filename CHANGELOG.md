@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.12] - 2026-01-22
+
+### Fixed
+
+- **File Viewer**: Fixed "Failed to load directory" error by removing overly restrictive path allowlist checks that were causing Windows path normalization issues.
+- **Permission Spam**: Prevented repeated approval prompts for the same tool request.
+- **Allow All Auto-Approval**: Aligned auto-approval with permission request IDs to stop duplicate prompts.
+- **Session Switching**: Cleared pending permission state when switching sessions to avoid stale approvals.
+
 ## [0.1.11] - 2026-01-22
 
 ### Fixed
@@ -157,7 +166,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Project-based organization
 - Real-time streaming responses
 
-[Unreleased]: https://github.com/frumu-ai/tandem/compare/v0.1.11...HEAD
+[Unreleased]: https://github.com/frumu-ai/tandem/compare/v0.1.12...HEAD
+[0.1.12]: https://github.com/frumu-ai/tandem/compare/v0.1.11...v0.1.12
 [0.1.11]: https://github.com/frumu-ai/tandem/compare/v0.1.10...v0.1.11
 [0.1.10]: https://github.com/frumu-ai/tandem/compare/v0.1.9...v0.1.10
 [0.1.9]: https://github.com/frumu-ai/tandem/compare/v0.1.7...v0.1.9

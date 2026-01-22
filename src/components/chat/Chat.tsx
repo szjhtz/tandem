@@ -106,6 +106,7 @@ export function Chat({
   // const [activities, setActivities] = useState<ActivityItem[]>([]);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
   const [isGitRepository, setIsGitRepository] = useState(false);
+  const handledPermissionIdsRef = useRef<Set<string>>(new Set());
 
   // Support both new agent prop and legacy usePlanMode
   const selectedAgent =
@@ -271,6 +272,9 @@ Start with task #1 and continue through each one. Let me know when each task is 
     setIsGenerating(false);
     currentAssistantMessageRef.current = "";
     currentAssistantMessageIdRef.current = null;
+    handledPermissionIdsRef.current = new Set();
+    setPendingPermissions([]);
+    setPendingQuestion(null);
 
     if (generationTimeoutRef.current) {
       clearTimeout(generationTimeoutRef.current);
@@ -686,8 +690,6 @@ Start with task #1 and continue through each one. Let me know when each task is 
         }
 
         case "tool_start": {
-          const args = event.args as Record<string, unknown>;
-
           // Technical tools are handled as transient background tasks
           // UPDATE: User wants to see all tools, so we disable technical hiding
           /*
@@ -748,45 +750,6 @@ Start with task #1 and continue through each one. Let me know when each task is 
             return prev;
           });
 
-          // Create permission request for destructive operations
-          const needsApproval = [
-            "write_file",
-            "create_file",
-            "delete_file",
-            "run_command",
-            "bash",
-            "shell",
-          ].includes(event.tool);
-          if (needsApproval) {
-            // Check for Auto-Approve
-            if (allowAllTools && currentSessionId) {
-              approveTool(currentSessionId, event.part_id, {
-                tool: event.tool,
-                args,
-                messageId: event.message_id,
-              }).catch(console.error);
-              // Do not add to pending permissions
-              break;
-            }
-
-            const permissionRequest: PermissionRequest = {
-              id: event.part_id,
-              type: event.tool as PermissionRequest["type"],
-              path: args.path as string | undefined,
-              command: (args.command || args.cmd) as string | undefined,
-              reasoning: (args.reasoning as string) || "AI wants to perform this action",
-              riskLevel:
-                event.tool === "delete_file" ||
-                event.tool === "run_command" ||
-                event.tool === "bash"
-                  ? "high"
-                  : "medium",
-              tool: event.tool,
-              args,
-              messageId: event.message_id,
-            };
-            setPendingPermissions((prev) => [...prev, permissionRequest]);
-          }
           break;
         }
 
@@ -984,14 +947,10 @@ Start with task #1 and continue through each one. Let me know when each task is 
           // Handle permission requests from OpenCode
           // Use the current assistant message ID so we can associate file snapshots with this message
           const currentMsgId = currentAssistantMessageIdRef.current;
-          console.log(
-            "[Permission] Asked for tool:",
-            event.tool,
-            "messageId:",
-            currentMsgId,
-            "args:",
-            event.args
-          );
+          if (handledPermissionIdsRef.current.has(event.request_id)) {
+            break;
+          }
+          handledPermissionIdsRef.current.add(event.request_id);
 
           // Check if this is a destructive operation
           const isDestructive = [
@@ -1021,8 +980,13 @@ Start with task #1 and continue through each one. Let me know when each task is 
           } else {
             // Auto-approve if allowAllTools is enabled on frontend
             if (allowAllTools) {
-              console.log("[Permission] Auto-approving due to Allow All setting");
-              handleApprovePermission(event.request_id);
+              if (currentSessionId) {
+                approveTool(currentSessionId, event.request_id, {
+                  tool: event.tool || undefined,
+                  args: (event.args as Record<string, unknown>) || undefined,
+                  messageId: currentMsgId || undefined,
+                }).catch(console.error);
+              }
             } else {
               // Immediate mode: show permission toast as before
               const permissionRequest: PermissionRequest = {
@@ -1037,7 +1001,12 @@ Start with task #1 and continue through each one. Let me know when each task is 
                 args: (event.args as Record<string, unknown>) || undefined,
                 messageId: currentMsgId || undefined, // Associate with current message for undo
               };
-              setPendingPermissions((prev) => [...prev, permissionRequest]);
+              setPendingPermissions((prev) => {
+                if (prev.some((p) => p.id === permissionRequest.id)) {
+                  return prev;
+                }
+                return [...prev, permissionRequest];
+              });
             }
           }
           break;

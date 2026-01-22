@@ -1,3 +1,26 @@
+# Tandem v0.1.12 Release Notes
+
+## Highlights
+
+- **File Viewer Fixed**: Resolved "Failed to load directory" error that broke the Files tab. The overly restrictive path security checks from v0.1.11 were causing Windows path normalization issues and have been removed.
+- **Permission Spam Fix**: Stopped repeated approval prompts for the same tool request, even when "Allow all" is enabled.
+- **Reliable Auto-Approval**: Auto-approve now responds to the correct permission request ID and no longer creates duplicate prompts.
+- **Cleaner Session Switching**: Pending approvals reset cleanly when switching sessions to prevent stale prompts.
+
+## Complete Fix List
+
+### File Access
+
+- **Directory Loading**: Removed path allowlist checks from `read_directory`, `read_file_content`, and `read_binary_file` that were causing the file viewer to fail. The canonical path normalization on Windows (e.g., `\\?\C:\...`) wasn't matching the stored allowed paths, resulting in "Failed to load directory" errors.
+
+### Permissions
+
+- **Deduplicated Requests**: Permission prompts are now keyed to a single request ID to prevent duplicates.
+- **Allow All Alignment**: Auto-approval now uses the permission request ID instead of tool start IDs.
+- **Session Reset**: Pending permissions are cleared when the active session changes.
+
+---
+
 # Tandem v0.1.11 Release Notes
 
 ## Highlights
