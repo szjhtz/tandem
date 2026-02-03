@@ -1,3 +1,19 @@
+# Tandem v0.1.15 Release Notes
+
+## Highlights
+
+- **Unified Update Experience**: We've completely overhauled how updates are handled. Previously, the application and the local AI engine (sidecar) had separate, disjointed update screens. Now, they share a unified, polished full-screen interface that communicates progress clearly and resolves scheduling conflicts.
+
+## Complete Feature List
+
+### UX Improvements
+
+- **Unified Update UI**: A shared visual component now powers the "checking", "downloading", and "installing" states for all types of updates.
+- **Blocking Update Overlay**: Critical updates for the app now present a prominent, focused overlay that can't be missed, ensuring you're always on the latest version.
+- **Conflict Management**: Smart layering ensures that if both an app update and an AI engine update are available, the app update (which requires a restart) takes priority to prevent corrupted states.
+
+---
+
 # Tandem v0.1.14 Release Notes
 
 ## Highlights

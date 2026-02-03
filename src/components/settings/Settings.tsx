@@ -24,7 +24,7 @@ import { Input } from "@/components/ui/Input";
 import { Switch } from "@/components/ui/Switch";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/Card";
 import { GitInitDialog } from "@/components/dialogs/GitInitDialog";
-import { UpdateToast } from "@/components/ui/UpdateToast";
+
 import { useUpdater } from "@/hooks/useUpdater";
 import {
   getProvidersConfig,
@@ -939,9 +939,6 @@ export function Settings({ onClose, onProjectChange, onProviderChange }: Setting
         gitInstalled={gitStatus?.git_installed ?? false}
         folderPath={pendingProjectPath ?? ""}
       />
-
-      {/* Update Notification */}
-      <UpdateToast />
 
       {/* Sidecar Restart Overlay */}
       <AnimatePresence>

@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.15] - 2026-02-03
+
+### Added
+
+- **Unified Update UI**: Replaced the disparate update experiences for OpenCode (Sidecar) and Tandem (App) with a single, polished, full-screen overlay component.
+- **Conflict Resolution**: The new `AppUpdateOverlay` takes precedence over other update screens, ensuring that app updates (which restart the application) are handled cleanly and avoid conflicts with sidecar updates.
+
 ## [0.1.14] - 2026-01-31
 
 ### Improved
