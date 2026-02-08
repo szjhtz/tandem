@@ -21,7 +21,7 @@ Inspired by early AI coworking research previews, but open source and provider-a
 
 **🔒 Privacy First**: Unlike cloud-based AI tools, Tandem runs on your machine. Your code, documents, and API keys never touch our servers because we don't have any.
 
-**💰 Bring Your Own Key (BYOK)**: Use any LLM provider - don't get locked into one vendor. Switch between OpenRouter, Anthropic, OpenAI, or run models locally with Ollama.
+**💰 Provider Agnostic**: Use any LLM provider - don't get locked into one vendor. Switch between OpenRouter, Anthropic, OpenAI, or run models locally with Ollama.
 
 **🛡️ Zero Trust**: Every file operation requires explicit approval. AI agents are powerful but Tandem treats them as "untrusted contractors" with supervised access.
 
@@ -359,7 +359,7 @@ tandem/
 - [x] **Phase 1: Security Foundation** - Encrypted vault, permission system
 - [x] **Phase 2: Sidecar Integration** - OpenCode agent runtime
 - [x] **Phase 3: Glass UI** - Modern, polished interface
-- [x] **Phase 4: BYOK Provider Routing** - Multi-provider support
+- [x] **Phase 4: Provider Routing** - Multi-provider support
 - [x] **Phase 5: Agent Capabilities** - Multi-mode agents, execution planning
 - [x] **Phase 6: Project Management** - Multi-workspace support
 - [x] **Phase 7: Advanced Presentations** - PPTX export engine, theme mapping, explicit positioning

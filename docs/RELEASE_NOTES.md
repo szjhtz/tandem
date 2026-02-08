@@ -1,4 +1,4 @@
-# Tandem v0.2.4 Release Notes (Unreleased)
+# Tandem v0.2.4 Release Notes
 
 ## Highlights
 
