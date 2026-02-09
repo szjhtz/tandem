@@ -2,14 +2,19 @@
 
 Canonical release notes live in `docs/RELEASE_NOTES.md`.
 
-## v0.2.10 (Unreleased)
+## v0.2.11 (Unreleased)
 
 - OpenCode: Prevent sessions from getting stuck indefinitely when a tool invocation never reaches a terminal state (ignore heartbeat/diff noise, treat more tool terminal statuses as `ToolEnd`, and add a fail-fast timeout that cancels the request and surfaces an error).
 - Diagnostics: Add an on-demand Logs drawer that can tail Tandem app logs and show OpenCode sidecar stdout/stderr (captured into a bounded in-memory buffer). Streaming only runs while the viewer is open.
 - Reliability: Ignore OpenCode `server.*` heartbeat SSE events (and downgrade other unknown SSE events) to prevent warning spam in logs.
 - Providers: Add Poe as an OpenAI-compatible provider option (endpoint + `POE_API_KEY`). Thanks [@CamNoob](https://github.com/CamNoob).
+- Release: Retry GitHub Release asset uploads to reduce flakes during transient GitHub errors.
 
-## v0.2.9 (Unreleased)
+## v0.2.10 (Failed Release, 2026-02-09)
+
+- Release attempt failed due to GitHub release asset upload errors during a GitHub incident; no assets were published. v0.2.11 re-cuts the same changes.
+
+## v0.2.9 (2026-02-09)
 
 - Memory: Incremental per-project workspace file indexing with percent progress, auto-index toggle, and a "Clear File Index" action to reclaim space.
 - Memory: Vector Database Stats now supports All Projects vs Active Project scope.

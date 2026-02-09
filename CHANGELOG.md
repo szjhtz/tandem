@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.2.10] - Unreleased
+## [0.2.11] - Unreleased
 
 ### Added
 
@@ -18,10 +18,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **OpenCode Session Hangs**: Prevent sessions from getting stuck indefinitely when a tool invocation never reaches a terminal state by recognizing more terminal tool statuses, ignoring heartbeat/diff noise in the stream, and fail-fast cancelling with a surfaced error after a timeout.
 - **Sidecar StdIO Deadlock Risk**: Always drain the OpenCode sidecar stdout/stderr pipes so the sidecar cannot block if it emits high-volume output.
-- **Log Noise Reduction**: Ignore OpenCode `server.*` SSE heartbeat events (and downgrade other unknown SSE events) to prevent log spam during long-running sessions.
+- **Log Noise Reduction**: Ignore OpenCode `server.*` heartbeat SSE events (and downgrade other unknown SSE events) to prevent log spam during long-running sessions.
 - **Vault Locked Log Spam**: Avoid warning-level logs when the keystore isn't available because the vault is locked (expected state).
+- **Release Pipeline Resilience**: Retry GitHub Release asset uploads to reduce flakes during transient GitHub errors.
 
-## [0.2.9] - Unreleased
+## [0.2.10] - 2026-02-09 (Failed Release)
+
+- Release attempt failed due to GitHub release asset upload errors during a GitHub incident; no assets were published. v0.2.11 re-cuts the same changes.
+
+## [0.2.9] - 2026-02-09
 
 ### Added
 
@@ -368,7 +373,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Project-based organization
 - Real-time streaming responses
 
-[Unreleased]: https://github.com/frumu-ai/tandem/compare/v0.2.8...HEAD
+[Unreleased]: https://github.com/frumu-ai/tandem/compare/v0.2.10...HEAD
+[0.2.10]: https://github.com/frumu-ai/tandem/compare/v0.2.9...v0.2.10
+[0.2.9]: https://github.com/frumu-ai/tandem/compare/v0.2.8...v0.2.9
+[0.2.8]: https://github.com/frumu-ai/tandem/compare/v0.2.7...v0.2.8
 [0.1.13]: https://github.com/frumu-ai/tandem/compare/v0.1.12...v0.1.13
 [0.1.12]: https://github.com/frumu-ai/tandem/compare/v0.1.11...v0.1.12
 [0.1.11]: https://github.com/frumu-ai/tandem/compare/v0.1.10...v0.1.11
