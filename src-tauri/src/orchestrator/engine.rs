@@ -129,7 +129,13 @@ impl OrchestratorEngine {
     /// Start the orchestration run
     pub async fn start(&self) -> Result<()> {
         // Phase 1: Planning
-        self.run_planning_phase().await?;
+        if let Err(e) = self.run_planning_phase().await {
+            // Ensure the run transitions to a terminal state instead of leaving the UI stuck
+            // in "planning" forever.
+            let reason = e.to_string();
+            let _ = self.handle_failure(&reason).await;
+            return Err(e);
+        }
 
         // Wait for approval (handled externally via approve() call)
         // The run status will be AwaitingApproval
@@ -860,7 +866,9 @@ impl OrchestratorEngine {
         let mut first_tool_finished = false;
 
         // Add a hard timeout to prevent hanging forever (even if the sidecar only sends heartbeats).
-        let timeout = tokio::time::Duration::from_secs(120);
+        // Planning can legitimately take a while (large repos, slower models, cold starts).
+        // Keep this reasonably high so we don't fail healthy runs, but still fail-fast for true hangs.
+        let timeout = tokio::time::Duration::from_secs(300);
         let consume = async {
             while let Some(result) = stream.next().await {
                 match result {

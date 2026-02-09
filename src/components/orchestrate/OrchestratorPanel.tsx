@@ -19,6 +19,7 @@ import { BudgetMeter } from "./BudgetMeter";
 import { TaskBoard } from "./TaskBoard";
 import { ModelSelector } from "@/components/chat/ModelSelector";
 import { LogsDrawer } from "@/components/logs";
+import { getProvidersConfig } from "@/lib/tauri";
 import { DEFAULT_ORCHESTRATOR_CONFIG } from "./types";
 import type { OrchestratorConfig, RunSnapshot, Run, Task, OrchestratorEvent } from "./types";
 
@@ -73,6 +74,99 @@ export function OrchestratorPanel({ onClose, runId: initialRunId }: Orchestrator
       setRunProvider(undefined);
     }
   }, [initialRunId]);
+
+  // Prefill model/provider for new runs from the user's last selected provider/model (same as chat).
+  useEffect(() => {
+    if (runId) return; // only for the "new run" view
+    if (selectedModel || selectedProvider) return; // don't clobber if user already picked
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const config = await getProvidersConfig();
+        if (cancelled) return;
+
+        let modelId: string | undefined;
+        let providerId: string | undefined;
+
+        // Highest priority: explicit selected model (works for custom providers too).
+        if (config.selected_model?.model_id && config.selected_model?.provider_id) {
+          modelId = config.selected_model.model_id;
+          providerId = config.selected_model.provider_id;
+        } else {
+          // Fallback: find a default provider slot with a model set.
+          const candidates: Array<{
+            id: string;
+            enabled: boolean;
+            isDefault: boolean;
+            model?: string;
+          }> = [
+            {
+              id: "opencode_zen",
+              enabled: config.opencode_zen.enabled,
+              isDefault: config.opencode_zen.default,
+              model: config.opencode_zen.model ?? undefined,
+            },
+            {
+              id: "ollama",
+              enabled: config.ollama.enabled,
+              isDefault: config.ollama.default,
+              model: config.ollama.model ?? undefined,
+            },
+            {
+              id: "openrouter",
+              enabled: config.openrouter.enabled,
+              isDefault: config.openrouter.default,
+              model: config.openrouter.model ?? undefined,
+            },
+            {
+              id: "anthropic",
+              enabled: config.anthropic.enabled,
+              isDefault: config.anthropic.default,
+              model: config.anthropic.model ?? undefined,
+            },
+            {
+              id: "openai",
+              enabled: config.openai.enabled,
+              isDefault: config.openai.default,
+              model: config.openai.model ?? undefined,
+            },
+            // Poe may or may not exist depending on build; access defensively.
+            ...((config as any).poe
+              ? [
+                  {
+                    id: "poe",
+                    enabled: (config as any).poe.enabled,
+                    isDefault: (config as any).poe.default,
+                    model: (config as any).poe.model ?? undefined,
+                  },
+                ]
+              : []),
+          ];
+
+          const preferred =
+            candidates.find((c) => c.enabled && c.isDefault && c.model) ??
+            candidates.find((c) => c.enabled && c.model) ??
+            candidates.find((c) => c.model);
+
+          modelId = preferred?.model;
+          providerId = preferred?.id;
+        }
+
+        // Backend stores "opencode" in selected_model for sidecar routing; UI uses "opencode_zen".
+        if (providerId === "opencode") providerId = "opencode_zen";
+
+        if (modelId) setSelectedModel(modelId);
+        if (providerId) setSelectedProvider(providerId);
+      } catch {
+        // Best-effort only.
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [runId, selectedModel, selectedProvider]);
 
   // Load current model/provider for an existing run so paused-resume can swap models safely.
   useEffect(() => {

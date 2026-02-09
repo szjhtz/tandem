@@ -116,7 +116,14 @@ impl OrchestratorStore {
 
     /// Append event to log
     pub fn append_event(&self, run_id: &str, event: &OrchestratorEvent) -> Result<()> {
-        let path = self.run_dir(run_id).join("events.log");
+        let run_dir = self.run_dir(run_id);
+        // Ensure the run directory exists. The engine can emit events before the run is fully
+        // persisted/created on disk (e.g. on early failures), and Windows will error with
+        // "The system cannot find the path specified" if the parent dir doesn't exist.
+        fs::create_dir_all(&run_dir)
+            .map_err(|e| TandemError::IoError(format!("Failed to create run dir: {}", e)))?;
+
+        let path = run_dir.join("events.log");
 
         let mut file = OpenOptions::new()
             .create(true)
