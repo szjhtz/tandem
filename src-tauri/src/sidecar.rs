@@ -1229,10 +1229,11 @@ impl SidecarManager {
 
         let try_roots = async {
             let url = format!("{}/session", base_url);
-            let response = self
-                .http_client
-                .get(&url)
-                .query(&[("roots", "true")])
+            let mut req = self.http_client.get(&url).query(&[("roots", "true")]);
+            if let Some(directory) = self.workspace_directory().await {
+                req = req.query(&[("directory", directory)]);
+            }
+            let response = req
                 .send()
                 .await
                 .map_err(|e| TandemError::Sidecar(format!("Failed to list sessions: {}", e)))?;
@@ -1245,10 +1246,14 @@ impl SidecarManager {
             Err(e) => {
                 tracing::warn!("Failed to list root sessions (falling back): {}", e);
                 let url = format!("{}/session", base_url);
-                let response =
-                    self.http_client.get(&url).send().await.map_err(|e| {
-                        TandemError::Sidecar(format!("Failed to list sessions: {}", e))
-                    })?;
+                let mut req = self.http_client.get(&url);
+                if let Some(directory) = self.workspace_directory().await {
+                    req = req.query(&[("directory", directory)]);
+                }
+                let response = req
+                    .send()
+                    .await
+                    .map_err(|e| TandemError::Sidecar(format!("Failed to list sessions: {}", e)))?;
                 self.handle_response(response).await
             }
         }
@@ -1287,9 +1292,11 @@ impl SidecarManager {
 
         let url = format!("{}/project", self.base_url().await?);
 
-        let response = self
-            .http_client
-            .get(&url)
+        let mut req = self.http_client.get(&url);
+        if let Some(directory) = self.workspace_directory().await {
+            req = req.query(&[("directory", directory)]);
+        }
+        let response = req
             .send()
             .await
             .map_err(|e| TandemError::Sidecar(format!("Failed to list projects: {}", e)))?;
