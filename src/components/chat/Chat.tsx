@@ -32,7 +32,9 @@ import {
   onSidecarEvent,
   approveTool,
   denyTool,
-  answerQuestion,
+  listQuestions,
+  replyQuestion,
+  rejectQuestion,
   getSessionMessages,
   undoViaCommand,
   isGitRepo,
@@ -43,7 +45,7 @@ import {
   type StreamEvent,
   type SidecarState,
   type TodoItem,
-  type QuestionEvent,
+  type QuestionRequestEvent,
   type FileAttachmentInput,
   startPlanSession,
   ralphStatus,
@@ -131,11 +133,16 @@ export function Chat({
   const [error, setError] = useState<string | null>(null);
   const [isConnecting, setIsConnecting] = useState(false);
   const [pendingPermissions, setPendingPermissions] = useState<PermissionRequest[]>([]);
-  const [pendingQuestion, setPendingQuestion] = useState<QuestionEvent | null>(null);
+  const [pendingQuestionRequests, setPendingQuestionRequests] = useState<QuestionRequestEvent[]>(
+    []
+  );
   // const [activities, setActivities] = useState<ActivityItem[]>([]);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
   const [isGitRepository, setIsGitRepository] = useState(false);
   const handledPermissionIdsRef = useRef<Set<string>>(new Set());
+  const handledQuestionRequestIdsRef = useRef<Set<string>>(new Set());
+  const pendingQuestionToolCallIdsRef = useRef<Set<string>>(new Set());
+  const pendingQuestionToolMessageIdsRef = useRef<Set<string>>(new Set());
 
   // Support both new agent prop and legacy usePlanMode
   const selectedAgent =
@@ -210,6 +217,114 @@ export function Chat({
   useEffect(() => {
     setEnabledToolCategories(new Set(["files", "search", "terminal"]));
   }, []);
+
+  // Clear any queued prompts when switching sessions.
+  useEffect(() => {
+    setPendingQuestionRequests([]);
+    pendingQuestionToolCallIdsRef.current = new Set();
+    pendingQuestionToolMessageIdsRef.current = new Set();
+  }, [currentSessionId]);
+
+  // Fetch already-pending question requests so the current session
+  // shows the prompt even if the SSE event was missed.
+  useEffect(() => {
+    if (sidecarStatus !== "running" || !currentSessionId) return;
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const all = await listQuestions();
+        if (cancelled) return;
+
+        const relevant = all.filter(
+          (r) => r.session_id === currentSessionId && r.questions && r.questions.length > 0
+        );
+
+        // Track which tool calls in history are still answerable.
+        pendingQuestionToolCallIdsRef.current = new Set(
+          relevant.map((r) => r.tool_call_id).filter(Boolean) as string[]
+        );
+        pendingQuestionToolMessageIdsRef.current = new Set(
+          relevant.map((r) => r.tool_message_id).filter(Boolean) as string[]
+        );
+
+        setPendingQuestionRequests((prev) => {
+          if (relevant.length === 0) return prev;
+
+          const existing = new Set(prev.map((r) => r.request_id));
+          const next = [...prev];
+          for (const req of relevant) {
+            if (
+              handledQuestionRequestIdsRef.current.has(req.request_id) ||
+              existing.has(req.request_id)
+            ) {
+              continue;
+            }
+            next.push(req);
+          }
+          return next;
+        });
+      } catch (e) {
+        // Non-fatal: the SSE event will still surface prompts.
+        console.warn("Failed to list pending questions:", e);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [sidecarStatus, currentSessionId]);
+
+  const handleOpenQuestionToolCall = useCallback(
+    async ({ messageId, toolCallId }: { messageId: string; toolCallId: string }) => {
+      if (!currentSessionId) return;
+
+      try {
+        const all = await listQuestions();
+        const match = all.find(
+          (r) =>
+            r.session_id === currentSessionId &&
+            (r.tool_call_id === toolCallId || r.tool_message_id === messageId)
+        );
+
+        if (!match) {
+          setError("No pending question found for that tool call. It may already be answered.");
+          // Hide the action going forward for this tool call/message.
+          pendingQuestionToolCallIdsRef.current.delete(toolCallId);
+          pendingQuestionToolMessageIdsRef.current.delete(messageId);
+          return;
+        }
+
+        setPendingQuestionRequests((prev) => {
+          if (
+            handledQuestionRequestIdsRef.current.has(match.request_id) ||
+            prev.some((r) => r.request_id === match.request_id)
+          ) {
+            return prev;
+          }
+
+          if (match.tool_call_id) pendingQuestionToolCallIdsRef.current.add(match.tool_call_id);
+          if (match.tool_message_id)
+            pendingQuestionToolMessageIdsRef.current.add(match.tool_message_id);
+          return [match, ...prev];
+        });
+      } catch (e) {
+        console.error("Failed to locate pending question:", e);
+        setError(`Failed to locate pending question: ${e}`);
+      }
+    },
+    [currentSessionId]
+  );
+
+  const isQuestionToolCallPending = useCallback(
+    ({ messageId, toolCallId }: { messageId: string; toolCallId: string }) => {
+      return (
+        pendingQuestionToolCallIdsRef.current.has(toolCallId) ||
+        pendingQuestionToolMessageIdsRef.current.has(messageId)
+      );
+    },
+    []
+  );
 
   // Handle execute pending tasks from sidebar
   useEffect(() => {
@@ -342,7 +457,7 @@ Start with task #1 and continue through each one. IMPORTANT: After verifying eac
     currentAssistantMessageIdRef.current = null;
     handledPermissionIdsRef.current = new Set();
     setPendingPermissions([]);
-    setPendingQuestion(null);
+    setPendingQuestionRequests([]);
 
     if (generationTimeoutRef.current) {
       clearTimeout(generationTimeoutRef.current);
@@ -1079,14 +1194,33 @@ Start with task #1 and continue through each one. IMPORTANT: After verifying eac
         }
 
         case "question_asked": {
-          const questionEvent: QuestionEvent = {
-            session_id: event.session_id,
-            question_id: event.question_id,
-            header: event.header,
-            question: event.question,
-            options: event.options,
-          };
-          setPendingQuestion(questionEvent);
+          // Only show prompts for the active session.
+          if (!currentSessionId || event.session_id !== currentSessionId) {
+            break;
+          }
+          if (!event.questions || event.questions.length === 0) {
+            break;
+          }
+
+          setPendingQuestionRequests((prev) => {
+            if (
+              handledQuestionRequestIdsRef.current.has(event.request_id) ||
+              prev.some((r) => r.request_id === event.request_id)
+            ) {
+              return prev;
+            }
+
+            return [
+              ...prev,
+              {
+                session_id: event.session_id,
+                request_id: event.request_id,
+                questions: event.questions,
+                tool_call_id: event.tool_call_id,
+                tool_message_id: event.tool_message_id,
+              },
+            ];
+          });
           break;
         }
 
@@ -1590,15 +1724,41 @@ ${g.example}
     }
   };
 
-  const handleAnswerQuestion = async (answer: string) => {
-    if (!pendingQuestion || !currentSessionId) return;
+  const removeActiveQuestionRequest = () => {
+    setPendingQuestionRequests((prev) => prev.slice(1));
+  };
+
+  const handleSubmitQuestionRequest = async (answers: string[][]) => {
+    const request = pendingQuestionRequests[0];
+    if (!request) return;
 
     try {
-      await answerQuestion(currentSessionId, pendingQuestion.question_id, answer);
-      setPendingQuestion(null);
+      await replyQuestion(request.request_id, answers);
+      handledQuestionRequestIdsRef.current.add(request.request_id);
+      if (request.tool_call_id) pendingQuestionToolCallIdsRef.current.delete(request.tool_call_id);
+      if (request.tool_message_id)
+        pendingQuestionToolMessageIdsRef.current.delete(request.tool_message_id);
+      removeActiveQuestionRequest();
     } catch (err) {
-      console.error("Failed to answer question:", err);
+      console.error("Failed to reply to question request:", err);
       setError(`Failed to answer question: ${err}`);
+    }
+  };
+
+  const handleRejectQuestionRequest = async () => {
+    const request = pendingQuestionRequests[0];
+    if (!request) return;
+
+    try {
+      await rejectQuestion(request.request_id);
+      handledQuestionRequestIdsRef.current.add(request.request_id);
+      if (request.tool_call_id) pendingQuestionToolCallIdsRef.current.delete(request.tool_call_id);
+      if (request.tool_message_id)
+        pendingQuestionToolMessageIdsRef.current.delete(request.tool_message_id);
+      removeActiveQuestionRequest();
+    } catch (err) {
+      console.error("Failed to reject question request:", err);
+      setError(`Failed to reject question: ${err}`);
     }
   };
 
@@ -1709,7 +1869,10 @@ ${g.example}
           )}
         >
           {/* Messages */}
-          <div ref={messagesContainerRef} className="flex-1 overflow-y-auto pb-48">
+          <div
+            ref={messagesContainerRef}
+            className="flex-1 overflow-y-auto overflow-x-hidden pb-48"
+          >
             <AnimatePresence>
               {isLoadingHistory ? (
                 <motion.div
@@ -1755,6 +1918,8 @@ ${g.example}
                         onCopy={handleCopy}
                         onUndo={isGitRepository ? handleUndo : undefined}
                         onFileOpen={onFileOpen}
+                        onOpenQuestionToolCall={handleOpenQuestionToolCall}
+                        isQuestionToolCallPending={isQuestionToolCallPending}
                       />
                       {showActionButtons && (
                         <div className="ml-14 mb-4">
@@ -1970,7 +2135,12 @@ Start with task #1 and execute each one. Use the 'write' tool to create files im
           )}
 
           {/* Question dialog */}
-          <QuestionDialog question={pendingQuestion} onAnswer={handleAnswerQuestion} />
+          <QuestionDialog
+            key={pendingQuestionRequests[0]?.request_id ?? "no-request"}
+            request={pendingQuestionRequests[0] ?? null}
+            onSubmit={handleSubmitQuestionRequest}
+            onReject={handleRejectQuestionRequest}
+          />
         </div>
 
         {/* Plan Viewer - Split view */}

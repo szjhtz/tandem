@@ -8,6 +8,7 @@ import App from "./App";
 import "./index.css";
 import { ThemeProvider } from "@/hooks/useTheme";
 import { UpdaterProvider } from "@/hooks/useUpdater";
+import { MemoryIndexingProvider } from "@/contexts/MemoryIndexingContext";
 import { DEFAULT_THEME_ID, getThemeById } from "@/lib/themes";
 import type { ThemeId } from "@/types/theme";
 
@@ -30,7 +31,9 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
     <ThemeProvider>
       <UpdaterProvider>
-        <App />
+        <MemoryIndexingProvider>
+          <App />
+        </MemoryIndexingProvider>
       </UpdaterProvider>
     </ThemeProvider>
   </React.StrictMode>

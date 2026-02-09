@@ -435,6 +435,9 @@ pub fn run() {
             commands::approve_tool,
             commands::deny_tool,
             commands::answer_question,
+            commands::list_questions,
+            commands::reply_question,
+            commands::reject_question,
             // Execution planning / staging area
             commands::stage_tool_operation,
             commands::get_staged_operations,
@@ -502,6 +505,10 @@ pub fn run() {
             commands::orchestrator_restart_run,
             // Memory Management
             commands::get_memory_stats,
+            commands::get_memory_settings,
+            commands::set_memory_settings,
+            commands::get_project_memory_stats,
+            commands::clear_project_file_index,
             commands::index_workspace_command,
         ]);
 

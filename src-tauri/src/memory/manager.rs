@@ -21,6 +21,10 @@ pub struct MemoryManager {
 }
 
 impl MemoryManager {
+    pub(crate) fn db(&self) -> &Arc<MemoryDatabase> {
+        &self.db
+    }
+
     /// Initialize the memory manager
     pub async fn new(db_path: &Path) -> MemoryResult<Self> {
         let db = Arc::new(MemoryDatabase::new(db_path).await?);
@@ -77,6 +81,10 @@ impl MemoryManager {
                 session_id: request.session_id.clone(),
                 project_id: request.project_id.clone(),
                 source: request.source.clone(),
+                source_path: request.source_path.clone(),
+                source_mtime: request.source_mtime,
+                source_size: request.source_size,
+                source_hash: request.source_hash.clone(),
                 created_at: Utc::now(),
                 token_count: text_chunk.token_count as i64,
                 metadata: request.metadata.clone(),
@@ -398,6 +406,10 @@ mod tests {
             session_id: Some("session-1".to_string()),
             project_id: Some("project-1".to_string()),
             source: "user_message".to_string(),
+            source_path: None,
+            source_mtime: None,
+            source_size: None,
+            source_hash: None,
             metadata: None,
         };
 
@@ -432,6 +444,10 @@ mod tests {
             session_id: None,
             project_id: Some("project-1".to_string()),
             source: "assistant_response".to_string(),
+            source_path: None,
+            source_mtime: None,
+            source_size: None,
+            source_hash: None,
             metadata: None,
         };
         manager.store_message(request).await.unwrap();

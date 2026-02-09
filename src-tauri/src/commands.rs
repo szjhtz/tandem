@@ -4,7 +4,7 @@
 use crate::error::{Result, TandemError};
 use crate::keystore::{validate_api_key, validate_key_type, ApiKeyType, SecureKeyStore};
 use crate::memory::indexer::{index_workspace, IndexingStats};
-use crate::memory::types::MemoryStats;
+use crate::memory::types::{ClearFileIndexResult, MemoryStats, ProjectMemoryStats};
 use crate::orchestrator::{
     engine::OrchestratorEngine,
     policy::{PolicyConfig, PolicyEngine},
@@ -166,6 +166,77 @@ pub async fn get_memory_stats(state: State<'_, AppState>) -> Result<MemoryStats>
     if let Some(manager) = &state.memory_manager {
         manager
             .get_stats()
+            .await
+            .map_err(|e| TandemError::Memory(e.to_string()))
+    } else {
+        Err(TandemError::Memory(
+            "Memory manager not initialized".to_string(),
+        ))
+    }
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct MemorySettings {
+    pub auto_index_on_project_load: bool,
+}
+
+#[tauri::command]
+pub fn get_memory_settings(app: AppHandle) -> MemorySettings {
+    let mut settings = MemorySettings {
+        auto_index_on_project_load: false,
+    };
+
+    if let Ok(store) = app.store("settings.json") {
+        if let Some(value) = store.get("memory_auto_index_on_project_load") {
+            if let Some(b) = value.as_bool() {
+                settings.auto_index_on_project_load = b;
+            }
+        }
+    }
+
+    settings
+}
+
+#[tauri::command]
+pub fn set_memory_settings(app: AppHandle, settings: MemorySettings) -> Result<()> {
+    if let Ok(store) = app.store("settings.json") {
+        store.set(
+            "memory_auto_index_on_project_load",
+            serde_json::json!(settings.auto_index_on_project_load),
+        );
+        let _ = store.save();
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn get_project_memory_stats(
+    state: State<'_, AppState>,
+    project_id: String,
+) -> Result<ProjectMemoryStats> {
+    if let Some(manager) = &state.memory_manager {
+        manager
+            .db()
+            .get_project_stats(&project_id)
+            .await
+            .map_err(|e| TandemError::Memory(e.to_string()))
+    } else {
+        Err(TandemError::Memory(
+            "Memory manager not initialized".to_string(),
+        ))
+    }
+}
+
+#[tauri::command]
+pub async fn clear_project_file_index(
+    state: State<'_, AppState>,
+    project_id: String,
+    vacuum: bool,
+) -> Result<ClearFileIndexResult> {
+    if let Some(manager) = &state.memory_manager {
+        manager
+            .db()
+            .clear_project_file_index(&project_id, vacuum)
             .await
             .map_err(|e| TandemError::Memory(e.to_string()))
     } else {
@@ -2137,6 +2208,30 @@ pub async fn answer_question(
         .sidecar
         .answer_question(&session_id, &question_id, answer)
         .await
+}
+
+/// List pending question requests from the sidecar (OpenCode).
+#[tauri::command]
+pub async fn list_questions(
+    state: State<'_, AppState>,
+) -> Result<Vec<crate::sidecar::QuestionRequest>> {
+    state.sidecar.list_questions().await
+}
+
+/// Reply to a pending question request.
+#[tauri::command]
+pub async fn reply_question(
+    state: State<'_, AppState>,
+    request_id: String,
+    answers: Vec<Vec<String>>,
+) -> Result<()> {
+    state.sidecar.reply_question(&request_id, answers).await
+}
+
+/// Reject a pending question request.
+#[tauri::command]
+pub async fn reject_question(state: State<'_, AppState>, request_id: String) -> Result<()> {
+    state.sidecar.reject_question(&request_id).await
 }
 
 // ============================================================================

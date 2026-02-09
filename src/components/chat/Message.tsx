@@ -44,6 +44,8 @@ export interface MessageProps {
   onCopy?: (content: string) => void;
   onUndo?: (messageId: string) => void;
   onFileOpen?: (filePath: string) => void;
+  onOpenQuestionToolCall?: (args: { messageId: string; toolCallId: string }) => void;
+  isQuestionToolCallPending?: (args: { messageId: string; toolCallId: string }) => boolean;
 }
 
 export interface ToolCall {
@@ -141,6 +143,8 @@ export function Message({
   onCopy,
   onUndo,
   onFileOpen,
+  onOpenQuestionToolCall,
+  isQuestionToolCallPending,
 }: MessageProps) {
   const isUser = role === "user";
   const isSystem = role === "system";
@@ -200,7 +204,7 @@ export function Message({
       )}
 
       {/* Content */}
-      <div className="flex-1 space-y-3">
+      <div className="flex-1 min-w-0 space-y-3">
         <div className="flex items-center gap-2">
           <span className="font-medium text-text">
             {isUser ? "You" : isSystem ? "System" : "Tandem"}
@@ -447,11 +451,22 @@ export function Message({
         {toolCalls &&
           toolCalls.length > 0 &&
           (toolCalls.length >= 2 ? (
-            <CollapsedToolCalls toolCalls={toolCalls} />
+            <CollapsedToolCalls
+              toolCalls={toolCalls}
+              parentMessageId={id}
+              onOpenQuestionToolCall={onOpenQuestionToolCall}
+              isQuestionToolCallPending={isQuestionToolCallPending}
+            />
           ) : (
             <div className="space-y-2">
               {toolCalls.map((tool) => (
-                <ToolCallCard key={tool.id} {...tool} />
+                <ToolCallCard
+                  key={tool.id}
+                  {...tool}
+                  parentMessageId={id}
+                  onOpenQuestionToolCall={onOpenQuestionToolCall}
+                  isQuestionToolCallPending={isQuestionToolCallPending}
+                />
               ))}
             </div>
           ))}
@@ -461,7 +476,17 @@ export function Message({
 }
 
 // Collapsed tool calls for Plan Mode - shows summary with expand toggle
-function CollapsedToolCalls({ toolCalls }: { toolCalls: ToolCall[] }) {
+function CollapsedToolCalls({
+  toolCalls,
+  parentMessageId,
+  onOpenQuestionToolCall,
+  isQuestionToolCallPending,
+}: {
+  toolCalls: ToolCall[];
+  parentMessageId: string;
+  onOpenQuestionToolCall?: (args: { messageId: string; toolCallId: string }) => void;
+  isQuestionToolCallPending?: (args: { messageId: string; toolCallId: string }) => boolean;
+}) {
   const [isExpanded, setIsExpanded] = useState(false);
 
   const runningCount = toolCalls.filter((t) => t.status === "running").length;
@@ -531,7 +556,13 @@ function CollapsedToolCalls({ toolCalls }: { toolCalls: ToolCall[] }) {
           >
             <div className="p-2 space-y-2 border-t border-glass">
               {toolCalls.map((tool) => (
-                <ToolCallCard key={tool.id} {...tool} />
+                <ToolCallCard
+                  key={tool.id}
+                  {...tool}
+                  parentMessageId={parentMessageId}
+                  onOpenQuestionToolCall={onOpenQuestionToolCall}
+                  isQuestionToolCallPending={isQuestionToolCallPending}
+                />
               ))}
             </div>
           </motion.div>
@@ -541,7 +572,20 @@ function CollapsedToolCalls({ toolCalls }: { toolCalls: ToolCall[] }) {
   );
 }
 
-function ToolCallCard({ tool, args, status, result }: ToolCall) {
+function ToolCallCard({
+  id,
+  tool,
+  args,
+  status,
+  result,
+  parentMessageId,
+  onOpenQuestionToolCall,
+  isQuestionToolCallPending,
+}: ToolCall & {
+  parentMessageId: string;
+  onOpenQuestionToolCall?: (args: { messageId: string; toolCallId: string }) => void;
+  isQuestionToolCallPending?: (args: { messageId: string; toolCallId: string }) => boolean;
+}) {
   const [isExpanded, setIsExpanded] = useState(false);
 
   // Don't render completed technical tools (redundant if Chat.tsx filters them,
@@ -598,14 +642,27 @@ function ToolCallCard({ tool, args, status, result }: ToolCall) {
     if (json.length > 100) {
       return <div className="text-xs text-text-subtle">{json.substring(0, 100)}...</div>;
     }
-    return <pre className="font-mono text-xs text-text-subtle">{json}</pre>;
+    return (
+      <pre className="font-mono text-xs text-text-subtle whitespace-pre-wrap break-words">
+        {json}
+      </pre>
+    );
   };
 
   const hasContent = (args && Object.keys(args).length > 0) || result;
+  const isQuestionTool = tool === "question";
+  const showAnswerQuestion =
+    isQuestionTool &&
+    (isQuestionToolCallPending
+      ? isQuestionToolCallPending({ messageId: parentMessageId, toolCallId: id })
+      : true);
 
   return (
     <motion.div
-      className={cn("rounded-lg border p-3 transition-colors", getStatusColor())}
+      className={cn(
+        "rounded-lg border p-3 transition-colors w-full max-w-full min-w-0 overflow-hidden",
+        getStatusColor()
+      )}
       initial={{ opacity: 0, scale: 0.95 }}
       animate={{ opacity: 1, scale: 1 }}
     >
@@ -637,18 +694,18 @@ function ToolCallCard({ tool, args, status, result }: ToolCall) {
             className="overflow-hidden"
           >
             {args && Object.keys(args).length > 0 && (
-              <div className="mt-2 rounded bg-surface p-2 overflow-x-auto">
+              <div className="mt-2 rounded bg-surface p-2 overflow-x-auto max-w-full">
                 <p className="mb-1 text-[10px] uppercase font-bold text-text-muted">Arguments</p>
-                <pre className="font-mono text-xs text-text-subtle whitespace-pre-wrap">
+                <pre className="font-mono text-xs text-text-subtle whitespace-pre-wrap break-words">
                   {JSON.stringify(args, null, 2)}
                 </pre>
               </div>
             )}
 
             {result && (
-              <div className="mt-2 rounded bg-surface p-2 overflow-x-auto">
+              <div className="mt-2 rounded bg-surface p-2 overflow-x-auto max-w-full">
                 <p className="mb-1 text-[10px] uppercase font-bold text-text-muted">Result</p>
-                <pre className="font-mono text-xs text-text-muted whitespace-pre-wrap">
+                <pre className="font-mono text-xs text-text-muted whitespace-pre-wrap break-words">
                   {result}
                 </pre>
               </div>
@@ -658,6 +715,21 @@ function ToolCallCard({ tool, args, status, result }: ToolCall) {
       </AnimatePresence>
 
       {!isExpanded && hasContent && <div className="mt-2 pl-6">{getArgsSummary()}</div>}
+
+      {showAnswerQuestion && (
+        <div className="mt-3 flex justify-end">
+          <button
+            type="button"
+            className="text-xs text-primary hover:text-primary/80 hover:underline"
+            onClick={(e) => {
+              e.stopPropagation();
+              onOpenQuestionToolCall?.({ messageId: parentMessageId, toolCallId: id });
+            }}
+          >
+            Answer this question
+          </button>
+        </div>
+      )}
     </motion.div>
   );
 }

@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.2.9] - Unreleased
 
+### Added
+
+- **Project File Indexing**: Add an incremental, per-project file index for workspace embeddings with total/percent progress reporting.
+- **Memory Stats Scope**: Switch Vector Database Stats between All Projects and Active Project views.
+- **Auto-Index Toggle**: Optionally auto-index the active project on load (with a short cooldown).
+- **Clear File Index**: Clear only file-derived vectors/chunks for a project (optional VACUUM) to reclaim space.
+
 ### Fixed
 
 - **Question Prompts**: Properly handle OpenCode `question.asked` events (including multi-question requests) and render an interactive one-at-a-time wizard with multiple-choice + custom answers; replies are sent via the OpenCode `/question/{requestID}/reply` API.

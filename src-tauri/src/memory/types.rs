@@ -47,6 +47,11 @@ pub struct MemoryChunk {
     pub session_id: Option<String>,
     pub project_id: Option<String>,
     pub source: String, // e.g., "user_message", "assistant_response", "file_content"
+    // File-derived fields (only set when source == "file")
+    pub source_path: Option<String>,
+    pub source_mtime: Option<i64>,
+    pub source_size: Option<i64>,
+    pub source_hash: Option<String>,
     pub created_at: DateTime<Utc>,
     pub token_count: i64,
     pub metadata: Option<serde_json::Value>,
@@ -175,7 +180,41 @@ pub struct StoreMessageRequest {
     pub session_id: Option<String>,
     pub project_id: Option<String>,
     pub source: String,
+    // File-derived fields (only set when source == "file")
+    pub source_path: Option<String>,
+    pub source_mtime: Option<i64>,
+    pub source_size: Option<i64>,
+    pub source_hash: Option<String>,
     pub metadata: Option<serde_json::Value>,
+}
+
+/// Project-scoped memory statistics (filtered by project_id)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectMemoryStats {
+    pub project_id: String,
+    /// Total chunks stored under this project_id (all sources)
+    pub project_chunks: i64,
+    pub project_bytes: i64,
+    /// Chunks/bytes that came from workspace file indexing (source == "file")
+    pub file_index_chunks: i64,
+    pub file_index_bytes: i64,
+    /// Number of indexed files currently tracked for this project_id
+    pub indexed_files: i64,
+    /// Last time indexing completed for this project_id (if known)
+    pub last_indexed_at: Option<DateTime<Utc>>,
+    /// Last run totals (if known)
+    pub last_total_files: Option<i64>,
+    pub last_processed_files: Option<i64>,
+    pub last_indexed_files: Option<i64>,
+    pub last_skipped_files: Option<i64>,
+    pub last_errors: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClearFileIndexResult {
+    pub chunks_deleted: i64,
+    pub bytes_estimated: i64,
+    pub did_vacuum: bool,
 }
 
 /// Request to search memory

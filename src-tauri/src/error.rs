@@ -58,6 +58,12 @@ pub enum TandemError {
     Memory(String),
 }
 
+impl From<crate::memory::types::MemoryError> for TandemError {
+    fn from(err: crate::memory::types::MemoryError) -> Self {
+        TandemError::Memory(err.to_string())
+    }
+}
+
 // Allow conversion from String to TandemError
 impl From<String> for TandemError {
     fn from(err: String) -> Self {

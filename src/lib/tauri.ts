@@ -162,17 +162,25 @@ export interface TodoItem {
   status: "pending" | "in_progress" | "completed" | "cancelled";
 }
 
-export interface QuestionOption {
-  id: string;
+export interface QuestionChoice {
   label: string;
+  description: string;
 }
 
-export interface QuestionEvent {
-  session_id: string;
-  question_id: string;
-  header?: string;
+export interface QuestionInfo {
+  header: string;
   question: string;
-  options: QuestionOption[];
+  options: QuestionChoice[];
+  multiple?: boolean;
+  custom?: boolean;
+}
+
+export interface QuestionRequestEvent {
+  session_id: string;
+  request_id: string;
+  questions: QuestionInfo[];
+  tool_call_id?: string;
+  tool_message_id?: string;
 }
 
 export interface FileEntry {
@@ -230,10 +238,10 @@ export type StreamEvent =
   | {
       type: "question_asked";
       session_id: string;
-      question_id: string;
-      header?: string;
-      question: string;
-      options: QuestionOption[];
+      request_id: string;
+      questions: QuestionInfo[];
+      tool_call_id?: string;
+      tool_message_id?: string;
     }
   | {
       type: "todo_updated";
@@ -656,6 +664,18 @@ export async function answerQuestion(
   return invoke("answer_question", { sessionId, questionId, answer });
 }
 
+export async function listQuestions(): Promise<QuestionRequestEvent[]> {
+  return invoke("list_questions");
+}
+
+export async function replyQuestion(requestId: string, answers: string[][]): Promise<void> {
+  return invoke("reply_question", { requestId, answers });
+}
+
+export async function rejectQuestion(requestId: string): Promise<void> {
+  return invoke("reject_question", { requestId });
+}
+
 // ============================================================================
 // Execution Planning / Staging Area
 // ============================================================================
@@ -821,14 +841,90 @@ export async function getMemoryStats(): Promise<MemoryStats> {
   return invoke<MemoryStats>("get_memory_stats");
 }
 
+export interface MemorySettings {
+  auto_index_on_project_load: boolean;
+}
+
+export async function getMemorySettings(): Promise<MemorySettings> {
+  return invoke<MemorySettings>("get_memory_settings");
+}
+
+export async function setMemorySettings(settings: MemorySettings): Promise<void> {
+  return invoke<void>("set_memory_settings", { settings });
+}
+
+export interface ProjectMemoryStats {
+  project_id: string;
+  project_chunks: number;
+  project_bytes: number;
+  file_index_chunks: number;
+  file_index_bytes: number;
+  indexed_files: number;
+  last_indexed_at: string | null;
+  last_total_files: number | null;
+  last_processed_files: number | null;
+  last_indexed_files: number | null;
+  last_skipped_files: number | null;
+  last_errors: number | null;
+}
+
+export async function getProjectMemoryStats(projectId: string): Promise<ProjectMemoryStats> {
+  return invoke<ProjectMemoryStats>("get_project_memory_stats", { projectId });
+}
+
+export interface ClearFileIndexResult {
+  chunks_deleted: number;
+  bytes_estimated: number;
+  did_vacuum: boolean;
+}
+
+export async function clearProjectFileIndex(
+  projectId: string,
+  vacuum: boolean
+): Promise<ClearFileIndexResult> {
+  return invoke<ClearFileIndexResult>("clear_project_file_index", { projectId, vacuum });
+}
+
 export interface IndexingStats {
+  total_files: number;
   files_processed: number;
+  indexed_files: number;
+  skipped_files: number;
+  deleted_files: number;
   chunks_created: number;
   errors: number;
 }
 
 export async function indexWorkspace(projectId: string): Promise<IndexingStats> {
   return invoke<IndexingStats>("index_workspace_command", { projectId });
+}
+
+export interface IndexingStart {
+  project_id: string;
+  total_files: number;
+}
+
+export interface IndexingProgress {
+  project_id: string;
+  files_processed: number;
+  total_files: number;
+  indexed_files: number;
+  skipped_files: number;
+  deleted_files: number;
+  errors: number;
+  chunks_created: number;
+  current_file: string;
+}
+
+export interface IndexingComplete {
+  project_id: string;
+  total_files: number;
+  files_processed: number;
+  indexed_files: number;
+  skipped_files: number;
+  deleted_files: number;
+  chunks_created: number;
+  errors: number;
 }
 
 // ============================================================================

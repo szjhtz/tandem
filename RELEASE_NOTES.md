@@ -4,6 +4,9 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
 
 ## v0.2.9 (Unreleased)
 
+- Memory: Incremental per-project workspace file indexing with percent progress, auto-index toggle, and a "Clear File Index" action to reclaim space.
+- Memory: Vector Database Stats now supports All Projects vs Active Project scope.
+- OpenCode: Properly handle question prompts (multi-question wizard with multiple-choice + custom answers).
 - Windows: Prevent orphaned OpenCode sidecar (and Bun) processes during `pnpm tauri dev` rebuilds by attaching the sidecar to a Job Object (kill-on-close).
 
 ## v0.2.8 (2026-02-09)

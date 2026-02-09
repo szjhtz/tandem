@@ -2,6 +2,7 @@ import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { ChevronDown, FolderOpen, Check, Plus, Settings as SettingsIcon } from "lucide-react";
 import type { UserProject } from "@/lib/tauri";
+import { useMemoryIndexing } from "@/contexts/MemoryIndexingContext";
 
 interface ProjectSwitcherProps {
   projects: UserProject[];
@@ -21,6 +22,11 @@ export function ProjectSwitcher({
   isLoading,
 }: ProjectSwitcherProps) {
   const [isOpen, setIsOpen] = useState(false);
+  const { projects: indexingProjects } = useMemoryIndexing();
+
+  const indexingState = activeProject ? indexingProjects[activeProject.id] : undefined;
+  const progress = indexingState?.progress;
+  const isIndexing = indexingState?.status === "indexing" && !!progress;
 
   const handleSwitchProject = (projectId: string) => {
     setIsOpen(false);
@@ -52,6 +58,18 @@ export function ProjectSwitcher({
               <>
                 <p className="truncate text-sm font-medium text-text">{activeProject.name}</p>
                 <p className="truncate text-xs text-text-subtle">{activeProject.path}</p>
+                {isIndexing && (
+                  <p className="truncate text-[11px] text-text-subtle mt-0.5">
+                    Indexing: {progress.files_processed}/{progress.total_files} (
+                    {progress.total_files > 0
+                      ? Math.min(
+                          100,
+                          Math.round((progress.files_processed / progress.total_files) * 100)
+                        )
+                      : 0}
+                    %)
+                  </p>
+                )}
               </>
             ) : (
               <p className="text-sm text-text-muted">No folder selected</p>

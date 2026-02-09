@@ -20,6 +20,7 @@ import { useTodos } from "@/hooks/useTodos";
 import { cn } from "@/lib/utils";
 import { BrandMark } from "@/components/ui/BrandMark";
 import { OnboardingWizard } from "@/components/onboarding/OnboardingWizard";
+import { useMemoryIndexing } from "@/contexts/MemoryIndexingContext";
 import {
   listSessions,
   listProjects,
@@ -30,6 +31,8 @@ import {
   setActiveProject,
   addProject,
   getSidecarStatus,
+  getMemorySettings,
+  getProjectMemoryStats,
   readFileContent,
   readBinaryFile,
   checkGitStatus,
@@ -84,6 +87,7 @@ declare global {
 function App() {
   const { state, loading, refresh: refreshAppState } = useAppState();
   const { cycleTheme } = useTheme();
+  const { startIndex } = useMemoryIndexing();
   const [sidecarReady, setSidecarReady] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [taskSidebarOpen, setTaskSidebarOpen] = useState(false);
@@ -130,6 +134,37 @@ function App() {
   const [activeProject, setActiveProjectState] = useState<UserProject | null>(null);
   const [projectSwitcherLoading, setProjectSwitcherLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Auto-index workspace files when a project becomes active (if enabled in settings).
+  useEffect(() => {
+    let cancelled = false;
+
+    const maybeAutoIndex = async () => {
+      if (!activeProject?.id) return;
+
+      try {
+        const settings = await getMemorySettings();
+        if (!settings.auto_index_on_project_load) return;
+
+        // Cooldown: don't auto-start if we just indexed recently.
+        const stats = await getProjectMemoryStats(activeProject.id);
+        if (stats.last_indexed_at) {
+          const last = new Date(stats.last_indexed_at).getTime();
+          if (Number.isFinite(last) && Date.now() - last < 5 * 60 * 1000) return;
+        }
+
+        if (cancelled) return;
+        await startIndex(activeProject.id);
+      } catch (e) {
+        console.warn("[AutoIndex] Failed to auto-index:", e);
+      }
+    };
+
+    maybeAutoIndex();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeProject?.id, startIndex]);
 
   // Git initialization dialog state
   const [showGitDialog, setShowGitDialog] = useState(false);
@@ -333,10 +368,13 @@ function App() {
 
   // Load sessions and projects when sidecar is ready
   const loadHistory = useCallback(async () => {
-    if (!sidecarReady) return;
-
     setHistoryLoading(true);
     try {
+      // On initial app load, "sidecarReady" can be true before the engine is actually running.
+      // If we query too early, the list calls fail and the UI stays empty until a manual refresh.
+      const status = await getSidecarStatus();
+      if (status !== "running") return;
+
       const [sessionsData, projectsData] = await Promise.all([listSessions(), listProjects()]);
 
       // Convert Session to SessionInfo format
@@ -358,7 +396,7 @@ function App() {
     } finally {
       setHistoryLoading(false);
     }
-  }, [sidecarReady]);
+  }, []);
 
   useEffect(() => {
     loadHistory();
@@ -1018,7 +1056,11 @@ function App() {
                     setCurrentSessionId(id);
                     await loadHistory();
                   }}
-                  onSidecarConnected={() => setSidecarReady(true)}
+                  onSidecarConnected={() => {
+                    // Ensure we load history after the engine is actually running (especially on startup).
+                    setSidecarReady(true);
+                    void loadHistory();
+                  }}
                   usePlanMode={usePlanMode}
                   onPlanModeChange={setUsePlanMode}
                   onToggleTaskSidebar={() => setTaskSidebarOpen(!taskSidebarOpen)}

@@ -2,11 +2,13 @@
 // SQLite + sqlite-vec for vector storage
 
 use crate::memory::types::{
-    MemoryChunk, MemoryConfig, MemoryResult, MemoryStats, MemoryTier, DEFAULT_EMBEDDING_DIMENSION,
+    ClearFileIndexResult, MemoryChunk, MemoryConfig, MemoryResult, MemoryStats, MemoryTier,
+    ProjectMemoryStats, DEFAULT_EMBEDDING_DIMENSION,
 };
 use chrono::{DateTime, Utc};
 use rusqlite::{ffi::sqlite3_auto_extension, params, Connection, OptionalExtension, Row};
 use sqlite_vec::sqlite3_vec_init;
+use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -91,6 +93,39 @@ impl MemoryDatabase {
             [],
         )?;
 
+        // Migrations: file-derived columns on project_memory_chunks
+        // (SQLite doesn't support IF NOT EXISTS for columns, so we inspect table_info)
+        let existing_cols: HashSet<String> = {
+            let mut stmt = conn.prepare("PRAGMA table_info(project_memory_chunks)")?;
+            let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
+            rows.collect::<Result<HashSet<_>, _>>()?
+        };
+
+        if !existing_cols.contains("source_path") {
+            conn.execute(
+                "ALTER TABLE project_memory_chunks ADD COLUMN source_path TEXT",
+                [],
+            )?;
+        }
+        if !existing_cols.contains("source_mtime") {
+            conn.execute(
+                "ALTER TABLE project_memory_chunks ADD COLUMN source_mtime INTEGER",
+                [],
+            )?;
+        }
+        if !existing_cols.contains("source_size") {
+            conn.execute(
+                "ALTER TABLE project_memory_chunks ADD COLUMN source_size INTEGER",
+                [],
+            )?;
+        }
+        if !existing_cols.contains("source_hash") {
+            conn.execute(
+                "ALTER TABLE project_memory_chunks ADD COLUMN source_hash TEXT",
+                [],
+            )?;
+        }
+
         // Project memory vectors (virtual table)
         conn.execute(
             &format!(
@@ -100,6 +135,33 @@ impl MemoryDatabase {
                 )",
                 DEFAULT_EMBEDDING_DIMENSION
             ),
+            [],
+        )?;
+
+        // File indexing tables (project-scoped)
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS project_file_index (
+                project_id TEXT NOT NULL,
+                path TEXT NOT NULL,
+                mtime INTEGER NOT NULL,
+                size INTEGER NOT NULL,
+                hash TEXT NOT NULL,
+                indexed_at TEXT NOT NULL,
+                PRIMARY KEY(project_id, path)
+            )",
+            [],
+        )?;
+
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS project_index_status (
+                project_id TEXT PRIMARY KEY,
+                last_indexed_at TEXT,
+                last_total_files INTEGER,
+                last_processed_files INTEGER,
+                last_indexed_files INTEGER,
+                last_skipped_files INTEGER,
+                last_errors INTEGER
+            )",
             [],
         )?;
 
@@ -173,6 +235,10 @@ impl MemoryDatabase {
             [],
         )?;
         conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_project_file_chunks ON project_memory_chunks(project_id, source, source_path)",
+            [],
+        )?;
+        conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_session_chunks_created ON session_memory_chunks(created_at)",
             [],
         )?;
@@ -225,8 +291,10 @@ impl MemoryDatabase {
             MemoryTier::Project => {
                 conn.execute(
                     &format!(
-                        "INSERT INTO {} (id, content, project_id, session_id, source, created_at, token_count, metadata) 
-                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                        "INSERT INTO {} (
+                            id, content, project_id, session_id, source, created_at, token_count, metadata,
+                            source_path, source_mtime, source_size, source_hash
+                         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
                         chunks_table
                     ),
                     params![
@@ -237,7 +305,11 @@ impl MemoryDatabase {
                         chunk.source,
                         created_at_str,
                         chunk.token_count,
-                        metadata_str
+                        metadata_str,
+                        chunk.source_path.clone(),
+                        chunk.source_mtime,
+                        chunk.source_size,
+                        chunk.source_hash.clone()
                     ],
                 )?;
             }
@@ -503,6 +575,10 @@ impl MemoryDatabase {
                     session_id: None,
                     project_id: None,
                     source,
+                    source_path: None,
+                    source_mtime: None,
+                    source_size: None,
+                    source_hash: None,
                     created_at,
                     token_count,
                     metadata,
@@ -789,6 +865,297 @@ impl MemoryDatabase {
         conn.execute("VACUUM", [])?;
         Ok(())
     }
+
+    // ---------------------------------------------------------------------
+    // Project file indexing helpers
+    // ---------------------------------------------------------------------
+
+    pub async fn project_file_index_count(&self, project_id: &str) -> MemoryResult<i64> {
+        let conn = self.conn.lock().await;
+        let n: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM project_file_index WHERE project_id = ?1",
+            params![project_id],
+            |row| row.get(0),
+        )?;
+        Ok(n)
+    }
+
+    pub async fn project_has_file_chunks(&self, project_id: &str) -> MemoryResult<bool> {
+        let conn = self.conn.lock().await;
+        let exists: Option<i64> = conn
+            .query_row(
+                "SELECT 1 FROM project_memory_chunks WHERE project_id = ?1 AND source = 'file' LIMIT 1",
+                params![project_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        Ok(exists.is_some())
+    }
+
+    pub async fn get_file_index_entry(
+        &self,
+        project_id: &str,
+        path: &str,
+    ) -> MemoryResult<Option<(i64, i64, String)>> {
+        let conn = self.conn.lock().await;
+        let row: Option<(i64, i64, String)> = conn
+            .query_row(
+                "SELECT mtime, size, hash FROM project_file_index WHERE project_id = ?1 AND path = ?2",
+                params![project_id, path],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .optional()?;
+        Ok(row)
+    }
+
+    pub async fn upsert_file_index_entry(
+        &self,
+        project_id: &str,
+        path: &str,
+        mtime: i64,
+        size: i64,
+        hash: &str,
+    ) -> MemoryResult<()> {
+        let conn = self.conn.lock().await;
+        let indexed_at = Utc::now().to_rfc3339();
+        conn.execute(
+            "INSERT INTO project_file_index (project_id, path, mtime, size, hash, indexed_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT(project_id, path) DO UPDATE SET
+                mtime = excluded.mtime,
+                size = excluded.size,
+                hash = excluded.hash,
+                indexed_at = excluded.indexed_at",
+            params![project_id, path, mtime, size, hash, indexed_at],
+        )?;
+        Ok(())
+    }
+
+    pub async fn delete_file_index_entry(&self, project_id: &str, path: &str) -> MemoryResult<()> {
+        let conn = self.conn.lock().await;
+        conn.execute(
+            "DELETE FROM project_file_index WHERE project_id = ?1 AND path = ?2",
+            params![project_id, path],
+        )?;
+        Ok(())
+    }
+
+    pub async fn list_file_index_paths(&self, project_id: &str) -> MemoryResult<Vec<String>> {
+        let conn = self.conn.lock().await;
+        let mut stmt = conn.prepare("SELECT path FROM project_file_index WHERE project_id = ?1")?;
+        let rows = stmt.query_map(params![project_id], |row| row.get::<_, String>(0))?;
+        Ok(rows.collect::<Result<Vec<_>, _>>()?)
+    }
+
+    pub async fn delete_project_file_chunks_by_path(
+        &self,
+        project_id: &str,
+        source_path: &str,
+    ) -> MemoryResult<(i64, i64)> {
+        let conn = self.conn.lock().await;
+
+        let chunks_deleted: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM project_memory_chunks
+             WHERE project_id = ?1 AND source = 'file' AND source_path = ?2",
+            params![project_id, source_path],
+            |row| row.get(0),
+        )?;
+
+        let bytes_estimated: i64 = conn.query_row(
+            "SELECT COALESCE(SUM(LENGTH(content)), 0) FROM project_memory_chunks
+             WHERE project_id = ?1 AND source = 'file' AND source_path = ?2",
+            params![project_id, source_path],
+            |row| row.get(0),
+        )?;
+
+        // Delete vectors first (keep order consistent with other clears)
+        conn.execute(
+            "DELETE FROM project_memory_vectors WHERE chunk_id IN
+             (SELECT id FROM project_memory_chunks WHERE project_id = ?1 AND source = 'file' AND source_path = ?2)",
+            params![project_id, source_path],
+        )?;
+
+        conn.execute(
+            "DELETE FROM project_memory_chunks WHERE project_id = ?1 AND source = 'file' AND source_path = ?2",
+            params![project_id, source_path],
+        )?;
+
+        Ok((chunks_deleted, bytes_estimated))
+    }
+
+    pub async fn upsert_project_index_status(
+        &self,
+        project_id: &str,
+        total_files: i64,
+        processed_files: i64,
+        indexed_files: i64,
+        skipped_files: i64,
+        errors: i64,
+    ) -> MemoryResult<()> {
+        let conn = self.conn.lock().await;
+        let last_indexed_at = Utc::now().to_rfc3339();
+        conn.execute(
+            "INSERT INTO project_index_status (
+                project_id, last_indexed_at, last_total_files, last_processed_files,
+                last_indexed_files, last_skipped_files, last_errors
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+             ON CONFLICT(project_id) DO UPDATE SET
+                last_indexed_at = excluded.last_indexed_at,
+                last_total_files = excluded.last_total_files,
+                last_processed_files = excluded.last_processed_files,
+                last_indexed_files = excluded.last_indexed_files,
+                last_skipped_files = excluded.last_skipped_files,
+                last_errors = excluded.last_errors",
+            params![
+                project_id,
+                last_indexed_at,
+                total_files,
+                processed_files,
+                indexed_files,
+                skipped_files,
+                errors
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub async fn get_project_stats(&self, project_id: &str) -> MemoryResult<ProjectMemoryStats> {
+        let conn = self.conn.lock().await;
+
+        let project_chunks: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM project_memory_chunks WHERE project_id = ?1",
+            params![project_id],
+            |row| row.get(0),
+        )?;
+
+        let project_bytes: i64 = conn.query_row(
+            "SELECT COALESCE(SUM(LENGTH(content)), 0) FROM project_memory_chunks WHERE project_id = ?1",
+            params![project_id],
+            |row| row.get(0),
+        )?;
+
+        let file_index_chunks: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM project_memory_chunks WHERE project_id = ?1 AND source = 'file'",
+            params![project_id],
+            |row| row.get(0),
+        )?;
+
+        let file_index_bytes: i64 = conn.query_row(
+            "SELECT COALESCE(SUM(LENGTH(content)), 0) FROM project_memory_chunks WHERE project_id = ?1 AND source = 'file'",
+            params![project_id],
+            |row| row.get(0),
+        )?;
+
+        let indexed_files: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM project_file_index WHERE project_id = ?1",
+            params![project_id],
+            |row| row.get(0),
+        )?;
+
+        let status_row: Option<(Option<String>, Option<i64>, Option<i64>, Option<i64>, Option<i64>, Option<i64>)> =
+            conn
+                .query_row(
+                    "SELECT last_indexed_at, last_total_files, last_processed_files, last_indexed_files, last_skipped_files, last_errors
+                     FROM project_index_status WHERE project_id = ?1",
+                    params![project_id],
+                    |row| {
+                        Ok((
+                            row.get(0)?,
+                            row.get(1)?,
+                            row.get(2)?,
+                            row.get(3)?,
+                            row.get(4)?,
+                            row.get(5)?,
+                        ))
+                    },
+                )
+                .optional()?;
+
+        let (
+            last_indexed_at,
+            last_total_files,
+            last_processed_files,
+            last_indexed_files,
+            last_skipped_files,
+            last_errors,
+        ) = status_row.unwrap_or((None, None, None, None, None, None));
+
+        let last_indexed_at = last_indexed_at.and_then(|s| {
+            DateTime::parse_from_rfc3339(&s)
+                .ok()
+                .map(|dt| dt.with_timezone(&Utc))
+        });
+
+        Ok(ProjectMemoryStats {
+            project_id: project_id.to_string(),
+            project_chunks,
+            project_bytes,
+            file_index_chunks,
+            file_index_bytes,
+            indexed_files,
+            last_indexed_at,
+            last_total_files,
+            last_processed_files,
+            last_indexed_files,
+            last_skipped_files,
+            last_errors,
+        })
+    }
+
+    pub async fn clear_project_file_index(
+        &self,
+        project_id: &str,
+        vacuum: bool,
+    ) -> MemoryResult<ClearFileIndexResult> {
+        let conn = self.conn.lock().await;
+
+        let chunks_deleted: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM project_memory_chunks WHERE project_id = ?1 AND source = 'file'",
+            params![project_id],
+            |row| row.get(0),
+        )?;
+
+        let bytes_estimated: i64 = conn.query_row(
+            "SELECT COALESCE(SUM(LENGTH(content)), 0) FROM project_memory_chunks WHERE project_id = ?1 AND source = 'file'",
+            params![project_id],
+            |row| row.get(0),
+        )?;
+
+        // Delete vectors first
+        conn.execute(
+            "DELETE FROM project_memory_vectors WHERE chunk_id IN
+             (SELECT id FROM project_memory_chunks WHERE project_id = ?1 AND source = 'file')",
+            params![project_id],
+        )?;
+
+        // Delete file chunks
+        conn.execute(
+            "DELETE FROM project_memory_chunks WHERE project_id = ?1 AND source = 'file'",
+            params![project_id],
+        )?;
+
+        // Clear file index tracking + status
+        conn.execute(
+            "DELETE FROM project_file_index WHERE project_id = ?1",
+            params![project_id],
+        )?;
+        conn.execute(
+            "DELETE FROM project_index_status WHERE project_id = ?1",
+            params![project_id],
+        )?;
+
+        drop(conn); // release lock before VACUUM (which needs exclusive access)
+
+        if vacuum {
+            self.vacuum().await?;
+        }
+
+        Ok(ClearFileIndexResult {
+            chunks_deleted,
+            bytes_estimated,
+            did_vacuum: vacuum,
+        })
+    }
 }
 
 /// Convert a database row to a MemoryChunk
@@ -830,6 +1197,10 @@ fn row_to_chunk(row: &Row, tier: MemoryTier) -> Result<MemoryChunk, rusqlite::Er
         session_id,
         project_id,
         source,
+        source_path: None,
+        source_mtime: None,
+        source_size: None,
+        source_hash: None,
         created_at,
         token_count,
         metadata,
@@ -867,6 +1238,10 @@ mod tests {
             session_id: Some("session-1".to_string()),
             project_id: Some("project-1".to_string()),
             source: "user_message".to_string(),
+            source_path: None,
+            source_mtime: None,
+            source_size: None,
+            source_hash: None,
             created_at: Utc::now(),
             token_count: 10,
             metadata: None,
