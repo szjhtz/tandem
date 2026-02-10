@@ -12,6 +12,21 @@ pub struct SkillTemplateInfo {
 }
 
 fn resolve_templates_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    // In development (`tauri dev`), Tauri often copies resources into
+    // `target/**/resources/**`. That copy can lag behind local edits to
+    // `src-tauri/resources/**`, which makes newly-added templates appear "missing".
+    //
+    // Prefer the source `src-tauri/resources/skill-templates` directory when available.
+    #[cfg(debug_assertions)]
+    {
+        let dev = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("resources")
+            .join("skill-templates");
+        if dev.exists() {
+            return Ok(dev);
+        }
+    }
+
     let resource_dir = app
         .path()
         .resource_dir()
@@ -27,18 +42,6 @@ fn resolve_templates_dir(app: &AppHandle) -> Result<PathBuf, String> {
         .iter()
         .find(|p| p.exists())
         .cloned()
-        .or_else(|| {
-            #[cfg(debug_assertions)]
-            {
-                let dev = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                    .join("resources")
-                    .join("skill-templates");
-                if dev.exists() {
-                    return Some(dev);
-                }
-            }
-            None
-        })
         .ok_or_else(|| {
             format!(
                 "Skill templates directory not found. Looked in: {:?}",
