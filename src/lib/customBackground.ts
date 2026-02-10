@@ -66,6 +66,11 @@ export function applyCustomBackgroundUrl(
   root.style.setProperty("--custom-bg-repeat", css.repeat);
 }
 
+export function setCustomBackgroundOpacity(opacity: number) {
+  const root = document.documentElement;
+  root.style.setProperty("--custom-bg-opacity", String(opacity ?? 0));
+}
+
 export function applyCustomBackground(info: CustomBackgroundInfo | null | undefined) {
   const root = document.documentElement;
 

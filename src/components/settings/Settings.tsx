@@ -29,6 +29,7 @@ import {
   applyCustomBackground,
   getCustomBackgroundAssetUrl,
   mirrorCustomBackgroundToLocalStorage,
+  setCustomBackgroundOpacity,
   tryReadCustomBackgroundDataUrl,
 } from "@/lib/customBackground";
 import {
@@ -891,7 +892,8 @@ export function Settings({
                     };
 
                     setCustomBg(next);
-                    applyCustomBackground(next);
+                    // Avoid re-setting the background image URL on every slider tick (prevents flashing in some packaged builds).
+                    setCustomBackgroundOpacity(nextOpacity);
                     mirrorCustomBackgroundToLocalStorage(next);
 
                     if (bgSaveTimerRef.current) {

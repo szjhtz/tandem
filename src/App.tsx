@@ -822,439 +822,444 @@ function App() {
   };
 
   return (
-    <div className="flex h-screen app-background">
-      {/* Icon Sidebar */}
-      {effectiveView !== "onboarding" && effectiveView !== "sidecar-setup" && (
-        <motion.aside
-          className="flex w-16 flex-col items-center border-r border-border bg-surface py-4 z-20"
-          initial={{ x: -64 }}
-          animate={{ x: 0 }}
-          transition={{ duration: 0.3 }}
-        >
-          {/* Brand mark */}
-          <div className="mb-8">
-            <BrandMark size="md" />
-          </div>
+    <div className="h-screen w-screen app-background">
+      <div className="custom-bg-layer" aria-hidden="true" />
+      <div className="app-shell flex h-screen">
+        {/* Icon Sidebar */}
+        {effectiveView !== "onboarding" && effectiveView !== "sidecar-setup" && (
+          <motion.aside
+            className="flex w-16 flex-col items-center border-r border-border bg-surface py-4 z-20"
+            initial={{ x: -64 }}
+            animate={{ x: 0 }}
+            transition={{ duration: 0.3 }}
+          >
+            {/* Brand mark */}
+            <div className="mb-8">
+              <BrandMark size="md" />
+            </div>
 
-          {/* Navigation */}
-          <nav className="flex flex-1 flex-col items-center gap-2">
-            {/* Toggle sidebar button */}
-            <button
-              onClick={() => setSidebarOpen(!sidebarOpen)}
-              className="flex h-10 w-10 items-center justify-center rounded-lg text-text-muted transition-colors hover:bg-surface-elevated hover:text-text"
-              title={sidebarOpen ? "Hide history" : "Show history"}
-            >
-              {sidebarOpen ? (
-                <PanelLeftClose className="h-5 w-5" />
-              ) : (
-                <PanelLeft className="h-5 w-5" />
-              )}
-            </button>
-
-            <button
-              onClick={() => setView("chat")}
-              className={`flex h-10 w-10 items-center justify-center rounded-lg transition-colors ${
-                effectiveView === "chat"
-                  ? "bg-primary/20 text-primary"
-                  : "text-text-muted hover:bg-surface-elevated hover:text-text"
-              }`}
-              title="Chat"
-            >
-              <MessageSquare className="h-5 w-5" />
-            </button>
-            <button
-              onClick={handleOpenPacks}
-              className={`flex h-10 w-10 items-center justify-center rounded-lg transition-colors ${
-                effectiveView === "packs"
-                  ? "bg-primary/20 text-primary"
-                  : "text-text-muted hover:bg-surface-elevated hover:text-text"
-              }`}
-              title="Starter Packs"
-            >
-              <Sparkles className="h-5 w-5" />
-            </button>
-            <button
-              onClick={() => setView("extensions")}
-              className={`flex h-10 w-10 items-center justify-center rounded-lg transition-colors ${
-                effectiveView === "extensions"
-                  ? "bg-primary/20 text-primary"
-                  : "text-text-muted hover:bg-surface-elevated hover:text-text"
-              }`}
-              title="Extensions"
-            >
-              <Blocks className="h-5 w-5" />
-            </button>
-            <button
-              onClick={() => setView("settings")}
-              className={`flex h-10 w-10 items-center justify-center rounded-lg transition-colors ${
-                effectiveView === "settings"
-                  ? "bg-primary/20 text-primary"
-                  : "text-text-muted hover:bg-surface-elevated hover:text-text"
-              }`}
-              title="Settings"
-            >
-              <SettingsIcon className="h-5 w-5" />
-            </button>
-
-            {/* Theme quick toggle */}
-            <button
-              onClick={() => cycleTheme()}
-              className="flex h-10 w-10 items-center justify-center rounded-lg text-text-muted transition-colors hover:bg-surface-elevated hover:text-text"
-              title="Switch theme"
-            >
-              <Palette className="h-5 w-5" />
-            </button>
-            <button
-              onClick={() => setView("about")}
-              className={`flex h-10 w-10 items-center justify-center rounded-lg transition-colors ${
-                effectiveView === "about"
-                  ? "bg-primary/20 text-primary"
-                  : "text-text-muted hover:bg-surface-elevated hover:text-text"
-              }`}
-              title="About"
-            >
-              <Info className="h-5 w-5" />
-            </button>
-
-            {/* Task sidebar toggle - only visible in chat */}
-            {effectiveView === "chat" && (usePlanMode || todosData.todos.length > 0) && (
+            {/* Navigation */}
+            <nav className="flex flex-1 flex-col items-center gap-2">
+              {/* Toggle sidebar button */}
               <button
-                onClick={() => setTaskSidebarOpen(!taskSidebarOpen)}
+                onClick={() => setSidebarOpen(!sidebarOpen)}
+                className="flex h-10 w-10 items-center justify-center rounded-lg text-text-muted transition-colors hover:bg-surface-elevated hover:text-text"
+                title={sidebarOpen ? "Hide history" : "Show history"}
+              >
+                {sidebarOpen ? (
+                  <PanelLeftClose className="h-5 w-5" />
+                ) : (
+                  <PanelLeft className="h-5 w-5" />
+                )}
+              </button>
+
+              <button
+                onClick={() => setView("chat")}
                 className={`flex h-10 w-10 items-center justify-center rounded-lg transition-colors ${
-                  taskSidebarOpen
+                  effectiveView === "chat"
                     ? "bg-primary/20 text-primary"
                     : "text-text-muted hover:bg-surface-elevated hover:text-text"
                 }`}
-                title="Tasks"
+                title="Chat"
               >
-                <ListTodo className="h-5 w-5" />
-                {todosData.todos.length > 0 && (
-                  <span className="absolute top-1 right-1 h-2 w-2 rounded-full bg-primary" />
-                )}
+                <MessageSquare className="h-5 w-5" />
               </button>
-            )}
-          </nav>
-
-          {/* Security indicator */}
-          <div className="mt-auto" title="Zero-trust security enabled">
-            <Shield className="h-4 w-4 text-success" />
-          </div>
-        </motion.aside>
-      )}
-
-      {/* Tabbed Sidebar (Sessions / Files) */}
-      {effectiveView === "chat" && (
-        <motion.div
-          className="flex h-full flex-col border-r border-border bg-surface z-10 overflow-hidden"
-          initial={false}
-          animate={{ width: sidebarOpen ? 320 : 0, opacity: sidebarOpen ? 1 : 0 }}
-          transition={{ duration: 0.25, ease: "easeOut" }}
-          style={{ pointerEvents: sidebarOpen ? "auto" : "none" }}
-        >
-          {/* Tab Switcher */}
-          <div className="flex border-b border-border">
-            <button
-              onClick={() => setSidebarTab("sessions")}
-              className={cn(
-                "flex-1 px-4 py-3 text-sm font-medium transition-colors flex items-center justify-center gap-2",
-                sidebarTab === "sessions"
-                  ? "border-b-2 border-primary text-primary"
-                  : "text-text-muted hover:text-text hover:bg-surface-elevated"
-              )}
-            >
-              <MessageSquare className="h-4 w-4" />
-              Sessions
-            </button>
-            <button
-              onClick={() => setSidebarTab("files")}
-              className={cn(
-                "flex-1 px-4 py-3 text-sm font-medium transition-colors flex items-center justify-center gap-2",
-                sidebarTab === "files"
-                  ? "border-b-2 border-primary text-primary"
-                  : "text-text-muted hover:text-text hover:bg-surface-elevated"
-              )}
-            >
-              <Files className="h-4 w-4" />
-              Files
-            </button>
-          </div>
-
-          {/* Tab Content */}
-          <div className="flex-1 overflow-hidden flex flex-col">
-            {sidebarTab === "sessions" ? (
-              <>
-                {/* Unified Sessions List */}
-                <div className="flex-1 overflow-hidden">
-                  <SessionSidebar
-                    isOpen={true}
-                    onToggle={() => setSidebarOpen(!sidebarOpen)}
-                    sessions={sessions.filter((session) => {
-                      // Only show sessions from the active project
-                      if (!activeProject) return true;
-                      if (!session.directory) return false;
-
-                      // Normalize paths for comparison: lowercase, standard slashes, remove trailing slash
-                      const normSession = session.directory
-                        .toLowerCase()
-                        .replace(/\\/g, "/")
-                        .replace(/\/$/, "");
-                      const normProject = activeProject.path
-                        .toLowerCase()
-                        .replace(/\\/g, "/")
-                        .replace(/\/$/, "");
-
-                      // Check if session directory starts with or contains the project path
-                      // We check both ways to handle nested workspaces or root mismatches
-                      return normSession.includes(normProject) || normProject.includes(normSession);
-                    })}
-                    runs={orchestratorRuns}
-                    projects={projects}
-                    currentSessionId={currentSessionId}
-                    currentRunId={currentOrchestratorRunId}
-                    onSelectSession={handleSelectSession}
-                    onSelectRun={(runId) => {
-                      setCurrentOrchestratorRunId(runId);
-                      setOrchestratorOpen(true);
-                    }}
-                    onNewChat={handleNewChat}
-                    onOpenPacks={() => setView("packs")}
-                    onDeleteSession={handleDeleteSession}
-                    onDeleteRun={handleDeleteOrchestratorRun}
-                    isLoading={historyLoading}
-                    userProjects={userProjects}
-                    activeProject={activeProject}
-                    onSwitchProject={handleSwitchProject}
-                    onAddProject={handleAddProject}
-                    onManageProjects={handleManageProjects}
-                    projectSwitcherLoading={projectSwitcherLoading}
-                  />
-                </div>
-              </>
-            ) : (
-              <FileBrowser
-                rootPath={activeProject?.path || null}
-                onFileSelect={(file) => setSelectedFile(file)}
-                selectedPath={selectedFile?.path}
-              />
-            )}
-          </div>
-        </motion.div>
-      )}
-
-      {/* Main Content */}
-      <main className="flex-1 overflow-hidden relative flex">
-        {effectiveView === "sidecar-setup" ? (
-          <motion.div
-            key="sidecar-setup"
-            className="flex h-full w-full items-center justify-center app-background"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.8, ease: "easeOut" }}
-          >
-            <SidecarDownloader onComplete={handleSidecarReady} />
-          </motion.div>
-        ) : effectiveView === "onboarding" ? (
-          <OnboardingWizard
-            hasConfiguredProvider={hasConfiguredProvider}
-            hasWorkspace={!!state?.has_workspace}
-            error={error}
-            onChooseFolder={handleAddProject}
-            onOpenProviders={() => {
-              setSettingsInitialSection("providers");
-              setView("settings");
-            }}
-            onBrowsePacks={() => setView("packs")}
-            onSkip={() => {
-              setSettingsInitialSection("projects");
-              setView("settings");
-            }}
-          />
-        ) : effectiveView === "packs" ? (
-          <PacksPanel
-            activeProjectPath={activeProject?.path || state?.workspace_path || undefined}
-            onOpenInstalledPack={handleOpenInstalledPack}
-            onOpenSkills={() => {
-              setExtensionsInitialTab("skills");
-              setView("extensions");
-            }}
-          />
-        ) : effectiveView === "settings" ? (
-          <motion.div
-            key="settings"
-            className="h-full w-full app-background"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.3, ease: "easeOut" }}
-          >
-            <Settings
-              onClose={handleSettingsClose}
-              onProjectChange={loadUserProjects}
-              onProviderChange={refreshAppState}
-              initialSection={settingsInitialSection ?? undefined}
-              onInitialSectionConsumed={() => setSettingsInitialSection(null)}
-            />
-          </motion.div>
-        ) : effectiveView === "extensions" ? (
-          <motion.div
-            key="extensions"
-            className="h-full w-full app-background"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.3, ease: "easeOut" }}
-          >
-            <Extensions
-              workspacePath={activeProject?.path || state?.workspace_path || null}
-              initialTab={extensionsInitialTab ?? undefined}
-              onInitialTabConsumed={() => setExtensionsInitialTab(null)}
-              onClose={() => setView("chat")}
-            />
-          </motion.div>
-        ) : effectiveView === "about" ? (
-          <motion.div
-            key="about"
-            className="h-full w-full app-background relative"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.3, ease: "easeOut" }}
-          >
-            <div className="absolute right-4 top-4 z-10">
               <button
-                type="button"
-                onClick={() => setView("chat")}
-                className="rounded-lg border border-border bg-surface/70 px-3 py-2 text-sm text-text transition-colors hover:bg-surface-elevated"
+                onClick={handleOpenPacks}
+                className={`flex h-10 w-10 items-center justify-center rounded-lg transition-colors ${
+                  effectiveView === "packs"
+                    ? "bg-primary/20 text-primary"
+                    : "text-text-muted hover:bg-surface-elevated hover:text-text"
+                }`}
+                title="Starter Packs"
               >
-                Close
+                <Sparkles className="h-5 w-5" />
+              </button>
+              <button
+                onClick={() => setView("extensions")}
+                className={`flex h-10 w-10 items-center justify-center rounded-lg transition-colors ${
+                  effectiveView === "extensions"
+                    ? "bg-primary/20 text-primary"
+                    : "text-text-muted hover:bg-surface-elevated hover:text-text"
+                }`}
+                title="Extensions"
+              >
+                <Blocks className="h-5 w-5" />
+              </button>
+              <button
+                onClick={() => setView("settings")}
+                className={`flex h-10 w-10 items-center justify-center rounded-lg transition-colors ${
+                  effectiveView === "settings"
+                    ? "bg-primary/20 text-primary"
+                    : "text-text-muted hover:bg-surface-elevated hover:text-text"
+                }`}
+                title="Settings"
+              >
+                <SettingsIcon className="h-5 w-5" />
+              </button>
+
+              {/* Theme quick toggle */}
+              <button
+                onClick={() => cycleTheme()}
+                className="flex h-10 w-10 items-center justify-center rounded-lg text-text-muted transition-colors hover:bg-surface-elevated hover:text-text"
+                title="Switch theme"
+              >
+                <Palette className="h-5 w-5" />
+              </button>
+              <button
+                onClick={() => setView("about")}
+                className={`flex h-10 w-10 items-center justify-center rounded-lg transition-colors ${
+                  effectiveView === "about"
+                    ? "bg-primary/20 text-primary"
+                    : "text-text-muted hover:bg-surface-elevated hover:text-text"
+                }`}
+                title="About"
+              >
+                <Info className="h-5 w-5" />
+              </button>
+
+              {/* Task sidebar toggle - only visible in chat */}
+              {effectiveView === "chat" && (usePlanMode || todosData.todos.length > 0) && (
+                <button
+                  onClick={() => setTaskSidebarOpen(!taskSidebarOpen)}
+                  className={`flex h-10 w-10 items-center justify-center rounded-lg transition-colors ${
+                    taskSidebarOpen
+                      ? "bg-primary/20 text-primary"
+                      : "text-text-muted hover:bg-surface-elevated hover:text-text"
+                  }`}
+                  title="Tasks"
+                >
+                  <ListTodo className="h-5 w-5" />
+                  {todosData.todos.length > 0 && (
+                    <span className="absolute top-1 right-1 h-2 w-2 rounded-full bg-primary" />
+                  )}
+                </button>
+              )}
+            </nav>
+
+            {/* Security indicator */}
+            <div className="mt-auto" title="Zero-trust security enabled">
+              <Shield className="h-4 w-4 text-success" />
+            </div>
+          </motion.aside>
+        )}
+
+        {/* Tabbed Sidebar (Sessions / Files) */}
+        {effectiveView === "chat" && (
+          <motion.div
+            className="flex h-full flex-col border-r border-border bg-surface z-10 overflow-hidden"
+            initial={false}
+            animate={{ width: sidebarOpen ? 320 : 0, opacity: sidebarOpen ? 1 : 0 }}
+            transition={{ duration: 0.25, ease: "easeOut" }}
+            style={{ pointerEvents: sidebarOpen ? "auto" : "none" }}
+          >
+            {/* Tab Switcher */}
+            <div className="flex border-b border-border">
+              <button
+                onClick={() => setSidebarTab("sessions")}
+                className={cn(
+                  "flex-1 px-4 py-3 text-sm font-medium transition-colors flex items-center justify-center gap-2",
+                  sidebarTab === "sessions"
+                    ? "border-b-2 border-primary text-primary"
+                    : "text-text-muted hover:text-text hover:bg-surface-elevated"
+                )}
+              >
+                <MessageSquare className="h-4 w-4" />
+                Sessions
+              </button>
+              <button
+                onClick={() => setSidebarTab("files")}
+                className={cn(
+                  "flex-1 px-4 py-3 text-sm font-medium transition-colors flex items-center justify-center gap-2",
+                  sidebarTab === "files"
+                    ? "border-b-2 border-primary text-primary"
+                    : "text-text-muted hover:text-text hover:bg-surface-elevated"
+                )}
+              >
+                <Files className="h-4 w-4" />
+                Files
               </button>
             </div>
-            <About />
-          </motion.div>
-        ) : (
-          <>
-            {/* Chat Area */}
-            <div className={cn("flex-1 overflow-hidden relative", selectedFile && "w-1/2")}>
-              {orchestratorOpen ? (
-                // Orchestrator as main view
-                <OrchestratorPanel
-                  runId={currentOrchestratorRunId}
-                  onClose={() => {
-                    setOrchestratorOpen(false);
-                    // Reset to default agent when closing
-                    setSelectedAgent(undefined);
-                  }}
-                />
+
+            {/* Tab Content */}
+            <div className="flex-1 overflow-hidden flex flex-col">
+              {sidebarTab === "sessions" ? (
+                <>
+                  {/* Unified Sessions List */}
+                  <div className="flex-1 overflow-hidden">
+                    <SessionSidebar
+                      isOpen={true}
+                      onToggle={() => setSidebarOpen(!sidebarOpen)}
+                      sessions={sessions.filter((session) => {
+                        // Only show sessions from the active project
+                        if (!activeProject) return true;
+                        if (!session.directory) return false;
+
+                        // Normalize paths for comparison: lowercase, standard slashes, remove trailing slash
+                        const normSession = session.directory
+                          .toLowerCase()
+                          .replace(/\\/g, "/")
+                          .replace(/\/$/, "");
+                        const normProject = activeProject.path
+                          .toLowerCase()
+                          .replace(/\\/g, "/")
+                          .replace(/\/$/, "");
+
+                        // Check if session directory starts with or contains the project path
+                        // We check both ways to handle nested workspaces or root mismatches
+                        return (
+                          normSession.includes(normProject) || normProject.includes(normSession)
+                        );
+                      })}
+                      runs={orchestratorRuns}
+                      projects={projects}
+                      currentSessionId={currentSessionId}
+                      currentRunId={currentOrchestratorRunId}
+                      onSelectSession={handleSelectSession}
+                      onSelectRun={(runId) => {
+                        setCurrentOrchestratorRunId(runId);
+                        setOrchestratorOpen(true);
+                      }}
+                      onNewChat={handleNewChat}
+                      onOpenPacks={() => setView("packs")}
+                      onDeleteSession={handleDeleteSession}
+                      onDeleteRun={handleDeleteOrchestratorRun}
+                      isLoading={historyLoading}
+                      userProjects={userProjects}
+                      activeProject={activeProject}
+                      onSwitchProject={handleSwitchProject}
+                      onAddProject={handleAddProject}
+                      onManageProjects={handleManageProjects}
+                      projectSwitcherLoading={projectSwitcherLoading}
+                    />
+                  </div>
+                </>
               ) : (
-                // Chat view
-                <Chat
-                  key={activeProject?.id || "no-project"}
-                  workspacePath={activeProject?.path || state?.workspace_path || null}
-                  sessionId={currentSessionId}
-                  onSessionCreated={async (id) => {
-                    setCurrentSessionId(id);
-                    await loadHistory();
-                  }}
-                  onSidecarConnected={() => {
-                    // Ensure we load history after the engine is actually running (especially on startup).
-                    setSidecarReady(true);
-                    void loadHistory();
-                  }}
-                  usePlanMode={usePlanMode}
-                  onPlanModeChange={setUsePlanMode}
-                  onToggleTaskSidebar={() => setTaskSidebarOpen(!taskSidebarOpen)}
-                  executePendingTasksTrigger={executePendingTrigger}
-                  onGeneratingChange={setIsExecutingTasks}
-                  pendingTasks={todosData.todos}
-                  fileToAttach={fileToAttach || undefined}
-                  onFileAttached={() => setFileToAttach(null)}
-                  selectedAgent={selectedAgent}
-                  onAgentChange={handleAgentChange}
-                  hasConfiguredProvider={hasConfiguredProvider}
-                  activeProviderId={activeProviderId || undefined}
-                  activeProviderLabel={activeProviderInfo?.providerLabel || undefined}
-                  activeModelLabel={activeProviderInfo?.modelLabel || undefined}
-                  onOpenSettings={() => setView("settings")}
-                  onOpenPacks={() => setView("packs")}
-                  onOpenExtensions={(tab) => {
-                    setExtensionsInitialTab(tab ?? "skills");
-                    setView("extensions");
-                  }}
-                  onProviderChange={refreshAppState}
-                  draftMessage={draftMessage ?? undefined}
-                  onDraftMessageConsumed={() => setDraftMessage(null)}
-                  onFileOpen={(filePath) => {
-                    // Resolve relative paths to absolute using workspace path
-                    const workspacePath = activeProject?.path || state?.workspace_path;
-                    let absolutePath = filePath;
-
-                    // If path is not absolute, resolve it relative to workspace
-                    if (workspacePath && !filePath.match(/^([a-zA-Z]:[\\/]|\/)/)) {
-                      absolutePath = `${workspacePath}/${filePath}`.replace(/\\/g, "/");
-                    }
-
-                    // Create FileEntry from path and open in preview
-                    const fileName = absolutePath.split(/[\\/]/).pop() || absolutePath;
-                    const fileEntry: FileEntry = {
-                      path: absolutePath,
-                      name: fileName,
-                      is_directory: false,
-                      extension: fileName.includes(".") ? fileName.split(".").pop() : undefined,
-                    };
-                    setSelectedFile(fileEntry);
-                    setSidebarTab("files"); // Switch to files tab for context
-                  }}
+                <FileBrowser
+                  rootPath={activeProject?.path || null}
+                  onFileSelect={(file) => setSelectedFile(file)}
+                  selectedPath={selectedFile?.path}
                 />
               )}
             </div>
-
-            {/* File Preview Panel */}
-            <AnimatePresence>
-              {selectedFile && (
-                <motion.div
-                  initial={{ width: 0, opacity: 0 }}
-                  animate={{ width: "50%", opacity: 1 }}
-                  exit={{ width: 0, opacity: 0 }}
-                  transition={{ duration: 0.3 }}
-                  className="overflow-hidden"
-                >
-                  <FilePreview
-                    file={selectedFile}
-                    onClose={() => setSelectedFile(null)}
-                    onAddToChat={handleAddFileToChat}
-                  />
-                </motion.div>
-              )}
-            </AnimatePresence>
-
-            {/* Git Initialization Dialog */}
-            <GitInitDialog
-              isOpen={showGitDialog}
-              onClose={handleGitSkip}
-              onInitialize={handleGitInitialize}
-              gitInstalled={gitStatus?.git_installed ?? false}
-              folderPath={pendingProjectPath ?? ""}
-            />
-
-            {/* Task Sidebar - only show in chat mode */}
-            {!orchestratorOpen && (
-              <TaskSidebar
-                isOpen={taskSidebarOpen}
-                onClose={() => setTaskSidebarOpen(false)}
-                todos={todosData.todos}
-                pending={todosData.pending}
-                inProgress={todosData.inProgress}
-                completed={todosData.completed}
-                isLoading={todosData.isLoading}
-                onExecutePending={handleExecutePendingTasks}
-                isExecuting={isExecutingTasks}
-              />
-            )}
-          </>
+          </motion.div>
         )}
-      </main>
-      <AppUpdateOverlay />
+
+        {/* Main Content */}
+        <main className="flex-1 overflow-hidden relative flex">
+          {effectiveView === "sidecar-setup" ? (
+            <motion.div
+              key="sidecar-setup"
+              className="flex h-full w-full items-center justify-center app-background"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.8, ease: "easeOut" }}
+            >
+              <SidecarDownloader onComplete={handleSidecarReady} />
+            </motion.div>
+          ) : effectiveView === "onboarding" ? (
+            <OnboardingWizard
+              hasConfiguredProvider={hasConfiguredProvider}
+              hasWorkspace={!!state?.has_workspace}
+              error={error}
+              onChooseFolder={handleAddProject}
+              onOpenProviders={() => {
+                setSettingsInitialSection("providers");
+                setView("settings");
+              }}
+              onBrowsePacks={() => setView("packs")}
+              onSkip={() => {
+                setSettingsInitialSection("projects");
+                setView("settings");
+              }}
+            />
+          ) : effectiveView === "packs" ? (
+            <PacksPanel
+              activeProjectPath={activeProject?.path || state?.workspace_path || undefined}
+              onOpenInstalledPack={handleOpenInstalledPack}
+              onOpenSkills={() => {
+                setExtensionsInitialTab("skills");
+                setView("extensions");
+              }}
+            />
+          ) : effectiveView === "settings" ? (
+            <motion.div
+              key="settings"
+              className="h-full w-full app-background"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.3, ease: "easeOut" }}
+            >
+              <Settings
+                onClose={handleSettingsClose}
+                onProjectChange={loadUserProjects}
+                onProviderChange={refreshAppState}
+                initialSection={settingsInitialSection ?? undefined}
+                onInitialSectionConsumed={() => setSettingsInitialSection(null)}
+              />
+            </motion.div>
+          ) : effectiveView === "extensions" ? (
+            <motion.div
+              key="extensions"
+              className="h-full w-full app-background"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.3, ease: "easeOut" }}
+            >
+              <Extensions
+                workspacePath={activeProject?.path || state?.workspace_path || null}
+                initialTab={extensionsInitialTab ?? undefined}
+                onInitialTabConsumed={() => setExtensionsInitialTab(null)}
+                onClose={() => setView("chat")}
+              />
+            </motion.div>
+          ) : effectiveView === "about" ? (
+            <motion.div
+              key="about"
+              className="h-full w-full app-background relative"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.3, ease: "easeOut" }}
+            >
+              <div className="absolute right-4 top-4 z-10">
+                <button
+                  type="button"
+                  onClick={() => setView("chat")}
+                  className="rounded-lg border border-border bg-surface/70 px-3 py-2 text-sm text-text transition-colors hover:bg-surface-elevated"
+                >
+                  Close
+                </button>
+              </div>
+              <About />
+            </motion.div>
+          ) : (
+            <>
+              {/* Chat Area */}
+              <div className={cn("flex-1 overflow-hidden relative", selectedFile && "w-1/2")}>
+                {orchestratorOpen ? (
+                  // Orchestrator as main view
+                  <OrchestratorPanel
+                    runId={currentOrchestratorRunId}
+                    onClose={() => {
+                      setOrchestratorOpen(false);
+                      // Reset to default agent when closing
+                      setSelectedAgent(undefined);
+                    }}
+                  />
+                ) : (
+                  // Chat view
+                  <Chat
+                    key={activeProject?.id || "no-project"}
+                    workspacePath={activeProject?.path || state?.workspace_path || null}
+                    sessionId={currentSessionId}
+                    onSessionCreated={async (id) => {
+                      setCurrentSessionId(id);
+                      await loadHistory();
+                    }}
+                    onSidecarConnected={() => {
+                      // Ensure we load history after the engine is actually running (especially on startup).
+                      setSidecarReady(true);
+                      void loadHistory();
+                    }}
+                    usePlanMode={usePlanMode}
+                    onPlanModeChange={setUsePlanMode}
+                    onToggleTaskSidebar={() => setTaskSidebarOpen(!taskSidebarOpen)}
+                    executePendingTasksTrigger={executePendingTrigger}
+                    onGeneratingChange={setIsExecutingTasks}
+                    pendingTasks={todosData.todos}
+                    fileToAttach={fileToAttach || undefined}
+                    onFileAttached={() => setFileToAttach(null)}
+                    selectedAgent={selectedAgent}
+                    onAgentChange={handleAgentChange}
+                    hasConfiguredProvider={hasConfiguredProvider}
+                    activeProviderId={activeProviderId || undefined}
+                    activeProviderLabel={activeProviderInfo?.providerLabel || undefined}
+                    activeModelLabel={activeProviderInfo?.modelLabel || undefined}
+                    onOpenSettings={() => setView("settings")}
+                    onOpenPacks={() => setView("packs")}
+                    onOpenExtensions={(tab) => {
+                      setExtensionsInitialTab(tab ?? "skills");
+                      setView("extensions");
+                    }}
+                    onProviderChange={refreshAppState}
+                    draftMessage={draftMessage ?? undefined}
+                    onDraftMessageConsumed={() => setDraftMessage(null)}
+                    onFileOpen={(filePath) => {
+                      // Resolve relative paths to absolute using workspace path
+                      const workspacePath = activeProject?.path || state?.workspace_path;
+                      let absolutePath = filePath;
+
+                      // If path is not absolute, resolve it relative to workspace
+                      if (workspacePath && !filePath.match(/^([a-zA-Z]:[\\/]|\/)/)) {
+                        absolutePath = `${workspacePath}/${filePath}`.replace(/\\/g, "/");
+                      }
+
+                      // Create FileEntry from path and open in preview
+                      const fileName = absolutePath.split(/[\\/]/).pop() || absolutePath;
+                      const fileEntry: FileEntry = {
+                        path: absolutePath,
+                        name: fileName,
+                        is_directory: false,
+                        extension: fileName.includes(".") ? fileName.split(".").pop() : undefined,
+                      };
+                      setSelectedFile(fileEntry);
+                      setSidebarTab("files"); // Switch to files tab for context
+                    }}
+                  />
+                )}
+              </div>
+
+              {/* File Preview Panel */}
+              <AnimatePresence>
+                {selectedFile && (
+                  <motion.div
+                    initial={{ width: 0, opacity: 0 }}
+                    animate={{ width: "50%", opacity: 1 }}
+                    exit={{ width: 0, opacity: 0 }}
+                    transition={{ duration: 0.3 }}
+                    className="overflow-hidden"
+                  >
+                    <FilePreview
+                      file={selectedFile}
+                      onClose={() => setSelectedFile(null)}
+                      onAddToChat={handleAddFileToChat}
+                    />
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
+              {/* Git Initialization Dialog */}
+              <GitInitDialog
+                isOpen={showGitDialog}
+                onClose={handleGitSkip}
+                onInitialize={handleGitInitialize}
+                gitInstalled={gitStatus?.git_installed ?? false}
+                folderPath={pendingProjectPath ?? ""}
+              />
+
+              {/* Task Sidebar - only show in chat mode */}
+              {!orchestratorOpen && (
+                <TaskSidebar
+                  isOpen={taskSidebarOpen}
+                  onClose={() => setTaskSidebarOpen(false)}
+                  todos={todosData.todos}
+                  pending={todosData.pending}
+                  inProgress={todosData.inProgress}
+                  completed={todosData.completed}
+                  isLoading={todosData.isLoading}
+                  onExecutePending={handleExecutePendingTasks}
+                  isExecuting={isExecutingTasks}
+                />
+              )}
+            </>
+          )}
+        </main>
+        <AppUpdateOverlay />
+      </div>
     </div>
   );
 }
