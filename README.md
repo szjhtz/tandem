@@ -63,6 +63,10 @@ What Cursor did for developers, Tandem does for everyone.
 - **⏪ Full undo** - Rollback any AI operation with comprehensive operation journaling
 - **🧠 Long-Term Memory** - Vector database stores codebase context and history for smarter answers
 - **🧩 Skills System** - Import and manage custom AI capabilities and instructions
+- **🏷️ Skill runtime hints** - Starter skill cards show optional runtime requirements (Python/Node/Bash)
+- **📎 Document text extraction** - Extract text from PDF/DOCX/PPTX/XLSX/RTF for skills and chat context
+- **🐍 Workspace Python venv** - Guided setup creates `.opencode/.venv` and enforces venv-only tools
+- **🎨 Rich themes** - Enhanced background art and consistent gradient rendering across the app
 - **📋 Execution Planning** - Review and batch-approve multi-step AI operations before execution
 - **🔄 Auto-updates** - Seamless updates with code-signed releases (when using installers)
 
