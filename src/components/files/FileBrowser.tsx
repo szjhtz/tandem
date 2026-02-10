@@ -119,6 +119,14 @@ export function FileBrowser({ rootPath, onFileSelect, selectedPath }: FileBrowse
     let disposed = false;
     let unlisten: (() => void) | null = null;
 
+    const normalizeRoot = (p: string) => {
+      // Windows can surface verbatim paths (\\?\C:\...) in Rust logs and sometimes via APIs.
+      // Also, path case and slashes can differ; normalize so we don't accidentally ignore events.
+      let s = p;
+      if (s.startsWith("\\\\?\\")) s = s.slice("\\\\?\\".length);
+      return s.replace(/\\/g, "/").toLowerCase();
+    };
+
     const scheduleRefresh = () => {
       if (refreshTimerRef.current) {
         globalThis.clearTimeout(refreshTimerRef.current);
@@ -140,8 +148,18 @@ export function FileBrowser({ rootPath, onFileSelect, selectedPath }: FileBrowse
         const un = await listen<FileTreeChangedPayload>("file-tree-changed", (event) => {
           const payload = event.payload;
           if (!payload?.root) return;
-          // Only react to our active root
-          if (payload.root !== rootPath) return;
+          // Only react to our active root (normalized, tolerant for Windows path formatting).
+          // If this ever mismatches unexpectedly, we still refresh as a safe fallback since
+          // the Files view is mounted only for a single workspace.
+          const matchesRoot = normalizeRoot(payload.root) === normalizeRoot(rootPath);
+          if (!matchesRoot) {
+            // Fallback: refresh anyway, but keep the console noise low.
+            // eslint-disable-next-line no-console
+            console.debug?.("[FileBrowser] file-tree-changed root mismatch; refreshing anyway", {
+              payloadRoot: payload.root,
+              rootPath,
+            });
+          }
           scheduleRefresh();
         });
         unlisten = un;
