@@ -167,6 +167,10 @@ export function Chat({
   const generationTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastEventAtRef = useRef<number | null>(null);
   const prevPropSessionIdRef = useRef<string | null>(null);
+  // Track the currently active session without causing re-renders (used by stream handlers).
+  const currentSessionIdRef = useRef<string | null>(null);
+  // If we try to load history before the sidecar is running, stash the session id and retry later.
+  const deferredSessionLoadRef = useRef<string | null>(null);
 
   // Staging area hook
   const {
@@ -533,10 +537,18 @@ Start with task #1 and continue through each one. IMPORTANT: After verifying eac
     async (sessionId: string) => {
       setIsLoadingHistory(true);
       try {
-        // Check if sidecar is running before attempting to load
-        const status = await getSidecarStatus();
-        if (status !== "running") {
-          console.log("[LoadHistory] Sidecar not running, skipping history load");
+        // On startup, `propSessionId` can be set before the sidecar finishes auto-starting.
+        // If we just "skip" here, the session can appear selected but never load until the user
+        // changes sessions/projects (because the prop doesn't change). Defer instead.
+        if (sidecarStatus !== "running") {
+          console.log(
+            "[LoadHistory] Sidecar not running, deferring history load for:",
+            sessionId,
+            "(status:",
+            sidecarStatus,
+            ")"
+          );
+          deferredSessionLoadRef.current = sessionId;
           setIsLoadingHistory(false);
           return;
         }
@@ -683,8 +695,26 @@ Start with task #1 and continue through each one. IMPORTANT: After verifying eac
         setIsLoadingHistory(false);
       }
     },
-    [setError, setIsLoadingHistory, setMessages]
+    [setError, setIsLoadingHistory, setMessages, sidecarStatus]
   );
+
+  // If we deferred a history load while waiting for the sidecar to come up, retry once it is running.
+  useEffect(() => {
+    if (sidecarStatus !== "running") return;
+    if (isGenerating) return;
+
+    const deferredId = deferredSessionLoadRef.current;
+    if (!deferredId) return;
+
+    // Prefer the latest prop if it exists, but fall back to what we deferred.
+    const effectiveId = propSessionId || deferredId;
+    deferredSessionLoadRef.current = null;
+
+    console.log("[Chat] Sidecar running - loading deferred session history:", effectiveId);
+    setMessages([]);
+    currentAssistantMessageRef.current = "";
+    loadSessionHistory(effectiveId);
+  }, [sidecarStatus, isGenerating, propSessionId, loadSessionHistory, setMessages]);
 
   // Helper to determine activity type from tool name - DISABLED
   // const getActivityType = (tool: string): ActivityItem["type"] => {
@@ -739,10 +769,6 @@ Start with task #1 and continue through each one. IMPORTANT: After verifying eac
   //   // Fallback to tool name
   //   return tool.replace(/_/g, " ").replace(/\b\w/g, (l) => l.toUpperCase());
   // };
-
-  // Use a ref to track the current session without causing re-renders
-  const currentSessionIdRef = useRef<string | null>(null);
-  const deferredSessionLoadRef = useRef<string | null>(null);
 
   // Update ref when session changes (but this doesn't cause handleStreamEvent to recreate)
   useEffect(() => {

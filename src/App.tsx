@@ -646,8 +646,15 @@ function App() {
   };
 
   const handleSelectSession = (sessionId: string) => {
-    setCurrentSessionId(sessionId);
     setView("chat");
+    // If the user clicks the already-selected session, React won't emit a state change,
+    // and Chat won't reload history. Force a reload by briefly clearing then restoring.
+    if (sessionId === currentSessionId) {
+      setCurrentSessionId(null);
+      setTimeout(() => setCurrentSessionId(sessionId), 50);
+      return;
+    }
+    setCurrentSessionId(sessionId);
   };
 
   const handleNewChat = () => {

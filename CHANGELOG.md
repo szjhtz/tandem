@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Gradient Themes in Main Views**: Fix theme gradients not appearing in main app surfaces by avoiding Tailwind `bg-background` (background-color) for gradient-based theme backgrounds.
 - **Overlay Shine-Through**: Fix Settings/overlays occasionally appearing translucent when `bg-background/..` was applied to gradient themes.
+- **Startup Session Restore**: Fix restored sessions appearing selected but not opening until reselecting the folder (defer history load until the sidecar is running; allow re-clicking the selected session to reload).
 - **Dev Skill Template Discovery**: In `tauri dev`, load starter skill templates from `src-tauri/resources/skill-templates/` so newly added templates appear immediately (avoids stale `target/**/resources/**` copies).
 - **Logs Viewer UX**: Improve log viewer usability (fullscreen mode, and copy feedback).
 - **Skill Template Parsing**: Fix invalid bundled skill template frontmatter (missing `name`) so it is not skipped.
