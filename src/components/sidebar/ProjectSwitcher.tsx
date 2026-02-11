@@ -98,6 +98,31 @@ export function ProjectSwitcher({
               transition={{ duration: 0.15 }}
               className="bg-surface-elevated border border-border absolute left-0 right-0 top-full z-50 mt-2 max-h-96 overflow-y-auto rounded-lg shadow-2xl ring-1 ring-white/5"
             >
+              {/* Actions */}
+              <div className="p-2">
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    onClick={handleAddProject}
+                    disabled={isLoading}
+                    className="flex items-center justify-center gap-2 rounded-lg p-2.5 text-center transition-colors hover:bg-surface-elevated disabled:opacity-50"
+                  >
+                    <Plus className="h-4 w-4 text-primary" />
+                    <span className="text-sm text-primary">Add Folder</span>
+                  </button>
+                  <button
+                    onClick={handleManageProjects}
+                    disabled={isLoading}
+                    className="flex items-center justify-center gap-2 rounded-lg p-2.5 text-center transition-colors hover:bg-surface-elevated disabled:opacity-50"
+                  >
+                    <SettingsIcon className="h-4 w-4 text-text-muted" />
+                    <span className="text-sm text-text-muted">Manage</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Divider */}
+              <div className="my-2 border-t border-border" />
+
               {/* Folders List */}
               {projects.length > 0 ? (
                 <div className="p-2">
@@ -126,29 +151,6 @@ export function ProjectSwitcher({
                   <p className="text-sm text-text-muted">No folders yet</p>
                 </div>
               )}
-
-              {/* Divider */}
-              <div className="my-2 border-t border-border" />
-
-              {/* Actions */}
-              <div className="p-2">
-                <button
-                  onClick={handleAddProject}
-                  disabled={isLoading}
-                  className="flex w-full items-center gap-3 rounded-lg p-3 text-left transition-colors hover:bg-surface-elevated disabled:opacity-50"
-                >
-                  <Plus className="h-4 w-4 text-primary" />
-                  <span className="text-sm text-primary">Add Folder</span>
-                </button>
-                <button
-                  onClick={handleManageProjects}
-                  disabled={isLoading}
-                  className="flex w-full items-center gap-3 rounded-lg p-3 text-left transition-colors hover:bg-surface-elevated disabled:opacity-50"
-                >
-                  <SettingsIcon className="h-4 w-4 text-text-muted" />
-                  <span className="text-sm text-text-muted">Manage Folders</span>
-                </button>
-              </div>
             </motion.div>
           </>
         )}
