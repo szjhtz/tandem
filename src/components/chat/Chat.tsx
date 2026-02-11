@@ -1126,10 +1126,10 @@ Start with task #1 and continue through each one. IMPORTANT: After verifying eac
               const newToolCalls = lastMessage.toolCalls.map((tc) =>
                 tc.id === event.part_id
                   ? {
-                    ...tc,
-                    result: event.error || String(event.result || ""),
-                    status: (event.error ? "failed" : "completed") as "failed" | "completed",
-                  }
+                      ...tc,
+                      result: event.error || String(event.result || ""),
+                      status: (event.error ? "failed" : "completed") as "failed" | "completed",
+                    }
                   : tc
               );
               return [...prev.slice(0, -1), { ...lastMessage, toolCalls: newToolCalls }];
@@ -2125,12 +2125,13 @@ ${g.example}
 
           <div className="flex items-center gap-2">
             <div
-              className={`h-2 w-2 rounded-full ${sidecarStatus === "running"
+              className={`h-2 w-2 rounded-full ${
+                sidecarStatus === "running"
                   ? "bg-primary"
                   : sidecarStatus === "starting"
                     ? "bg-warning animate-pulse"
                     : "bg-text-subtle"
-                }`}
+              }`}
             />
             <span className="text-xs text-text-muted">
               {sidecarStatus === "running"
@@ -2346,7 +2347,7 @@ Start with task #1 and execute each one. Use the 'write' tool to create files im
             )}
 
             {showJumpToLatest && (
-              <div className="pointer-events-none sticky bottom-28 z-20 flex justify-end px-5">
+              <div className="pointer-events-none sticky bottom-28 z-20 flex justify-center px-5">
                 <button
                   type="button"
                   className="pointer-events-auto inline-flex items-center gap-2 rounded-full border border-primary/40 bg-surface-elevated/95 px-4 py-2 text-xs font-medium text-primary shadow-lg shadow-black/25 transition hover:border-primary/70 hover:bg-surface-elevated animate-pulse"
@@ -2413,10 +2414,15 @@ Start with task #1 and execute each one. Use the 'write' tool to create files im
                 <div className="border-t border-border bg-surface/70 px-4 py-3">
                   <div className="mx-auto flex w-full max-w-5xl items-start justify-between gap-3 rounded-lg border border-border bg-surface-elevated p-3">
                     <div className="min-w-0 flex-1">
-                      <p className="text-xs font-semibold text-text">Queued messages ({queuedMessages.length})</p>
+                      <p className="text-xs font-semibold text-text">
+                        Queued messages ({queuedMessages.length})
+                      </p>
                       <div className="mt-1 space-y-1">
                         {queuedMessages.slice(0, 3).map((q) => (
-                          <div key={q.id} className="flex items-center gap-2 text-xs text-text-muted">
+                          <div
+                            key={q.id}
+                            className="flex items-center gap-2 text-xs text-text-muted"
+                          >
                             <span className="truncate">{q.content || "(attachment only)"}</span>
                             <button
                               type="button"
@@ -2428,7 +2434,9 @@ Start with task #1 and execute each one. Use the 'write' tool to create files im
                           </div>
                         ))}
                         {queuedMessages.length > 3 && (
-                          <p className="text-[11px] text-text-subtle">+{queuedMessages.length - 3} more</p>
+                          <p className="text-[11px] text-text-subtle">
+                            +{queuedMessages.length - 3} more
+                          </p>
                         )}
                       </div>
                     </div>
@@ -2477,7 +2485,8 @@ Start with task #1 and execute each one. Use the 'write' tool to create files im
                   // Update the global provider config to switch to this model
                   try {
                     // Normalize provider ID (sidecar uses 'opencode', tandem use 'opencode_zen')
-                    const providerId = providerIdRaw === "opencode" ? "opencode_zen" : providerIdRaw;
+                    const providerId =
+                      providerIdRaw === "opencode" ? "opencode_zen" : providerIdRaw;
                     const providerIdForSidecar =
                       providerId === "opencode_zen" ? "opencode" : providerId;
 
