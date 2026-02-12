@@ -1,3 +1,46 @@
+# Tandem v0.2.25 Release Notes
+
+## Highlights
+
+- **Canonical Marketing Core 9**: Added dedicated starter skills for SEO audit, social content, content strategy, copywriting/editing, email sequencing, launch planning, competitor alternatives, and shared product marketing context.
+- **Template Install Completeness**: Starter template install now copies full template folders (including `references/`, scripts, and assets), not just `SKILL.md`.
+- **Skill Parser Reliability Fixes**: Removed UTF-8 BOM issues in template `SKILL.md` files and fixed YAML `tags` format in affected starter skills.
+- **No-Duplicate Marketing Routing**: Added canonical mapping guidance and updated UI recommendations to prioritize canonical marketing starters over legacy fallback templates.
+- **Shared Context Path Update**: Migrated marketing context references from `.claude/...` to `scripts/marketing/_shared/...`.
+- **Version Sync**: Bumped app metadata to `0.2.25`.
+
+## Complete Feature List
+
+### Skills
+
+- Added starter templates:
+  - `product-marketing-context`
+  - `content-strategy`
+  - `seo-audit`
+  - `social-content`
+  - `copywriting`
+  - `copy-editing`
+  - `email-sequence`
+  - `competitor-alternatives`
+  - `launch-strategy`
+- Updated marketing legacy templates to indicate fallback usage.
+- Added shared `references/product-marketing-context-template.md` to canonical marketing templates.
+
+### Backend
+
+- Updated `skills_install_template` to recursively copy template directories.
+- Added template-directory resolver helper for install path validation.
+
+### UI
+
+- Updated Skills recommendations to rank canonical marketing templates first for marketing-intent discovery.
+
+### Docs
+
+- Added `docs/marketing_skill_canonical_map.md`.
+
+---
+
 # Tandem v0.2.24 Release Notes
 
 ## Highlights

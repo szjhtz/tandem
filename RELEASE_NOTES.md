@@ -2,6 +2,17 @@
 
 Canonical release notes live in `docs/RELEASE_NOTES.md`.
 
+## v0.2.25 (2026-02-12)
+
+- Skills: Added canonical Core 9 marketing starter templates (`product-marketing-context`, `content-strategy`, `seo-audit`, `social-content`, `copywriting`, `copy-editing`, `email-sequence`, `competitor-alternatives`, `launch-strategy`).
+- Skills: Template installer now copies the full template directory (including `references/`, scripts, and assets), not only `SKILL.md`.
+- Skills: Fixed starter-template parsing issues caused by UTF-8 BOM in `SKILL.md` files (`missing or malformed frontmatter`).
+- Skills: Fixed invalid YAML `tags` in `development-estimation` and `mode-builder`.
+- Skills UI: Prioritized canonical marketing skills over legacy/fallback marketing templates in recommendations.
+- Marketing workflow: Replaced `.claude/product-marketing-context.md` references with `scripts/marketing/_shared/product-marketing-context.md` and bundled shared context templates.
+- Docs: Added canonical no-duplicate routing map at `docs/marketing_skill_canonical_map.md`.
+- Release: Bumped version metadata to `0.2.25` across app manifests.
+
 ## v0.2.24 (2026-02-12)
 
 - Modes: Added full custom modes MVP across backend + frontend with server-side enforcement and safe fallbacks.

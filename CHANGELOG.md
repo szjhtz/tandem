@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.25] - 2026-02-12
+
+### Added
+
+- **Canonical Marketing Skills (Core 9)**: Added starter skill templates for `product-marketing-context`, `content-strategy`, `seo-audit`, `social-content`, `copywriting`, `copy-editing`, `email-sequence`, `competitor-alternatives`, and `launch-strategy`.
+- **Marketing Skills Canonical Map**: Added `docs/marketing_skill_canonical_map.md` to document no-duplicate routing and fallback strategy.
+
+### Changed
+
+- **Skill Template Install Behavior**: `skills_install_template` now installs the full template directory recursively (not just `SKILL.md`), so bundled `references/`, scripts, and assets ship with installs.
+- **Marketing Starter Ordering**: Updated `SkillsPanel` recommendations to prioritize canonical marketing skills over legacy/fallback templates for marketing-intent discovery.
+- **Shared Marketing Context Path**: Replaced `.claude/product-marketing-context.md` references with `scripts/marketing/_shared/product-marketing-context.md` and included shared context template references.
+
+### Fixed
+
+- **Skill Template Parsing Reliability**: Re-saved template `SKILL.md` files in UTF-8 without BOM to prevent false `missing or malformed frontmatter (---...---)` parser failures.
+- **Template Frontmatter YAML**: Fixed invalid `tags` format in `development-estimation` and `mode-builder` (`string` -> YAML sequence).
+- **Legacy Marketing Template Labeling**: Updated overlapping bundled marketing templates to clearly indicate legacy/fallback usage.
+- **Version Metadata Sync**: Bumped version to `0.2.25` across app metadata for release consistency.
+
 ## [0.2.24] - 2026-02-12
 
 ### Added
@@ -590,7 +610,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Project-based organization
 - Real-time streaming responses
 
-[Unreleased]: https://github.com/frumu-ai/tandem/compare/v0.2.24...HEAD
+[Unreleased]: https://github.com/frumu-ai/tandem/compare/v0.2.25...HEAD
+[0.2.25]: https://github.com/frumu-ai/tandem/compare/v0.2.24...v0.2.25
 [0.2.24]: https://github.com/frumu-ai/tandem/compare/v0.2.23...v0.2.24
 [0.2.23]: https://github.com/frumu-ai/tandem/compare/v0.2.22...v0.2.23
 [0.2.22]: https://github.com/frumu-ai/tandem/compare/v0.2.21...v0.2.22
