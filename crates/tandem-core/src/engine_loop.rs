@@ -2,19 +2,27 @@ use futures::StreamExt;
 use serde_json::{json, Map, Number, Value};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use tandem_observability::{emit_event, ObservabilityEvent, ProcessKind};
 use tandem_providers::{ChatMessage, ProviderRegistry, StreamChunk};
-use tandem_tools::ToolRegistry;
+use tandem_tools::{validate_tool_schemas, ToolRegistry};
 use tandem_types::{
     EngineEvent, Message, MessagePart, MessagePartInput, MessageRole, SendMessageRequest,
 };
 use tandem_wire::WireMessagePart;
 use tokio_util::sync::CancellationToken;
+use tracing::Level;
 
 use crate::{
     AgentDefinition, AgentRegistry, CancellationRegistry, EventBus, PermissionAction,
     PermissionManager, PluginRegistry, Storage,
 };
 use tokio::sync::RwLock;
+
+#[derive(Default)]
+struct StreamedToolCall {
+    name: String,
+    args: String,
+}
 
 #[derive(Clone)]
 pub struct EngineLoop {
@@ -75,6 +83,16 @@ impl EngineLoop {
         session_id: String,
         req: SendMessageRequest,
     ) -> anyhow::Result<()> {
+        self.run_prompt_async_with_context(session_id, req, None)
+            .await
+    }
+
+    pub async fn run_prompt_async_with_context(
+        &self,
+        session_id: String,
+        req: SendMessageRequest,
+        correlation_id: Option<String>,
+    ) -> anyhow::Result<()> {
         let session_provider = self
             .storage
             .get_session(&session_id)
@@ -85,7 +103,26 @@ impl EngineLoop {
             .as_ref()
             .map(|m| m.provider_id.clone())
             .or(session_provider);
+        let correlation_ref = correlation_id.as_deref();
+        let model_id = req.model.as_ref().map(|m| m.model_id.as_str());
         let cancel = self.cancellations.create(&session_id).await;
+        emit_event(
+            Level::INFO,
+            ProcessKind::Engine,
+            ObservabilityEvent {
+                event: "provider.call.start",
+                component: "engine.loop",
+                correlation_id: correlation_ref,
+                session_id: Some(&session_id),
+                run_id: None,
+                message_id: None,
+                provider_id: provider_hint.as_deref(),
+                model_id,
+                status: Some("start"),
+                error_code: None,
+                detail: Some("run_prompt_async dispatch"),
+            },
+        );
         self.event_bus.publish(EngineEvent::new(
             "session.status",
             json!({"sessionID": session_id, "status":"running"}),
@@ -159,6 +196,7 @@ impl EngineLoop {
             let mut completion = String::new();
             let mut max_iterations = 25usize;
             let mut followup_context: Option<String> = None;
+            let mut last_tool_outputs: Vec<String> = Vec::new();
 
             while max_iterations > 0 && !cancel.is_cancelled() {
                 max_iterations -= 1;
@@ -178,23 +216,113 @@ impl EngineLoop {
                         content: extra,
                     });
                 }
+                let tool_schemas = self.tools.list().await;
+                if let Err(validation_err) = validate_tool_schemas(&tool_schemas) {
+                    let detail = validation_err.to_string();
+                    emit_event(
+                        Level::ERROR,
+                        ProcessKind::Engine,
+                        ObservabilityEvent {
+                            event: "provider.call.error",
+                            component: "engine.loop",
+                            correlation_id: correlation_ref,
+                            session_id: Some(&session_id),
+                            run_id: None,
+                            message_id: Some(&user_message_id),
+                            provider_id: provider_hint.as_deref(),
+                            model_id,
+                            status: Some("failed"),
+                            error_code: Some("TOOL_SCHEMA_INVALID"),
+                            detail: Some(&detail),
+                        },
+                    );
+                    anyhow::bail!("{detail}");
+                }
                 let stream = self
                     .providers
                     .stream_for_provider(
                         provider_hint.as_deref(),
                         messages,
-                        Some(self.tools.list().await),
+                        Some(tool_schemas),
                         cancel.clone(),
                     )
-                    .await?;
+                    .await
+                    .map_err(|err| {
+                        let error_text = err.to_string();
+                        let error_code = provider_error_code(&error_text);
+                        let detail = truncate_text(&error_text, 500);
+                        emit_event(
+                            Level::ERROR,
+                            ProcessKind::Engine,
+                            ObservabilityEvent {
+                                event: "provider.call.error",
+                                component: "engine.loop",
+                                correlation_id: correlation_ref,
+                                session_id: Some(&session_id),
+                                run_id: None,
+                                message_id: Some(&user_message_id),
+                                provider_id: provider_hint.as_deref(),
+                                model_id,
+                                status: Some("failed"),
+                                error_code: Some(error_code),
+                                detail: Some(&detail),
+                            },
+                        );
+                        err
+                    })?;
                 tokio::pin!(stream);
                 completion.clear();
+                let mut streamed_tool_calls: HashMap<String, StreamedToolCall> = HashMap::new();
                 while let Some(chunk) = stream.next().await {
-                    let Ok(chunk) = chunk else {
-                        continue;
+                    let chunk = match chunk {
+                        Ok(chunk) => chunk,
+                        Err(err) => {
+                            let error_text = err.to_string();
+                            let error_code = provider_error_code(&error_text);
+                            let detail = truncate_text(&error_text, 500);
+                            emit_event(
+                                Level::ERROR,
+                                ProcessKind::Engine,
+                                ObservabilityEvent {
+                                    event: "provider.call.error",
+                                    component: "engine.loop",
+                                    correlation_id: correlation_ref,
+                                    session_id: Some(&session_id),
+                                    run_id: None,
+                                    message_id: Some(&user_message_id),
+                                    provider_id: provider_hint.as_deref(),
+                                    model_id,
+                                    status: Some("failed"),
+                                    error_code: Some(error_code),
+                                    detail: Some(&detail),
+                                },
+                            );
+                            return Err(anyhow::anyhow!(
+                                "provider stream chunk error: {error_text}"
+                            ));
+                        }
                     };
                     match chunk {
                         StreamChunk::TextDelta(delta) => {
+                            if completion.is_empty() {
+                                emit_event(
+                                    Level::INFO,
+                                    ProcessKind::Engine,
+                                    ObservabilityEvent {
+                                        event: "provider.call.first_byte",
+                                        component: "engine.loop",
+                                        correlation_id: correlation_ref,
+                                        session_id: Some(&session_id),
+                                        run_id: None,
+                                        message_id: Some(&user_message_id),
+                                        provider_id: provider_hint.as_deref(),
+                                        model_id,
+                                        status: Some("streaming"),
+                                        error_code: None,
+                                        detail: Some("first text delta"),
+                                    },
+                                );
+                            }
                             completion.push_str(&delta);
                             let delta = truncate_text(&delta, 4_000);
                             let delta_part =
@@ -206,14 +334,37 @@ impl EngineLoop {
                         }
                         StreamChunk::ReasoningDelta(_reasoning) => {}
                         StreamChunk::Done { .. } => break,
-                        _ => {}
+                        StreamChunk::ToolCallStart { id, name } => {
+                            let entry = streamed_tool_calls.entry(id).or_default();
+                            if entry.name.is_empty() {
+                                entry.name = name;
+                            }
+                        }
+                        StreamChunk::ToolCallDelta { id, args_delta } => {
+                            let entry = streamed_tool_calls.entry(id).or_default();
+                            entry.args.push_str(&args_delta);
+                        }
+                        StreamChunk::ToolCallEnd { id: _ } => {}
                     }
                     if cancel.is_cancelled() {
                         break;
                     }
                 }
 
-                let tool_calls = parse_tool_invocations_from_response(&completion);
+                let mut tool_calls = streamed_tool_calls
+                    .into_values()
+                    .filter_map(|call| {
+                        if call.name.trim().is_empty() {
+                            return None;
+                        }
+                        let parsed_args = serde_json::from_str::<Value>(call.args.trim())
+                            .unwrap_or_else(|_| json!({}));
+                        Some((normalize_tool_name(&call.name), parsed_args))
+                    })
+                    .collect::<Vec<_>>();
+                if tool_calls.is_empty() {
+                    tool_calls = parse_tool_invocations_from_response(&completion);
+                }
                 if !tool_calls.is_empty() {
                     let mut outputs = Vec::new();
                     for (tool, args) in tool_calls {
@@ -234,6 +385,7 @@ impl EngineLoop {
                         }
                     }
                     if !outputs.is_empty() {
+                        last_tool_outputs = outputs.clone();
                         followup_context = Some(format!("{}\nContinue.", outputs.join("\n\n")));
                         continue;
                     }
@@ -241,8 +393,37 @@ impl EngineLoop {
 
                 break;
             }
+            if completion.trim().is_empty() && !last_tool_outputs.is_empty() {
+                let preview = last_tool_outputs
+                    .iter()
+                    .take(3)
+                    .map(|o| truncate_text(o, 240))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                completion = format!(
+                    "I completed project analysis steps using tools, but the model returned no final narrative text.\n\nTool result summary:\n{}",
+                    preview
+                );
+            }
             truncate_text(&completion, 16_000)
         };
+        emit_event(
+            Level::INFO,
+            ProcessKind::Engine,
+            ObservabilityEvent {
+                event: "provider.call.finish",
+                component: "engine.loop",
+                correlation_id: correlation_ref,
+                session_id: Some(&session_id),
+                run_id: None,
+                message_id: Some(&user_message_id),
+                provider_id: provider_hint.as_deref(),
+                model_id,
+                status: Some("ok"),
+                error_code: None,
+                detail: Some("provider stream complete"),
+            },
+        );
         if active_agent.name.eq_ignore_ascii_case("plan") {
             emit_plan_todo_fallback(
                 self.storage.clone(),
@@ -455,6 +636,45 @@ fn truncate_text(input: &str, max_len: usize) -> String {
     let mut out = input[..max_len].to_string();
     out.push_str("...<truncated>");
     out
+}
+
+fn provider_error_code(error_text: &str) -> &'static str {
+    let lower = error_text.to_lowercase();
+    if lower.contains("invalid_function_parameters")
+        || lower.contains("array schema missing items")
+        || lower.contains("tool schema")
+    {
+        return "TOOL_SCHEMA_INVALID";
+    }
+    if lower.contains("rate limit") || lower.contains("too many requests") || lower.contains("429")
+    {
+        return "RATE_LIMIT_EXCEEDED";
+    }
+    if lower.contains("context length")
+        || lower.contains("max tokens")
+        || lower.contains("token limit")
+    {
+        return "CONTEXT_LENGTH_EXCEEDED";
+    }
+    if lower.contains("unauthorized")
+        || lower.contains("authentication")
+        || lower.contains("401")
+        || lower.contains("403")
+    {
+        return "AUTHENTICATION_ERROR";
+    }
+    if lower.contains("timeout") || lower.contains("timed out") {
+        return "TIMEOUT";
+    }
+    if lower.contains("server error")
+        || lower.contains("500")
+        || lower.contains("502")
+        || lower.contains("503")
+        || lower.contains("504")
+    {
+        return "PROVIDER_SERVER_ERROR";
+    }
+    "PROVIDER_REQUEST_FAILED"
 }
 
 fn normalize_tool_name(name: &str) -> String {

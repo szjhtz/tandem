@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tokio::fs;
 use tokio::sync::RwLock;
+use tokio::task;
 use uuid::Uuid;
 
 use tandem_types::{Message, MessagePart, MessageRole, Session};
@@ -69,28 +70,76 @@ pub struct SessionRepairStats {
     pub conflicts_merged: u64,
 }
 
+const LEGACY_IMPORT_MARKER_FILE: &str = "legacy_import_marker.json";
+const LEGACY_IMPORT_MARKER_VERSION: u32 = 1;
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct LegacyTreeCounts {
+    pub session_files: u64,
+    pub message_files: u64,
+    pub part_files: u64,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct LegacyImportedCounts {
+    pub sessions: u64,
+    pub messages: u64,
+    pub parts: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LegacyImportMarker {
+    pub version: u32,
+    pub created_at_ms: u64,
+    pub last_checked_at_ms: u64,
+    pub legacy_counts: LegacyTreeCounts,
+    pub imported_counts: LegacyImportedCounts,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LegacyRepairRunReport {
+    pub status: String,
+    pub marker_updated: bool,
+    pub sessions_merged: u64,
+    pub messages_recovered: u64,
+    pub parts_recovered: u64,
+    pub legacy_counts: LegacyTreeCounts,
+    pub imported_counts: LegacyImportedCounts,
+}
+
 impl Storage {
     pub async fn new(base: impl AsRef<Path>) -> anyhow::Result<Self> {
         let base = base.as_ref().to_path_buf();
         fs::create_dir_all(&base).await?;
         let sessions_file = base.join("sessions.json");
+        let marker_path = base.join(LEGACY_IMPORT_MARKER_FILE);
+        let sessions_file_exists = sessions_file.exists();
         let mut imported_legacy_sessions = false;
-        let mut sessions = if sessions_file.exists() {
+        let mut sessions = if sessions_file_exists {
             let raw = fs::read_to_string(&sessions_file).await?;
-            let mut current =
-                serde_json::from_str::<HashMap<String, Session>>(&raw).unwrap_or_default();
-            let imported = load_legacy_opencode_sessions(&base).unwrap_or_default();
-            if merge_legacy_sessions(&mut current, imported) {
-                imported_legacy_sessions = true;
-            }
-            current
+            serde_json::from_str::<HashMap<String, Session>>(&raw).unwrap_or_default()
         } else {
-            let imported = load_legacy_opencode_sessions(&base).unwrap_or_default();
-            if !imported.is_empty() {
+            HashMap::new()
+        };
+
+        let mut marker_to_write = None;
+        if should_run_legacy_scan_on_startup(&marker_path, sessions_file_exists).await {
+            let base_for_scan = base.clone();
+            let scan = task::spawn_blocking(move || scan_legacy_sessions(&base_for_scan))
+                .await
+                .map_err(|err| anyhow::anyhow!("legacy scan task join error: {}", err))??;
+            if merge_legacy_sessions(&mut sessions, scan.sessions) {
                 imported_legacy_sessions = true;
             }
-            imported
-        };
+            marker_to_write = Some(LegacyImportMarker {
+                version: LEGACY_IMPORT_MARKER_VERSION,
+                created_at_ms: now_ms_u64(),
+                last_checked_at_ms: now_ms_u64(),
+                legacy_counts: scan.legacy_counts,
+                imported_counts: scan.imported_counts,
+            });
+        }
+
         if hydrate_workspace_roots(&mut sessions) {
             imported_legacy_sessions = true;
         }
@@ -117,6 +166,9 @@ impl Storage {
 
         if imported_legacy_sessions {
             storage.flush().await?;
+        }
+        if let Some(marker) = marker_to_write {
+            storage.write_legacy_import_marker(&marker).await?;
         }
 
         Ok(storage)
@@ -210,6 +262,76 @@ impl Storage {
         }
 
         Ok(stats)
+    }
+
+    pub async fn run_legacy_storage_repair_scan(
+        &self,
+        force: bool,
+    ) -> anyhow::Result<LegacyRepairRunReport> {
+        let marker_path = self.base.join(LEGACY_IMPORT_MARKER_FILE);
+        let sessions_exists = self.base.join("sessions.json").exists();
+        let should_scan = if force {
+            true
+        } else {
+            should_run_legacy_scan_on_startup(&marker_path, sessions_exists).await
+        };
+        if !should_scan {
+            let marker = read_legacy_import_marker(&marker_path)
+                .await
+                .unwrap_or_else(|| LegacyImportMarker {
+                    version: LEGACY_IMPORT_MARKER_VERSION,
+                    created_at_ms: now_ms_u64(),
+                    last_checked_at_ms: now_ms_u64(),
+                    legacy_counts: LegacyTreeCounts::default(),
+                    imported_counts: LegacyImportedCounts::default(),
+                });
+            return Ok(LegacyRepairRunReport {
+                status: "skipped".to_string(),
+                marker_updated: false,
+                sessions_merged: 0,
+                messages_recovered: 0,
+                parts_recovered: 0,
+                legacy_counts: marker.legacy_counts,
+                imported_counts: marker.imported_counts,
+            });
+        }
+
+        let base_for_scan = self.base.clone();
+        let scan = task::spawn_blocking(move || scan_legacy_sessions(&base_for_scan))
+            .await
+            .map_err(|err| anyhow::anyhow!("legacy scan task join error: {}", err))??;
+
+        let merge_stats = {
+            let mut sessions = self.sessions.write().await;
+            merge_legacy_sessions_with_stats(&mut sessions, scan.sessions)
+        };
+
+        if merge_stats.changed {
+            self.flush().await?;
+        }
+
+        let marker = LegacyImportMarker {
+            version: LEGACY_IMPORT_MARKER_VERSION,
+            created_at_ms: now_ms_u64(),
+            last_checked_at_ms: now_ms_u64(),
+            legacy_counts: scan.legacy_counts.clone(),
+            imported_counts: scan.imported_counts.clone(),
+        };
+        self.write_legacy_import_marker(&marker).await?;
+
+        Ok(LegacyRepairRunReport {
+            status: if merge_stats.changed {
+                "updated".to_string()
+            } else {
+                "no_changes".to_string()
+            },
+            marker_updated: true,
+            sessions_merged: merge_stats.sessions_merged,
+            messages_recovered: merge_stats.messages_recovered,
+            parts_recovered: merge_stats.parts_recovered,
+            legacy_counts: scan.legacy_counts,
+            imported_counts: scan.imported_counts,
+        })
     }
 
     pub async fn delete_session(&self, id: &str) -> anyhow::Result<bool> {
@@ -518,6 +640,12 @@ impl Storage {
         fs::write(self.base.join("questions.json"), questions_payload).await?;
         Ok(())
     }
+
+    async fn write_legacy_import_marker(&self, marker: &LegacyImportMarker) -> anyhow::Result<()> {
+        let payload = serde_json::to_string_pretty(marker)?;
+        fs::write(self.base.join(LEGACY_IMPORT_MARKER_FILE), payload).await?;
+        Ok(())
+    }
 }
 
 fn normalize_todo_items(items: Vec<Value>) -> Vec<Value> {
@@ -556,16 +684,114 @@ fn normalize_todo_items(items: Vec<Value>) -> Vec<Value> {
         .collect()
 }
 
+#[derive(Debug)]
+struct LegacyScanResult {
+    sessions: HashMap<String, Session>,
+    legacy_counts: LegacyTreeCounts,
+    imported_counts: LegacyImportedCounts,
+}
+
+#[derive(Debug, Default)]
+struct LegacyMergeStats {
+    changed: bool,
+    sessions_merged: u64,
+    messages_recovered: u64,
+    parts_recovered: u64,
+}
+
+fn now_ms_u64() -> u64 {
+    Utc::now().timestamp_millis().max(0) as u64
+}
+
+async fn should_run_legacy_scan_on_startup(marker_path: &Path, sessions_exist: bool) -> bool {
+    if !sessions_exist {
+        return true;
+    }
+    // Fast-path startup: if canonical sessions already exist, do not block startup
+    // on deep legacy tree scans. Users can trigger an explicit repair scan later.
+    if read_legacy_import_marker(marker_path).await.is_none() {
+        return false;
+    }
+    false
+}
+
+async fn read_legacy_import_marker(marker_path: &Path) -> Option<LegacyImportMarker> {
+    let raw = fs::read_to_string(marker_path).await.ok()?;
+    serde_json::from_str::<LegacyImportMarker>(&raw).ok()
+}
+
+fn scan_legacy_sessions(base: &Path) -> anyhow::Result<LegacyScanResult> {
+    let sessions = load_legacy_opencode_sessions(base).unwrap_or_default();
+    let imported_counts = LegacyImportedCounts {
+        sessions: sessions.len() as u64,
+        messages: sessions.values().map(|s| s.messages.len() as u64).sum(),
+        parts: sessions
+            .values()
+            .flat_map(|s| s.messages.iter())
+            .map(|m| m.parts.len() as u64)
+            .sum(),
+    };
+    let legacy_counts = LegacyTreeCounts {
+        session_files: count_legacy_json_files(&base.join("session")),
+        message_files: count_legacy_json_files(&base.join("message")),
+        part_files: count_legacy_json_files(&base.join("part")),
+    };
+    Ok(LegacyScanResult {
+        sessions,
+        legacy_counts,
+        imported_counts,
+    })
+}
+
+fn count_legacy_json_files(root: &Path) -> u64 {
+    if !root.is_dir() {
+        return 0;
+    }
+    let mut count = 0u64;
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        if let Ok(entries) = std::fs::read_dir(&dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                    stack.push(path);
+                    continue;
+                }
+                if path.extension().and_then(|ext| ext.to_str()) == Some("json") {
+                    count += 1;
+                }
+            }
+        }
+    }
+    count
+}
+
 fn merge_legacy_sessions(
     current: &mut HashMap<String, Session>,
     imported: HashMap<String, Session>,
 ) -> bool {
-    let mut changed = false;
+    merge_legacy_sessions_with_stats(current, imported).changed
+}
+
+fn merge_legacy_sessions_with_stats(
+    current: &mut HashMap<String, Session>,
+    imported: HashMap<String, Session>,
+) -> LegacyMergeStats {
+    let mut stats = LegacyMergeStats::default();
     for (id, legacy) in imported {
+        let legacy_message_count = legacy.messages.len() as u64;
+        let legacy_part_count = legacy
+            .messages
+            .iter()
+            .map(|m| m.parts.len() as u64)
+            .sum::<u64>();
         match current.get_mut(&id) {
             None => {
                 current.insert(id, legacy);
-                changed = true;
+                stats.changed = true;
+                stats.sessions_merged += 1;
+                stats.messages_recovered += legacy_message_count;
+                stats.parts_recovered += legacy_part_count;
             }
             Some(existing) => {
                 let should_merge_messages =
@@ -596,12 +822,17 @@ fn merge_legacy_sessions(
                     || should_fill_directory
                     || should_fill_workspace
                 {
-                    changed = true;
+                    stats.changed = true;
+                    if should_merge_messages {
+                        stats.sessions_merged += 1;
+                        stats.messages_recovered += legacy_message_count;
+                        stats.parts_recovered += legacy_part_count;
+                    }
                 }
             }
         }
     }
-    changed
+    stats
 }
 
 fn hydrate_workspace_roots(sessions: &mut HashMap<String, Session>) -> bool {

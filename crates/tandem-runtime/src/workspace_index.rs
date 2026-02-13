@@ -44,21 +44,26 @@ impl WorkspaceIndex {
     }
 
     pub async fn refresh(&self) -> WorkspaceIndexSnapshot {
-        let mut files = Vec::new();
-        let mut count = 0usize;
-
-        for entry in WalkBuilder::new(self.root.as_path()).build().flatten() {
-            if !entry.file_type().map(|f| f.is_file()).unwrap_or(false) {
-                continue;
+        let root = self.root.clone();
+        let (mut files, count) = tokio::task::spawn_blocking(move || {
+            let mut files = Vec::new();
+            let mut count = 0usize;
+            for entry in WalkBuilder::new(root.as_path()).build().flatten() {
+                if !entry.file_type().map(|f| f.is_file()).unwrap_or(false) {
+                    continue;
+                }
+                count += 1;
+                if let Ok(meta) = entry.metadata() {
+                    files.push(IndexedFile {
+                        path: relativize(root.as_path(), entry.path()),
+                        bytes: meta.len(),
+                    });
+                }
             }
-            count += 1;
-            if let Ok(meta) = entry.metadata() {
-                files.push(IndexedFile {
-                    path: relativize(self.root.as_path(), entry.path()),
-                    bytes: meta.len(),
-                });
-            }
-        }
+            (files, count)
+        })
+        .await
+        .unwrap_or_default();
 
         files.sort_by(|a, b| b.bytes.cmp(&a.bytes));
         let largest_files = files.into_iter().take(20).collect::<Vec<_>>();

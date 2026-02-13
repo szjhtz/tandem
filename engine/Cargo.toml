@@ -33,3 +33,4 @@ tandem-core = { path = "../crates/tandem-core" }
 tandem-tools = { path = "../crates/tandem-tools" }
 tandem-providers = { path = "../crates/tandem-providers" }
 tandem-server = { path = "../crates/tandem-server" }
+tandem-observability = { path = "../crates/tandem-observability" }

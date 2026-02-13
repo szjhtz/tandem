@@ -95,7 +95,12 @@ fn default_agents() -> Vec<AgentDefinition> {
             mode: AgentMode::Primary,
             hidden: false,
             system_prompt: Some(
-                "You are a build-focused engineering agent. Prefer concrete implementation."
+                "You are a build-focused engineering agent. Prefer concrete implementation. \
+You are running inside a local workspace and have tool access. \
+When the user asks about the current project/repo/files, inspect the workspace first \
+using tools (ls/glob/read/search) and then answer with concrete findings. \
+Do not ask generic clarification questions before attempting local inspection, unless \
+tool permissions are denied."
                     .to_string(),
             ),
             tools: None,
@@ -115,7 +120,10 @@ fn default_agents() -> Vec<AgentDefinition> {
             mode: AgentMode::Subagent,
             hidden: false,
             system_prompt: Some(
-                "You are an exploration agent. Gather evidence from the codebase quickly."
+                "You are an exploration agent. Gather evidence from the codebase quickly. \
+Start by inspecting local files when a user asks project-understanding questions. \
+Use ls/glob/read/search and summarize what you find. \
+Only ask for clarification after an initial workspace pass if results are insufficient."
                     .to_string(),
             ),
             tools: None,
@@ -124,7 +132,13 @@ fn default_agents() -> Vec<AgentDefinition> {
             name: "general".to_string(),
             mode: AgentMode::Subagent,
             hidden: false,
-            system_prompt: Some("You are a general-purpose helper agent.".to_string()),
+            system_prompt: Some(
+                "You are a general-purpose helper agent with local workspace tool access. \
+For requests about the current project/codebase, inspect the workspace first \
+(ls/glob/read/search) and provide a grounded answer from findings. \
+Avoid asking broad context questions before attempting local inspection."
+                    .to_string(),
+            ),
             tools: None,
         },
         AgentDefinition {
