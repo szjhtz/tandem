@@ -8,6 +8,7 @@ use crossterm::{
 pub enum Action {
     Tick,
     Quit,
+    CtrlCPressed,
     EnterPin(char),
     SubmitPin,
     CreateSession,
@@ -22,6 +23,7 @@ pub enum Action {
     SubmitCommand,
     ClearCommand,
     BackspaceCommand,
+    InsertNewline,
     SwitchToChat,
     Autocomplete,
     AutocompleteNext,
@@ -39,9 +41,36 @@ pub enum Action {
     PageUp,
     PageDown,
     ToggleTaskPin(String),
-    PromptSuccess(Vec<ChatMessage>),
-    PromptDelta(String),
-    PromptFailure(String),
+    PromptSuccess {
+        agent_id: String,
+        messages: Vec<ChatMessage>,
+    },
+    PromptDelta {
+        agent_id: String,
+        delta: String,
+    },
+    PromptFailure {
+        agent_id: String,
+        error: String,
+    },
+    PromptRunStarted {
+        agent_id: String,
+        run_id: Option<String>,
+    },
+    NewAgent,
+    CloseActiveAgent,
+    SwitchAgentNext,
+    SwitchAgentPrev,
+    SelectAgentByNumber(usize),
+    ToggleUiMode,
+    GridPageNext,
+    GridPagePrev,
+    ShowHelpModal,
+    CloseModal,
+    ConfirmCloseAgent(bool),
+    CancelActiveAgent,
+    StartDemoStream,
+    SpawnBackgroundDemo,
 }
 
 use crate::net::client::Session;
@@ -59,6 +88,42 @@ pub enum EngineConnectionStatus {
     Connecting,
     Connected,
     Error,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UiMode {
+    Focus,
+    Grid,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AgentStatus {
+    Idle,
+    Running,
+    Streaming,
+    Cancelling,
+    Done,
+    Error,
+    Closed,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ModalState {
+    Help,
+    ConfirmCloseAgent { target_agent_id: String },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct AgentPane {
+    pub agent_id: String,
+    pub session_id: String,
+    pub draft: String,
+    pub messages: Vec<ChatMessage>,
+    pub scroll_from_bottom: u16,
+    pub tasks: Vec<Task>,
+    pub active_task_id: Option<String>,
+    pub status: AgentStatus,
+    pub active_run_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -80,6 +145,11 @@ pub enum AppState {
         scroll_from_bottom: u16,
         tasks: Vec<Task>,
         active_task_id: Option<String>,
+        agents: Vec<AgentPane>,
+        active_agent_index: usize,
+        ui_mode: UiMode,
+        grid_page: usize,
+        modal: Option<ModalState>,
     },
     Connecting,
     SetupWizard {
@@ -191,6 +261,7 @@ pub struct App {
     pub autocomplete_mode: AutocompleteMode,
     pub show_autocomplete: bool,
     pub action_tx: Option<tokio::sync::mpsc::UnboundedSender<Action>>,
+    pub quit_armed_at: Option<Instant>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
@@ -250,6 +321,90 @@ impl TandemMode {
 }
 
 impl App {
+    fn provider_is_connected(&self, provider_id: &str) -> bool {
+        self.provider_catalog
+            .as_ref()
+            .map(|c| c.connected.iter().any(|p| p == provider_id))
+            .unwrap_or(false)
+    }
+
+    fn open_key_wizard_for_provider(&mut self, provider_id: &str) -> bool {
+        let mut selected_provider_index = 0usize;
+        let mut found = false;
+        if let Some(catalog) = &self.provider_catalog {
+            if let Some(idx) = catalog.all.iter().position(|p| p.id == provider_id) {
+                selected_provider_index = idx;
+                found = true;
+            }
+        }
+        if !found {
+            return false;
+        }
+        self.state = AppState::SetupWizard {
+            step: SetupStep::EnterApiKey,
+            provider_catalog: self.provider_catalog.clone(),
+            selected_provider_index,
+            selected_model_index: 0,
+            api_key_input: String::new(),
+            model_input: String::new(),
+        };
+        true
+    }
+
+    async fn sync_keystore_keys_to_engine(&self, client: &EngineClient) -> usize {
+        let Some(keystore) = &self.keystore else {
+            return 0;
+        };
+        let mut providers = serde_json::Map::new();
+        let mut synced = 0usize;
+        for key_name in keystore.list_keys() {
+            if let Ok(Some(api_key)) = keystore.get(&key_name) {
+                if api_key.trim().is_empty() {
+                    continue;
+                }
+                let provider_id = Self::normalize_provider_id_from_keystore_key(&key_name);
+                providers.insert(provider_id, json!({ "api_key": api_key }));
+                synced += 1;
+            }
+        }
+        if synced == 0 {
+            return 0;
+        }
+        let _ = client
+            .patch_config(json!({
+                "providers": providers
+            }))
+            .await;
+        synced
+    }
+
+    fn normalize_provider_id_from_keystore_key(key: &str) -> String {
+        let trimmed = key.trim();
+        if let Some(rest) = trimmed.strip_prefix("opencode_") {
+            if let Some(provider) = rest.strip_suffix("_api_key") {
+                return provider.to_string();
+            }
+        }
+        if let Some(provider) = trimmed.strip_suffix("_api_key") {
+            return provider.to_string();
+        }
+        if let Some(provider) = trimmed.strip_suffix("_key") {
+            return provider.to_string();
+        }
+        trimmed.to_string()
+    }
+
+    fn save_provider_key_local(&mut self, provider_id: &str, api_key: &str) {
+        let Some(keystore) = &mut self.keystore else {
+            return;
+        };
+        if keystore.set(provider_id, api_key.to_string()).is_ok() {
+            if let Some(config_dir) = &self.config_dir {
+                let _ = keystore.save(config_dir.join("tandem.keystore"));
+            }
+        }
+    }
+
     fn shared_engine_mode_enabled() -> bool {
         std::env::var("TANDEM_SHARED_ENGINE_MODE")
             .ok()
@@ -260,39 +415,17 @@ impl App {
             .unwrap_or(true)
     }
 
-    const COMMANDS: &'static [&'static str] = &[
-        "help",
-        "engine",
-        "sessions",
-        "new",
-        "use",
-        "title",
-        "prompt",
-        "cancel",
-        "messages",
-        "modes",
-        "mode",
-        "providers",
-        "provider",
-        "models",
-        "model",
-        "keys",
-        "key",
-        "approve",
-        "deny",
-        "answer",
-        "config",
-    ];
-
     pub const COMMAND_HELP: &'static [(&'static str, &'static str)] = &[
         ("help", "Show available commands"),
         ("engine", "Engine status / restart"),
         ("sessions", "List all sessions"),
         ("new", "Create new session"),
+        ("agent", "Manage in-chat agents"),
         ("use", "Switch to session by ID"),
         ("title", "Rename current session"),
         ("prompt", "Send prompt to session"),
         ("cancel", "Cancel current operation"),
+        ("last_error", "Show last prompt/system error"),
         ("messages", "Show message history"),
         ("modes", "List available modes"),
         ("mode", "Set or show current mode"),
@@ -349,6 +482,101 @@ impl App {
             autocomplete_mode: AutocompleteMode::Command,
             show_autocomplete: false,
             action_tx: None,
+            quit_armed_at: None,
+        }
+    }
+
+    fn make_agent_pane(agent_id: String, session_id: String) -> AgentPane {
+        AgentPane {
+            agent_id,
+            session_id,
+            draft: String::new(),
+            messages: Vec::new(),
+            scroll_from_bottom: 0,
+            tasks: Vec::new(),
+            active_task_id: None,
+            status: AgentStatus::Idle,
+            active_run_id: None,
+        }
+    }
+
+    fn active_agent_clone(&self) -> Option<AgentPane> {
+        if let AppState::Chat {
+            agents,
+            active_agent_index,
+            ..
+        } = &self.state
+        {
+            return agents.get(*active_agent_index).cloned();
+        }
+        None
+    }
+
+    fn sync_chat_from_active_agent(&mut self) {
+        if let AppState::Chat {
+            session_id,
+            command_input,
+            messages,
+            scroll_from_bottom,
+            tasks,
+            active_task_id,
+            agents,
+            active_agent_index,
+            ..
+        } = &mut self.state
+        {
+            if let Some(agent) = agents.get(*active_agent_index) {
+                *session_id = agent.session_id.clone();
+                *command_input = agent.draft.clone();
+                *messages = agent.messages.clone();
+                *scroll_from_bottom = agent.scroll_from_bottom;
+                *tasks = agent.tasks.clone();
+                *active_task_id = agent.active_task_id.clone();
+            }
+        }
+    }
+
+    fn sync_active_agent_from_chat(&mut self) {
+        if let AppState::Chat {
+            session_id,
+            command_input,
+            messages,
+            scroll_from_bottom,
+            tasks,
+            active_task_id,
+            agents,
+            active_agent_index,
+            ..
+        } = &mut self.state
+        {
+            if let Some(agent) = agents.get_mut(*active_agent_index) {
+                agent.session_id = session_id.clone();
+                agent.draft = command_input.clone();
+                agent.messages = messages.clone();
+                agent.scroll_from_bottom = *scroll_from_bottom;
+                agent.tasks = tasks.clone();
+                agent.active_task_id = active_task_id.clone();
+            }
+        }
+    }
+
+    async fn cancel_agent_if_running(&mut self, agent_index: usize) {
+        let (session_id, run_id) = if let AppState::Chat { agents, .. } = &self.state {
+            if let Some(agent) = agents.get(agent_index) {
+                (agent.session_id.clone(), agent.active_run_id.clone())
+            } else {
+                return;
+            }
+        } else {
+            return;
+        };
+
+        if let Some(client) = &self.client {
+            if let Some(run_id) = run_id.as_deref() {
+                let _ = client.cancel_run_by_id(&session_id, run_id).await;
+            } else {
+                let _ = client.abort_session(&session_id).await;
+            }
         }
     }
 
@@ -466,10 +694,20 @@ impl App {
     }
 
     pub fn handle_key_event(&self, key: KeyEvent) -> Option<Action> {
-        // Global exit keys
+        // Global control keys
         if key.modifiers.contains(KeyModifiers::CONTROL) {
             match key.code {
-                KeyCode::Char('c') | KeyCode::Char('x') => return Some(Action::Quit),
+                KeyCode::Char('c') => {
+                    return match self.state {
+                        AppState::Chat { .. } => Some(Action::CancelActiveAgent),
+                        _ => Some(Action::CtrlCPressed),
+                    };
+                }
+                KeyCode::Char('x') => return Some(Action::Quit),
+                KeyCode::Char('n') => return Some(Action::NewAgent),
+                KeyCode::Char('w') => return Some(Action::CloseActiveAgent),
+                KeyCode::Char('u') => return Some(Action::PageUp),
+                KeyCode::Char('d') => return Some(Action::PageDown),
                 _ => {}
             }
         }
@@ -508,6 +746,24 @@ impl App {
             },
 
             AppState::Chat { .. } => {
+                if let AppState::Chat { modal, .. } = &self.state {
+                    if let Some(active_modal) = modal {
+                        return match key.code {
+                            KeyCode::Esc => Some(Action::CloseModal),
+                            KeyCode::Char('y') | KeyCode::Char('Y')
+                                if matches!(active_modal, ModalState::ConfirmCloseAgent { .. }) =>
+                            {
+                                Some(Action::ConfirmCloseAgent(true))
+                            }
+                            KeyCode::Char('n') | KeyCode::Char('N')
+                                if matches!(active_modal, ModalState::ConfirmCloseAgent { .. }) =>
+                            {
+                                Some(Action::ConfirmCloseAgent(false))
+                            }
+                            _ => None,
+                        };
+                    }
+                }
                 if self.show_autocomplete {
                     match key.code {
                         KeyCode::Esc => Some(Action::AutocompleteDismiss),
@@ -530,14 +786,39 @@ impl App {
                     }
                 } else {
                     match key.code {
-                        KeyCode::Esc => Some(Action::BackToMenu),
+                        KeyCode::Esc => None,
+                        KeyCode::F(1) => Some(Action::ShowHelpModal),
+                        KeyCode::Char('g') | KeyCode::Char('G') => Some(Action::ToggleUiMode),
+                        KeyCode::Char('s') | KeyCode::Char('S') => Some(Action::StartDemoStream),
+                        KeyCode::Char('b') | KeyCode::Char('B') => {
+                            Some(Action::SpawnBackgroundDemo)
+                        }
+                        KeyCode::Char('[') => Some(Action::GridPagePrev),
+                        KeyCode::Char(']') => Some(Action::GridPageNext),
+                        KeyCode::BackTab => Some(Action::SwitchAgentPrev),
+                        KeyCode::Enter
+                            if key.modifiers.contains(KeyModifiers::SHIFT)
+                                || key.modifiers.contains(KeyModifiers::ALT) =>
+                        {
+                            Some(Action::InsertNewline)
+                        }
                         KeyCode::Enter => Some(Action::SubmitCommand),
                         KeyCode::Backspace => Some(Action::BackspaceCommand),
-                        KeyCode::Tab => Some(Action::Autocomplete),
+                        KeyCode::Tab => Some(Action::SwitchAgentNext),
                         KeyCode::Up => Some(Action::ScrollUp),
                         KeyCode::Down => Some(Action::ScrollDown),
                         KeyCode::PageUp => Some(Action::PageUp),
                         KeyCode::PageDown => Some(Action::PageDown),
+                        KeyCode::Char(c)
+                            if key.modifiers.contains(KeyModifiers::ALT) && c.is_ascii_digit() =>
+                        {
+                            let idx = (c as u8 - b'0') as usize;
+                            if idx > 0 {
+                                Some(Action::SelectAgentByNumber(idx))
+                            } else {
+                                None
+                            }
+                        }
                         KeyCode::Char(c) => Some(Action::CommandInput(c)),
                         _ => None,
                     }
@@ -553,8 +834,6 @@ impl App {
                 KeyCode::Backspace => Some(Action::SetupBackspace),
                 _ => None,
             },
-
-            _ => None,
         }
     }
     pub fn handle_mouse_event(&self, mouse: MouseEvent) -> Option<Action> {
@@ -578,6 +857,27 @@ impl App {
     pub async fn update(&mut self, action: Action) -> anyhow::Result<()> {
         match action {
             Action::Quit => self.should_quit = true,
+            Action::CtrlCPressed => {
+                let now = Instant::now();
+                if self
+                    .quit_armed_at
+                    .map(|t| now.duration_since(t).as_millis() <= 1500)
+                    .unwrap_or(false)
+                {
+                    self.should_quit = true;
+                    self.quit_armed_at = None;
+                } else {
+                    self.quit_armed_at = Some(now);
+                    if let AppState::Chat { messages, .. } = &mut self.state {
+                        messages.push(ChatMessage {
+                            role: MessageRole::System,
+                            content: vec![ContentBlock::Text(
+                                "Press Ctrl+C again within 1.5s to quit.".to_string(),
+                            )],
+                        });
+                    }
+                }
+            }
             Action::SkipAnimation => {
                 if let AppState::StartupAnimation { .. } = self.state {
                     self.state = AppState::PinPrompt {
@@ -838,6 +1138,8 @@ impl App {
                             // server sorts by updated desc, so new one is first.
                             self.selected_session_index = 0;
                             if let Some(ref session) = self.sessions.first() {
+                                let first_agent =
+                                    Self::make_agent_pane("A1".to_string(), session.id.clone());
                                 self.state = AppState::Chat {
                                     session_id: session.id.clone(),
                                     command_input: String::new(),
@@ -845,6 +1147,11 @@ impl App {
                                     scroll_from_bottom: 0,
                                     tasks: Vec::new(),
                                     active_task_id: None,
+                                    agents: vec![first_agent],
+                                    active_agent_index: 0,
+                                    ui_mode: UiMode::Focus,
+                                    grid_page: 0,
+                                    modal: None,
                                 };
                             }
                         }
@@ -855,6 +1162,7 @@ impl App {
             Action::SelectSession => {
                 if !self.sessions.is_empty() {
                     let session = &self.sessions[self.selected_session_index];
+                    let first_agent = Self::make_agent_pane("A1".to_string(), session.id.clone());
                     self.state = AppState::Chat {
                         session_id: session.id.clone(),
                         command_input: String::new(),
@@ -862,6 +1170,11 @@ impl App {
                         scroll_from_bottom: 0,
                         tasks: Vec::new(),
                         active_task_id: None,
+                        agents: vec![first_agent],
+                        active_agent_index: 0,
+                        ui_mode: UiMode::Focus,
+                        grid_page: 0,
+                        modal: None,
                     };
                 }
             }
@@ -872,6 +1185,7 @@ impl App {
                     let input = command_input.clone();
                     self.update_autocomplete_for_input(&input);
                 }
+                self.sync_active_agent_from_chat();
             }
 
             Action::BackspaceCommand => {
@@ -890,6 +1204,15 @@ impl App {
                         self.update_autocomplete_for_input(&input);
                     }
                 }
+                self.sync_active_agent_from_chat();
+            }
+            Action::InsertNewline => {
+                if let AppState::Chat { command_input, .. } = &mut self.state {
+                    command_input.push('\n');
+                    let input = command_input.clone();
+                    self.update_autocomplete_for_input(&input);
+                }
+                self.sync_active_agent_from_chat();
             }
 
             Action::Autocomplete => {
@@ -940,6 +1263,7 @@ impl App {
                     self.show_autocomplete = false;
                     self.autocomplete_items.clear();
                 }
+                self.sync_active_agent_from_chat();
             }
 
             Action::AutocompleteDismiss => {
@@ -953,6 +1277,370 @@ impl App {
                 self.autocomplete_items.clear();
                 self.autocomplete_mode = AutocompleteMode::Command;
                 self.state = AppState::MainMenu;
+            }
+
+            Action::SwitchAgentNext => {
+                self.sync_active_agent_from_chat();
+                if let AppState::Chat {
+                    agents,
+                    active_agent_index,
+                    ..
+                } = &mut self.state
+                {
+                    if !agents.is_empty() {
+                        *active_agent_index = (*active_agent_index + 1) % agents.len();
+                    }
+                }
+                self.sync_chat_from_active_agent();
+            }
+            Action::SwitchAgentPrev => {
+                self.sync_active_agent_from_chat();
+                if let AppState::Chat {
+                    agents,
+                    active_agent_index,
+                    ..
+                } = &mut self.state
+                {
+                    if !agents.is_empty() {
+                        if *active_agent_index == 0 {
+                            *active_agent_index = agents.len().saturating_sub(1);
+                        } else {
+                            *active_agent_index -= 1;
+                        }
+                    }
+                }
+                self.sync_chat_from_active_agent();
+            }
+            Action::SelectAgentByNumber(n) => {
+                self.sync_active_agent_from_chat();
+                if let AppState::Chat {
+                    agents,
+                    active_agent_index,
+                    ..
+                } = &mut self.state
+                {
+                    if n > 0 && n <= agents.len() {
+                        *active_agent_index = n - 1;
+                    }
+                }
+                self.sync_chat_from_active_agent();
+            }
+            Action::ToggleUiMode => {
+                if let AppState::Chat { ui_mode, .. } = &mut self.state {
+                    *ui_mode = if *ui_mode == UiMode::Focus {
+                        UiMode::Grid
+                    } else {
+                        UiMode::Focus
+                    };
+                }
+            }
+            Action::GridPageNext => {
+                if let AppState::Chat {
+                    grid_page, agents, ..
+                } = &mut self.state
+                {
+                    let max_page = agents.len().saturating_sub(1) / 4;
+                    *grid_page = (*grid_page + 1).min(max_page);
+                }
+            }
+            Action::GridPagePrev => {
+                if let AppState::Chat { grid_page, .. } = &mut self.state {
+                    *grid_page = grid_page.saturating_sub(1);
+                }
+            }
+            Action::ShowHelpModal => {
+                if let AppState::Chat { modal, .. } = &mut self.state {
+                    *modal = Some(ModalState::Help);
+                }
+            }
+            Action::CloseModal => {
+                if let AppState::Chat { modal, .. } = &mut self.state {
+                    *modal = None;
+                }
+            }
+            Action::NewAgent => {
+                self.sync_active_agent_from_chat();
+                let next_agent_id = if let AppState::Chat { agents, .. } = &self.state {
+                    format!("A{}", agents.len() + 1)
+                } else {
+                    "A1".to_string()
+                };
+                let mut new_session_id: Option<String> = None;
+                if let Some(client) = &self.client {
+                    if let Ok(session) = client
+                        .create_session(Some(format!("{} session", next_agent_id)))
+                        .await
+                    {
+                        new_session_id = Some(session.id);
+                    }
+                }
+                if let AppState::Chat {
+                    agents,
+                    active_agent_index,
+                    ..
+                } = &mut self.state
+                {
+                    let fallback_session = agents
+                        .get(*active_agent_index)
+                        .map(|a| a.session_id.clone())
+                        .unwrap_or_default();
+                    let pane = Self::make_agent_pane(
+                        next_agent_id,
+                        new_session_id.unwrap_or(fallback_session),
+                    );
+                    agents.push(pane);
+                    *active_agent_index = agents.len().saturating_sub(1);
+                }
+                self.sync_chat_from_active_agent();
+            }
+            Action::CloseActiveAgent => {
+                self.sync_active_agent_from_chat();
+                let mut confirm = None;
+                if let AppState::Chat {
+                    agents,
+                    active_agent_index,
+                    modal,
+                    ..
+                } = &mut self.state
+                {
+                    if let Some(agent) = agents.get(*active_agent_index) {
+                        if !agent.draft.trim().is_empty() {
+                            confirm = Some(agent.agent_id.clone());
+                        }
+                    }
+                    if let Some(agent_id) = confirm.clone() {
+                        *modal = Some(ModalState::ConfirmCloseAgent {
+                            target_agent_id: agent_id,
+                        });
+                    }
+                }
+                if confirm.is_none() {
+                    let active_idx = if let AppState::Chat {
+                        active_agent_index, ..
+                    } = &self.state
+                    {
+                        *active_agent_index
+                    } else {
+                        0
+                    };
+                    self.cancel_agent_if_running(active_idx).await;
+                    if let AppState::Chat {
+                        agents,
+                        modal,
+                        active_agent_index,
+                        grid_page,
+                        ..
+                    } = &mut self.state
+                    {
+                        if agents.len() <= 1 {
+                            let replacement = Self::make_agent_pane(
+                                "A1".to_string(),
+                                agents
+                                    .first()
+                                    .map(|a| a.session_id.clone())
+                                    .unwrap_or_default(),
+                            );
+                            agents.clear();
+                            agents.push(replacement);
+                        } else {
+                            agents.remove(active_idx);
+                            if *active_agent_index >= agents.len() {
+                                *active_agent_index = agents.len().saturating_sub(1);
+                            }
+                            let max_page = agents.len().saturating_sub(1) / 4;
+                            if *grid_page > max_page {
+                                *grid_page = max_page;
+                            }
+                        }
+                        *modal = None;
+                    }
+                    self.sync_chat_from_active_agent();
+                }
+            }
+            Action::ConfirmCloseAgent(confirmed) => {
+                if !confirmed {
+                    if let AppState::Chat { modal, .. } = &mut self.state {
+                        *modal = None;
+                    }
+                } else {
+                    let active_idx = if let AppState::Chat {
+                        active_agent_index, ..
+                    } = &self.state
+                    {
+                        *active_agent_index
+                    } else {
+                        0
+                    };
+                    self.cancel_agent_if_running(active_idx).await;
+                    if let AppState::Chat {
+                        agents,
+                        modal,
+                        active_agent_index,
+                        grid_page,
+                        ..
+                    } = &mut self.state
+                    {
+                        if agents.len() <= 1 {
+                            let replacement = Self::make_agent_pane(
+                                "A1".to_string(),
+                                agents
+                                    .first()
+                                    .map(|a| a.session_id.clone())
+                                    .unwrap_or_default(),
+                            );
+                            agents.clear();
+                            agents.push(replacement);
+                        } else {
+                            agents.remove(active_idx);
+                            if *active_agent_index >= agents.len() {
+                                *active_agent_index = agents.len().saturating_sub(1);
+                            }
+                            let max_page = agents.len().saturating_sub(1) / 4;
+                            if *grid_page > max_page {
+                                *grid_page = max_page;
+                            }
+                        }
+                        *modal = None;
+                    }
+                    self.sync_chat_from_active_agent();
+                }
+            }
+            Action::CancelActiveAgent => {
+                let mut cancel_idx: Option<usize> = None;
+                if let AppState::Chat {
+                    modal,
+                    agents,
+                    active_agent_index,
+                    ..
+                } = &mut self.state
+                {
+                    if modal.is_some() {
+                        *modal = None;
+                    } else if let Some(agent) = agents.get_mut(*active_agent_index) {
+                        if matches!(agent.status, AgentStatus::Running | AgentStatus::Streaming) {
+                            agent.status = AgentStatus::Cancelling;
+                            cancel_idx = Some(*active_agent_index);
+                        } else {
+                            self.state = AppState::MainMenu;
+                        }
+                    }
+                }
+                if let Some(idx) = cancel_idx {
+                    self.cancel_agent_if_running(idx).await;
+                    if let AppState::Chat { agents, .. } = &mut self.state {
+                        if let Some(agent) = agents.get_mut(idx) {
+                            agent.status = AgentStatus::Idle;
+                            agent.active_run_id = None;
+                        }
+                    }
+                    self.sync_chat_from_active_agent();
+                }
+            }
+            Action::StartDemoStream => {
+                if let Some(tx) = &self.action_tx {
+                    if let Some(agent) = self.active_agent_clone() {
+                        let agent_id = agent.agent_id;
+                        let tx = tx.clone();
+                        tokio::spawn(async move {
+                            let _ = tx.send(Action::PromptRunStarted {
+                                agent_id: agent_id.clone(),
+                                run_id: Some(format!(
+                                    "demo-{}",
+                                    std::time::SystemTime::now()
+                                        .duration_since(std::time::UNIX_EPOCH)
+                                        .map(|d| d.as_millis())
+                                        .unwrap_or(0)
+                                )),
+                            });
+                            let tokens = ["demo ", "stream ", "for ", "active ", "agent"];
+                            for t in tokens {
+                                let _ = tx.send(Action::PromptDelta {
+                                    agent_id: agent_id.clone(),
+                                    delta: t.to_string(),
+                                });
+                                tokio::time::sleep(std::time::Duration::from_millis(120)).await;
+                            }
+                        });
+                    }
+                }
+            }
+            Action::SpawnBackgroundDemo => {
+                self.sync_active_agent_from_chat();
+                let previous_active = if let AppState::Chat {
+                    active_agent_index, ..
+                } = &self.state
+                {
+                    *active_agent_index
+                } else {
+                    0
+                };
+                let next_agent_id = if let AppState::Chat { agents, .. } = &self.state {
+                    format!("A{}", agents.len() + 1)
+                } else {
+                    "A1".to_string()
+                };
+                let mut new_session_id: Option<String> = None;
+                if let Some(client) = &self.client {
+                    if let Ok(session) = client
+                        .create_session(Some(format!("{} session", next_agent_id)))
+                        .await
+                    {
+                        new_session_id = Some(session.id);
+                    }
+                }
+                let new_agent_id = if let AppState::Chat {
+                    agents,
+                    active_agent_index,
+                    ..
+                } = &mut self.state
+                {
+                    let fallback_session = agents
+                        .get(*active_agent_index)
+                        .map(|a| a.session_id.clone())
+                        .unwrap_or_default();
+                    let pane = Self::make_agent_pane(
+                        next_agent_id.clone(),
+                        new_session_id.unwrap_or(fallback_session),
+                    );
+                    agents.push(pane);
+                    *active_agent_index = agents.len().saturating_sub(1);
+                    next_agent_id
+                } else {
+                    "A1".to_string()
+                };
+                self.sync_chat_from_active_agent();
+                if let Some(tx) = &self.action_tx {
+                    let tx = tx.clone();
+                    tokio::spawn(async move {
+                        let _ = tx.send(Action::PromptRunStarted {
+                            agent_id: new_agent_id.clone(),
+                            run_id: Some(format!(
+                                "demo-{}",
+                                std::time::SystemTime::now()
+                                    .duration_since(std::time::UNIX_EPOCH)
+                                    .map(|d| d.as_millis())
+                                    .unwrap_or(0)
+                            )),
+                        });
+                        let tokens = ["background ", "demo ", "stream"];
+                        for t in tokens {
+                            let _ = tx.send(Action::PromptDelta {
+                                agent_id: new_agent_id.clone(),
+                                delta: t.to_string(),
+                            });
+                            tokio::time::sleep(std::time::Duration::from_millis(120)).await;
+                        }
+                    });
+                }
+                if let AppState::Chat {
+                    active_agent_index,
+                    agents,
+                    ..
+                } = &mut self.state
+                {
+                    *active_agent_index = previous_active.min(agents.len().saturating_sub(1));
+                }
+                self.sync_chat_from_active_agent();
             }
 
             Action::SetupNextStep => {
@@ -1023,6 +1711,9 @@ impl App {
                 if let Some((provider_id, model_id, api_key)) = persist_provider {
                     self.current_provider = Some(provider_id.clone());
                     self.current_model = model_id.clone();
+                    if let Some(ref key) = api_key {
+                        self.save_provider_key_local(&provider_id, key);
+                    }
                     self.persist_provider_defaults(
                         &provider_id,
                         model_id.as_deref(),
@@ -1183,6 +1874,7 @@ impl App {
                 {
                     *scroll_from_bottom = scroll_from_bottom.saturating_add(1);
                 }
+                self.sync_active_agent_from_chat();
             }
             Action::ScrollDown => {
                 if let AppState::Chat {
@@ -1191,6 +1883,7 @@ impl App {
                 {
                     *scroll_from_bottom = scroll_from_bottom.saturating_sub(1);
                 }
+                self.sync_active_agent_from_chat();
             }
             Action::PageUp => {
                 if let AppState::Chat {
@@ -1199,6 +1892,7 @@ impl App {
                 {
                     *scroll_from_bottom = scroll_from_bottom.saturating_add(10);
                 }
+                self.sync_active_agent_from_chat();
             }
             Action::PageDown => {
                 if let AppState::Chat {
@@ -1207,29 +1901,37 @@ impl App {
                 {
                     *scroll_from_bottom = scroll_from_bottom.saturating_sub(10);
                 }
+                self.sync_active_agent_from_chat();
             }
 
             Action::ClearCommand => {
                 if let AppState::Chat { command_input, .. } = &mut self.state {
                     command_input.clear();
                 }
+                self.sync_active_agent_from_chat();
             }
 
             Action::SubmitCommand => {
-                let (session_id, msg_to_send) = if let AppState::Chat {
+                let (session_id, active_agent_id, msg_to_send) = if let AppState::Chat {
                     session_id,
                     command_input,
+                    agents,
+                    active_agent_index,
                     ..
                 } = &mut self.state
                 {
-                    if command_input.is_empty() {
+                    if command_input.trim().is_empty() {
                         return Ok(());
                     }
                     let msg = command_input.trim().to_string();
                     command_input.clear();
-                    (session_id.clone(), Some(msg))
+                    let agent_id = agents
+                        .get(*active_agent_index)
+                        .map(|a| a.agent_id.clone())
+                        .unwrap_or_else(|| "A1".to_string());
+                    (session_id.clone(), agent_id, Some(msg))
                 } else {
-                    (String::new(), None)
+                    (String::new(), "A1".to_string(), None)
                 };
 
                 if let Some(msg) = msg_to_send {
@@ -1241,6 +1943,7 @@ impl App {
                                 content: vec![ContentBlock::Text(response)],
                             });
                         }
+                        self.sync_active_agent_from_chat();
                     } else if let Some(provider_id) = self.pending_model_provider.clone() {
                         let model_id = msg.trim().to_string();
                         if model_id.is_empty() {
@@ -1267,18 +1970,34 @@ impl App {
                                     ))],
                                 });
                             }
+                            self.sync_active_agent_from_chat();
                         }
                     } else {
+                        if let Some(provider_id) = self.current_provider.clone() {
+                            if !self.provider_is_connected(&provider_id)
+                                && self.open_key_wizard_for_provider(&provider_id)
+                            {
+                                if let AppState::Chat { messages, .. } = &mut self.state {
+                                    messages.push(ChatMessage {
+                                        role: MessageRole::System,
+                                        content: vec![ContentBlock::Text(format!(
+                                            "Provider '{}' has no configured key. Enter API key in setup wizard to continue.",
+                                            provider_id
+                                        ))],
+                                    });
+                                }
+                                self.sync_active_agent_from_chat();
+                                return Ok(());
+                            }
+                        }
                         // User message
                         if let AppState::Chat { messages, .. } = &mut self.state {
                             messages.push(ChatMessage {
                                 role: MessageRole::User,
                                 content: vec![ContentBlock::Text(msg.clone())],
                             });
-                            // Add a temporary "Thinking..." message or just rely on async response?
-                            // For TUI, it's nice to see something.
-                            // But for now let's just send the request.
                         }
+                        self.sync_active_agent_from_chat();
 
                         if let Some(client) = &self.client {
                             if let Some(tx) = &self.action_tx {
@@ -1288,36 +2007,90 @@ impl App {
                                 let msg = msg.clone();
                                 let agent = Some(self.current_mode.as_agent().to_string());
                                 let model = self.current_model_spec();
+                                let agent_id = active_agent_id.clone();
+                                let saw_stream_error =
+                                    std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
 
                                 tokio::spawn(async move {
+                                    let saw_stream_error_cb = saw_stream_error.clone();
                                     match client
-                                        .send_prompt_with_stream(
+                                        .send_prompt_with_stream_events(
                                             &session_id,
                                             &msg,
                                             agent.as_deref(),
+                                            Some(&agent_id),
                                             model,
-                                            |delta| {
-                                                let _ = tx.send(Action::PromptDelta(delta));
+                                            |event| {
+                                                if let Some(err) =
+                                                    crate::net::client::extract_stream_error(
+                                                        &event.payload,
+                                                    )
+                                                {
+                                                    if !saw_stream_error_cb.swap(
+                                                        true,
+                                                        std::sync::atomic::Ordering::Relaxed,
+                                                    ) {
+                                                        let _ = tx.send(Action::PromptFailure {
+                                                            agent_id: agent_id.clone(),
+                                                            error: err,
+                                                        });
+                                                    }
+                                                }
+                                                if event.event_type == "session.run.started" {
+                                                    let _ = tx.send(Action::PromptRunStarted {
+                                                        agent_id: agent_id.clone(),
+                                                        run_id: event.run_id.clone(),
+                                                    });
+                                                }
+                                                if let Some(delta) =
+                                                    crate::net::client::extract_delta_text(
+                                                        &event.payload,
+                                                    )
+                                                {
+                                                    let _ = tx.send(Action::PromptDelta {
+                                                        agent_id: agent_id.clone(),
+                                                        delta,
+                                                    });
+                                                }
                                             },
                                         )
                                         .await
                                     {
                                         Ok(run) => {
+                                            if saw_stream_error
+                                                .load(std::sync::atomic::Ordering::Relaxed)
+                                            {
+                                                return;
+                                            }
                                             if !run.streamed {
                                                 if let Some(response) =
                                                     Self::extract_assistant_message(&run.messages)
                                                 {
-                                                    let _ = tx.send(Action::PromptSuccess(vec![
-                                                        ChatMessage {
+                                                    let _ = tx.send(Action::PromptSuccess {
+                                                        agent_id: agent_id.clone(),
+                                                        messages: vec![ChatMessage {
                                                             role: MessageRole::Assistant,
                                                             content: response,
-                                                        },
-                                                    ]));
+                                                        }],
+                                                    });
+                                                } else {
+                                                    let _ = tx.send(Action::PromptFailure {
+                                                        agent_id: agent_id.clone(),
+                                                        error: "No assistant response received. Check provider key/config with /keys, /provider, /model."
+                                                            .to_string(),
+                                                    });
                                                 }
                                             }
                                         }
                                         Err(err) => {
-                                            let _ = tx.send(Action::PromptFailure(err.to_string()));
+                                            if !saw_stream_error
+                                                .load(std::sync::atomic::Ordering::Relaxed)
+                                            {
+                                                let _ = tx.send(Action::PromptFailure {
+                                                    agent_id: agent_id.clone(),
+                                                    error: err.to_string(),
+                                                });
+                                            }
                                         }
                                     }
                                 });
@@ -1340,38 +2113,123 @@ impl App {
                 }
             }
 
-            Action::PromptSuccess(new_messages) => {
-                if let AppState::Chat { messages, .. } = &mut self.state {
-                    messages.extend(new_messages);
-                }
-            }
-            Action::PromptDelta(delta) => {
-                if let AppState::Chat { messages, .. } = &mut self.state {
-                    if let Some(ChatMessage {
-                        role: MessageRole::Assistant,
-                        content,
-                    }) = messages.last_mut()
-                    {
-                        if let Some(ContentBlock::Text(existing)) = content.first_mut() {
-                            existing.push_str(&delta);
-                        } else {
-                            content.push(ContentBlock::Text(delta));
+            Action::PromptRunStarted { agent_id, run_id } => {
+                if let AppState::Chat {
+                    agents,
+                    active_agent_index,
+                    session_id,
+                    ..
+                } = &mut self.state
+                {
+                    if let Some(agent_idx) = agents.iter().position(|a| a.agent_id == agent_id) {
+                        let agent = &mut agents[agent_idx];
+                        agent.status = AgentStatus::Running;
+                        agent.active_run_id = run_id;
+                        if *active_agent_index == agent_idx {
+                            *session_id = agent.session_id.clone();
                         }
-                    } else {
-                        messages.push(ChatMessage {
-                            role: MessageRole::Assistant,
-                            content: vec![ContentBlock::Text(delta)],
-                        });
                     }
                 }
             }
-            Action::PromptFailure(err) => {
-                if let AppState::Chat { messages, .. } = &mut self.state {
-                    messages.push(ChatMessage {
-                        role: MessageRole::System,
-                        content: vec![ContentBlock::Text(format!("Prompt failed: {}", err))],
-                    });
+            Action::PromptSuccess {
+                agent_id,
+                messages: new_messages,
+            } => {
+                if let AppState::Chat {
+                    agents,
+                    active_agent_index,
+                    messages,
+                    ..
+                } = &mut self.state
+                {
+                    if let Some(agent) = agents.iter_mut().find(|a| a.agent_id == agent_id) {
+                        agent.messages.extend(new_messages.clone());
+                        agent.status = AgentStatus::Done;
+                        agent.active_run_id = None;
+                    }
+                    if *active_agent_index < agents.len()
+                        && agents[*active_agent_index].agent_id == agent_id
+                    {
+                        messages.extend(new_messages);
+                    }
                 }
+                self.sync_active_agent_from_chat();
+            }
+            Action::PromptDelta { agent_id, delta } => {
+                if let AppState::Chat {
+                    agents,
+                    active_agent_index,
+                    messages,
+                    ..
+                } = &mut self.state
+                {
+                    if let Some(agent) = agents.iter_mut().find(|a| a.agent_id == agent_id) {
+                        agent.status = AgentStatus::Streaming;
+                        if let Some(ChatMessage {
+                            role: MessageRole::Assistant,
+                            content,
+                        }) = agent.messages.last_mut()
+                        {
+                            if let Some(ContentBlock::Text(existing)) = content.first_mut() {
+                                existing.push_str(&delta);
+                            } else {
+                                content.push(ContentBlock::Text(delta.clone()));
+                            }
+                        } else {
+                            agent.messages.push(ChatMessage {
+                                role: MessageRole::Assistant,
+                                content: vec![ContentBlock::Text(delta.clone())],
+                            });
+                        }
+                    }
+                    if *active_agent_index < agents.len()
+                        && agents[*active_agent_index].agent_id == agent_id
+                    {
+                        if let Some(ChatMessage {
+                            role: MessageRole::Assistant,
+                            content,
+                        }) = messages.last_mut()
+                        {
+                            if let Some(ContentBlock::Text(existing)) = content.first_mut() {
+                                existing.push_str(&delta);
+                            } else {
+                                content.push(ContentBlock::Text(delta));
+                            }
+                        } else {
+                            messages.push(ChatMessage {
+                                role: MessageRole::Assistant,
+                                content: vec![ContentBlock::Text(delta)],
+                            });
+                        }
+                    }
+                }
+            }
+            Action::PromptFailure { agent_id, error } => {
+                if let AppState::Chat {
+                    agents,
+                    active_agent_index,
+                    messages,
+                    ..
+                } = &mut self.state
+                {
+                    if let Some(agent) = agents.iter_mut().find(|a| a.agent_id == agent_id) {
+                        agent.status = AgentStatus::Error;
+                        agent.active_run_id = None;
+                        agent.messages.push(ChatMessage {
+                            role: MessageRole::System,
+                            content: vec![ContentBlock::Text(format!("Prompt failed: {}", error))],
+                        });
+                    }
+                    if *active_agent_index < agents.len()
+                        && agents[*active_agent_index].agent_id == agent_id
+                    {
+                        messages.push(ChatMessage {
+                            role: MessageRole::System,
+                            content: vec![ContentBlock::Text(format!("Prompt failed: {}", error))],
+                        });
+                    }
+                }
+                self.sync_active_agent_from_chat();
             }
 
             _ => {}
@@ -1430,6 +2288,11 @@ impl App {
                             self.connection_status = "Connected! Loading...".to_string();
                             self.client = Some(client.clone());
                             self.acquire_engine_lease().await;
+                            let synced = self.sync_keystore_keys_to_engine(&client).await;
+                            if synced > 0 {
+                                self.connection_status =
+                                    format!("Synced {} provider key(s). Loading...", synced);
+                            }
                             // Check if providers are configured
                             if let Ok(providers) = client.list_providers().await {
                                 self.provider_catalog = Some(providers.clone());
@@ -1541,9 +2404,14 @@ SESSIONS:
   /sessions          List all sessions
   /new [title...]    Create new session
   /use <session_id> Switch to session
+  /agent new         Create agent in current chat
+  /agent list        List chat agents
+  /agent use <A#>    Switch active agent
+  /agent close       Close active agent
   /title <new title> Rename current session
   /prompt <text>    Send prompt to current session
   /cancel           Cancel current operation
+  /last_error       Show last prompt/system error
   /messages [limit] Show session messages
   /task add <desc>   Add a new task
   /task done <id>    Mark task as done
@@ -1575,7 +2443,19 @@ APPROVALS:
   /answer <id> <text>       Answer question
 
 CONFIG:
-  /config            Show configuration"#;
+  /config            Show configuration
+
+MULTI-AGENT KEYS:
+  Tab / Shift+Tab    Cycle active agent
+  Alt+1..Alt+9       Jump to agent slot
+  Ctrl+N             New agent
+  Ctrl+W             Close active agent
+  Ctrl+C             Cancel active run
+  G                  Toggle Focus/Grid
+  [ / ]              Prev/next grid page
+  Shift+Enter        Insert newline
+  Esc                Close modal / return to input
+  Ctrl+X             Quit"#;
                 help_text.to_string()
             }
 
@@ -1656,6 +2536,122 @@ CONFIG:
                 }
             }
 
+            "agent" => match args.first().copied() {
+                Some("new") => {
+                    self.sync_active_agent_from_chat();
+                    let next_agent_id = if let AppState::Chat { agents, .. } = &self.state {
+                        format!("A{}", agents.len() + 1)
+                    } else {
+                        "A1".to_string()
+                    };
+                    let mut new_session_id: Option<String> = None;
+                    if let Some(client) = &self.client {
+                        if let Ok(session) = client
+                            .create_session(Some(format!("{} session", next_agent_id)))
+                            .await
+                        {
+                            new_session_id = Some(session.id);
+                        }
+                    }
+                    if let AppState::Chat {
+                        agents,
+                        active_agent_index,
+                        ..
+                    } = &mut self.state
+                    {
+                        let fallback_session = agents
+                            .get(*active_agent_index)
+                            .map(|a| a.session_id.clone())
+                            .unwrap_or_default();
+                        let pane = Self::make_agent_pane(
+                            next_agent_id,
+                            new_session_id.unwrap_or(fallback_session),
+                        );
+                        agents.push(pane);
+                        *active_agent_index = agents.len().saturating_sub(1);
+                    }
+                    self.sync_chat_from_active_agent();
+                    "Created new agent.".to_string()
+                }
+                Some("list") => {
+                    if let AppState::Chat {
+                        agents,
+                        active_agent_index,
+                        ..
+                    } = &self.state
+                    {
+                        let mut out = Vec::new();
+                        for (i, a) in agents.iter().enumerate() {
+                            let marker = if i == *active_agent_index { ">" } else { " " };
+                            out.push(format!(
+                                "{} {} [{}] {}",
+                                marker,
+                                a.agent_id,
+                                a.session_id,
+                                format!("{:?}", a.status)
+                            ));
+                        }
+                        format!("Agents:\n{}", out.join("\n"))
+                    } else {
+                        "Not in chat.".to_string()
+                    }
+                }
+                Some("use") => {
+                    if let Some(agent_id) = args.get(1) {
+                        self.sync_active_agent_from_chat();
+                        if let AppState::Chat {
+                            agents,
+                            active_agent_index,
+                            ..
+                        } = &mut self.state
+                        {
+                            if let Some(idx) = agents.iter().position(|a| &a.agent_id == agent_id) {
+                                *active_agent_index = idx;
+                                self.sync_chat_from_active_agent();
+                                return format!("Switched to {}.", agent_id);
+                            }
+                        }
+                        format!("Agent not found: {}", agent_id)
+                    } else {
+                        "Usage: /agent use <A#>".to_string()
+                    }
+                }
+                Some("close") => {
+                    self.sync_active_agent_from_chat();
+                    let active_idx = if let AppState::Chat {
+                        active_agent_index, ..
+                    } = &self.state
+                    {
+                        *active_agent_index
+                    } else {
+                        0
+                    };
+                    self.cancel_agent_if_running(active_idx).await;
+                    if let AppState::Chat {
+                        agents,
+                        active_agent_index,
+                        grid_page,
+                        ..
+                    } = &mut self.state
+                    {
+                        if agents.len() <= 1 {
+                            return "Cannot close last agent.".to_string();
+                        }
+                        agents.remove(active_idx);
+                        if *active_agent_index >= agents.len() {
+                            *active_agent_index = agents.len().saturating_sub(1);
+                        }
+                        let max_page = agents.len().saturating_sub(1) / 4;
+                        if *grid_page > max_page {
+                            *grid_page = max_page;
+                        }
+                    }
+                    self.sync_chat_from_active_agent();
+                    "Closed active agent.".to_string()
+                }
+                _ => "Usage: /agent new|list|use <A#>|close".to_string(),
+            },
+
             "use" => {
                 if args.is_empty() {
                     return "Usage: /use <session_id>".to_string();
@@ -1731,14 +2727,22 @@ CONFIG:
                     if let Some(catalog) = &self.provider_catalog {
                         if let Some(idx) = catalog.all.iter().position(|p| p.id == provider_id) {
                             selected_provider_index = idx;
-                            step = SetupStep::SelectModel;
+                            step = if catalog.connected.contains(&provider_id.to_string()) {
+                                SetupStep::SelectModel
+                            } else {
+                                SetupStep::EnterApiKey
+                            };
                         }
                     }
                 } else if let Some(current) = &self.current_provider {
                     if let Some(catalog) = &self.provider_catalog {
                         if let Some(idx) = catalog.all.iter().position(|p| &p.id == current) {
                             selected_provider_index = idx;
-                            step = SetupStep::SelectModel;
+                            step = if catalog.connected.contains(current) {
+                                SetupStep::SelectModel
+                            } else {
+                                SetupStep::EnterApiKey
+                            };
                         }
                     }
                 }
@@ -1820,7 +2824,13 @@ CONFIG:
 
             "keys" => {
                 if let Some(keystore) = &self.keystore {
-                    let provider_ids = keystore.list_keys();
+                    let mut provider_ids: Vec<String> = keystore
+                        .list_keys()
+                        .into_iter()
+                        .map(|k| Self::normalize_provider_id_from_keystore_key(&k))
+                        .collect();
+                    provider_ids.sort();
+                    provider_ids.dedup();
                     if provider_ids.is_empty() {
                         "No provider keys configured.".to_string()
                     } else {
@@ -1840,14 +2850,19 @@ CONFIG:
 
             "key" => match args.get(0).map(|s| *s) {
                 Some("set") => {
-                    if args.len() < 2 {
-                        return "Usage: /key set <provider_id>".to_string();
+                    let provider_id = args
+                        .get(1)
+                        .map(|s| s.to_string())
+                        .or_else(|| self.current_provider.clone());
+                    let Some(provider_id) = provider_id else {
+                        return "Usage: /key set <provider_id> (or set /provider first)"
+                            .to_string();
+                    };
+                    if self.open_key_wizard_for_provider(&provider_id) {
+                        format!("Opening key setup wizard for {}...", provider_id)
+                    } else {
+                        format!("Provider not found: {}", provider_id)
                     }
-                    let provider_id = args[1];
-                    format!(
-                        "Interactive key entry not implemented. Provider: {}",
-                        provider_id
-                    )
                 }
                 Some("remove") => {
                     if args.len() < 2 {
@@ -1881,7 +2896,25 @@ CONFIG:
                 _ => "Usage: /key set|remove|test <provider_id>".to_string(),
             },
 
-            "cancel" => "Cancel not implemented yet.".to_string(),
+            "cancel" => {
+                let active_idx = if let AppState::Chat {
+                    active_agent_index, ..
+                } = &self.state
+                {
+                    *active_agent_index
+                } else {
+                    0
+                };
+                self.cancel_agent_if_running(active_idx).await;
+                if let AppState::Chat { agents, .. } = &mut self.state {
+                    if let Some(agent) = agents.get_mut(active_idx) {
+                        agent.status = AgentStatus::Idle;
+                        agent.active_run_id = None;
+                    }
+                }
+                self.sync_chat_from_active_agent();
+                "Cancel requested for active agent.".to_string()
+            }
 
             "task" => {
                 if let AppState::Chat { tasks, .. } = &mut self.state {
@@ -1958,14 +2991,45 @@ CONFIG:
                 format!("Message history not implemented yet. (limit: {})", limit)
             }
 
+            "last_error" => {
+                if let AppState::Chat { messages, .. } = &self.state {
+                    let maybe_error = messages.iter().rev().find_map(|m| {
+                        if m.role != MessageRole::System {
+                            return None;
+                        }
+                        let text = m
+                            .content
+                            .iter()
+                            .filter_map(|b| match b {
+                                ContentBlock::Text(t) => Some(t.as_str()),
+                                _ => None,
+                            })
+                            .collect::<Vec<_>>()
+                            .join("\n");
+                        if text.to_lowercase().contains("failed")
+                            || text.to_lowercase().contains("error")
+                        {
+                            Some(text)
+                        } else {
+                            None
+                        }
+                    });
+                    maybe_error.unwrap_or_else(|| "No recent error found.".to_string())
+                } else {
+                    "Not in a chat session.".to_string()
+                }
+            }
+
             "prompt" => {
                 let text = args.join(" ");
                 if text.is_empty() {
                     return "Usage: /prompt <text...>".to_string();
                 }
-                let (session_id, should_send) = if let AppState::Chat {
+                let (session_id, active_agent_id, should_send) = if let AppState::Chat {
                     session_id,
                     messages,
+                    agents,
+                    active_agent_index,
                     ..
                 } = &mut self.state
                 {
@@ -1973,9 +3037,13 @@ CONFIG:
                         role: MessageRole::User,
                         content: vec![ContentBlock::Text(text.clone())],
                     });
-                    (session_id.clone(), true)
+                    let agent_id = agents
+                        .get(*active_agent_index)
+                        .map(|a| a.agent_id.clone())
+                        .unwrap_or_else(|| "A1".to_string());
+                    (session_id.clone(), agent_id, true)
                 } else {
-                    (String::new(), false)
+                    (String::new(), "A1".to_string(), false)
                 };
 
                 if !should_send {
@@ -1988,34 +3056,81 @@ CONFIG:
                     if let Some(tx) = &self.action_tx {
                         let client = client.clone();
                         let tx = tx.clone();
+                        let agent_id = active_agent_id.clone();
+                        let saw_stream_error =
+                            std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
                         tokio::spawn(async move {
+                            let saw_stream_error_cb = saw_stream_error.clone();
                             match client
-                                .send_prompt_with_stream(
+                                .send_prompt_with_stream_events(
                                     &session_id,
                                     &text,
                                     agent.as_deref(),
+                                    Some(&agent_id),
                                     model,
-                                    |delta| {
-                                        let _ = tx.send(Action::PromptDelta(delta));
+                                    |event| {
+                                        if let Some(err) =
+                                            crate::net::client::extract_stream_error(&event.payload)
+                                        {
+                                            if !saw_stream_error_cb
+                                                .swap(true, std::sync::atomic::Ordering::Relaxed)
+                                            {
+                                                let _ = tx.send(Action::PromptFailure {
+                                                    agent_id: agent_id.clone(),
+                                                    error: err,
+                                                });
+                                            }
+                                        }
+                                        if event.event_type == "session.run.started" {
+                                            let _ = tx.send(Action::PromptRunStarted {
+                                                agent_id: agent_id.clone(),
+                                                run_id: event.run_id.clone(),
+                                            });
+                                        }
+                                        if let Some(delta) =
+                                            crate::net::client::extract_delta_text(&event.payload)
+                                        {
+                                            let _ = tx.send(Action::PromptDelta {
+                                                agent_id: agent_id.clone(),
+                                                delta,
+                                            });
+                                        }
                                     },
                                 )
                                 .await
                             {
                                 Ok(run) => {
+                                    if saw_stream_error.load(std::sync::atomic::Ordering::Relaxed) {
+                                        return;
+                                    }
                                     if !run.streamed {
                                         if let Some(response) =
                                             Self::extract_assistant_message(&run.messages)
                                         {
-                                            let _ =
-                                                tx.send(Action::PromptSuccess(vec![ChatMessage {
+                                            let _ = tx.send(Action::PromptSuccess {
+                                                agent_id: agent_id.clone(),
+                                                messages: vec![ChatMessage {
                                                     role: MessageRole::Assistant,
                                                     content: response,
-                                                }]));
+                                                }],
+                                            });
+                                        } else {
+                                            let _ = tx.send(Action::PromptFailure {
+                                                agent_id: agent_id.clone(),
+                                                error: "No assistant response received. Check provider key/config with /keys, /provider, /model."
+                                                    .to_string(),
+                                            });
                                         }
                                     }
                                 }
                                 Err(err) => {
-                                    let _ = tx.send(Action::PromptFailure(err.to_string()));
+                                    if !saw_stream_error.load(std::sync::atomic::Ordering::Relaxed)
+                                    {
+                                        let _ = tx.send(Action::PromptFailure {
+                                            agent_id: agent_id.clone(),
+                                            error: err.to_string(),
+                                        });
+                                    }
                                 }
                             }
                         });

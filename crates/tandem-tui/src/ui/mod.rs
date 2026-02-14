@@ -8,7 +8,7 @@ use ratatui::{
 
 pub mod components;
 pub mod matrix;
-use crate::app::{App, AppState, PinPromptMode, SetupStep};
+use crate::app::{AgentStatus, App, AppState, ModalState, PinPromptMode, SetupStep, UiMode};
 use crate::ui::components::{flow::FlowList, task_list::TaskList};
 
 pub fn draw(f: &mut Frame, app: &App) {
@@ -163,6 +163,11 @@ fn draw_chat(f: &mut Frame, app: &App) {
         messages,
         scroll_from_bottom,
         tasks,
+        agents,
+        active_agent_index,
+        ui_mode,
+        grid_page,
+        modal,
         ..
     } = &app.state
     {
@@ -188,8 +193,8 @@ fn draw_chat(f: &mut Frame, app: &App) {
             .unwrap_or("New session");
         let chat_title = format!(" {} ", session_title);
 
-        // Split content_area for tasks if needed
-        let (messages_area, tasks_area) = if !tasks.is_empty() {
+        // Split content area for tasks only in focus mode.
+        let (messages_area, tasks_area) = if *ui_mode == UiMode::Focus && !tasks.is_empty() {
             let areas = Layout::default()
                 .direction(Direction::Horizontal)
                 .constraints([Constraint::Percentage(70), Constraint::Percentage(30)])
@@ -214,33 +219,129 @@ fn draw_chat(f: &mut Frame, app: &App) {
         ))
         .alignment(Alignment::Right);
 
-        // Render Chat (FlowList)
-        if messages.is_empty() {
-            let empty_msg = Paragraph::new("No messages yet. Type a prompt or /help for commands.\n\nPress Tab for command autocomplete.")
-                .style(Style::default().fg(Color::DarkGray))
-                .alignment(Alignment::Center)
-                .block(
+        if *ui_mode == UiMode::Focus {
+            // Focus mode: active agent transcript only.
+            if messages.is_empty() {
+                let empty_msg = Paragraph::new("No messages yet. Type a prompt or /help for commands.\n\nTab/Shift+Tab switches active agent.")
+                    .style(Style::default().fg(Color::DarkGray))
+                    .alignment(Alignment::Center)
+                    .block(
+                        Block::default()
+                            .borders(Borders::ALL)
+                            .title(chat_title.as_str())
+                            .title(status_title.clone())
+                            .border_style(Style::default().fg(Color::DarkGray)),
+                    );
+                f.render_widget(empty_msg, messages_area);
+            } else {
+                let flow_list = FlowList::new(messages).block(
                     Block::default()
                         .borders(Borders::ALL)
+                        .borders(Borders::ALL)
                         .title(chat_title.as_str())
-                        .title(status_title.clone())
+                        .title(status_title)
                         .border_style(Style::default().fg(Color::DarkGray)),
                 );
-            f.render_widget(empty_msg, messages_area);
-        } else {
-            let flow_list = FlowList::new(messages).block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .borders(Borders::ALL)
-                    .title(chat_title.as_str())
-                    .title(status_title)
-                    .border_style(Style::default().fg(Color::DarkGray)),
-            );
 
-            let mut flow_state = crate::ui::components::flow::FlowListState {
-                offset: *scroll_from_bottom as usize,
+                let mut flow_state = crate::ui::components::flow::FlowListState {
+                    offset: *scroll_from_bottom as usize,
+                };
+                f.render_stateful_widget(flow_list, messages_area, &mut flow_state);
+            }
+        } else {
+            // Grid mode: up to 4 panes per page.
+            let start = (*grid_page).saturating_mul(4);
+            let end = (start + 4).min(agents.len());
+            let page_agents = &agents[start..end];
+
+            let pane_areas = match page_agents.len() {
+                0 => Vec::new(),
+                1 => vec![messages_area],
+                2 => Layout::default()
+                    .direction(Direction::Horizontal)
+                    .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+                    .split(messages_area)
+                    .to_vec(),
+                3 => {
+                    let rows = Layout::default()
+                        .direction(Direction::Vertical)
+                        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+                        .split(messages_area);
+                    let top = Layout::default()
+                        .direction(Direction::Horizontal)
+                        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+                        .split(rows[0]);
+                    vec![top[0], top[1], rows[1]]
+                }
+                _ => {
+                    let rows = Layout::default()
+                        .direction(Direction::Vertical)
+                        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+                        .split(messages_area);
+                    let top = Layout::default()
+                        .direction(Direction::Horizontal)
+                        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+                        .split(rows[0]);
+                    let bot = Layout::default()
+                        .direction(Direction::Horizontal)
+                        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+                        .split(rows[1]);
+                    vec![top[0], top[1], bot[0], bot[1]]
+                }
             };
-            f.render_stateful_widget(flow_list, messages_area, &mut flow_state);
+
+            for (pane_idx, agent) in page_agents.iter().enumerate() {
+                if pane_idx >= pane_areas.len() {
+                    break;
+                }
+                let is_active = start + pane_idx == *active_agent_index;
+                let status_label = match agent.status {
+                    AgentStatus::Running | AgentStatus::Streaming => {
+                        format!("{} Working", spinner_frame(app.tick_count))
+                    }
+                    AgentStatus::Cancelling => "Cancelling".to_string(),
+                    AgentStatus::Done => "Done".to_string(),
+                    AgentStatus::Error => "Error".to_string(),
+                    AgentStatus::Closed => "Closed".to_string(),
+                    AgentStatus::Idle => "Idle".to_string(),
+                };
+                let title = format!(
+                    " {} {} [{}] ",
+                    if is_active { ">" } else { " " },
+                    agent.agent_id,
+                    status_label
+                );
+                if agent.messages.is_empty() {
+                    let empty = Paragraph::new("No output yet")
+                        .style(Style::default().fg(Color::DarkGray))
+                        .block(
+                            Block::default()
+                                .borders(Borders::ALL)
+                                .title(title)
+                                .border_style(if is_active {
+                                    Style::default().fg(Color::Yellow)
+                                } else {
+                                    Style::default().fg(Color::DarkGray)
+                                }),
+                        );
+                    f.render_widget(empty, pane_areas[pane_idx]);
+                } else {
+                    let flow_list = FlowList::new(&agent.messages).block(
+                        Block::default()
+                            .borders(Borders::ALL)
+                            .title(title)
+                            .border_style(if is_active {
+                                Style::default().fg(Color::Yellow)
+                            } else {
+                                Style::default().fg(Color::DarkGray)
+                            }),
+                    );
+                    let mut flow_state = crate::ui::components::flow::FlowListState {
+                        offset: agent.scroll_from_bottom as usize,
+                    };
+                    f.render_stateful_widget(flow_list, pane_areas[pane_idx], &mut flow_state);
+                }
+            }
         }
 
         // Render Tasks (TaskList)
@@ -328,12 +429,31 @@ fn draw_chat(f: &mut Frame, app: &App) {
         let mode_str = format!("{:?}", app.current_mode);
         let provider_str = app.current_provider.as_deref().unwrap_or("not configured");
         let model_str = app.current_model.as_deref().unwrap_or("none");
+        let active_label = agents
+            .get(*active_agent_index)
+            .map(|a| a.agent_id.as_str())
+            .unwrap_or("A1");
+        let active_activity = agents
+            .get(*active_agent_index)
+            .map(|a| match a.status {
+                AgentStatus::Running | AgentStatus::Streaming => {
+                    format!("{} Working", spinner_frame(app.tick_count))
+                }
+                AgentStatus::Cancelling => "Cancelling".to_string(),
+                AgentStatus::Done => "Done".to_string(),
+                AgentStatus::Error => "Error".to_string(),
+                AgentStatus::Closed => "Closed".to_string(),
+                AgentStatus::Idle => "Idle".to_string(),
+            })
+            .unwrap_or_else(|| "Idle".to_string());
         let status_text = format!(
-            " {} | {} | {} | {} ",
+            " Tandem TUI | {} | {} | {} | {} | Active: {} ({}) ",
             mode_str,
             provider_str,
             model_str,
-            &session_id[..8.min(session_id.len())]
+            &session_id[..8.min(session_id.len())],
+            active_label,
+            active_activity
         );
         let status_widget = Paragraph::new(status_text)
             .style(
@@ -344,6 +464,28 @@ fn draw_chat(f: &mut Frame, app: &App) {
             .alignment(Alignment::Left)
             .block(Block::default().borders(Borders::NONE));
         f.render_widget(status_widget, status_chunk);
+
+        if let Some(modal_state) = modal {
+            let area = centered_rect(58, 34, f.area());
+            f.render_widget(Clear, area);
+            let text = match modal_state {
+                ModalState::Help => "Keys:\nTab/Shift+Tab switch agent\nAlt+1..9 jump agent\nCtrl+N new agent\nCtrl+W close agent\nCtrl+C cancel active run\nG toggle grid\nShift+Enter newline\nEsc close modal/input\nCtrl+X quit",
+                ModalState::ConfirmCloseAgent { target_agent_id } => {
+                    if target_agent_id.is_empty() {
+                        "Close active agent and discard draft? (Y/N)"
+                    } else {
+                        "Discard draft and close this agent? (Y/N)"
+                    }
+                }
+            };
+            let popup = Paragraph::new(text).wrap(Wrap { trim: true }).block(
+                Block::default()
+                    .title(" Modal ")
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(Color::Yellow)),
+            );
+            f.render_widget(popup, area);
+        }
     }
 }
 
@@ -358,12 +500,18 @@ fn draw_status_bar(f: &mut Frame, app: &App) {
     let mode_str = format!("{:?}", app.current_mode);
     let provider_str = app.current_provider.as_deref().unwrap_or("not configured");
     let model_str = app.current_model.as_deref().unwrap_or("none");
+    let identity = app
+        .sessions
+        .get(app.selected_session_index)
+        .map(|s| s.id.as_str())
+        .or(app.engine_lease_id.as_deref())
+        .unwrap_or("engine");
     let status_text = format!(
-        " Tandem TUI | {} | {} | {} | Sessions: {} ",
+        " Tandem TUI | {} | {} | {} | {} ",
         mode_str,
         provider_str,
         model_str,
-        app.sessions.len()
+        &identity[..8.min(identity.len())]
     );
     let status_widget = Paragraph::new(status_text)
         .style(
@@ -620,4 +768,9 @@ fn centered_rect(
             Constraint::Percentage((100 - percent_x) / 2),
         ])
         .split(popup_layout[1])[1]
+}
+
+fn spinner_frame(tick: usize) -> &'static str {
+    const FRAMES: [&str; 4] = ["|", "/", "-", "\\"];
+    FRAMES[tick % FRAMES.len()]
 }

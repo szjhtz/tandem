@@ -90,6 +90,16 @@ pub struct PromptRunResult {
     pub streamed: bool,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct StreamEventEnvelope {
+    pub event_type: String,
+    pub session_id: Option<String>,
+    pub run_id: Option<String>,
+    pub agent_id: Option<String>,
+    pub channel: Option<String>,
+    pub payload: serde_json::Value,
+}
+
 #[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum MessagePartInput {
@@ -306,6 +316,28 @@ impl EngineClient {
     where
         F: FnMut(String),
     {
+        self.send_prompt_with_stream_events(session_id, message, agent, None, model, |event| {
+            if let Some(delta) = extract_delta_text(&event.payload) {
+                if !delta.is_empty() {
+                    on_delta(delta);
+                }
+            }
+        })
+        .await
+    }
+
+    pub async fn send_prompt_with_stream_events<F>(
+        &self,
+        session_id: &str,
+        message: &str,
+        agent: Option<&str>,
+        agent_id: Option<&str>,
+        model: Option<ModelSpec>,
+        mut on_event: F,
+    ) -> Result<PromptRunResult>
+    where
+        F: FnMut(StreamEventEnvelope),
+    {
         let append_url = format!(
             "{}/session/{}/message?mode=append",
             self.base_url, session_id
@@ -324,13 +356,14 @@ impl EngineClient {
             let body = append_resp.text().await?;
             bail!("append failed {}: {}", status, body);
         }
-        let resp = self
+        let mut prompt_req = self
             .client
             .post(&prompt_url)
-            .header("Accept", "text/event-stream")
-            .json(&req)
-            .send()
-            .await?;
+            .header("Accept", "text/event-stream");
+        if let Some(agent_id) = agent_id {
+            prompt_req = prompt_req.header("x-tandem-agent-id", agent_id);
+        }
+        let resp = prompt_req.json(&req).send().await?;
         let status = resp.status();
         if !status.is_success() {
             let body = resp.text().await?;
@@ -351,11 +384,14 @@ impl EngineClient {
                 let text = String::from_utf8_lossy(&chunk);
                 buffer.push_str(&text);
                 while let Some(payload) = parse_sse_payload(&mut buffer) {
-                    if let Some(delta) = extract_delta_text(&payload) {
-                        if !delta.is_empty() {
+                    if let Some(event) = parse_stream_event_envelope(payload) {
+                        if extract_delta_text(&event.payload)
+                            .map(|d| !d.is_empty())
+                            .unwrap_or(false)
+                        {
                             streamed = true;
-                            on_delta(delta);
                         }
+                        on_event(event);
                     }
                 }
             }
@@ -476,7 +512,38 @@ fn parse_sse_payload(buffer: &mut String) -> Option<serde_json::Value> {
     serde_json::from_str::<serde_json::Value>(&data).ok()
 }
 
-fn extract_delta_text(payload: &serde_json::Value) -> Option<String> {
+fn parse_stream_event_envelope(payload: serde_json::Value) -> Option<StreamEventEnvelope> {
+    let event_type = payload.get("type").and_then(|v| v.as_str())?.to_string();
+    let props = payload
+        .get("properties")
+        .cloned()
+        .unwrap_or_else(|| serde_json::json!({}));
+    Some(StreamEventEnvelope {
+        event_type,
+        session_id: props
+            .get("sessionID")
+            .or_else(|| props.get("sessionId"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+        run_id: props
+            .get("runID")
+            .or_else(|| props.get("run_id"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+        agent_id: props
+            .get("agentID")
+            .or_else(|| props.get("agent"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+        channel: props
+            .get("channel")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+        payload,
+    })
+}
+
+pub fn extract_delta_text(payload: &serde_json::Value) -> Option<String> {
     let event_type = payload.get("type").and_then(|v| v.as_str())?;
     if event_type != "message.part.updated" {
         return None;
@@ -518,6 +585,40 @@ fn extract_delta_text(payload: &serde_json::Value) -> Option<String> {
         .and_then(|v| v.as_str())
         .map(|s| s.to_string())
         .filter(|s| !s.trim().is_empty())
+}
+
+pub fn extract_stream_error(payload: &serde_json::Value) -> Option<String> {
+    let event_type = payload.get("type").and_then(|v| v.as_str())?;
+    let props = payload.get("properties")?;
+
+    if event_type == "session.error" {
+        if let Some(message) = props
+            .get("error")
+            .and_then(|e| e.get("message"))
+            .and_then(|v| v.as_str())
+        {
+            let code = props
+                .get("error")
+                .and_then(|e| e.get("code"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("ENGINE_ERROR");
+            return Some(format!("{}: {}", code, message));
+        }
+        return Some("Engine reported an error.".to_string());
+    }
+
+    if event_type == "session.run.finished" {
+        let status = props.get("status").and_then(|v| v.as_str()).unwrap_or("");
+        if status != "completed" {
+            let reason = props
+                .get("error")
+                .and_then(|v| v.as_str())
+                .unwrap_or("run did not complete");
+            return Some(format!("Run {}: {}", status, reason));
+        }
+    }
+
+    None
 }
 
 #[cfg(test)]
@@ -589,5 +690,52 @@ mod tests {
             .await
             .expect("cancel");
         assert!(!cancelled);
+    }
+
+    #[test]
+    fn parse_stream_event_envelope_extracts_core_fields() {
+        let payload = serde_json::json!({
+            "type": "message.part.updated",
+            "properties": {
+                "sessionID": "s1",
+                "runID": "r1",
+                "agentID": "A2",
+                "channel": "assistant",
+                "delta": "hello"
+            }
+        });
+        let envelope = parse_stream_event_envelope(payload.clone()).expect("envelope");
+        assert_eq!(envelope.event_type, "message.part.updated");
+        assert_eq!(envelope.session_id.as_deref(), Some("s1"));
+        assert_eq!(envelope.run_id.as_deref(), Some("r1"));
+        assert_eq!(envelope.agent_id.as_deref(), Some("A2"));
+        assert_eq!(envelope.channel.as_deref(), Some("assistant"));
+        assert_eq!(envelope.payload, payload);
+    }
+
+    #[test]
+    fn parse_sse_payload_reads_data_block() {
+        let mut buffer =
+            "event: message\ndata: {\"type\":\"message.part.updated\",\"properties\":{\"delta\":\"x\"}}\n\n"
+                .to_string();
+        let parsed = parse_sse_payload(&mut buffer).expect("payload");
+        assert_eq!(
+            parsed.get("type").and_then(|v| v.as_str()),
+            Some("message.part.updated")
+        );
+        assert!(buffer.is_empty());
+    }
+
+    #[test]
+    fn extract_stream_error_reads_session_error() {
+        let payload = serde_json::json!({
+            "type": "session.error",
+            "properties": {
+                "error": { "code": "PROVIDER_AUTH", "message": "missing API key" }
+            }
+        });
+        let msg = extract_stream_error(&payload).expect("error");
+        assert!(msg.contains("PROVIDER_AUTH"));
+        assert!(msg.contains("missing API key"));
     }
 }

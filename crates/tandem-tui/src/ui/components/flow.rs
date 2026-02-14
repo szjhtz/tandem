@@ -3,10 +3,10 @@ use ratatui::{
     layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, StatefulWidget, Widget},
+    widgets::{Block, StatefulWidget, Widget},
 };
 
-use crate::app::{ChatMessage, ContentBlock, MessageRole, ToolCallInfo};
+use crate::app::{ChatMessage, ContentBlock, MessageRole};
 
 #[derive(Default)]
 pub struct FlowListState {
@@ -48,9 +48,9 @@ impl<'a> StatefulWidget for FlowList<'a> {
             return;
         }
 
-        // 1. Flatten all messages into renderable lines (simple approach for now)
-        // In a real optimized version, we'd only render what's visible, but for now we flatten all.
+        // Flatten messages into wrapped render lines for narrow terminals.
         let mut lines: Vec<Line> = Vec::new();
+        let max_width = area.width as usize;
 
         for msg in self.messages {
             let (role_color, role_prefix) = match msg.role {
@@ -69,45 +69,57 @@ impl<'a> StatefulWidget for FlowList<'a> {
                 match block {
                     ContentBlock::Text(text) => {
                         for line in text.lines() {
-                            lines.push(Line::from(vec![Span::raw("     "), Span::raw(line)]));
+                            push_wrapped_line(
+                                &mut lines,
+                                "     ",
+                                line,
+                                Style::default(),
+                                max_width,
+                            );
                         }
                     }
                     ContentBlock::Code { language, code } => {
-                        lines.push(Line::from(vec![
-                            Span::raw("     "),
-                            Span::styled(
-                                format!("```{}", language),
-                                Style::default().fg(Color::DarkGray),
-                            ),
-                        ]));
+                        push_wrapped_line(
+                            &mut lines,
+                            "     ",
+                            &format!("```{}", language),
+                            Style::default().fg(Color::DarkGray),
+                            max_width,
+                        );
                         for line in code.lines() {
-                            lines.push(Line::from(vec![
-                                Span::raw("     "),
-                                Span::styled(line, Style::default().fg(Color::Gray)),
-                            ]));
+                            push_wrapped_line(
+                                &mut lines,
+                                "     ",
+                                line,
+                                Style::default().fg(Color::Gray),
+                                max_width,
+                            );
                         }
-                        lines.push(Line::from(vec![
-                            Span::raw("     "),
-                            Span::styled("```", Style::default().fg(Color::DarkGray)),
-                        ]));
+                        push_wrapped_line(
+                            &mut lines,
+                            "     ",
+                            "```",
+                            Style::default().fg(Color::DarkGray),
+                            max_width,
+                        );
                     }
                     ContentBlock::ToolCall(info) => {
-                        lines.push(Line::from(vec![
-                            Span::raw("     "),
-                            Span::styled(
-                                format!("> Tool Call: {}({})", info.name, info.args),
-                                Style::default().fg(Color::Magenta),
-                            ),
-                        ]));
+                        push_wrapped_line(
+                            &mut lines,
+                            "     ",
+                            &format!("> Tool Call: {}({})", info.name, info.args),
+                            Style::default().fg(Color::Magenta),
+                            max_width,
+                        );
                     }
                     ContentBlock::ToolResult(output) => {
-                        lines.push(Line::from(vec![
-                            Span::raw("     "),
-                            Span::styled(
-                                format!("> Tool Result: {}", output),
-                                Style::default().fg(Color::DarkGray),
-                            ),
-                        ]));
+                        push_wrapped_line(
+                            &mut lines,
+                            "     ",
+                            &format!("> Tool Result: {}", output),
+                            Style::default().fg(Color::DarkGray),
+                            max_width,
+                        );
                     }
                 }
             }
@@ -118,10 +130,7 @@ impl<'a> StatefulWidget for FlowList<'a> {
         let visible_height = area.height as usize;
         let total_lines = lines.len();
 
-        let mut scroll = state.offset;
-        if total_lines > visible_height {
-            // Auto-scroll logic could go here or be handled by the caller updating state
-        }
+        let scroll = state.offset;
 
         // 3. Render visible lines
         if total_lines > 0 {
@@ -133,4 +142,63 @@ impl<'a> StatefulWidget for FlowList<'a> {
             }
         }
     }
+}
+
+fn push_wrapped_line(
+    out: &mut Vec<Line>,
+    indent: &str,
+    text: &str,
+    style: Style,
+    max_width: usize,
+) {
+    if max_width == 0 {
+        return;
+    }
+    let indent_chars = indent.chars().count();
+    let content_width = max_width.saturating_sub(indent_chars).max(1);
+
+    if text.is_empty() {
+        out.push(Line::from(vec![Span::raw(indent.to_string())]));
+        return;
+    }
+
+    let mut rest = text;
+    while !rest.is_empty() {
+        let split = wrap_split_index(rest, content_width);
+        let (head, tail) = rest.split_at(split);
+        out.push(Line::from(vec![
+            Span::raw(indent.to_string()),
+            Span::styled(head.to_string(), style),
+        ]));
+        rest = tail.trim_start();
+    }
+}
+
+fn wrap_split_index(s: &str, max_chars: usize) -> usize {
+    let total_chars = s.chars().count();
+    if total_chars <= max_chars {
+        return s.len();
+    }
+
+    let mut count = 0usize;
+    let mut split_at = s.len();
+    let mut last_ws: Option<usize> = None;
+
+    for (idx, ch) in s.char_indices() {
+        if ch.is_whitespace() {
+            last_ws = Some(idx);
+        }
+        count += 1;
+        if count >= max_chars {
+            split_at = idx + ch.len_utf8();
+            break;
+        }
+    }
+
+    if let Some(ws) = last_ws {
+        if ws > 0 {
+            return ws;
+        }
+    }
+    split_at
 }

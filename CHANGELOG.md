@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **TUI Key Setup Wizard**: Added interactive API-key setup flow when a selected provider is not configured.
+- **TUI Error Recall Command**: Added `/last_error` to quickly print the most recent prompt/system failure message.
+- **TUI Working Indicator**: Added active-agent working status/spinner visibility in chat footer and grid pane titles.
+
+### Changed
+
+- **Keystore Key Mapping**: TUI now normalizes legacy/local keystore key names (e.g. `openrouter_key`, `*_api_key`, `opencode_*_api_key`) to canonical provider IDs before syncing to engine config.
+- **Keystore -> Engine Sync**: On connect, TUI now syncs unlocked local keystore provider keys into engine provider config to keep desktop/TUI auth behavior consistent.
+- **Transcript Rendering**: Chat flow renderer now wraps long lines for readable error/output text in narrow terminals.
+- **Windows Dev Docs**: Expanded `ENGINE_TESTING.md` with PowerShell-safe build/copy/run commands and bash-vs-PowerShell clarity.
+
+### Fixed
+
+- **Silent Prompt Failures in TUI**: Stream failures are now surfaced from runtime events (`session.error` and failed `session.run.finished`) instead of appearing as no-response hangs.
+- **Run Stream Stability**: Fixed run-scoped SSE handling so unrelated events do not prematurely terminate active stream processing.
+- **No-Response Completion Case**: Added explicit fallback error messaging when a run completes without streamed deltas or assistant content.
+- **Provider Auth in TUI**: Fixed a key-discovery mismatch that prevented existing desktop-stored keys from being recognized by TUI.
+
 ## [0.3.0] - 2026-02-14
 
 ### Added

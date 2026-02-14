@@ -33,6 +33,17 @@ cp target/debug/tandem-engine src-tauri/binaries/tandem-engine
 pnpm tauri dev
 ```
 
+PowerShell equivalent (Windows):
+
+```powershell
+pnpm install
+Get-Process | Where-Object { $_.ProcessName -in @('tandem-engine','tandem') } | Stop-Process -Force -ErrorAction SilentlyContinue
+cargo build -p tandem-engine
+New-Item -ItemType Directory -Force -Path .\src-tauri\binaries | Out-Null
+Copy-Item .\target\debug\tandem-engine.exe .\src-tauri\binaries\tandem-engine.exe -Force
+pnpm tauri dev
+```
+
 ## Quick commands
 
 From `tandem/`:
@@ -309,6 +320,17 @@ pkill -f tandem-engine || true
 - If bind fails, verify no process is already listening on your port.
 - If startup log shows `Another instance tried to launch`, a previous app instance is still running. Close/kill all `tandem` processes and relaunch.
 - For writable state/config, use `--state-dir` with a project-local directory.
+
+Windows copy/paste recovery for `os error 5`:
+
+```powershell
+Get-Process | Where-Object { $_.ProcessName -in @('tandem-engine','tandem') } | Stop-Process -Force -ErrorAction SilentlyContinue
+cargo build -p tandem-engine
+New-Item -ItemType Directory -Force -Path .\src-tauri\binaries | Out-Null
+Copy-Item .\target\debug\tandem-engine.exe .\src-tauri\binaries\tandem-engine.exe -Force
+```
+
+Note: `mkdir -p` and `cp target/debug/tandem-engine ...` are macOS/Linux commands. On Windows, use `New-Item` and `Copy-Item` with the `.exe` filename.
 
 ## Storage migration verification (legacy upgrades)
 

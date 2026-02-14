@@ -45,6 +45,10 @@ pub struct ActiveRun {
     pub last_activity_at_ms: u64,
     #[serde(rename = "clientID", skip_serializing_if = "Option::is_none")]
     pub client_id: Option<String>,
+    #[serde(rename = "agentID", skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<String>,
+    #[serde(rename = "agentProfile", skip_serializing_if = "Option::is_none")]
+    pub agent_profile: Option<String>,
 }
 
 #[derive(Clone, Default)]
@@ -66,6 +70,8 @@ impl RunRegistry {
         session_id: &str,
         run_id: String,
         client_id: Option<String>,
+        agent_id: Option<String>,
+        agent_profile: Option<String>,
     ) -> std::result::Result<ActiveRun, ActiveRun> {
         let mut guard = self.active.write().await;
         if let Some(existing) = guard.get(session_id).cloned() {
@@ -77,6 +83,8 @@ impl RunRegistry {
             started_at_ms: now,
             last_activity_at_ms: now,
             client_id,
+            agent_id,
+            agent_profile,
         };
         guard.insert(session_id.to_string(), run.clone());
         Ok(run)

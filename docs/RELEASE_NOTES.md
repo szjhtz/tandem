@@ -1,4 +1,16 @@
-﻿# Tandem v0.3.0 Release Notes
+# Tandem v0.3.0 Release Notes
+
+## Unreleased
+
+### Highlights
+
+- **TUI multi-agent reliability pass**: fixed silent/no-response prompt runs by hardening run-scoped SSE handling and stream termination behavior.
+- **Auth/key setup flow repaired**: TUI now syncs unlocked local keystore keys into engine provider config on connect, including legacy key-name alias mapping.
+- **Key setup wizard in CLI**: added interactive key-setup routing when a provider is selected but not connected.
+- **Error visibility improvements**: stream errors (`session.error` and failed run finishes) are surfaced directly in transcript output.
+- **Transcript readability improvements**: long lines now wrap in the TUI flow renderer; added `/last_error` for quick full error recall.
+- **Working-state UX**: added active-agent spinner/status activity indicators in footer and grid pane titles.
+- **Windows dev docs fixes**: added explicit PowerShell equivalents for build/copy/tauri-dev steps and lock-file recovery guidance.
 
 ## Highlights
 
@@ -413,7 +425,7 @@
 - **Runtime Requirement Pills**: Starter skill cards can show optional runtime hints (Python/Node/Bash) via `requires: [...]` YAML frontmatter.
 - **Skills UX Improvements**: Clearer install/manage experience (runtime note, installed-skill counts, and better discoverability of deletion).
 - **Packs Page Cleanup**: Packs page now shows packs only (no starter skills section) and surfaces the runtime note at the top.
-- **Diagnostics Polishing**: Logs viewer improvements (fullscreen + copy feedback) and fix invalid bundled skill template frontmatter so templates arenâ€™t skipped.
+- **Diagnostics Polishing**: Logs viewer improvements (fullscreen + copy feedback) and fix invalid bundled skill template frontmatter so templates aren’t skipped.
 - **Dev Quality of Life**: In `tauri dev`, starter skill templates are loaded from `src-tauri/resources/skill-templates/` so newly added templates appear immediately.
 
 ---
@@ -516,12 +528,12 @@ _Release attempt failed on 2026-02-09 due to GitHub release asset upload errors 
 
 ### Onboarding
 
-- Treat enabled Custom providers with an endpoint as â€œconfiguredâ€ to avoid onboarding loops.
+- Treat enabled Custom providers with an endpoint as “configured” to avoid onboarding loops.
 
 ### Memory
 
 - Add a Vector DB stats card in Settings.
-- Add manual â€œIndex Filesâ€ action with progress events and indexing summary.
+- Add manual “Index Files” action with progress events and indexing summary.
 
 ### Release / CI
 
@@ -617,23 +629,23 @@ _Release attempt failed on 2026-02-09 due to GitHub release asset upload errors 
 ## Highlights
 
 - **First-outcome onboarding**: a guided wizard helps new users pick a folder, connect AI, and run a starter workflow in minutes.
-- **Starter Packs + Starter Skills (offline)**: install curated, local-first templates directly from the appâ€”no copy/paste required (advanced SKILL.md paste remains available).
+- **Starter Packs + Starter Skills (offline)**: install curated, local-first templates directly from the app—no copy/paste required (advanced SKILL.md paste remains available).
 - **More reliable Orchestration**: runs now pause on provider quota/rate-limit errors so you can switch model/provider and resume, instead of failing after max retries.
 
 ## Complete Feature List
 
 ### UX
 
-- Onboarding wizard to drive a â€œfirst successful outcomeâ€.
+- Onboarding wizard to drive a “first successful outcome”.
 - Packs panel for browsing and installing bundled workflow packs.
-- Starter Skills gallery with a clear separation between templates and â€œAdvanced: paste SKILL.mdâ€.
+- Starter Skills gallery with a clear separation between templates and “Advanced: paste SKILL.md”.
 - Reduced developer-jargon in key surfaces to better match a non-coder-first product.
 
 ### Orchestration
 
 - Increased default iteration/sub-agent budgets and auto-upgraded older runs created with too-low limits.
 - Provider quota/rate-limit detection now pauses runs (and avoids burning retries), enabling recovery without restarting from scratch.
-- Model selection is available even after a run fails to support â€œswitch and resumeâ€.
+- Model selection is available even after a run fails to support “switch and resume”.
 
 ### Platform / Reliability
 
@@ -702,7 +714,7 @@ _Release attempt failed on 2026-02-09 due to GitHub release asset upload errors 
 
 - **Prompt Engineering**: Updated `ralph/service.rs` and `Chat.tsx` to include strict directives for task status updates. The AI is now mandated to call `todowrite` with `status="completed"` immediately after finishing a task item.
 
-- **Ralph Loop (Iterative Task Agent)**: Meet Ralphâ€”a new mode that puts the AI in a robust "do-loop." Give it a complex task, and it will iterate, verify, and refine its work until it meets a strict completion promise. It's like having a tireless junior developer who checks their own work.
+- **Ralph Loop (Iterative Task Agent)**: Meet Ralph—a new mode that puts the AI in a robust "do-loop." Give it a complex task, and it will iterate, verify, and refine its work until it meets a strict completion promise. It's like having a tireless junior developer who checks their own work.
 - **Long-Term Memory**: Tandem now remembers! We've integrated a semantic memory system using `sqlite-vec` that allows the AI to recall context from previous sessions and project documents. This means smarter, more context-aware assistance that grows with your project.
 - **Semantic Context Retrieval**: Questions about your project now tap into a vector database of your codebase, providing accurate, relevant context even for large repositories that don't fit in a standard prompt.
 
@@ -712,7 +724,3 @@ _Release attempt failed on 2026-02-09 due to GitHub release asset upload errors 
 
 - **Vector Memory Store**: Implemented a local, zero-trust vector database (`sqlite-vec`) to store and retrieve semantic embeddings of your codebase and conversation history.
 - **Memory Context Injection**: The AI now automatically receives relevant context snippets based on your current query, reducing hallucinations and "I don't know" responses about your own code.
-
-
-
-

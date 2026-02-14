@@ -248,6 +248,27 @@ pub async fn serve(addr: SocketAddr, state: AppState) -> anyhow::Result<()> {
     Ok(())
 }
 
+#[derive(Debug, Deserialize)]
+struct ToolExecutionInput {
+    tool: String,
+    args: Option<Value>,
+}
+
+async fn execute_tool(
+    State(state): State<AppState>,
+    Json(input): Json<ToolExecutionInput>,
+) -> Result<Json<Value>, StatusCode> {
+    let args = input.args.unwrap_or_else(|| json!({}));
+    let result = state.tools.execute(&input.tool, args).await.map_err(|e| {
+        tracing::error!("Tool execution failed: {}", e);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+    Ok(Json(json!({
+        "output": result.output,
+        "metadata": result.metadata
+    })))
+}
+
 fn app_router(state: AppState) -> Router {
     Router::new()
         .route("/global/health", get(global_health))
@@ -363,6 +384,7 @@ fn app_router(state: AppState) -> Router {
         .route("/mcp/resources", get(mcp_resources))
         .route("/tool/ids", get(tool_ids))
         .route("/tool", get(tool_list_for_model))
+        .route("/tool/execute", post(execute_tool))
         .route(
             "/worktree",
             get(list_worktrees)
@@ -567,7 +589,24 @@ fn sse_stream(
             if !event_matches_filter(&event, &filter) {
                 return None;
             }
-            let payload = serde_json::to_string(&event).unwrap_or_default();
+            let normalized = if let Some(run_id) = filter.run_id.as_deref() {
+                let session_hint = filter
+                    .session_id
+                    .as_deref()
+                    .or_else(|| {
+                        event
+                            .properties
+                            .get("sessionID")
+                            .or_else(|| event.properties.get("sessionId"))
+                            .and_then(|v| v.as_str())
+                    })
+                    .unwrap_or_default()
+                    .to_string();
+                normalize_run_event(event, &session_hint, run_id)
+            } else {
+                event
+            };
+            let payload = serde_json::to_string(&normalized).unwrap_or_default();
             let payload = truncate_for_stream(&payload, 16_000);
             Some(Ok(Event::default().data(payload)))
         }
@@ -853,7 +892,13 @@ async fn prompt_async(
 
     let active_run = match state
         .run_registry
-        .acquire(&session_id, run_id.clone(), client_id.clone())
+        .acquire(
+            &session_id,
+            run_id.clone(),
+            client_id.clone(),
+            req.agent.clone(),
+            req.agent.clone(),
+        )
         .await
     {
         Ok(run) => run,
@@ -887,6 +932,8 @@ async fn prompt_async(
             "runID": active_run.run_id,
             "startedAtMs": active_run.started_at_ms,
             "clientID": active_run.client_id,
+            "agentID": active_run.agent_id,
+            "agentProfile": active_run.agent_profile,
         }),
     ));
 
@@ -942,10 +989,22 @@ async fn prompt_sync(
         .get("x-tandem-client-id")
         .and_then(|v| v.to_str().ok())
         .map(|s| s.to_string());
+    let agent_id = headers
+        .get("x-tandem-agent-id")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string())
+        .or_else(|| req.agent.clone());
+    let agent_profile = req.agent.clone();
     let run_id = Uuid::new_v4().to_string();
     let active_run = match state
         .run_registry
-        .acquire(&id, run_id.clone(), client_id.clone())
+        .acquire(
+            &id,
+            run_id.clone(),
+            client_id.clone(),
+            agent_id.clone(),
+            agent_profile.clone(),
+        )
         .await
     {
         Ok(run) => run,
@@ -970,6 +1029,8 @@ async fn prompt_sync(
             "runID": active_run.run_id,
             "startedAtMs": active_run.started_at_ms,
             "clientID": active_run.client_id,
+            "agentID": active_run.agent_id,
+            "agentProfile": active_run.agent_profile,
         }),
     ));
 
@@ -981,7 +1042,13 @@ async fn prompt_sync(
             req,
             correlation_id,
         );
-        let stream = sse_run_stream(state.clone(), id.clone(), run_id.clone());
+        let stream = sse_run_stream(
+            state.clone(),
+            id.clone(),
+            run_id.clone(),
+            agent_id.clone(),
+            agent_profile.clone(),
+        );
         return Ok(Sse::new(stream)
             .keep_alive(KeepAlive::new().interval(Duration::from_secs(10)))
             .into_response());
@@ -1116,6 +1183,8 @@ fn sse_run_stream(
     state: AppState,
     session_id: String,
     run_id: String,
+    agent_id: Option<String>,
+    agent_profile: Option<String>,
 ) -> impl Stream<Item = Result<Event, std::convert::Infallible>> {
     let rx = state.event_bus.subscribe();
     let started = tokio_stream::once(Ok(Event::default().data(
@@ -1125,38 +1194,38 @@ fn sse_run_stream(
                 "sessionID": session_id,
                 "runID": run_id,
                 "startedAtMs": crate::now_ms(),
+                "agentID": agent_id,
+                "agentProfile": agent_profile,
+                "channel": "system",
             }),
         ))
         .unwrap_or_default(),
     )));
-    let take_session_id = session_id.clone();
-    let take_run_id = run_id.clone();
+    let filter_session_id = session_id.clone();
+    let filter_run_id = run_id.clone();
+    let end_run_id = run_id.clone();
     let map_session_id = session_id.clone();
     let map_run_id = run_id.clone();
-    let live = BroadcastStream::new(rx).take_while(move |msg| {
-        let session_id = take_session_id.clone();
-        let run_id = take_run_id.clone();
-        match msg {
-            Ok(event) => {
-                let matches = event_matches_run(event, &session_id, &run_id);
-                let is_finished = event.event_type == "session.run.finished"
-                    && event
-                        .properties
-                        .get("runID")
-                        .and_then(|v| v.as_str())
-                        .map(|v| v == run_id.as_str())
-                        .unwrap_or(false);
-                matches && !is_finished
-            }
-            Err(_) => false,
-        }
-    });
-    let mapped = live.filter_map(move |msg| match msg {
-        Ok(event) if event_matches_run(&event, &map_session_id, &map_run_id) => {
-            let payload = serde_json::to_string(&event).unwrap_or_default();
-            Some(Ok(Event::default().data(payload)))
-        }
+
+    // Ignore unrelated events from the shared bus and only terminate when this run finishes.
+    let run_events = BroadcastStream::new(rx).filter_map(move |msg| match msg {
+        Ok(event) if event_matches_run(&event, &filter_session_id, &filter_run_id) => Some(event),
         _ => None,
+    });
+    let live = run_events.take_while(move |event| {
+        let is_finished = event.event_type == "session.run.finished"
+            && event
+                .properties
+                .get("runID")
+                .and_then(|v| v.as_str())
+                .map(|v| v == end_run_id.as_str())
+                .unwrap_or(false);
+        !is_finished
+    });
+    let mapped = live.map(move |event| {
+        let normalized = normalize_run_event(event, &map_session_id, &map_run_id);
+        let payload = serde_json::to_string(&normalized).unwrap_or_default();
+        Ok(Event::default().data(payload))
     });
     started.chain(mapped)
 }
@@ -1170,6 +1239,8 @@ fn conflict_payload(session_id: &str, active: &ActiveRun) -> Value {
             "startedAtMs": active.started_at_ms,
             "lastActivityAtMs": active.last_activity_at_ms,
             "clientID": active.client_id,
+            "agentID": active.agent_id,
+            "agentProfile": active.agent_profile,
         },
         "retryAfterMs": 500,
         "attachEventStream": attach_event_stream_path(session_id, &active.run_id),
@@ -1199,6 +1270,52 @@ fn event_matches_run(event: &EngineEvent, session_id: &str, run_id: &str) -> boo
         Some(value) => value == run_id,
         None => true,
     }
+}
+
+fn normalize_run_event(mut event: EngineEvent, session_id: &str, run_id: &str) -> EngineEvent {
+    if !event.properties.is_object() {
+        event.properties = json!({});
+    }
+    if let Some(props) = event.properties.as_object_mut() {
+        if !props.contains_key("sessionID") {
+            props.insert("sessionID".to_string(), json!(session_id));
+        }
+        if !props.contains_key("runID") {
+            props.insert("runID".to_string(), json!(run_id));
+        }
+        if !props.contains_key("agentID") {
+            if let Some(agent) = props.get("agent").and_then(|v| v.as_str()) {
+                props.insert("agentID".to_string(), json!(agent));
+            }
+        }
+        if !props.contains_key("channel") {
+            let channel = infer_event_channel(&event.event_type, props);
+            props.insert("channel".to_string(), json!(channel));
+        }
+    }
+    event
+}
+
+fn infer_event_channel(event_type: &str, props: &serde_json::Map<String, Value>) -> &'static str {
+    if event_type.starts_with("session.") {
+        return "system";
+    }
+    if event_type.starts_with("todo.") || event_type.starts_with("question.") {
+        return "system";
+    }
+    if event_type == "message.part.updated" {
+        if let Some(part_type) = props
+            .get("part")
+            .and_then(|v| v.get("type"))
+            .and_then(|v| v.as_str())
+        {
+            if part_type == "tool-invocation" || part_type == "tool-result" {
+                return "tool";
+            }
+        }
+        return "assistant";
+    }
+    "log"
 }
 
 fn dispatch_error_code(message: &str) -> &'static str {
@@ -2899,6 +3016,48 @@ mod tests {
         );
         assert!(part.get("messageID").and_then(|v| v.as_str()).is_some());
         assert!(part.get("type").and_then(|v| v.as_str()).is_some());
+    }
+
+    #[test]
+    fn normalize_run_event_adds_required_fields() {
+        let event = EngineEvent::new(
+            "message.part.updated",
+            json!({
+                "part": { "type": "text" },
+                "delta": "hello"
+            }),
+        );
+        let normalized = normalize_run_event(event, "s-1", "r-1");
+        assert_eq!(
+            normalized
+                .properties
+                .get("sessionID")
+                .and_then(|v| v.as_str()),
+            Some("s-1")
+        );
+        assert_eq!(
+            normalized.properties.get("runID").and_then(|v| v.as_str()),
+            Some("r-1")
+        );
+        assert_eq!(
+            normalized
+                .properties
+                .get("channel")
+                .and_then(|v| v.as_str()),
+            Some("assistant")
+        );
+    }
+
+    #[test]
+    fn infer_event_channel_routes_tool_message_parts() {
+        let channel = infer_event_channel(
+            "message.part.updated",
+            &serde_json::from_value::<serde_json::Map<String, Value>>(json!({
+                "part": { "type": "tool-result" }
+            }))
+            .expect("map"),
+        );
+        assert_eq!(channel, "tool");
     }
 
     #[tokio::test]
