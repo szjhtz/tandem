@@ -57,7 +57,20 @@ impl MemoryDatabase {
 
         // Initialize schema
         db.init_schema().await?;
-        db.validate_vector_tables().await?;
+        if let Err(err) = db.validate_vector_tables().await {
+            match &err {
+                crate::types::MemoryError::Database(db_err)
+                    if Self::is_vector_table_error(db_err) =>
+                {
+                    tracing::warn!(
+                        "Detected vector table corruption during startup ({}). Recreating vector tables.",
+                        db_err
+                    );
+                    db.recreate_vector_tables().await?;
+                }
+                _ => return Err(err),
+            }
+        }
         db.validate_integrity().await?;
 
         Ok(db)
@@ -286,13 +299,30 @@ impl MemoryDatabase {
     /// This catches legacy/corrupted vector blobs early so startup can recover.
     pub async fn validate_vector_tables(&self) -> MemoryResult<()> {
         let conn = self.conn.lock().await;
+        let probe_embedding = format!("[{}]", vec!["0.0"; DEFAULT_EMBEDDING_DIMENSION].join(","));
+
         for table in [
             "session_memory_vectors",
             "project_memory_vectors",
             "global_memory_vectors",
         ] {
             let sql = format!("SELECT COUNT(*) FROM {}", table);
-            let _: i64 = conn.query_row(&sql, [], |row| row.get(0))?;
+            let row_count: i64 = conn.query_row(&sql, [], |row| row.get(0))?;
+
+            // COUNT(*) can pass even when vector chunk blobs are unreadable.
+            // Probe sqlite-vec MATCH execution to surface latent blob corruption.
+            if row_count > 0 {
+                let probe_sql = format!(
+                    "SELECT chunk_id, distance
+                     FROM {}
+                     WHERE embedding MATCH ?1 AND k = 1
+                     LIMIT 1",
+                    table
+                );
+                let mut stmt = conn.prepare(&probe_sql)?;
+                let mut rows = stmt.query(params![probe_embedding.as_str()])?;
+                let _ = rows.next()?;
+            }
         }
         Ok(())
     }

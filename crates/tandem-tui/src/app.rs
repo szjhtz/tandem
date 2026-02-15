@@ -1043,6 +1043,98 @@ impl App {
         resolve_shared_paths()
             .ok()
             .map(|paths| paths.canonical_root.join("binaries"))
+            .or_else(|| {
+                #[cfg(target_os = "windows")]
+                {
+                    std::env::var_os("APPDATA")
+                        .map(PathBuf::from)
+                        .map(|d| d.join("tandem").join("binaries"))
+                }
+                #[cfg(not(target_os = "windows"))]
+                {
+                    std::env::var_os("XDG_DATA_HOME")
+                        .map(PathBuf::from)
+                        .or_else(|| {
+                            std::env::var_os("HOME")
+                                .map(PathBuf::from)
+                                .map(|h| h.join(".local").join("share"))
+                        })
+                        .map(|d| d.join("tandem").join("binaries"))
+                }
+            })
+    }
+
+    fn find_desktop_bundled_engine_binary() -> Option<PathBuf> {
+        let binary_name = Self::engine_binary_name();
+        let mut candidates: Vec<PathBuf> = Vec::new();
+
+        #[cfg(target_os = "windows")]
+        {
+            let mut roots: Vec<PathBuf> = Vec::new();
+            if let Some(v) = std::env::var_os("ProgramFiles").map(PathBuf::from) {
+                roots.push(v);
+            }
+            if let Some(v) = std::env::var_os("ProgramW6432").map(PathBuf::from) {
+                if !roots.contains(&v) {
+                    roots.push(v);
+                }
+            }
+            if let Some(v) = std::env::var_os("LOCALAPPDATA").map(PathBuf::from) {
+                roots.push(v.join("Programs"));
+            }
+
+            for root in roots {
+                let app_dir = root.join("Tandem");
+                candidates.push(app_dir.join("binaries").join(binary_name));
+                candidates.push(app_dir.join("resources").join("binaries").join(binary_name));
+                candidates.push(
+                    app_dir
+                        .join("resources")
+                        .join("resources")
+                        .join("binaries")
+                        .join(binary_name),
+                );
+            }
+        }
+
+        #[cfg(target_os = "macos")]
+        {
+            let app_dir = PathBuf::from("/Applications/Tandem.app")
+                .join("Contents")
+                .join("Resources");
+            candidates.push(app_dir.join("binaries").join(binary_name));
+            candidates.push(app_dir.join("resources").join("binaries").join(binary_name));
+        }
+
+        #[cfg(target_os = "linux")]
+        {
+            let roots = [
+                PathBuf::from("/opt/tandem"),
+                PathBuf::from("/usr/lib/tandem"),
+            ];
+            for root in roots {
+                candidates.push(root.join("binaries").join(binary_name));
+                candidates.push(root.join("resources").join("binaries").join(binary_name));
+                candidates.push(
+                    root.join("resources")
+                        .join("resources")
+                        .join("binaries")
+                        .join(binary_name),
+                );
+            }
+        }
+
+        for candidate in candidates {
+            if candidate
+                .metadata()
+                .map(|m| m.len() >= MIN_ENGINE_BINARY_SIZE)
+                .unwrap_or(false)
+            {
+                return Some(candidate);
+            }
+        }
+
+        None
     }
 
     fn find_dev_engine_binary() -> Option<PathBuf> {
@@ -1116,8 +1208,20 @@ impl App {
                 return Ok(Some(path));
             }
         }
+
+        if let Some(path) = Self::find_desktop_bundled_engine_binary() {
+            self.engine_binary_path = Some(path.clone());
+            self.engine_download_active = false;
+            self.engine_download_total_bytes = None;
+            self.engine_downloaded_bytes = 0;
+            self.engine_download_phase = Some("Using desktop bundled engine binary".to_string());
+            return Ok(Some(path));
+        }
+
         let Some(binaries_dir) = Self::shared_binaries_dir() else {
-            return Ok(None);
+            return Err(anyhow!(
+                "Unable to resolve Tandem binaries directory for engine download"
+            ));
         };
         let binary_path = binaries_dir.join(Self::engine_binary_name());
         if binary_path
@@ -1177,7 +1281,22 @@ impl App {
                         .iter()
                         .any(|asset| Self::engine_asset_matches(&asset.name))
             })
+            .or_else(|| {
+                releases.iter().find(|release| {
+                    !release.draft
+                        && release
+                            .assets
+                            .iter()
+                            .any(|asset| Self::engine_asset_matches(&asset.name))
+                })
+            })
             .ok_or_else(|| anyhow!("No compatible tandem-engine release found"))?;
+        if release.prerelease {
+            tracing::info!(
+                "No stable compatible tandem-engine release found; using prerelease {}",
+                release.tag_name
+            );
+        }
 
         let asset_name = Self::engine_asset_name();
         let asset = release
@@ -3913,6 +4032,7 @@ impl App {
                                 "Engine ready. Press Enter to continue.".to_string();
                         }
                         Err(err) => {
+                            tracing::warn!("TUI engine bootstrap failed: {}", err);
                             self.engine_download_active = false;
                             self.engine_download_last_error = Some(err.to_string());
                             self.engine_download_retry_at =
@@ -3972,6 +4092,7 @@ impl App {
                         let engine_binary = match self.ensure_engine_binary().await {
                             Ok(path) => path,
                             Err(err) => {
+                                tracing::warn!("TUI could not prepare engine binary: {}", err);
                                 self.engine_download_active = false;
                                 self.engine_download_last_error = Some(err.to_string());
                                 self.engine_download_retry_at =
@@ -4010,7 +4131,7 @@ impl App {
                             cargo_cmd
                                 .arg("run")
                                 .arg("-p")
-                                .arg("tandem-engine")
+                                .arg("tandem-ai")
                                 .arg("--")
                                 .arg("serve");
                             cargo_cmd.stdout(Stdio::null()).stderr(Stdio::null());
@@ -4021,6 +4142,9 @@ impl App {
                         }
 
                         if !spawned {
+                            tracing::warn!(
+                                "TUI failed to spawn tandem-engine from downloaded binary, PATH, and cargo fallback"
+                            );
                             self.connection_status = "Failed to start engine.".to_string();
                         }
                     } else {
