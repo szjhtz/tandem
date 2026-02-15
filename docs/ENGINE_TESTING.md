@@ -13,7 +13,7 @@ From `tandem/`:
 ```powershell
 pnpm install
 pnpm engine:stop:windows
-cargo build -p tandem-engine
+cargo build -p tandem-ai
 New-Item -ItemType Directory -Force -Path .\src-tauri\binaries | Out-Null
 Copy-Item .\target\debug\tandem-engine.exe .\src-tauri\binaries\tandem-engine.exe -Force
 pnpm tauri dev
@@ -27,7 +27,7 @@ From `tandem/`:
 pnpm install
 # Kill any existing engine instance
 pkill tandem-engine || true
-cargo build -p tandem-engine
+cargo build -p tandem-ai
 mkdir -p src-tauri/binaries
 cp target/debug/tandem-engine src-tauri/binaries/tandem-engine
 pnpm tauri dev
@@ -38,7 +38,7 @@ PowerShell equivalent (Windows):
 ```powershell
 pnpm install
 Get-Process | Where-Object { $_.ProcessName -in @('tandem-engine','tandem') } | Stop-Process -Force -ErrorAction SilentlyContinue
-cargo build -p tandem-engine
+cargo build -p tandem-ai
 New-Item -ItemType Directory -Force -Path .\src-tauri\binaries | Out-Null
 Copy-Item .\target\debug\tandem-engine.exe .\src-tauri\binaries\tandem-engine.exe -Force
 pnpm tauri dev
@@ -49,8 +49,8 @@ pnpm tauri dev
 From `tandem/`:
 
 ```bash
-cargo build -p tandem-engine
-cargo run -p tandem-engine -- serve --host 127.0.0.1 --port 3000
+cargo build -p tandem-ai
+cargo run -p tandem-ai -- serve --host 127.0.0.1 --port 39731
 cargo test -p tandem-server -p tandem-core -p tandem-engine
 ```
 
@@ -94,19 +94,19 @@ Size savings example (proven from the Frumu.ai run above):
 ```powershell
 @'
 {"tool":"webfetch_document","args":{"url":"https://frumu.ai","return":"both","mode":"auto"}}
-'@ | cargo run -p tandem-engine -- tool --json -
+'@ | cargo run -p tandem-ai -- tool --json -
 ```
 
 ```powershell
 @'
 {"tool":"mcp_debug","args":{"url":"https://mcp.exa.ai/mcp","tool":"web_search_exa","args":{"query":"tandem engine","numResults":1}}}
-'@ | cargo run -p tandem-engine -- tool --json -
+'@ | cargo run -p tandem-ai -- tool --json -
 ```
 
 ### macOS/Linux (bash)
 
 ```bash
-cat << 'JSON' | cargo run -p tandem-engine -- tool --json -
+cat << 'JSON' | cargo run -p tandem-ai -- tool --json -
 {"tool":"webfetch_document","args":{"url":"https://frumu.ai","return":"both","mode":"auto"}}
 JSON
 ```
@@ -166,7 +166,7 @@ This is the automated version of the manual proof steps and writes artifacts to 
 Optional args:
 
 ```powershell
-./scripts/engine_smoke.ps1 -HostName 127.0.0.1 -Port 3000 -StateDir .tandem-smoke -OutDir runtime-proof
+./scripts/engine_smoke.ps1 -HostName 127.0.0.1 -Port 39731 -StateDir .tandem-smoke -OutDir runtime-proof
 ```
 
 ### macOS/Linux (bash)
@@ -187,7 +187,7 @@ bash ./scripts/engine_smoke.sh
 Optional env vars:
 
 ```bash
-HOSTNAME=127.0.0.1 PORT=3000 STATE_DIR=.tandem-smoke OUT_DIR=runtime-proof bash ./scripts/engine_smoke.sh
+HOSTNAME=127.0.0.1 PORT=39731 STATE_DIR=.tandem-smoke OUT_DIR=runtime-proof bash ./scripts/engine_smoke.sh
 ```
 
 ## What smoke scripts validate
@@ -206,7 +206,7 @@ HOSTNAME=127.0.0.1 PORT=3000 STATE_DIR=.tandem-smoke OUT_DIR=runtime-proof bash 
 ### Windows
 
 ```powershell
-cargo run -p tandem-engine -- serve --host 127.0.0.1 --port 3000 --state-dir .tandem
+cargo run -p tandem-ai -- serve --host 127.0.0.1 --port 39731 --state-dir .tandem
 ```
 
 ## Running with `pnpm tauri dev`
@@ -220,9 +220,10 @@ Important: the filename is the same (`tandem-engine` or `tandem-engine.exe`), bu
 
 Desktop and TUI now use shared engine mode by default:
 
-- fixed engine port: `127.0.0.1:3000`
+- default engine port: `127.0.0.1:39731`
 - clients attach to an already-running engine when available
 - closing one client detaches instead of force-stopping the shared engine
+- set `TANDEM_ENGINE_PORT` to override the shared default for both desktop and TUI
 
 Disable shared mode (legacy single-client behavior) by setting:
 
@@ -272,7 +273,7 @@ Behavior in strict mode:
 From `tandem/`:
 
 ```bash
-cargo build -p tandem-engine
+cargo build -p tandem-ai
 mkdir -p ./src-tauri/binaries
 cp ./target/debug/tandem-engine ./src-tauri/binaries/tandem-engine
 chmod +x ./src-tauri/binaries/tandem-engine
@@ -282,7 +283,7 @@ pnpm tauri dev
 ### macOS/Linux
 
 ```bash
-cargo run -p tandem-engine -- serve --host 127.0.0.1 --port 3000 --state-dir .tandem
+cargo run -p tandem-ai -- serve --host 127.0.0.1 --port 39731 --state-dir .tandem
 ```
 
 ## Build commands by OS
@@ -290,13 +291,13 @@ cargo run -p tandem-engine -- serve --host 127.0.0.1 --port 3000 --state-dir .ta
 ### Windows
 
 ```powershell
-cargo build -p tandem-engine
+cargo build -p tandem-ai
 ```
 
 ### macOS/Linux
 
 ```bash
-cargo build -p tandem-engine
+cargo build -p tandem-ai
 ```
 
 ## Rogue process cleanup
@@ -325,7 +326,7 @@ Windows copy/paste recovery for `os error 5`:
 
 ```powershell
 Get-Process | Where-Object { $_.ProcessName -in @('tandem-engine','tandem') } | Stop-Process -Force -ErrorAction SilentlyContinue
-cargo build -p tandem-engine
+cargo build -p tandem-ai
 New-Item -ItemType Directory -Force -Path .\src-tauri\binaries | Out-Null
 Copy-Item .\target\debug\tandem-engine.exe .\src-tauri\binaries\tandem-engine.exe -Force
 ```

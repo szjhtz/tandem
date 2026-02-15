@@ -1,6 +1,6 @@
 param(
     [string]$HostName = "127.0.0.1",
-    [int]$Port = 3000,
+    [int]$Port = 39731,
     [string]$StateDir = ".tandem-smoke",
     [string]$OutDir = "runtime-proof",
     [int]$HealthTimeoutSeconds = 30

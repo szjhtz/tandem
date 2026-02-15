@@ -2,7 +2,7 @@
 set -euo pipefail
 
 HOSTNAME="${HOSTNAME:-127.0.0.1}"
-PORT="${PORT:-3000}"
+PORT="${PORT:-39731}"
 STATE_DIR="${STATE_DIR:-.tandem-smoke}"
 OUT_DIR="${OUT_DIR:-runtime-proof}"
 HEALTH_TIMEOUT_SECONDS="${HEALTH_TIMEOUT_SECONDS:-30}"

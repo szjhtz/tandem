@@ -344,6 +344,8 @@ cargo fmt
 ```
 
 Engine-specific build/run/smoke instructions (including `pnpm tauri dev` sidecar setup): see `docs/ENGINE_TESTING.md`.
+Engine CLI usage reference (commands, flags, examples): see `docs/ENGINE_CLI.md`.
+Engine runtime communication contract (desktop/TUI <-> engine): see `docs/ENGINE_COMMUNICATION.md`.
 
 ## Project Structure
 

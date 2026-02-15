@@ -10,6 +10,9 @@ pub mod session_title;
 pub mod storage;
 pub mod storage_paths;
 
+pub const DEFAULT_ENGINE_HOST: &str = "127.0.0.1";
+pub const DEFAULT_ENGINE_PORT: u16 = 39731;
+
 pub use agents::*;
 pub use cancellation::*;
 pub use config::*;

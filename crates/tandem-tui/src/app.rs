@@ -348,7 +348,10 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::time::Instant;
-use tandem_core::{migrate_legacy_storage_if_needed, resolve_shared_paths};
+use tandem_core::{
+    migrate_legacy_storage_if_needed, resolve_shared_paths, DEFAULT_ENGINE_HOST,
+    DEFAULT_ENGINE_PORT,
+};
 
 pub struct App {
     pub state: AppState,
@@ -568,6 +571,28 @@ impl App {
                 !(normalized == "0" || normalized == "false" || normalized == "off")
             })
             .unwrap_or(true)
+    }
+
+    fn configured_engine_port() -> u16 {
+        std::env::var("TANDEM_ENGINE_PORT")
+            .ok()
+            .and_then(|raw| raw.trim().parse::<u16>().ok())
+            .filter(|port| *port != 0)
+            .unwrap_or(DEFAULT_ENGINE_PORT)
+    }
+
+    fn configured_engine_base_url() -> String {
+        if let Ok(raw) = std::env::var("TANDEM_ENGINE_URL") {
+            let trimmed = raw.trim().trim_end_matches('/');
+            if !trimmed.is_empty() {
+                return trimmed.to_string();
+            }
+        }
+        format!(
+            "http://{}:{}",
+            DEFAULT_ENGINE_HOST,
+            Self::configured_engine_port()
+        )
     }
 
     pub const COMMAND_HELP: &'static [(&'static str, &'static str)] = &[
@@ -4062,7 +4087,7 @@ impl App {
                 if self.client.is_none() {
                     self.connection_status = "Searching for engine...".to_string();
                     // Check if running
-                    let client = EngineClient::new("http://127.0.0.1:3000".to_string());
+                    let client = EngineClient::new(Self::configured_engine_base_url());
                     if let Ok(healthy) = client.check_health().await {
                         if healthy {
                             self.connection_status =
@@ -4103,10 +4128,11 @@ impl App {
                         };
 
                         let mut spawned = false;
+                        let configured_port = Self::configured_engine_port().to_string();
                         if let Some(binary_path) = engine_binary {
                             let mut cmd = Command::new(binary_path);
                             cmd.kill_on_drop(!Self::shared_engine_mode_enabled());
-                            cmd.arg("serve").arg("--port").arg("3000");
+                            cmd.arg("serve").arg("--port").arg(&configured_port);
                             cmd.stdout(Stdio::null()).stderr(Stdio::null());
                             if let Ok(child) = cmd.spawn() {
                                 self.engine_process = Some(child);
@@ -4117,7 +4143,7 @@ impl App {
                         if !spawned {
                             let mut cmd = Command::new("tandem-engine");
                             cmd.kill_on_drop(!Self::shared_engine_mode_enabled());
-                            cmd.arg("serve").arg("--port").arg("3000");
+                            cmd.arg("serve").arg("--port").arg(&configured_port);
                             cmd.stdout(Stdio::null()).stderr(Stdio::null());
                             if let Ok(child) = cmd.spawn() {
                                 self.engine_process = Some(child);
@@ -4133,7 +4159,9 @@ impl App {
                                 .arg("-p")
                                 .arg("tandem-ai")
                                 .arg("--")
-                                .arg("serve");
+                                .arg("serve")
+                                .arg("--port")
+                                .arg(&configured_port);
                             cargo_cmd.stdout(Stdio::null()).stderr(Stdio::null());
                             if let Ok(child) = cargo_cmd.spawn() {
                                 self.engine_process = Some(child);
@@ -4281,7 +4309,7 @@ MULTI-AGENT KEYS:
                                     if status.healthy { "Yes" } else { "No" },
                                     status.version,
                                     status.mode,
-                                    "http://127.0.0.1:3000"
+                                    client.base_url()
                                 )
                             }
                             Err(e) => format!("Failed to get engine status: {}", e),

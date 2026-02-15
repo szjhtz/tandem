@@ -6,9 +6,12 @@ use std::{fs, io::Read};
 
 use anyhow::Context;
 use clap::{Parser, Subcommand};
+use futures::stream::{self, StreamExt};
+use serde::{Deserialize, Serialize};
 use tandem_core::{
     migrate_legacy_storage_if_needed, resolve_shared_paths, AgentRegistry, CancellationRegistry,
     ConfigStore, EngineLoop, EventBus, PermissionManager, PluginRegistry, Storage,
+    DEFAULT_ENGINE_HOST, DEFAULT_ENGINE_PORT,
 };
 use tandem_observability::{
     canonical_logs_dir_from_root, emit_event, init_process_logging, ObservabilityEvent, ProcessKind,
@@ -37,9 +40,57 @@ const SUPPORTED_PROVIDER_IDS: [&str; 12] = [
     "cohere",
 ];
 
+const ENGINE_CLI_EXAMPLES: &str = r#"Examples:
+  tandem-engine serve --hostname 127.0.0.1 --port 39731
+  tandem-engine run "Summarize this repository" --provider openrouter --model openai/gpt-4o-mini
+  tandem-engine tool --json @payload.json
+  cat payload.json | tandem-engine tool --json -
+  tandem-engine providers
+"#;
+
+const SERVE_EXAMPLES: &str = r#"Examples:
+  tandem-engine serve
+  tandem-engine serve --hostname 0.0.0.0 --port 39731
+  tandem-engine serve --state-dir .tandem-test --provider openrouter --model openai/gpt-4o-mini
+"#;
+
+const RUN_EXAMPLES: &str = r#"Examples:
+  tandem-engine run "Write a short status update"
+  tandem-engine run "Summarize docs/ENGINE_TESTING.md" --provider openai --model gpt-4o-mini
+"#;
+
+const PARALLEL_EXAMPLES: &str = r#"Examples:
+  tandem-engine parallel --json @tasks.json --concurrency 3
+  tandem-engine parallel --json "[{\"prompt\":\"Summarize README.md\"},{\"prompt\":\"List likely regressions\"}]"
+
+`--json` accepts:
+  - array of prompt strings
+  - array of objects: {\"id\":\"task-1\",\"prompt\":\"...\",\"provider\":\"openrouter\"}
+  - object wrapper: {\"tasks\":[...]}
+  - @path/to/file.json
+  - - (read JSON from stdin)
+"#;
+
+const TOOL_EXAMPLES: &str = r#"Examples:
+  tandem-engine tool --json "{\"tool\":\"workspace_list_files\",\"args\":{\"path\":\".\"}}"
+  tandem-engine tool --json @payload.json
+  cat payload.json | tandem-engine tool --json -
+
+`--json` accepts:
+  - raw JSON string
+  - @path/to/file.json
+  - - (read JSON from stdin)
+"#;
+
 #[derive(Parser, Debug)]
 #[command(name = "tandem-engine")]
+#[command(version)]
 #[command(about = "Headless Tandem AI backend")]
+#[command(
+    long_about = "Headless Tandem AI backend.\n\nUse `serve` for the HTTP/SSE runtime, `run` for one-shot prompts, and `tool` for direct tool execution."
+)]
+#[command(after_help = ENGINE_CLI_EXAMPLES)]
+#[command(propagate_version = true)]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -47,42 +98,103 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Command {
+    #[command(
+        about = "Start the HTTP/SSE engine server (recommended for desktop/TUI integration)."
+    )]
+    #[command(after_help = SERVE_EXAMPLES)]
     Serve {
-        #[arg(long, alias = "host", default_value = "127.0.0.1")]
+        #[arg(
+            long,
+            env = "TANDEM_ENGINE_HOST",
+            alias = "host",
+            default_value = DEFAULT_ENGINE_HOST,
+            help = "Hostname or IP address to bind."
+        )]
         hostname: String,
-        #[arg(long, default_value_t = 3000)]
+        #[arg(
+            long,
+            env = "TANDEM_ENGINE_PORT",
+            default_value_t = DEFAULT_ENGINE_PORT,
+            help = "Port to bind."
+        )]
         port: u16,
-        #[arg(long)]
+        #[arg(
+            long,
+            help = "Engine state directory. If omitted, uses TANDEM_STATE_DIR or the shared Tandem path."
+        )]
         state_dir: Option<String>,
-        #[arg(long, default_value_t = false)]
+        #[arg(
+            long,
+            default_value_t = false,
+            help = "Run engine loop in-process for debug/testing."
+        )]
         in_process: bool,
-        #[arg(long)]
+        #[arg(long, help = "Provider API key override for this process.")]
         api_key: Option<String>,
-        #[arg(long)]
+        #[arg(
+            long,
+            help = "Default provider override (see `tandem-engine providers`)."
+        )]
         provider: Option<String>,
-        #[arg(long)]
+        #[arg(long, help = "Default model override for the selected provider.")]
         model: Option<String>,
-        #[arg(long)]
+        #[arg(long, help = "Path to config JSON override.")]
         config: Option<String>,
     },
+    #[command(about = "Run one prompt and print only the assistant response.")]
+    #[command(after_help = RUN_EXAMPLES)]
     Run {
+        #[arg(help = "Prompt text to execute.")]
         prompt: String,
-        #[arg(long)]
+        #[arg(long, help = "Provider API key override for this run.")]
         api_key: Option<String>,
-        #[arg(long)]
+        #[arg(
+            long,
+            help = "Default provider override (see `tandem-engine providers`)."
+        )]
         provider: Option<String>,
-        #[arg(long)]
+        #[arg(long, help = "Default model override for the selected provider.")]
         model: Option<String>,
-        #[arg(long)]
+        #[arg(long, help = "Path to config JSON override.")]
         config: Option<String>,
     },
-    Chat,
-    Tool {
-        #[arg(long)]
+    #[command(about = "Run multiple prompts concurrently and print a JSON result summary.")]
+    #[command(after_help = PARALLEL_EXAMPLES)]
+    Parallel {
+        #[arg(long, help = "Task payload as JSON string, @file, or - for stdin.")]
         json: String,
-        #[arg(long)]
+        #[arg(long, default_value_t = 4, help = "Maximum concurrent tasks (1-32).")]
+        concurrency: usize,
+        #[arg(long, help = "Provider API key override for this batch.")]
+        api_key: Option<String>,
+        #[arg(
+            long,
+            help = "Default provider for tasks without an explicit provider."
+        )]
+        provider: Option<String>,
+        #[arg(
+            long,
+            help = "Default model override for provider config used by this batch."
+        )]
+        model: Option<String>,
+        #[arg(long, help = "Path to config JSON override.")]
+        config: Option<String>,
+    },
+    #[command(about = "Planned interactive REPL mode (currently a placeholder).")]
+    Chat,
+    #[command(about = "Execute a single built-in tool call using JSON input.")]
+    #[command(after_help = TOOL_EXAMPLES)]
+    Tool {
+        #[arg(long, help = "Tool payload as raw JSON, @file, or - for stdin.")]
+        json: String,
+        #[arg(
+            long,
+            help = "Engine state directory. If omitted, uses TANDEM_STATE_DIR or the shared Tandem path."
+        )]
         state_dir: Option<String>,
     },
+    #[command(about = "List supported provider IDs for --provider.")]
+    Providers,
 }
 
 #[tokio::main]
@@ -198,6 +310,72 @@ async fn main() -> anyhow::Result<()> {
                 .await?;
             println!("{reply}");
         }
+        Command::Parallel {
+            json,
+            concurrency,
+            api_key,
+            provider,
+            model,
+            config,
+        } => {
+            let provider = normalize_and_validate_provider(provider)?;
+            let overrides = build_cli_overrides(api_key, provider.clone(), model)?;
+            let config_path = config.map(PathBuf::from);
+            let state_dir = resolve_state_dir(None);
+            let state = build_runtime(&state_dir, None, overrides, config_path).await?;
+            let payload = read_json_input(&json)?;
+            let tasks = parse_parallel_tasks(payload, provider)?;
+            if tasks.is_empty() {
+                anyhow::bail!("parallel requires at least one task");
+            }
+
+            let limit = concurrency.clamp(1, 32);
+            let engine_loop = state.engine_loop.clone();
+            let mut results = stream::iter(tasks.into_iter().enumerate())
+                .map(|(idx, task)| {
+                    let engine_loop = engine_loop.clone();
+                    async move {
+                        let task_id = task.id.unwrap_or_else(|| format!("task-{}", idx + 1));
+                        match engine_loop
+                            .run_oneshot_for_provider(task.prompt.clone(), task.provider.as_deref())
+                            .await
+                        {
+                            Ok(output) => ParallelTaskResult {
+                                index: idx,
+                                id: task_id,
+                                provider: task.provider,
+                                status: "ok".to_string(),
+                                output: Some(output),
+                                error: None,
+                            },
+                            Err(err) => ParallelTaskResult {
+                                index: idx,
+                                id: task_id,
+                                provider: task.provider,
+                                status: "error".to_string(),
+                                output: None,
+                                error: Some(err.to_string()),
+                            },
+                        }
+                    }
+                })
+                .buffer_unordered(limit)
+                .collect::<Vec<_>>()
+                .await;
+
+            results.sort_by_key(|item| item.index);
+            let failures = results.iter().filter(|item| item.status == "error").count();
+            let report = serde_json::json!({
+                "concurrency": limit,
+                "total": results.len(),
+                "failures": failures,
+                "results": results,
+            });
+            println!("{}", serde_json::to_string_pretty(&report)?);
+            if failures > 0 {
+                anyhow::bail!("parallel completed with {} failed task(s)", failures);
+            }
+        }
         Command::Chat => {
             let _state = build_runtime(&resolve_state_dir(None), None, None, None).await?;
             println!("Interactive chat mode is planned; use `serve` for now.");
@@ -205,7 +383,7 @@ async fn main() -> anyhow::Result<()> {
         Command::Tool { json, state_dir } => {
             let state_dir = resolve_state_dir(state_dir);
             let state = build_runtime(&state_dir, None, None, None).await?;
-            let payload = read_tool_json(&json)?;
+            let payload = read_json_input(&json)?;
             let tool = payload
                 .get("tool")
                 .and_then(|v| v.as_str())
@@ -224,6 +402,12 @@ async fn main() -> anyhow::Result<()> {
                 "metadata": result.metadata
             });
             println!("{}", serde_json::to_string_pretty(&output)?);
+        }
+        Command::Providers => {
+            println!("Supported providers:");
+            for provider in SUPPORTED_PROVIDER_IDS {
+                println!("  - {provider}");
+            }
         }
     }
 
@@ -323,6 +507,83 @@ fn read_tool_json(input: &str) -> anyhow::Result<serde_json::Value> {
         return Ok(serde_json::from_str(&raw)?);
     }
     Ok(serde_json::from_str(input)?)
+}
+
+fn read_json_input(input: &str) -> anyhow::Result<serde_json::Value> {
+    if input.trim() == "-" {
+        let mut buf = String::new();
+        std::io::stdin().read_to_string(&mut buf)?;
+        return Ok(serde_json::from_str(&buf)?);
+    }
+    if let Some(path) = input.strip_prefix('@') {
+        let raw = fs::read_to_string(path)?;
+        return Ok(serde_json::from_str(&raw)?);
+    }
+    Ok(serde_json::from_str(input)?)
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct ParallelTaskInput {
+    id: Option<String>,
+    prompt: String,
+    provider: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ParallelTaskResult {
+    #[serde(skip_serializing)]
+    index: usize,
+    id: String,
+    provider: Option<String>,
+    status: String,
+    output: Option<String>,
+    error: Option<String>,
+}
+
+fn parse_parallel_tasks(
+    payload: serde_json::Value,
+    default_provider: Option<String>,
+) -> anyhow::Result<Vec<ParallelTaskInput>> {
+    let parse_item = |value: &serde_json::Value| -> anyhow::Result<ParallelTaskInput> {
+        match value {
+            serde_json::Value::String(prompt) => {
+                if prompt.trim().is_empty() {
+                    anyhow::bail!("parallel task prompt cannot be empty");
+                }
+                Ok(ParallelTaskInput {
+                    id: None,
+                    prompt: prompt.clone(),
+                    provider: default_provider.clone(),
+                })
+            }
+            serde_json::Value::Object(_) => {
+                let mut task: ParallelTaskInput = serde_json::from_value(value.clone())
+                    .context("invalid parallel task object shape")?;
+                if task.prompt.trim().is_empty() {
+                    anyhow::bail!("parallel task prompt cannot be empty");
+                }
+                task.provider = normalize_and_validate_provider(task.provider)?;
+                if task.provider.is_none() {
+                    task.provider = default_provider.clone();
+                }
+                Ok(task)
+            }
+            _ => anyhow::bail!("parallel tasks must be strings or objects"),
+        }
+    };
+
+    let items = match payload {
+        serde_json::Value::Array(items) => items,
+        serde_json::Value::Object(mut obj) => obj
+            .remove("tasks")
+            .and_then(|v| v.as_array().cloned())
+            .ok_or_else(|| {
+                anyhow::anyhow!("parallel object payload must include a `tasks` array")
+            })?,
+        _ => anyhow::bail!("parallel payload must be an array or an object with `tasks`"),
+    };
+
+    items.iter().map(parse_item).collect()
 }
 
 fn log_startup_paths(state_dir: &Path, addr: &SocketAddr, startup_attempt_id: &str) {

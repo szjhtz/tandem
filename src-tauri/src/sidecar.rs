@@ -12,7 +12,7 @@ use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tandem_core::resolve_shared_paths;
+use tandem_core::{resolve_shared_paths, DEFAULT_ENGINE_PORT};
 use tandem_observability::{emit_event, ObservabilityEvent, ProcessKind};
 use tandem_skills::{SkillContent, SkillInfo, SkillLocation, SkillTemplateInfo};
 use tokio::sync::{Mutex, RwLock};
@@ -174,6 +174,13 @@ fn default_health_ready() -> bool {
     true
 }
 
+fn default_sidecar_port() -> u16 {
+    std::env::var("TANDEM_ENGINE_PORT")
+        .ok()
+        .and_then(|raw| raw.trim().parse::<u16>().ok())
+        .unwrap_or(DEFAULT_ENGINE_PORT)
+}
+
 /// Configuration for the sidecar manager
 #[derive(Debug, Clone)]
 pub struct SidecarConfig {
@@ -198,7 +205,7 @@ pub struct SidecarConfig {
 impl Default for SidecarConfig {
     fn default() -> Self {
         Self {
-            port: 3000,
+            port: default_sidecar_port(),
             max_failures: 3,
             cooldown_duration: Duration::from_secs(30),
             operation_timeout: Duration::from_secs(300),
