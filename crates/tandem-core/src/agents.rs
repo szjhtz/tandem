@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::Context;
@@ -208,7 +208,7 @@ async fn load_custom_agents(dir: PathBuf) -> anyhow::Result<Vec<AgentDefinition>
     Ok(out)
 }
 
-fn parse_agent_markdown(raw: &str, path: &PathBuf) -> Option<AgentDefinition> {
+fn parse_agent_markdown(raw: &str, path: &Path) -> Option<AgentDefinition> {
     let trimmed = raw.trim_start();
     if !trimmed.starts_with("---") {
         return None;

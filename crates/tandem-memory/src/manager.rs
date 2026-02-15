@@ -214,7 +214,7 @@ impl MemoryManager {
                 // Convert distance to similarity (cosine similarity)
                 // sqlite-vec returns distance, where lower is more similar
                 // Cosine similarity ranges from -1 to 1, but for normalized vectors it's 0 to 1
-                let similarity = 1.0 - (distance as f64).clamp(0.0, 1.0);
+                let similarity = 1.0 - distance.clamp(0.0, 1.0);
 
                 results.push(MemorySearchResult { chunk, similarity });
             }

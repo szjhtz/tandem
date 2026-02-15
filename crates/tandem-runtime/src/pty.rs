@@ -145,6 +145,12 @@ impl PtyManager {
     }
 }
 
+impl Default for PtyManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 async fn read_stream(
     output: Arc<RwLock<String>>,
     mut stream: impl tokio::io::AsyncRead + Unpin + Send + 'static,

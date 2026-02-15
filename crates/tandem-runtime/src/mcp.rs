@@ -139,6 +139,12 @@ impl McpRegistry {
     }
 }
 
+impl Default for McpRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 fn resolve_state_file() -> PathBuf {
     if let Ok(path) = std::env::var("TANDEM_MCP_REGISTRY") {
         return PathBuf::from(path);

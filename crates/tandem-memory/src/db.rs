@@ -13,6 +13,15 @@ use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
+type ProjectIndexStatusRow = (
+    Option<String>,
+    Option<i64>,
+    Option<i64>,
+    Option<i64>,
+    Option<i64>,
+    Option<i64>,
+);
+
 /// Database connection manager
 pub struct MemoryDatabase {
     conn: Arc<Mutex<Connection>>,
@@ -24,7 +33,14 @@ impl MemoryDatabase {
     pub async fn new(db_path: &Path) -> MemoryResult<Self> {
         // Register sqlite-vec extension
         unsafe {
-            sqlite3_auto_extension(Some(std::mem::transmute(sqlite3_vec_init as *const ())));
+            sqlite3_auto_extension(Some(std::mem::transmute::<
+                *const (),
+                unsafe extern "C" fn(
+                    *mut rusqlite::ffi::sqlite3,
+                    *mut *mut i8,
+                    *const rusqlite::ffi::sqlite3_api_routines,
+                ) -> i32,
+            >(sqlite3_vec_init as *const ())));
         }
 
         let conn = Connection::open(db_path)?;
@@ -338,9 +354,7 @@ impl MemoryDatabase {
     pub async fn ensure_vector_tables_healthy(&self) -> MemoryResult<bool> {
         match self.validate_vector_tables().await {
             Ok(()) => Ok(false),
-            Err(crate::types::MemoryError::Database(err))
-                if Self::is_vector_table_error(&err) =>
-            {
+            Err(crate::types::MemoryError::Database(err)) if Self::is_vector_table_error(&err) => {
                 tracing::warn!(
                     "Memory vector tables appear corrupted ({}). Recreating vector tables.",
                     err
@@ -1157,7 +1171,7 @@ impl MemoryDatabase {
             |row| row.get(0),
         )?;
 
-        let status_row: Option<(Option<String>, Option<i64>, Option<i64>, Option<i64>, Option<i64>, Option<i64>)> =
+        let status_row: Option<ProjectIndexStatusRow> =
             conn
                 .query_row(
                     "SELECT last_indexed_at, last_total_files, last_processed_files, last_indexed_files, last_skipped_files, last_errors

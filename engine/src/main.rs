@@ -1,5 +1,5 @@
 use std::net::SocketAddr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 use std::{fs, io::Read};
@@ -325,7 +325,7 @@ fn read_tool_json(input: &str) -> anyhow::Result<serde_json::Value> {
     Ok(serde_json::from_str(input)?)
 }
 
-fn log_startup_paths(state_dir: &PathBuf, addr: &SocketAddr, startup_attempt_id: &str) {
+fn log_startup_paths(state_dir: &Path, addr: &SocketAddr, startup_attempt_id: &str) {
     let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("<unknown>"));
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("<unknown>"));
     let config_path = state_dir.join("config.json");
@@ -419,7 +419,7 @@ async fn initialize_runtime(
 }
 
 async fn build_runtime(
-    state_dir: &PathBuf,
+    state_dir: &Path,
     startup_state: Option<&AppState>,
     cli_overrides: Option<serde_json::Value>,
     override_config_path: Option<PathBuf>,

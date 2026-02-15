@@ -40,6 +40,7 @@ pub struct EngineLoop {
 }
 
 impl EngineLoop {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         storage: std::sync::Arc<Storage>,
         event_bus: EventBus,
@@ -271,7 +272,7 @@ impl EngineLoop {
                         cancel.clone(),
                     )
                     .await
-                    .map_err(|err| {
+                    .inspect_err(|err| {
                         let error_text = err.to_string();
                         let error_code = provider_error_code(&error_text);
                         let detail = truncate_text(&error_text, 500);
@@ -292,7 +293,6 @@ impl EngineLoop {
                                 detail: Some(&detail),
                             },
                         );
-                        err
                     })?;
                 tokio::pin!(stream);
                 completion.clear();
@@ -626,6 +626,7 @@ impl EngineLoop {
             .await
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn execute_tool_with_permission(
         &self,
         session_id: &str,
@@ -1436,7 +1437,7 @@ fn parse_function_style_tool_calls(input: &str) -> Vec<(String, Value)> {
             let needle = format!("{name}(");
             if let Some(rel_idx) = lower[cursor..].find(&needle) {
                 let idx = cursor + rel_idx;
-                if best.as_ref().map_or(true, |(best_idx, _)| idx < *best_idx) {
+                if best.as_ref().is_none_or(|(best_idx, _)| idx < *best_idx) {
                     best = Some((idx, name));
                 }
             }
@@ -1771,10 +1772,8 @@ fn normalize_streamed_tool_args(tool_name: &str, parsed: Value, raw: &str) -> Va
 
     match parsed {
         Value::Object(mut obj) => {
-            if !has_websearch_query(&obj) {
-                if !raw.trim().is_empty() {
-                    obj.insert("query".to_string(), Value::String(raw.trim().to_string()));
-                }
+            if !has_websearch_query(&obj) && !raw.trim().is_empty() {
+                obj.insert("query".to_string(), Value::String(raw.trim().to_string()));
             }
             Value::Object(obj)
         }
@@ -2072,13 +2071,12 @@ async fn load_chat_history(storage: std::sync::Arc<Storage>, session_id: &str) -
             let content = m
                 .parts
                 .into_iter()
-                .filter_map(|part| match part {
-                    MessagePart::Text { text } => Some(text),
-                    MessagePart::Reasoning { text } => Some(text),
-                    MessagePart::ToolInvocation { tool, result, .. } => Some(format!(
-                        "Tool {tool} => {}",
-                        result.unwrap_or_else(|| json!({}))
-                    )),
+                .map(|part| match part {
+                    MessagePart::Text { text } => text,
+                    MessagePart::Reasoning { text } => text,
+                    MessagePart::ToolInvocation { tool, result, .. } => {
+                        format!("Tool {tool} => {}", result.unwrap_or_else(|| json!({})))
+                    }
                 })
                 .collect::<Vec<_>>()
                 .join("\n");

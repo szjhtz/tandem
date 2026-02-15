@@ -1593,7 +1593,7 @@ async fn cancel_run_by_id(
     let active = state.run_registry.get(&id).await;
     if let Some(active_run) = active {
         if active_run.run_id == run_id {
-            let cancelled = state.cancellations.cancel(&id).await;
+            let _cancelled = state.cancellations.cancel(&id).await;
             let _ = state.run_registry.finish_if_match(&id, &run_id).await;
             state.event_bus.publish(EngineEvent::new(
                 "session.run.finished",
@@ -1604,7 +1604,7 @@ async fn cancel_run_by_id(
                     "status": "cancelled",
                 }),
             ));
-            return Json(json!({"ok": true, "cancelled": cancelled || true}));
+            return Json(json!({"ok": true, "cancelled": true}));
         }
     }
     Json(json!({"ok": true, "cancelled": false}))
@@ -2040,9 +2040,7 @@ async fn fetch_openrouter_models(cfg: &Value) -> Option<HashMap<String, WireProv
         }
     };
 
-    let Some(data) = body.get("data").and_then(|v| v.as_array()) else {
-        return None;
-    };
+    let data = body.get("data").and_then(|v| v.as_array())?;
 
     let mut out = HashMap::new();
     for item in data {

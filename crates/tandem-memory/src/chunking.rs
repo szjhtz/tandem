@@ -203,7 +203,7 @@ pub fn chunk_text_semantic(text: &str, config: &ChunkingConfig) -> MemoryResult<
 
             // Split long paragraph by sentences
             let sentences: Vec<&str> = paragraph
-                .split(|c| c == '.' || c == '!' || c == '?')
+                .split(['.', '!', '?'])
                 .filter(|s| !s.trim().is_empty())
                 .collect();
 

@@ -108,6 +108,12 @@ impl ToolRegistry {
     }
 }
 
+impl Default for ToolRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ToolSchemaValidationError {
     pub tool_name: String,

@@ -75,7 +75,7 @@ fn normalize_for_workspace_compare(path: PathBuf) -> PathBuf {
         } else if let Some(rest) = text.strip_prefix(r"\\?\") {
             text = rest.to_string();
         }
-        return PathBuf::from(text.to_ascii_lowercase());
+        PathBuf::from(text.to_ascii_lowercase())
     }
 
     #[cfg(not(windows))]

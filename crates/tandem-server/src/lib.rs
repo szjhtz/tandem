@@ -162,9 +162,9 @@ pub fn build_id() -> String {
 pub fn binary_path_for_health() -> Option<String> {
     #[cfg(debug_assertions)]
     {
-        return std::env::current_exe()
+        std::env::current_exe()
             .ok()
-            .map(|p| p.to_string_lossy().to_string());
+            .map(|p| p.to_string_lossy().to_string())
     }
     #[cfg(not(debug_assertions))]
     {
