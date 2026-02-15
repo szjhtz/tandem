@@ -24,6 +24,8 @@ pub struct AgentDefinition {
     pub system_prompt: Option<String>,
     #[serde(default)]
     pub tools: Option<Vec<String>>,
+    #[serde(default)]
+    pub skills: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -32,6 +34,7 @@ struct AgentFrontmatter {
     mode: Option<AgentMode>,
     hidden: Option<bool>,
     tools: Option<Vec<String>>,
+    skills: Option<Vec<String>>,
 }
 
 #[derive(Clone)]
@@ -84,6 +87,7 @@ impl AgentRegistry {
                 hidden: false,
                 system_prompt: None,
                 tools: None,
+                skills: None,
             })
     }
 }
@@ -104,6 +108,7 @@ tool permissions are denied."
                     .to_string(),
             ),
             tools: None,
+            skills: None,
         },
         AgentDefinition {
             name: "plan".to_string(),
@@ -114,6 +119,7 @@ tool permissions are denied."
                     .to_string(),
             ),
             tools: None,
+            skills: None,
         },
         AgentDefinition {
             name: "explore".to_string(),
@@ -127,6 +133,7 @@ Only ask for clarification after an initial workspace pass if results are insuff
                     .to_string(),
             ),
             tools: None,
+            skills: None,
         },
         AgentDefinition {
             name: "general".to_string(),
@@ -140,6 +147,7 @@ Avoid asking broad context questions before attempting local inspection."
                     .to_string(),
             ),
             tools: None,
+            skills: None,
         },
         AgentDefinition {
             name: "compaction".to_string(),
@@ -149,6 +157,7 @@ Avoid asking broad context questions before attempting local inspection."
                 "You summarize long conversations into compact context.".to_string(),
             ),
             tools: Some(vec![]),
+            skills: Some(vec![]),
         },
         AgentDefinition {
             name: "title".to_string(),
@@ -156,6 +165,7 @@ Avoid asking broad context questions before attempting local inspection."
             hidden: true,
             system_prompt: Some("You generate concise, descriptive session titles.".to_string()),
             tools: Some(vec![]),
+            skills: Some(vec![]),
         },
         AgentDefinition {
             name: "summary".to_string(),
@@ -163,6 +173,7 @@ Avoid asking broad context questions before attempting local inspection."
             hidden: true,
             system_prompt: Some("You produce factual summaries of session content.".to_string()),
             tools: Some(vec![]),
+            skills: Some(vec![]),
         },
     ]
 }
@@ -211,5 +222,6 @@ fn parse_agent_markdown(raw: &str, path: &PathBuf) -> Option<AgentDefinition> {
         hidden: parsed.hidden.unwrap_or(false),
         system_prompt: if body.is_empty() { None } else { Some(body) },
         tools: parsed.tools,
+        skills: parsed.skills,
     })
 }

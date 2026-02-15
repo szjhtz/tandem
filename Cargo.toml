@@ -11,5 +11,7 @@ members = [
     "crates/tandem-runtime",
     "crates/tandem-tui",
     "crates/tandem-observability",
+    "crates/tandem-skills",
+    "crates/tandem-memory",
 ]
 resolver = "2"

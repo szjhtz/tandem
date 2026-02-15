@@ -195,6 +195,7 @@ impl EngineLoop {
                     &user_message_id,
                     tool.clone(),
                     args,
+                    active_agent.skills.as_deref(),
                     &text,
                     None,
                     cancel.clone(),
@@ -211,19 +212,22 @@ impl EngineLoop {
             let mut readonly_tool_cache: HashMap<String, String> = HashMap::new();
             let mut readonly_signature_counts: HashMap<String, usize> = HashMap::new();
             let mut websearch_query_blocked = false;
+            let mut auto_workspace_probe_attempted = false;
 
             while max_iterations > 0 && !cancel.is_cancelled() {
                 max_iterations -= 1;
                 let mut messages = load_chat_history(self.storage.clone(), &session_id).await;
+                let mut system_parts = vec![tandem_runtime_system_prompt().to_string()];
                 if let Some(system) = active_agent.system_prompt.as_ref() {
-                    messages.insert(
-                        0,
-                        ChatMessage {
-                            role: "system".to_string(),
-                            content: system.clone(),
-                        },
-                    );
+                    system_parts.push(system.clone());
                 }
+                messages.insert(
+                    0,
+                    ChatMessage {
+                        role: "system".to_string(),
+                        content: system_parts.join("\n\n"),
+                    },
+                );
                 if let Some(extra) = followup_context.take() {
                     messages.push(ChatMessage {
                         role: "user".to_string(),
@@ -379,6 +383,13 @@ impl EngineLoop {
                 if tool_calls.is_empty() {
                     tool_calls = parse_tool_invocations_from_response(&completion);
                 }
+                if tool_calls.is_empty()
+                    && !auto_workspace_probe_attempted
+                    && should_force_workspace_probe(&text, &completion)
+                {
+                    auto_workspace_probe_attempted = true;
+                    tool_calls = vec![("glob".to_string(), json!({ "pattern": "*" }))];
+                }
                 if !tool_calls.is_empty() {
                     let mut outputs = Vec::new();
                     for (tool, args) in tool_calls {
@@ -388,7 +399,8 @@ impl EngineLoop {
                         let tool_key = normalize_tool_name(&tool);
                         if websearch_query_blocked && tool_key == "websearch" {
                             outputs.push(
-                                "Tool `websearch` call skipped: WEBSEARCH_QUERY_MISSING".to_string(),
+                                "Tool `websearch` call skipped: WEBSEARCH_QUERY_MISSING"
+                                    .to_string(),
                             );
                             continue;
                         }
@@ -446,6 +458,7 @@ impl EngineLoop {
                                 &user_message_id,
                                 tool,
                                 args,
+                                active_agent.skills.as_deref(),
                                 &text,
                                 Some(&completion),
                                 cancel.clone(),
@@ -572,12 +585,23 @@ impl EngineLoop {
         self.providers.default_complete(&prompt).await
     }
 
+    pub async fn run_oneshot_for_provider(
+        &self,
+        prompt: String,
+        provider_id: Option<&str>,
+    ) -> anyhow::Result<String> {
+        self.providers
+            .complete_for_provider(provider_id, &prompt)
+            .await
+    }
+
     async fn execute_tool_with_permission(
         &self,
         session_id: &str,
         message_id: &str,
         tool: String,
         args: Value,
+        equipped_skills: Option<&[String]>,
         latest_user_text: &str,
         latest_assistant_context: Option<&str>,
         cancel: CancellationToken,
@@ -640,7 +664,10 @@ impl EngineLoop {
             return Ok(Some("WEBSEARCH_QUERY_MISSING".to_string()));
         }
 
-        let args = normalized.args;
+        let args = match enforce_skill_scope(&tool, normalized.args, equipped_skills) {
+            Ok(args) => args,
+            Err(message) => return Ok(Some(message)),
+        };
         let mut tool_call_id: Option<String> = None;
         if let Some(violation) = self
             .workspace_sandbox_violation(session_id, &tool, &args)
@@ -732,7 +759,11 @@ impl EngineLoop {
             json!({"part": invoke_part}),
         ));
         let args_for_side_events = args.clone();
-        let result = match self.tools.execute_with_cancel(&tool, args, cancel.clone()).await {
+        let result = match self
+            .tools
+            .execute_with_cancel(&tool, args, cancel.clone())
+            .await
+        {
             Ok(result) => result,
             Err(err) => {
                 let mut failed_part =
@@ -853,15 +884,17 @@ impl EngineLoop {
             return None;
         }
         let mut messages = load_chat_history(self.storage.clone(), session_id).await;
+        let mut system_parts = vec![tandem_runtime_system_prompt().to_string()];
         if let Some(system) = active_agent.system_prompt.as_ref() {
-            messages.insert(
-                0,
-                ChatMessage {
-                    role: "system".to_string(),
-                    content: system.clone(),
-                },
-            );
+            system_parts.push(system.clone());
         }
+        messages.insert(
+            0,
+            ChatMessage {
+                role: "system".to_string(),
+                content: system_parts.join("\n\n"),
+            },
+        );
         messages.push(ChatMessage {
             role: "user".to_string(),
             content: format!(
@@ -977,6 +1010,59 @@ fn agent_can_use_tool(agent: &AgentDefinition, tool_name: &str) -> bool {
         None => true,
         Some(list) => list.iter().any(|t| normalize_tool_name(t) == target),
     }
+}
+
+fn enforce_skill_scope(
+    tool_name: &str,
+    args: Value,
+    equipped_skills: Option<&[String]>,
+) -> Result<Value, String> {
+    if normalize_tool_name(tool_name) != "skill" {
+        return Ok(args);
+    }
+    let Some(configured) = equipped_skills else {
+        return Ok(args);
+    };
+
+    let mut allowed = configured
+        .iter()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>();
+    if allowed
+        .iter()
+        .any(|s| s == "*" || s.eq_ignore_ascii_case("all"))
+    {
+        return Ok(args);
+    }
+    allowed.sort();
+    allowed.dedup();
+    if allowed.is_empty() {
+        return Err("No skills are equipped for this agent.".to_string());
+    }
+
+    let requested = args
+        .get("name")
+        .and_then(|v| v.as_str())
+        .map(|v| v.trim().to_string())
+        .unwrap_or_default();
+    if !requested.is_empty() && !allowed.iter().any(|s| s == &requested) {
+        return Err(format!(
+            "Skill '{}' is not equipped for this agent. Equipped skills: {}",
+            requested,
+            allowed.join(", ")
+        ));
+    }
+
+    let mut out = if let Some(obj) = args.as_object() {
+        Value::Object(obj.clone())
+    } else {
+        json!({})
+    };
+    if let Some(obj) = out.as_object_mut() {
+        obj.insert("allowed_skills".to_string(), json!(allowed));
+    }
+    Ok(out)
 }
 
 fn is_read_only_tool(tool_name: &str) -> bool {
@@ -1162,10 +1248,7 @@ fn tool_signature(tool_name: &str, args: &Value) -> String {
             .or_else(|| args.get("domain"))
             .map(|v| v.to_string())
             .unwrap_or_default();
-        let recency = args
-            .get("recency")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0);
+        let recency = args.get("recency").and_then(|v| v.as_u64()).unwrap_or(0);
         return format!("websearch:q={query}|limit={limit}|domains={domains}|recency={recency}");
     }
     format!("{}:{}", normalized, args)
@@ -1184,6 +1267,52 @@ fn summarize_tool_outputs(outputs: &[String]) -> String {
         .map(|output| truncate_text(output, 600))
         .collect::<Vec<_>>()
         .join("\n\n")
+}
+
+fn tandem_runtime_system_prompt() -> &'static str {
+    "You are operating inside Tandem (Desktop/TUI) as an engine-backed coding assistant.
+Use tool calls to inspect and modify the workspace when needed instead of asking the user
+to manually run basic discovery steps. Permission prompts may occur for some tools; if
+a tool is denied or blocked, explain what was blocked and suggest a concrete next step."
+}
+
+fn should_force_workspace_probe(user_text: &str, completion: &str) -> bool {
+    let user = user_text.to_lowercase();
+    let reply = completion.to_lowercase();
+
+    let asked_for_project_context = [
+        "what is this project",
+        "what's this project",
+        "explain this project",
+        "analyze this project",
+        "inspect this project",
+        "look at the project",
+        "use glob",
+        "run glob",
+    ]
+    .iter()
+    .any(|needle| user.contains(needle));
+
+    if !asked_for_project_context {
+        return false;
+    }
+
+    let assistant_claimed_no_access = [
+        "can't inspect",
+        "cannot inspect",
+        "don't have visibility",
+        "haven't been able to inspect",
+        "i don't know what this project is",
+        "need your help to",
+        "sandbox",
+        "system restriction",
+    ]
+    .iter()
+    .any(|needle| reply.contains(needle));
+
+    // If the user is explicitly asking for project inspection and the model replies with
+    // a no-access narrative instead of making a tool call, force a minimal read-only probe.
+    asked_for_project_context && assistant_claimed_no_access
 }
 
 fn parse_tool_invocation(input: &str) -> Option<(String, serde_json::Value)> {
@@ -2124,7 +2253,8 @@ Call: todowrite(task_id=3, status="in_progress")
 
     #[test]
     fn normalize_tool_args_websearch_infers_from_user_text() {
-        let normalized = normalize_tool_args("websearch", json!({}), "web search meaning of life", "");
+        let normalized =
+            normalize_tool_args("websearch", json!({}), "web search meaning of life", "");
         assert_eq!(
             normalized.args.get("query").and_then(|v| v.as_str()),
             Some("meaning of life")

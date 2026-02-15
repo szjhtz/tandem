@@ -2,6 +2,11 @@
 
 Canonical release notes live in `docs/RELEASE_NOTES.md`.
 
+## Unreleased
+
+- Skills: Expanded discovery to support multiple project/global ecosystem directories with deterministic project-over-global precedence.
+- Skills: Added per-agent `skills` activation controls and universal mode-level access for the `skill` tool.
+
 ## v0.2.25 (2026-02-12)
 
 - Skills: Added canonical Core 9 marketing starter templates (`product-marketing-context`, `content-strategy`, `seo-audit`, `social-content`, `copywriting`, `copy-editing`, `email-sequence`, `competitor-alternatives`, `launch-strategy`).

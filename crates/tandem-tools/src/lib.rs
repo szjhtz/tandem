@@ -1,4 +1,4 @@
-use std::collections::{hash_map::DefaultHasher, HashMap};
+use std::collections::{hash_map::DefaultHasher, HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -8,6 +8,7 @@ use async_trait::async_trait;
 use ignore::WalkBuilder;
 use regex::Regex;
 use serde_json::{json, Value};
+use tandem_skills::SkillService;
 use tokio::fs;
 use tokio::process::Command;
 use tokio::sync::RwLock;
@@ -1160,28 +1161,138 @@ impl Tool for SkillTool {
     fn schema(&self) -> ToolSchema {
         ToolSchema {
             name: "skill".to_string(),
-            description: "Inspect installed Codex skills".to_string(),
+            description: "List or load installed Tandem skills. Call without name to list available skills; provide name to load full SKILL.md content.".to_string(),
             input_schema: json!({"type":"object","properties":{"name":{"type":"string"}}}),
         }
     }
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
-        let name = args["name"].as_str().unwrap_or("unknown");
-        let mut found = Vec::new();
-        for root in [".codex/skills", ".codex/skills/.system"] {
-            let path = PathBuf::from(root).join(name).join("SKILL.md");
-            if path.exists() {
-                found.push(path.display().to_string());
+        let workspace_root = std::env::current_dir().ok();
+        let service = SkillService::for_workspace(workspace_root);
+        let requested = args["name"].as_str().map(str::trim).unwrap_or("");
+        let allowed_skills = parse_allowed_skills(&args);
+
+        if requested.is_empty() {
+            let mut skills = service.list_skills().unwrap_or_default();
+            if let Some(allowed) = &allowed_skills {
+                skills.retain(|s| allowed.contains(&s.name));
+            }
+            if skills.is_empty() {
+                return Ok(ToolResult {
+                    output: "No skills available.".to_string(),
+                    metadata: json!({"count": 0, "skills": []}),
+                });
+            }
+            let mut lines = vec![
+                "Available Tandem skills:".to_string(),
+                "<available_skills>".to_string(),
+            ];
+            for skill in &skills {
+                lines.push("  <skill>".to_string());
+                lines.push(format!("    <name>{}</name>", skill.name));
+                lines.push(format!(
+                    "    <description>{}</description>",
+                    escape_xml_text(&skill.description)
+                ));
+                lines.push(format!("    <location>{}</location>", skill.path));
+                lines.push("  </skill>".to_string());
+            }
+            lines.push("</available_skills>".to_string());
+            return Ok(ToolResult {
+                output: lines.join("\n"),
+                metadata: json!({"count": skills.len(), "skills": skills}),
+            });
+        }
+
+        if let Some(allowed) = &allowed_skills {
+            if !allowed.contains(requested) {
+                let mut allowed_list = allowed.iter().cloned().collect::<Vec<_>>();
+                allowed_list.sort();
+                return Ok(ToolResult {
+                    output: format!(
+                        "Skill \"{}\" is not enabled for this agent. Enabled skills: {}",
+                        requested,
+                        allowed_list.join(", ")
+                    ),
+                    metadata: json!({"name": requested, "enabled": allowed_list}),
+                });
             }
         }
+
+        let loaded = service.load_skill(requested).map_err(anyhow::Error::msg)?;
+        let Some(skill) = loaded else {
+            let available = service
+                .list_skills()
+                .unwrap_or_default()
+                .into_iter()
+                .map(|s| s.name)
+                .collect::<Vec<_>>();
+            return Ok(ToolResult {
+                output: format!(
+                    "Skill \"{}\" not found. Available skills: {}",
+                    requested,
+                    if available.is_empty() {
+                        "none".to_string()
+                    } else {
+                        available.join(", ")
+                    }
+                ),
+                metadata: json!({"name": requested, "matches": [], "available": available}),
+            });
+        };
+
+        let files = skill
+            .files
+            .iter()
+            .map(|f| format!("<file>{}</file>", f))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let output = [
+            format!("<skill_content name=\"{}\">", skill.info.name),
+            format!("# Skill: {}", skill.info.name),
+            String::new(),
+            skill.content.trim().to_string(),
+            String::new(),
+            format!("Base directory for this skill: {}", skill.base_dir),
+            "Relative paths in this skill are resolved from this base directory.".to_string(),
+            "Note: file list is sampled.".to_string(),
+            String::new(),
+            "<skill_files>".to_string(),
+            files,
+            "</skill_files>".to_string(),
+            "</skill_content>".to_string(),
+        ]
+        .join("\n");
         Ok(ToolResult {
-            output: if found.is_empty() {
-                format!("Skill `{name}` not found in local skill directories.")
-            } else {
-                format!("Skill `{name}` found:\n{}", found.join("\n"))
-            },
-            metadata: json!({"name": name, "matches": found}),
+            output,
+            metadata: json!({
+                "name": skill.info.name,
+                "dir": skill.base_dir,
+                "path": skill.info.path
+            }),
         })
     }
+}
+
+fn escape_xml_text(input: &str) -> String {
+    input
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+}
+
+fn parse_allowed_skills(args: &Value) -> Option<HashSet<String>> {
+    let values = args
+        .get("allowed_skills")
+        .or_else(|| args.get("allowedSkills"))
+        .and_then(|v| v.as_array())?;
+    let out = values
+        .iter()
+        .filter_map(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(ToString::to_string)
+        .collect::<HashSet<_>>();
+    Some(out)
 }
 
 struct ApplyPatchTool;
@@ -1502,6 +1613,51 @@ mod tests {
             extract_websearch_limit(&json!({"input":{"num_results": 6}})),
             Some(6)
         );
+    }
+
+    #[test]
+    fn test_html_stripping_and_markdown_reduction() {
+        let html = r#"
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <title>Test Page</title>
+                <style>
+                    body { color: red; }
+                </style>
+                <script>
+                    console.log("noisy script");
+                </script>
+            </head>
+            <body>
+                <h1>Hello World</h1>
+                <p>This is a <a href="https://example.com">link</a>.</p>
+                <noscript>Enable JS</noscript>
+            </body>
+            </html>
+        "#;
+
+        let cleaned = strip_html_noise(html);
+        assert!(!cleaned.contains("noisy script"));
+        assert!(!cleaned.contains("color: red"));
+        assert!(!cleaned.contains("Enable JS"));
+        assert!(cleaned.contains("Hello World"));
+
+        let markdown = html2md::parse_html(&cleaned);
+        let text = markdown_to_text(&markdown);
+
+        // Raw length includes all the noise
+        let raw_len = html.len();
+        // Markdown length should be significantly smaller
+        let md_len = markdown.len();
+
+        println!("Raw: {}, Markdown: {}", raw_len, md_len);
+        assert!(
+            md_len < raw_len / 2,
+            "Markdown should be < 50% of raw HTML size"
+        );
+        assert!(text.contains("Hello World"));
+        assert!(text.contains("link"));
     }
 }
 

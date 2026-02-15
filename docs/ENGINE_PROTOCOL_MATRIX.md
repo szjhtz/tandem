@@ -287,12 +287,12 @@ Validation rules in strict mode:
 
 ## 10) Workspace Namespace Contract
 
-| Boundary              | Canonical contract                                                    | Status      | Notes                                                                                                 |
-| --------------------- | --------------------------------------------------------------------- | ----------- | ----------------------------------------------------------------------------------------------------- |
-| Workspace plans       | Write to `.tandem/plans`; read `.tandem/plans` then `.opencode/plans` | implemented | `start_plan_session` writes canonical paths; `list_plans` and watcher include legacy-read fallback.   |
-| Workspace skills      | Write to `.tandem/skill`; read `.tandem/skill` then `.opencode/skill` | implemented | Project skill install/import/template flows now target `.tandem/skill`.                               |
-| Python workspace venv | Canonical `.tandem/.venv` with legacy `.opencode/.venv` compatibility | implemented | Policy checks and status resolve canonical first; legacy venv still accepted during migration window. |
-| Starter packs default | Install into `<workspace>/workspace-packs` when workspace is active   | implemented | Falls back to previous global default only when no active workspace exists.                           |
+| Boundary              | Canonical contract                                                                                                   | Status      | Notes                                                                                                                          |
+| --------------------- | -------------------------------------------------------------------------------------------------------------------- | ----------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| Workspace plans       | Write to `.tandem/plans`; read `.tandem/plans` then `.opencode/plans`                                                | implemented | `start_plan_session` writes canonical paths; `list_plans` and watcher include legacy-read fallback.                            |
+| Workspace skills      | Canonical project root `.tandem/skill` + global root `%APPDATA%/tandem/skills`; engine `/skills*` is source of truth | implemented | Tauri + TUI now delegate install/list/load/import/delete/template flows to engine endpoints/tooling (no `.opencode` fallback). |
+| Python workspace venv | Canonical `.tandem/.venv` with legacy `.opencode/.venv` compatibility                                                | implemented | Policy checks and status resolve canonical first; legacy venv still accepted during migration window.                          |
+| Starter packs default | Install into `<workspace>/workspace-packs` when workspace is active                                                  | implemented | Falls back to previous global default only when no active workspace exists.                                                    |
 
 ## 9) Authoritative State Sources (Web + TUI)
 

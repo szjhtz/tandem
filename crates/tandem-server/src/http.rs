@@ -18,6 +18,7 @@ use ignore::WalkBuilder;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use tandem_skills::{SkillLocation, SkillService, SkillsConflictPolicy};
 use tokio::process::Command;
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::StreamExt;
@@ -193,6 +194,25 @@ struct QuestionReplyInput {
 #[derive(Debug, Deserialize, Default)]
 struct QuestionAnswerInput {
     answer: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SkillLocationQuery {
+    location: Option<SkillLocation>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SkillsImportRequest {
+    content: Option<String>,
+    file_or_path: Option<String>,
+    location: SkillLocation,
+    namespace: Option<String>,
+    conflict_policy: Option<SkillsConflictPolicy>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SkillsTemplateInstallRequest {
+    location: SkillLocation,
 }
 
 #[derive(Debug, Serialize)]
@@ -410,6 +430,15 @@ fn app_router(state: AppState) -> Router {
         .route("/auth/{id}", put(set_auth).delete(delete_auth))
         .route("/path", get(path_info))
         .route("/agent", get(agent_list))
+        .route("/skills", get(skills_list).post(skills_import))
+        .route("/skills/import", post(skills_import))
+        .route("/skills/import/preview", post(skills_import_preview))
+        .route("/skills/templates", get(skills_templates_list))
+        .route(
+            "/skills/templates/{id}/install",
+            post(skills_templates_install),
+        )
+        .route("/skills/{name}", get(skills_get).delete(skills_delete))
         .route("/skill", get(skill_list))
         .route("/instance/dispose", post(instance_dispose))
         .route("/log", post(push_log))
@@ -656,6 +685,7 @@ async fn create_session(
     State(state): State<AppState>,
     Json(req): Json<CreateSessionRequest>,
 ) -> Result<Json<WireSession>, StatusCode> {
+    let requested_permission_rules = req.permission.clone();
     let mut session = Session::new(req.title, req.directory);
     let workspace_from_runtime = {
         let snapshot = state.workspace_index.snapshot().await;
@@ -680,11 +710,52 @@ async fn create_session(
         .save_session(session.clone())
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    apply_session_permission_rules(&state, requested_permission_rules).await;
     state.event_bus.publish(EngineEvent::new(
         "session.created",
         json!({"sessionID": session.id}),
     ));
     Ok(Json(session.into()))
+}
+
+async fn apply_session_permission_rules(state: &AppState, rules: Option<Vec<serde_json::Value>>) {
+    let Some(rules) = rules else {
+        return;
+    };
+    for raw in rules {
+        let Some((permission, pattern, action)) = parse_permission_rule_input(&raw) else {
+            continue;
+        };
+        let _ = state
+            .permissions
+            .add_rule(permission, pattern, action)
+            .await;
+    }
+}
+
+fn parse_permission_rule_input(
+    raw: &serde_json::Value,
+) -> Option<(String, String, tandem_core::PermissionAction)> {
+    let obj = raw.as_object()?;
+    let permission = obj.get("permission")?.as_str()?.trim().to_string();
+    if permission.is_empty() {
+        return None;
+    }
+    let pattern = obj
+        .get("pattern")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .unwrap_or(permission.as_str())
+        .to_string();
+    let action = obj.get("action").and_then(|v| v.as_str())?;
+    let action = match action.trim().to_ascii_lowercase().as_str() {
+        "allow" | "always" => tandem_core::PermissionAction::Allow,
+        "ask" | "once" => tandem_core::PermissionAction::Ask,
+        "deny" | "reject" => tandem_core::PermissionAction::Deny,
+        _ => return None,
+    };
+    Some((permission, pattern, action))
 }
 
 async fn list_sessions(
@@ -2525,8 +2596,134 @@ async fn path_info(
 async fn agent_list(State(state): State<AppState>) -> Json<Value> {
     Json(json!(state.agents.list().await))
 }
-async fn skill_list(State(state): State<AppState>) -> Json<Value> {
-    Json(json!(state.plugins.list().await))
+
+fn skills_service() -> SkillService {
+    SkillService::for_workspace(std::env::current_dir().ok())
+}
+
+fn skill_error(
+    status: StatusCode,
+    message: impl Into<String>,
+) -> (StatusCode, Json<ErrorEnvelope>) {
+    (
+        status,
+        Json(ErrorEnvelope {
+            error: message.into(),
+            code: Some("skills_error".to_string()),
+        }),
+    )
+}
+
+async fn skills_list() -> Result<Json<Value>, (StatusCode, Json<ErrorEnvelope>)> {
+    let service = skills_service();
+    let skills = service
+        .list_skills()
+        .map_err(|e| skill_error(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    Ok(Json(json!(skills)))
+}
+
+async fn skills_get(
+    Path(name): Path<String>,
+) -> Result<Json<Value>, (StatusCode, Json<ErrorEnvelope>)> {
+    let service = skills_service();
+    let loaded = service
+        .load_skill(&name)
+        .map_err(|e| skill_error(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    let Some(skill) = loaded else {
+        return Err(skill_error(
+            StatusCode::NOT_FOUND,
+            format!("Skill '{}' not found", name),
+        ));
+    };
+    Ok(Json(json!(skill)))
+}
+
+async fn skills_import_preview(
+    Json(input): Json<SkillsImportRequest>,
+) -> Result<Json<Value>, (StatusCode, Json<ErrorEnvelope>)> {
+    let service = skills_service();
+    let file_or_path = input.file_or_path.ok_or_else(|| {
+        skill_error(
+            StatusCode::BAD_REQUEST,
+            "Missing file_or_path for /skills/import/preview",
+        )
+    })?;
+    let preview = service
+        .skills_import_preview(
+            &file_or_path,
+            input.location,
+            input.namespace,
+            input.conflict_policy.unwrap_or(SkillsConflictPolicy::Skip),
+        )
+        .map_err(|e| skill_error(StatusCode::BAD_REQUEST, e))?;
+    Ok(Json(json!(preview)))
+}
+
+async fn skills_import(
+    Json(input): Json<SkillsImportRequest>,
+) -> Result<Json<Value>, (StatusCode, Json<ErrorEnvelope>)> {
+    let service = skills_service();
+    if let Some(content) = input.content {
+        let skill = service
+            .import_skill_from_content(&content, input.location)
+            .map_err(|e| skill_error(StatusCode::BAD_REQUEST, e))?;
+        return Ok(Json(json!(skill)));
+    }
+    let file_or_path = input.file_or_path.ok_or_else(|| {
+        skill_error(
+            StatusCode::BAD_REQUEST,
+            "Missing content or file_or_path for /skills/import",
+        )
+    })?;
+    let result = service
+        .skills_import(
+            &file_or_path,
+            input.location,
+            input.namespace,
+            input.conflict_policy.unwrap_or(SkillsConflictPolicy::Skip),
+        )
+        .map_err(|e| skill_error(StatusCode::BAD_REQUEST, e))?;
+    Ok(Json(json!(result)))
+}
+
+async fn skills_delete(
+    Path(name): Path<String>,
+    Query(query): Query<SkillLocationQuery>,
+) -> Result<Json<Value>, (StatusCode, Json<ErrorEnvelope>)> {
+    let service = skills_service();
+    let location = query.location.unwrap_or(SkillLocation::Project);
+    let deleted = service
+        .delete_skill(&name, location)
+        .map_err(|e| skill_error(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    Ok(Json(json!({ "deleted": deleted })))
+}
+
+async fn skills_templates_list() -> Result<Json<Value>, (StatusCode, Json<ErrorEnvelope>)> {
+    let service = skills_service();
+    let templates = service
+        .list_templates()
+        .map_err(|e| skill_error(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    Ok(Json(json!(templates)))
+}
+
+async fn skills_templates_install(
+    Path(id): Path<String>,
+    Json(input): Json<SkillsTemplateInstallRequest>,
+) -> Result<Json<Value>, (StatusCode, Json<ErrorEnvelope>)> {
+    let service = skills_service();
+    let installed = service
+        .install_template(&id, input.location)
+        .map_err(|e| skill_error(StatusCode::BAD_REQUEST, e))?;
+    Ok(Json(json!(installed)))
+}
+
+async fn skill_list() -> Json<Value> {
+    let service = skills_service();
+    let skills = service.list_skills().unwrap_or_default();
+    Json(json!({
+        "skills": skills,
+        "deprecation_warning": "GET /skill is deprecated; use GET /skills instead."
+    }))
 }
 async fn instance_dispose() -> Json<Value> {
     Json(json!({"ok": true}))
@@ -2561,6 +2758,11 @@ async fn openapi_doc() -> Json<Value> {
             "/worktree":{"get":{"summary":"List worktrees"},"post":{"summary":"Create worktree"},"delete":{"summary":"Delete worktree"}},
             "/mcp/resources":{"get":{"summary":"List MCP resources"}},
             "/tool":{"get":{"summary":"List tools"}},
+            "/skills":{"get":{"summary":"List installed skills"},"post":{"summary":"Import skill from content or file/zip"}},
+            "/skills/{name}":{"get":{"summary":"Load skill content"},"delete":{"summary":"Delete skill by name and location"}},
+            "/skills/import/preview":{"post":{"summary":"Preview skill import conflicts/actions"}},
+            "/skills/templates":{"get":{"summary":"List installable skill templates"}},
+            "/skills/templates/{id}/install":{"post":{"summary":"Install a skill template"}},
             "/command":{"get":{"summary":"List executable commands"}},
             "/session/{id}/command":{"post":{"summary":"Run explicit command"}},
             "/session/{id}/shell":{"post":{"summary":"Run shell command"}},
@@ -2602,7 +2804,7 @@ mod tests {
         let global = root.join("global-config.json");
         std::env::set_var("TANDEM_GLOBAL_CONFIG", &global);
         let storage = Arc::new(Storage::new(root.join("storage")).await.expect("storage"));
-        let config = ConfigStore::new(root.join("config.json"))
+        let config = ConfigStore::new(root.join("config.json"), None)
             .await
             .expect("config");
         let event_bus = EventBus::new();
@@ -3427,5 +3629,38 @@ mod tests {
             .await
             .expect("cancel response");
         assert_eq!(cancel_resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn skills_endpoints_return_expected_shapes() {
+        let state = test_state().await;
+        let app = app_router(state);
+
+        let list_req = Request::builder()
+            .method("GET")
+            .uri("/skills")
+            .body(Body::empty())
+            .expect("request");
+        let list_resp = app.clone().oneshot(list_req).await.expect("response");
+        assert_eq!(list_resp.status(), StatusCode::OK);
+        let list_body = to_bytes(list_resp.into_body(), usize::MAX)
+            .await
+            .expect("body");
+        let list_payload: Value = serde_json::from_slice(&list_body).expect("json");
+        assert!(list_payload.is_array());
+
+        let legacy_req = Request::builder()
+            .method("GET")
+            .uri("/skill")
+            .body(Body::empty())
+            .expect("request");
+        let legacy_resp = app.clone().oneshot(legacy_req).await.expect("response");
+        assert_eq!(legacy_resp.status(), StatusCode::OK);
+        let legacy_body = to_bytes(legacy_resp.into_body(), usize::MAX)
+            .await
+            .expect("body");
+        let legacy_payload: Value = serde_json::from_slice(&legacy_body).expect("json");
+        assert!(legacy_payload.get("skills").is_some());
+        assert!(legacy_payload.get("deprecation_warning").is_some());
     }
 }

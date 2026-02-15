@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **TUI Working Indicator**: Added active-agent working status/spinner visibility in chat footer and grid pane titles.
 - **TUI Request Center**: Added pending-request modal (`Alt+R` / `/requests`) for permission approvals and interactive question replies.
 - **Shared Permission Defaults**: Added centralized permission-default rule builder in `tandem-core` for desktop + TUI consistency.
+- **Skills Discovery Expansion**: Added multi-root skills discovery in `tandem-skills` for project and ecosystem directories (`.tandem/skill`, `.tandem/skills`, `~/.tandem/skills`, `~/.agents/skills`, `~/.claude/skills`, plus appdata compatibility).
+- **Agent Skill Activation Controls**: Added optional `skills` field to agent frontmatter/config so end users can scope which skills are active per agent.
 
 ### Changed
 
@@ -24,6 +26,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **TUI Keybinds/UX**: Grid toggle moved to `Alt+G`; request center added on `Alt+R`; scroll speed increased for line/page scrolling.
 - **Startup + PIN UX**: PIN prompt re-centered for fullscreen, digit-only PIN input enforced, and connecting screen now stays active until engine readiness checks complete.
 - **Markdown Pipeline**: TUI transcript path now uses `tui-markdown` preprocessing for assistant markdown content.
+- **Mode Tool Gating**: `skill` is now universal at mode level (not blocked by mode `allowed_tools` allowlists).
+- **Skill Tool Scope Behavior**: `skill` now respects agent-level equipped skill lists when present (filtered list/load), while still being callable from all modes.
 
 ### Fixed
 
@@ -34,6 +38,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Request Visibility**: Replaced noisy in-transcript request activity lines with dedicated request/status UI.
 - **Permission Clarity in Plan Mode**: Request modal now shows mode/tool context and explains why permission is requested, including `tool: question` previews.
 - **Question Handling**: Added custom-answer support alongside multiple-choice options and fixed `permission(tool=question)` normalization into question-answer flow.
+- **Skills Discovery Determinism**: Duplicate skill names are now resolved by deterministic priority (project roots override global roots).
 
 ## [0.3.0] - 2026-02-14
 

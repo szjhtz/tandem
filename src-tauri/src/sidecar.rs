@@ -14,6 +14,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tandem_core::resolve_shared_paths;
 use tandem_observability::{emit_event, ObservabilityEvent, ProcessKind};
+use tandem_skills::{SkillContent, SkillInfo, SkillLocation, SkillTemplateInfo};
 use tokio::sync::{Mutex, RwLock};
 
 #[cfg(windows)]
@@ -892,6 +893,63 @@ pub struct ActiveRunStatusResponse {
 #[derive(Debug, Clone, Deserialize)]
 struct ActiveRunEnvelope {
     active: Option<ActiveRunStatusResponse>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct SkillsImportRequest {
+    location: SkillLocation,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    content: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    file_or_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    namespace: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    conflict_policy: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct SkillsDeleteQuery<'a> {
+    location: &'a str,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct SkillsTemplateInstallRequest {
+    location: SkillLocation,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SkillsImportPreviewItem {
+    pub source: String,
+    pub valid: bool,
+    pub name: Option<String>,
+    pub description: Option<String>,
+    pub conflict: bool,
+    pub action: String,
+    pub target_path: Option<String>,
+    pub error: Option<String>,
+    pub version: Option<String>,
+    pub author: Option<String>,
+    pub tags: Vec<String>,
+    pub requires: Vec<String>,
+    pub compatibility: Option<String>,
+    pub triggers: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SkillsImportPreview {
+    pub items: Vec<SkillsImportPreviewItem>,
+    pub total: usize,
+    pub valid: usize,
+    pub invalid: usize,
+    pub conflicts: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SkillsImportResult {
+    pub imported: Vec<SkillInfo>,
+    pub skipped: Vec<String>,
+    pub errors: Vec<String>,
 }
 
 // ============================================================================
@@ -2588,6 +2646,163 @@ impl SidecarManager {
     }
 
     // ========================================================================
+    // Skills
+    // ========================================================================
+
+    pub async fn list_skills(&self) -> Result<Vec<SkillInfo>> {
+        self.check_circuit_breaker().await?;
+        let url = format!("{}/skills", self.base_url().await?);
+        let response = self
+            .http_client
+            .get(&url)
+            .send()
+            .await
+            .map_err(|e| TandemError::Sidecar(format!("Failed to list skills: {}", e)))?;
+        self.handle_response(response).await
+    }
+
+    pub async fn get_skill(&self, name: &str) -> Result<SkillContent> {
+        self.check_circuit_breaker().await?;
+        let url = format!("{}/skills/{}", self.base_url().await?, name);
+        let response = self
+            .http_client
+            .get(&url)
+            .send()
+            .await
+            .map_err(|e| TandemError::Sidecar(format!("Failed to load skill: {}", e)))?;
+        self.handle_response(response).await
+    }
+
+    pub async fn import_skill_content(
+        &self,
+        content: String,
+        location: SkillLocation,
+    ) -> Result<SkillInfo> {
+        self.check_circuit_breaker().await?;
+        let url = format!("{}/skills/import", self.base_url().await?);
+        let body = SkillsImportRequest {
+            location,
+            content: Some(content),
+            file_or_path: None,
+            namespace: None,
+            conflict_policy: None,
+        };
+        let response = self
+            .http_client
+            .post(&url)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| TandemError::Sidecar(format!("Failed to import skill: {}", e)))?;
+        self.handle_response(response).await
+    }
+
+    pub async fn skills_import_preview(
+        &self,
+        file_or_path: String,
+        location: SkillLocation,
+        namespace: Option<String>,
+        conflict_policy: String,
+    ) -> Result<SkillsImportPreview> {
+        self.check_circuit_breaker().await?;
+        let url = format!("{}/skills/import/preview", self.base_url().await?);
+        let body = SkillsImportRequest {
+            location,
+            content: None,
+            file_or_path: Some(file_or_path),
+            namespace,
+            conflict_policy: Some(conflict_policy),
+        };
+        let response = self
+            .http_client
+            .post(&url)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| TandemError::Sidecar(format!("Failed to preview skill import: {}", e)))?;
+        self.handle_response(response).await
+    }
+
+    pub async fn skills_import(
+        &self,
+        file_or_path: String,
+        location: SkillLocation,
+        namespace: Option<String>,
+        conflict_policy: String,
+    ) -> Result<SkillsImportResult> {
+        self.check_circuit_breaker().await?;
+        let url = format!("{}/skills/import", self.base_url().await?);
+        let body = SkillsImportRequest {
+            location,
+            content: None,
+            file_or_path: Some(file_or_path),
+            namespace,
+            conflict_policy: Some(conflict_policy),
+        };
+        let response = self
+            .http_client
+            .post(&url)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| TandemError::Sidecar(format!("Failed to import skills: {}", e)))?;
+        self.handle_response(response).await
+    }
+
+    pub async fn delete_skill(&self, name: String, location: SkillLocation) -> Result<()> {
+        self.check_circuit_breaker().await?;
+        let base = self.base_url().await?;
+        let location_text = match location {
+            SkillLocation::Project => "project",
+            SkillLocation::Global => "global",
+        };
+        let url = format!("{}/skills/{}", base, name);
+        let response = self
+            .http_client
+            .delete(&url)
+            .query(&[SkillsDeleteQuery {
+                location: location_text,
+            }])
+            .send()
+            .await
+            .map_err(|e| TandemError::Sidecar(format!("Failed to delete skill: {}", e)))?;
+        let _: serde_json::Value = self.handle_response(response).await?;
+        Ok(())
+    }
+
+    pub async fn list_skill_templates(&self) -> Result<Vec<SkillTemplateInfo>> {
+        self.check_circuit_breaker().await?;
+        let url = format!("{}/skills/templates", self.base_url().await?);
+        let response =
+            self.http_client.get(&url).send().await.map_err(|e| {
+                TandemError::Sidecar(format!("Failed to list skill templates: {}", e))
+            })?;
+        self.handle_response(response).await
+    }
+
+    pub async fn install_skill_template(
+        &self,
+        template_id: String,
+        location: SkillLocation,
+    ) -> Result<SkillInfo> {
+        self.check_circuit_breaker().await?;
+        let url = format!(
+            "{}/skills/templates/{}/install",
+            self.base_url().await?,
+            template_id
+        );
+        let body = SkillsTemplateInstallRequest { location };
+        let response = self
+            .http_client
+            .post(&url)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| TandemError::Sidecar(format!("Failed to install template: {}", e)))?;
+        self.handle_response(response).await
+    }
+
+    // ========================================================================
     // Tool Approval
     // ========================================================================
 
@@ -3108,9 +3323,7 @@ fn convert_opencode_event(event: OpenCodeEvent) -> Option<StreamEvent> {
                                 return None;
                             }
                         } else {
-                            tracing::debug!(
-                                "Emitting text part without delta for assistant"
-                            );
+                            tracing::debug!("Emitting text part without delta for assistant");
                         }
                     }
 

@@ -477,11 +477,18 @@ pub fn resolve_mode_for_request(
 }
 
 pub fn is_tool_allowed(mode: &ResolvedMode, tool: &str) -> bool {
+    if is_universal_tool(tool) {
+        return true;
+    }
     let Some(allowed) = &mode.allowed_tools else {
         return true;
     };
     let requested = canonical_tool_name(tool);
     allowed.iter().any(|t| t == &requested)
+}
+
+fn is_universal_tool(tool: &str) -> bool {
+    matches!(canonical_tool_name(tool).as_str(), "skill")
 }
 
 pub fn is_edit_path_allowed(mode: &ResolvedMode, workspace: &Path, path: &Path) -> bool {
@@ -702,5 +709,21 @@ mod tests {
         };
         assert!(is_tool_allowed(&mode, "read"));
         assert!(!is_tool_allowed(&mode, "write"));
+    }
+
+    #[test]
+    fn skill_tool_is_universal_even_with_allowlist() {
+        let mode = ResolvedMode {
+            id: "safe".to_string(),
+            label: "Safe".to_string(),
+            base_mode: ModeBase::Ask,
+            icon: None,
+            system_prompt_append: None,
+            allowed_tools: Some(vec!["read".to_string()]),
+            edit_globs: None,
+            auto_approve: None,
+            source: ModeSource::User,
+        };
+        assert!(is_tool_allowed(&mode, "skill"));
     }
 }

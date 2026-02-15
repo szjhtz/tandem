@@ -31,7 +31,6 @@ use crate::VaultState;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::fs;
-use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
@@ -4030,7 +4029,9 @@ pub async fn approve_tool(
         .as_deref()
         .map(normalize_tool_name_for_approval);
 
-    if normalized_tool.as_deref() == Some("websearch") && !websearch_query_present(effective_args.as_ref()) {
+    if normalized_tool.as_deref() == Some("websearch")
+        && !websearch_query_present(effective_args.as_ref())
+    {
         // Try request-scoped cache first.
         if let Some(cached_args) = state
             .permission_args_cache
@@ -4053,7 +4054,9 @@ pub async fn approve_tool(
             }
         }
     }
-    if normalized_tool.as_deref() == Some("websearch") && !websearch_query_present(effective_args.as_ref()) {
+    if normalized_tool.as_deref() == Some("websearch")
+        && !websearch_query_present(effective_args.as_ref())
+    {
         // Then per-session recovered intent cache.
         if let Some(query) = state
             .session_websearch_intent
@@ -4074,7 +4077,9 @@ pub async fn approve_tool(
             ));
         }
     }
-    if normalized_tool.as_deref() == Some("websearch") && !websearch_query_present(effective_args.as_ref()) {
+    if normalized_tool.as_deref() == Some("websearch")
+        && !websearch_query_present(effective_args.as_ref())
+    {
         // Last resort: infer from latest user message text in session history.
         if let Ok(messages) = state.sidecar.get_session_messages(&session_id).await {
             if let Some(user_text) = latest_user_text_from_messages(&messages) {
@@ -4093,7 +4098,9 @@ pub async fn approve_tool(
             }
         }
     }
-    if normalized_tool.as_deref() == Some("websearch") && !websearch_query_present(effective_args.as_ref()) {
+    if normalized_tool.as_deref() == Some("websearch")
+        && !websearch_query_present(effective_args.as_ref())
+    {
         tracing::warn!(
             "[approve_tool] denying websearch due to missing query after recovery attempts request_id={}",
             tool_call_id
@@ -4259,7 +4266,11 @@ pub async fn approve_tool(
     }
 
     // Clear request-scoped cache after approval resolution.
-    state.permission_args_cache.lock().await.remove(&tool_call_id);
+    state
+        .permission_args_cache
+        .lock()
+        .await
+        .remove(&tool_call_id);
 
     state.sidecar.approve_tool(&session_id, &tool_call_id).await
 }
@@ -4289,7 +4300,11 @@ pub async fn deny_tool(
         state.operation_journal.record(entry, None);
     }
 
-    state.permission_args_cache.lock().await.remove(&tool_call_id);
+    state
+        .permission_args_cache
+        .lock()
+        .await
+        .remove(&tool_call_id);
 
     state.sidecar.deny_tool(&session_id, &tool_call_id).await
 }
@@ -5664,72 +5679,46 @@ pub async fn python_install_requirements(
 // Skills Management Commands
 // ============================================================================
 
-fn import_skill_from_content(
-    state: &State<'_, AppState>,
-    content: &str,
+fn to_engine_skill_location(
     location: crate::skills::SkillLocation,
-) -> Result<crate::skills::SkillInfo> {
-    // Parse content to get name
-    let (name, description, _body, metadata) =
-        crate::skills::parse_skill_content_with_metadata(content)?;
-
-    // Determine target directory
-    let target_dir = match location {
-        crate::skills::SkillLocation::Project => {
-            let ws = state.workspace_path.read().unwrap();
-            let workspace = ws
-                .as_ref()
-                .ok_or_else(|| TandemError::InvalidConfig("No active workspace".to_string()))?;
-            workspace_skill_dirs(workspace).0.join(&name)
-        }
-        crate::skills::SkillLocation::Global => crate::skills::get_global_skills_dir()
-            .ok_or_else(|| {
-                TandemError::InvalidConfig("No canonical Tandem skills directory".to_string())
-            })?
-            .join(&name),
-    };
-
-    // Create directory and write file
-    fs::create_dir_all(&target_dir).map_err(TandemError::Io)?;
-
-    // Write original content directly (don't reconstruct to avoid formatting issues)
-    fs::write(target_dir.join("SKILL.md"), content).map_err(TandemError::Io)?;
-
-    tracing::info!("Imported skill '{}' to {:?}", name, location);
-
-    Ok(crate::skills::SkillInfo {
-        name,
-        description,
-        location,
-        path: target_dir.to_string_lossy().to_string(),
-        version: metadata.version,
-        author: metadata.author,
-        tags: metadata.tags,
-        requires: metadata.requires,
-        compatibility: metadata.compatibility,
-        triggers: metadata.triggers,
-        parse_error: None,
-    })
+) -> tandem_skills::SkillLocation {
+    match location {
+        crate::skills::SkillLocation::Project => tandem_skills::SkillLocation::Project,
+        crate::skills::SkillLocation::Global => tandem_skills::SkillLocation::Global,
+    }
 }
 
-fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
-    fs::create_dir_all(dst).map_err(TandemError::Io)?;
-    let entries = fs::read_dir(src).map_err(TandemError::Io)?;
-
-    for entry_res in entries {
-        let entry = entry_res.map_err(TandemError::Io)?;
-        let src_path = entry.path();
-        let dst_path = dst.join(entry.file_name());
-        let file_type = entry.file_type().map_err(TandemError::Io)?;
-
-        if file_type.is_dir() {
-            copy_dir_recursive(&src_path, &dst_path)?;
-        } else if file_type.is_file() {
-            fs::copy(&src_path, &dst_path).map_err(TandemError::Io)?;
-        }
+fn from_engine_skill_location(
+    location: tandem_skills::SkillLocation,
+) -> crate::skills::SkillLocation {
+    match location {
+        tandem_skills::SkillLocation::Project => crate::skills::SkillLocation::Project,
+        tandem_skills::SkillLocation::Global => crate::skills::SkillLocation::Global,
     }
+}
 
-    Ok(())
+fn from_engine_skill_info(info: tandem_skills::SkillInfo) -> crate::skills::SkillInfo {
+    crate::skills::SkillInfo {
+        name: info.name,
+        description: info.description,
+        location: from_engine_skill_location(info.location),
+        path: info.path,
+        version: info.version,
+        author: info.author,
+        tags: info.tags,
+        requires: info.requires,
+        compatibility: info.compatibility,
+        triggers: info.triggers,
+        parse_error: info.parse_error,
+    }
+}
+
+fn conflict_policy_text(policy: &SkillsConflictPolicy) -> String {
+    match policy {
+        SkillsConflictPolicy::Skip => "skip".to_string(),
+        SkillsConflictPolicy::Overwrite => "overwrite".to_string(),
+        SkillsConflictPolicy::Rename => "rename".to_string(),
+    }
 }
 
 #[derive(Debug, Clone, Serialize, serde::Deserialize)]
@@ -5740,7 +5729,7 @@ pub enum SkillsConflictPolicy {
     Rename,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, serde::Deserialize)]
 pub struct SkillsImportPreviewItem {
     pub source: String,
     pub valid: bool,
@@ -5758,7 +5747,7 @@ pub struct SkillsImportPreviewItem {
     pub triggers: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, serde::Deserialize)]
 pub struct SkillsImportPreview {
     pub items: Vec<SkillsImportPreviewItem>,
     pub total: usize,
@@ -5767,353 +5756,118 @@ pub struct SkillsImportPreview {
     pub conflicts: usize,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, serde::Deserialize)]
 pub struct SkillsImportResult {
     pub imported: Vec<crate::skills::SkillInfo>,
     pub skipped: Vec<String>,
     pub errors: Vec<String>,
 }
 
-#[derive(Debug, Clone)]
-struct SkillCandidate {
-    source: String,
-    content: String,
-}
-
-fn normalize_namespace(namespace: Option<String>) -> Option<String> {
-    namespace.and_then(|ns| {
-        let clean = ns.trim().replace('\\', "/");
-        let parts: Vec<String> = clean
-            .split('/')
-            .map(|p| p.trim())
-            .filter(|p| !p.is_empty() && *p != "." && *p != "..")
-            .map(|p| {
-                p.chars()
-                    .map(|c| {
-                        if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
-                            c
-                        } else {
-                            '-'
-                        }
-                    })
-                    .collect::<String>()
-            })
-            .collect();
-        if parts.is_empty() {
-            None
-        } else {
-            Some(parts.join("/"))
-        }
-    })
-}
-
-fn skill_base_dir(
-    state: &State<'_, AppState>,
-    location: crate::skills::SkillLocation,
-    namespace: Option<&str>,
-) -> Result<PathBuf> {
-    let mut base = match location {
-        crate::skills::SkillLocation::Project => {
-            let ws = state.workspace_path.read().unwrap();
-            let workspace = ws
-                .as_ref()
-                .ok_or_else(|| TandemError::InvalidConfig("No active workspace".to_string()))?;
-            workspace_skill_dirs(workspace).0
-        }
-        crate::skills::SkillLocation::Global => {
-            crate::skills::get_global_skills_dir().ok_or_else(|| {
-                TandemError::InvalidConfig("No canonical Tandem skills directory".to_string())
-            })?
-        }
-    };
-    if let Some(ns) = namespace {
-        for segment in ns.split('/') {
-            base.push(segment);
-        }
-    }
-    Ok(base)
-}
-
-fn resolve_conflict_name(base: &PathBuf, name: &str) -> String {
-    if !base.join(name).exists() {
-        return name.to_string();
-    }
-    for i in 2..=10_000 {
-        let candidate = format!("{}-{}", name, i);
-        if !base.join(&candidate).exists() {
-            return candidate;
-        }
-    }
-    format!("{}-{}", name, Uuid::new_v4().simple())
-}
-
-fn load_skill_candidates(file_or_path: &str) -> Result<Vec<SkillCandidate>> {
-    let path = PathBuf::from(file_or_path);
-    if path.exists() {
-        if path.extension().and_then(|e| e.to_str()) == Some("zip") {
-            let file = fs::File::open(&path).map_err(TandemError::Io)?;
-            let mut zip = zip::ZipArchive::new(file)
-                .map_err(|e| TandemError::InvalidConfig(format!("Invalid zip archive: {}", e)))?;
-            let mut out = Vec::new();
-            for i in 0..zip.len() {
-                let mut entry = zip.by_index(i).map_err(|e| {
-                    TandemError::InvalidConfig(format!("Failed to read zip entry: {}", e))
-                })?;
-                if entry.is_dir() {
-                    continue;
-                }
-                let name = entry.name().replace('\\', "/");
-                if !name.to_ascii_lowercase().ends_with("skill.md") {
-                    continue;
-                }
-                let mut content = String::new();
-                entry.read_to_string(&mut content).map_err(|e| {
-                    TandemError::InvalidConfig(format!(
-                        "Non-UTF8 SKILL.md in zip entry {}: {}",
-                        name, e
-                    ))
-                })?;
-                out.push(SkillCandidate {
-                    source: name,
-                    content,
-                });
-            }
-            if out.is_empty() {
-                return Err(TandemError::InvalidConfig(
-                    "No SKILL.md files found in zip".to_string(),
-                ));
-            }
-            return Ok(out);
-        }
-        let content = fs::read_to_string(&path).map_err(TandemError::Io)?;
-        return Ok(vec![SkillCandidate {
-            source: path.to_string_lossy().to_string(),
-            content,
-        }]);
-    }
-
-    Ok(vec![SkillCandidate {
-        source: "inline".to_string(),
-        content: file_or_path.to_string(),
-    }])
-}
-
 #[tauri::command]
-pub fn skills_import_preview(
+pub async fn skills_import_preview(
     state: State<'_, AppState>,
     file_or_path: String,
     location: crate::skills::SkillLocation,
     namespace: Option<String>,
     conflict_policy: SkillsConflictPolicy,
 ) -> Result<SkillsImportPreview> {
-    let namespace = normalize_namespace(namespace);
-    let base_dir = skill_base_dir(&state, location.clone(), namespace.as_deref())?;
-    let candidates = load_skill_candidates(&file_or_path)?;
-    let mut items = Vec::new();
-    let mut valid = 0usize;
-    let mut invalid = 0usize;
-    let mut conflicts = 0usize;
-
-    for c in candidates {
-        match crate::skills::parse_skill_content_with_metadata(&c.content) {
-            Ok((name, description, _, metadata)) => {
-                let conflict = base_dir.join(&name).exists();
-                if conflict {
-                    conflicts += 1;
-                }
-                let resolved_name =
-                    if conflict && matches!(conflict_policy, SkillsConflictPolicy::Rename) {
-                        resolve_conflict_name(&base_dir, &name)
-                    } else {
-                        name.clone()
-                    };
-                let action = if !conflict {
-                    "create".to_string()
-                } else {
-                    match conflict_policy {
-                        SkillsConflictPolicy::Skip => "skip".to_string(),
-                        SkillsConflictPolicy::Overwrite => "overwrite".to_string(),
-                        SkillsConflictPolicy::Rename => "rename".to_string(),
-                    }
-                };
-                items.push(SkillsImportPreviewItem {
-                    source: c.source,
-                    valid: true,
-                    name: Some(resolved_name.clone()),
-                    description: Some(description),
-                    conflict,
-                    action,
-                    target_path: Some(base_dir.join(&resolved_name).to_string_lossy().to_string()),
-                    error: None,
-                    version: metadata.version,
-                    author: metadata.author,
-                    tags: metadata.tags,
-                    requires: metadata.requires,
-                    compatibility: metadata.compatibility,
-                    triggers: metadata.triggers,
-                });
-                valid += 1;
-            }
-            Err(e) => {
-                items.push(SkillsImportPreviewItem {
-                    source: c.source,
-                    valid: false,
-                    name: None,
-                    description: None,
-                    conflict: false,
-                    action: "invalid".to_string(),
-                    target_path: None,
-                    error: Some(e),
-                    version: None,
-                    author: None,
-                    tags: Vec::new(),
-                    requires: Vec::new(),
-                    compatibility: None,
-                    triggers: Vec::new(),
-                });
-                invalid += 1;
-            }
-        }
-    }
-
+    let preview = state
+        .sidecar
+        .skills_import_preview(
+            file_or_path,
+            to_engine_skill_location(location),
+            namespace,
+            conflict_policy_text(&conflict_policy),
+        )
+        .await?;
     Ok(SkillsImportPreview {
-        total: items.len(),
-        valid,
-        invalid,
-        conflicts,
-        items,
+        items: preview
+            .items
+            .into_iter()
+            .map(|item| SkillsImportPreviewItem {
+                source: item.source,
+                valid: item.valid,
+                name: item.name,
+                description: item.description,
+                conflict: item.conflict,
+                action: item.action,
+                target_path: item.target_path,
+                error: item.error,
+                version: item.version,
+                author: item.author,
+                tags: item.tags,
+                requires: item.requires,
+                compatibility: item.compatibility,
+                triggers: item.triggers,
+            })
+            .collect(),
+        total: preview.total,
+        valid: preview.valid,
+        invalid: preview.invalid,
+        conflicts: preview.conflicts,
     })
 }
 
 #[tauri::command]
-pub fn skills_import(
+pub async fn skills_import(
     state: State<'_, AppState>,
     file_or_path: String,
     location: crate::skills::SkillLocation,
     namespace: Option<String>,
     conflict_policy: SkillsConflictPolicy,
 ) -> Result<SkillsImportResult> {
-    let namespace = normalize_namespace(namespace);
-    let base_dir = skill_base_dir(&state, location.clone(), namespace.as_deref())?;
-    fs::create_dir_all(&base_dir).map_err(TandemError::Io)?;
-    let candidates = load_skill_candidates(&file_or_path)?;
-
-    let mut imported = Vec::new();
-    let mut skipped = Vec::new();
-    let mut errors = Vec::new();
-
-    for c in candidates {
-        let parsed = crate::skills::parse_skill_content_with_metadata(&c.content);
-        let (name, description, _body, metadata) = match parsed {
-            Ok(v) => v,
-            Err(e) => {
-                errors.push(format!("{}: {}", c.source, e));
-                continue;
-            }
-        };
-
-        let existing = base_dir.join(&name);
-        let final_name = if existing.exists() {
-            match conflict_policy {
-                SkillsConflictPolicy::Skip => {
-                    skipped.push(name.clone());
-                    continue;
-                }
-                SkillsConflictPolicy::Overwrite => name.clone(),
-                SkillsConflictPolicy::Rename => resolve_conflict_name(&base_dir, &name),
-            }
-        } else {
-            name.clone()
-        };
-
-        let target_dir = base_dir.join(&final_name);
-        if target_dir.exists() {
-            fs::remove_dir_all(&target_dir).map_err(TandemError::Io)?;
-        }
-        fs::create_dir_all(&target_dir).map_err(TandemError::Io)?;
-        fs::write(target_dir.join("SKILL.md"), &c.content).map_err(TandemError::Io)?;
-
-        imported.push(crate::skills::SkillInfo {
-            name: final_name,
-            description,
-            location: location.clone(),
-            path: target_dir.to_string_lossy().to_string(),
-            version: metadata.version,
-            author: metadata.author,
-            tags: metadata.tags,
-            requires: metadata.requires,
-            compatibility: metadata.compatibility,
-            triggers: metadata.triggers,
-            parse_error: None,
-        });
-    }
-
+    let result = state
+        .sidecar
+        .skills_import(
+            file_or_path,
+            to_engine_skill_location(location),
+            namespace,
+            conflict_policy_text(&conflict_policy),
+        )
+        .await?;
     Ok(SkillsImportResult {
-        imported,
-        skipped,
-        errors,
+        imported: result
+            .imported
+            .into_iter()
+            .map(from_engine_skill_info)
+            .collect(),
+        skipped: result.skipped,
+        errors: result.errors,
     })
 }
 
 /// List all installed skills
 #[tauri::command]
-pub fn list_skills(state: State<'_, AppState>) -> Result<Vec<crate::skills::SkillInfo>> {
-    let workspace = state.workspace_path.read().unwrap();
-    let workspace_str = workspace.as_ref().map(|p| p.to_str().unwrap());
-
-    tracing::info!("Listing skills for workspace: {:?}", workspace_str);
-    let skills = crate::skills::discover_skills(workspace_str);
-    tracing::info!("Found {} skills", skills.len());
-    for skill in &skills {
-        tracing::info!("  - {} ({:?}): {}", skill.name, skill.location, skill.path);
-    }
-
-    Ok(skills)
+pub async fn list_skills(state: State<'_, AppState>) -> Result<Vec<crate::skills::SkillInfo>> {
+    let skills = state.sidecar.list_skills().await?;
+    Ok(skills.into_iter().map(from_engine_skill_info).collect())
 }
 
 /// Import a skill from raw SKILL.md content
 #[tauri::command]
-pub fn import_skill(
+pub async fn import_skill(
     state: State<'_, AppState>,
     content: String,
     location: crate::skills::SkillLocation,
 ) -> Result<crate::skills::SkillInfo> {
-    import_skill_from_content(&state, &content, location)
+    let skill = state
+        .sidecar
+        .import_skill_content(content, to_engine_skill_location(location))
+        .await?;
+    Ok(from_engine_skill_info(skill))
 }
 
 /// Delete a skill
 #[tauri::command]
-pub fn delete_skill(
+pub async fn delete_skill(
     state: State<'_, AppState>,
     name: String,
     location: crate::skills::SkillLocation,
 ) -> Result<()> {
-    let target_dirs: Vec<PathBuf> = match location {
-        crate::skills::SkillLocation::Project => {
-            let ws = state.workspace_path.read().unwrap();
-            let workspace = ws
-                .as_ref()
-                .ok_or_else(|| TandemError::InvalidConfig("No active workspace".to_string()))?;
-            let (canonical_dir, legacy_dir) = workspace_skill_dirs(workspace);
-            vec![canonical_dir.join(&name), legacy_dir.join(&name)]
-        }
-        crate::skills::SkillLocation::Global => {
-            vec![crate::skills::get_global_skills_dir()
-                .ok_or_else(|| {
-                    TandemError::InvalidConfig("No canonical Tandem skills directory".to_string())
-                })?
-                .join(&name)]
-        }
-    };
-
-    for target_dir in target_dirs {
-        if target_dir.exists() {
-            fs::remove_dir_all(&target_dir).map_err(TandemError::Io)?;
-            tracing::info!("Deleted skill '{}' from {:?}", name, target_dir);
-        }
-    }
-
-    Ok(())
+    state
+        .sidecar
+        .delete_skill(name, to_engine_skill_location(location))
+        .await
 }
 
 // ============================================================================
@@ -6121,67 +5875,34 @@ pub fn delete_skill(
 // ============================================================================
 
 #[tauri::command]
-pub fn skills_list_templates(
-    app: AppHandle,
+pub async fn skills_list_templates(
+    state: State<'_, AppState>,
+    _app: AppHandle,
 ) -> Result<Vec<crate::skill_templates::SkillTemplateInfo>> {
-    crate::skill_templates::list_skill_templates(&app).map_err(TandemError::InvalidConfig)
+    let templates = state.sidecar.list_skill_templates().await?;
+    Ok(templates
+        .into_iter()
+        .map(|t| crate::skill_templates::SkillTemplateInfo {
+            id: t.id,
+            name: t.name,
+            description: t.description,
+            requires: t.requires,
+        })
+        .collect())
 }
 
 #[tauri::command]
-pub fn skills_install_template(
+pub async fn skills_install_template(
     state: State<'_, AppState>,
-    app: AppHandle,
+    _app: AppHandle,
     template_id: String,
     location: crate::skills::SkillLocation,
 ) -> Result<crate::skills::SkillInfo> {
-    let template_dir = crate::skill_templates::get_skill_template_dir(&app, &template_id)
-        .map_err(TandemError::InvalidConfig)?;
-    let skill_file = template_dir.join("SKILL.md");
-    let content = fs::read_to_string(&skill_file).map_err(TandemError::Io)?;
-
-    let (name, description, _body, metadata) =
-        crate::skills::parse_skill_content_with_metadata(&content)?;
-
-    let target_dir = match location {
-        crate::skills::SkillLocation::Project => {
-            let ws = state.workspace_path.read().unwrap();
-            let workspace = ws
-                .as_ref()
-                .ok_or_else(|| TandemError::InvalidConfig("No active workspace".to_string()))?;
-            workspace_skill_dirs(workspace).0.join(&name)
-        }
-        crate::skills::SkillLocation::Global => crate::skills::get_global_skills_dir()
-            .ok_or_else(|| {
-                TandemError::InvalidConfig("No canonical Tandem skills directory".to_string())
-            })?
-            .join(&name),
-    };
-
-    if target_dir.exists() {
-        fs::remove_dir_all(&target_dir).map_err(TandemError::Io)?;
-    }
-    copy_dir_recursive(&template_dir, &target_dir)?;
-
-    tracing::info!(
-        "Installed skill template '{}' as '{}' to {:?}",
-        template_id,
-        name,
-        location
-    );
-
-    Ok(crate::skills::SkillInfo {
-        name,
-        description,
-        location,
-        path: target_dir.to_string_lossy().to_string(),
-        version: metadata.version,
-        author: metadata.author,
-        tags: metadata.tags,
-        requires: metadata.requires,
-        compatibility: metadata.compatibility,
-        triggers: metadata.triggers,
-        parse_error: None,
-    })
+    let installed = state
+        .sidecar
+        .install_skill_template(template_id, to_engine_skill_location(location))
+        .await?;
+    Ok(from_engine_skill_info(installed))
 }
 
 // ============================================================================
