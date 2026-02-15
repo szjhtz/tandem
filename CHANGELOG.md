@@ -5,9 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.3.0] - 2026-02-15
 
 ### Added
+
+- **Core/Providers**: Added explicit support for `copilot` and `cohere` providers, and set `google/gemini-2.5-flash` as the default Gemini model.
+- **Core Session Titles**: Added smart session titling logic in `tandem-core` to derive clean session names from user prompts.
+- **TUI Guide**: Added a comprehensive `TANDEM_TUI_GUIDE.md` covering installation, navigation, and usage.
+- **Tandem Guide Book**: Added a new mdbook-based guide in `guide/` for better documentation structure.
 
 - **TUI Key Setup Wizard**: Added interactive API-key setup flow when a selected provider is not configured.
 - **TUI Error Recall Command**: Added `/last_error` to quickly print the most recent prompt/system failure message.
@@ -20,6 +25,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Embedding Health API Surface**: Added shared embedding health (`status` + `reason`) in memory runtime types and manager API for UI/event consumption.
 
 ### Changed
+
+- **Frontend history**: Added debounce to history refresh to prevent excessive re-fetching.
+- **TUI key bindings**: Improved TUI key handling and help interface.
+- **Scripts**: Updated benchmarking and sidecar download scripts.
 
 - **Keystore Key Mapping**: TUI now normalizes legacy/local keystore key names (e.g. `openrouter_key`, `*_api_key`, `opencode_*_api_key`) to canonical provider IDs before syncing to engine config.
 - **Keystore -> Engine Sync**: On connect, TUI now syncs unlocked local keystore provider keys into engine provider config to keep desktop/TUI auth behavior consistent.
@@ -694,7 +703,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Real-time streaming responses
 
 [Unreleased]: https://github.com/frumu-ai/tandem/compare/v0.3.0...HEAD
-[0.3.0]: https://github.com/frumu-ai/tandem/compare/v0.2.25...v0.3.0
 [0.2.25]: https://github.com/frumu-ai/tandem/compare/v0.2.24...v0.2.25
 [0.2.24]: https://github.com/frumu-ai/tandem/compare/v0.2.23...v0.2.24
 [0.2.23]: https://github.com/frumu-ai/tandem/compare/v0.2.22...v0.2.23

@@ -2,7 +2,12 @@
 
 Canonical release notes live in `docs/RELEASE_NOTES.md`.
 
-## Unreleased
+## v0.3.0 (Beta) - 2026-02-15
+
+- Core: Added `copilot` and `cohere` providers; updated default Gemini model to `gemini-2.5-flash`.
+- Core: Implemented smart session titling to better name sessions based on user intent.
+- Frontend: Debounced history refresh calls to improve performance.
+- Docs: Added `TANDEM_TUI_GUIDE.md` and initialized a new `guide` mdbook.
 
 - Plan Mode: Fixed `todowrite` empty-argument loops (`todo list updated: 0 items`) by normalizing common todo payload shapes and skipping true empty calls.
 - Plan Mode: Added structured clarification fallback (`question.asked`) when no concrete task list can be produced, instead of leaving planning in prose-only follow-up.
