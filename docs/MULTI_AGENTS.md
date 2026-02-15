@@ -163,7 +163,7 @@ Before building the UI, we must unify the engine.
   - _Proposed Decision_: Extend `plan` agent with "Manager" capabilities (delegation tools).
 - **Communication**: How do agents share context?
   - _Current_: Shared `file_context` in `OrchestratorEngine::get_task_file_context`.
-  - _Proposed_: Shared `MemoryBank` struct passed to all agents in a team, referencing `tandem/src-tauri/src/memory/` (to be moved to `tandem-core`).
+  - _Proposed_: Shared `MemoryBank` struct passed to all agents in a team, referencing the new `crates/tandem-memory` crate (shared "Brain").
 
 ### UX + Workflows
 

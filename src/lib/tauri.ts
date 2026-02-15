@@ -149,6 +149,47 @@ export interface SessionMessage {
   parts: unknown[];
 }
 
+const EPOCH_MS_THRESHOLD = 1_000_000_000_000;
+
+function normalizeEpochMs(value: number | undefined | null): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return Date.now();
+  }
+  return value < EPOCH_MS_THRESHOLD ? value * 1000 : value;
+}
+
+function normalizeSessionTime(time?: SessionTime): SessionTime | undefined {
+  if (!time) return undefined;
+  return {
+    created: normalizeEpochMs(time.created),
+    updated: normalizeEpochMs(time.updated),
+  };
+}
+
+function normalizeSession(session: Session): Session {
+  return {
+    ...session,
+    time: normalizeSessionTime(session.time),
+  };
+}
+
+function normalizeSessionMessage(message: SessionMessage): SessionMessage {
+  return {
+    ...message,
+    info: {
+      ...message.info,
+      time: {
+        ...message.info.time,
+        created: normalizeEpochMs(message.info.time?.created),
+        completed:
+          message.info.time?.completed === undefined
+            ? undefined
+            : normalizeEpochMs(message.info.time.completed),
+      },
+    },
+  };
+}
+
 export interface StorageStatus {
   canonical_root: string;
   legacy_root: string;
@@ -747,21 +788,24 @@ export async function createSession(
   allowAllTools?: boolean,
   modeId?: string
 ): Promise<Session> {
-  return invoke("create_session", {
+  const session = await invoke<Session>("create_session", {
     title,
     model,
     provider,
     allowAllTools,
     modeId,
   });
+  return normalizeSession(session);
 }
 
 export async function getSession(sessionId: string): Promise<Session> {
-  return invoke("get_session", { sessionId });
+  const session = await invoke<Session>("get_session", { sessionId });
+  return normalizeSession(session);
 }
 
 export async function listSessions(): Promise<Session[]> {
-  return invoke("list_sessions");
+  const sessions = await invoke<Session[]>("list_sessions");
+  return sessions.map(normalizeSession);
 }
 
 export async function getSessionActiveRun(
@@ -804,7 +848,8 @@ export async function listProjects(): Promise<Project[]> {
 }
 
 export async function getSessionMessages(sessionId: string): Promise<SessionMessage[]> {
-  return invoke("get_session_messages", { sessionId });
+  const messages = await invoke<SessionMessage[]>("get_session_messages", { sessionId });
+  return messages.map(normalizeSessionMessage);
 }
 
 export async function listToolExecutions(

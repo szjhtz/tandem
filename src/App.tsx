@@ -131,6 +131,8 @@ function App() {
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyOverlayOpen, setHistoryOverlayOpen] = useState(false);
   const historyOverlayDelayRef = useRef<ReturnType<typeof globalThis.setTimeout> | null>(null);
+  const historyRefreshDebounceRef = useRef<ReturnType<typeof globalThis.setTimeout> | null>(null);
+  const loadHistoryRef = useRef<() => Promise<void>>(async () => {});
   const [vaultUnlocked, setVaultUnlocked] = useState(false);
   const [executePendingTrigger, setExecutePendingTrigger] = useState(0);
   const [isExecutingTasks, setIsExecutingTasks] = useState(false);
@@ -357,6 +359,17 @@ function App() {
     return () => clearInterval(interval);
   }, [activeProject]); // Re-fetch when project changes
 
+  function scheduleHistoryRefresh() {
+    if (historyRefreshDebounceRef.current) {
+      globalThis.clearTimeout(historyRefreshDebounceRef.current);
+      historyRefreshDebounceRef.current = null;
+    }
+    historyRefreshDebounceRef.current = globalThis.setTimeout(() => {
+      historyRefreshDebounceRef.current = null;
+      void loadHistoryRef.current();
+    }, 350);
+  }
+
   // Track running sessions globally from sidecar stream events so indicators remain accurate
   // even when the user switches away from the active chat tab/session.
   useEffect(() => {
@@ -379,6 +392,7 @@ function App() {
               next.delete(sid);
               return next;
             });
+            scheduleHistoryRefresh();
             return;
           }
 
@@ -393,9 +407,14 @@ function App() {
           }
 
           if (payload.type === "session_status") {
-            const terminal = ["idle", "completed", "failed", "error", "cancelled", "timeout"].includes(
-              payload.status
-            );
+            const terminal = [
+              "idle",
+              "completed",
+              "failed",
+              "error",
+              "cancelled",
+              "timeout",
+            ].includes(payload.status);
             const running = ["running", "in_progress", "executing"].includes(payload.status);
             setRunningSessionIds((prev) => {
               const has = prev.has(sid);
@@ -411,6 +430,9 @@ function App() {
               }
               return prev;
             });
+            if (terminal) {
+              scheduleHistoryRefresh();
+            }
             return;
           }
         });
@@ -694,10 +716,18 @@ function App() {
   }, [activeProject?.id, activeProject?.path, state?.workspace_path]);
 
   useEffect(() => {
+    loadHistoryRef.current = loadHistory;
+  }, [loadHistory]);
+
+  useEffect(() => {
     return () => {
       if (historyOverlayDelayRef.current) {
         globalThis.clearTimeout(historyOverlayDelayRef.current);
         historyOverlayDelayRef.current = null;
+      }
+      if (historyRefreshDebounceRef.current) {
+        globalThis.clearTimeout(historyRefreshDebounceRef.current);
+        historyRefreshDebounceRef.current = null;
       }
     };
   }, []);
