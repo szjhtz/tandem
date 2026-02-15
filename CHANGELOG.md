@@ -53,6 +53,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Windows `tandem-memory` Test Linking**: Fixed MSVC CRT mismatch (`LNK2038`, `MT_StaticRelease` vs `MD_DynamicRelease`) by vendoring/patching `esaxx-rs` to avoid static CRT linkage in this workspace.
 - **Corrupt Memory DB Startup Recovery**: Added SQLite integrity validation (`PRAGMA quick_check`) at memory DB startup so malformed databases are detected and auto-backed-up/reset before runtime writes.
 - **Session Rehydration Gaps**: Fixed missing memory retrieval/storage telemetry after reload by rehydrating persisted memory rows into assistant message badges and console history.
+- **Idle Stream Health**: Stream watchdog no longer marks the desktop stream as degraded when idle without active runs or tool calls.
 
 ## [0.3.0] - 2026-02-14
 

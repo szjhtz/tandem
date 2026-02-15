@@ -18,6 +18,7 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
 - Memory UX: Fixed a chat race where memory events could arrive before assistant text, causing missing badges despite console memory events being present.
 - Memory Reliability: Added startup SQLite integrity check + auto backup/reset recovery for malformed `memory.sqlite` databases.
 - Windows: Fixed `cargo test -p tandem-memory --lib` link-time CRT mismatch (`LNK2038`) between `esaxx-rs` and `ort-sys` via vendored `esaxx-rs` build patch.
+- Desktop: Stream watchdog now skips degraded status while idle with no active runs or tool calls.
 
 ## v0.2.25 (2026-02-12)
 

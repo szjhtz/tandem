@@ -8,6 +8,7 @@
 - **Strict memory search scope guarantees**: Added a dedicated `memory_search` tool with explicit session/project scope requirements and blocked global-tier queries.
 - **Embedding health visibility**: Memory retrieval telemetry and settings now expose embedding backend status and reason, surfaced in chat/settings badges.
 - **Windows memory-test link fix**: Resolved CRT mismatch (`LNK2038`) in `tandem-memory` test linking by patching vendored `esaxx-rs` CRT behavior.
+- **Idle stream health**: Stream watchdog now skips degraded status while the app is idle with no active runs or tool calls.
 
 - **Engine-owned skills system expansion**: Skills are now discovered from multiple ecosystem paths with deterministic priority and exposed through unified engine APIs/tooling for desktop + TUI parity.
 - **Per-agent skill activation**: Agents can now optionally define equipped skills (`skills`) to control which discovered skills are active for that agent.

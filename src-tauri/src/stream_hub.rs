@@ -132,6 +132,7 @@ impl StreamHub {
                 HashMap::new();
             let mut assistant_last_message_by_session: HashMap<String, String> = HashMap::new();
             let mut assistant_memory_stored: HashSet<(String, String)> = HashSet::new();
+            let mut active_sessions: HashSet<String> = HashSet::new();
             let mut last_progress = Instant::now();
             let idle_timeout = Duration::from_secs(10 * 60);
             let no_event_watchdog = Duration::from_secs(45);
@@ -415,7 +416,10 @@ impl StreamHub {
                                 let _ = tx.send(idle_env);
                             }
 
+                            let has_active_sessions =
+                                !active_sessions.is_empty() || !pending_tools.is_empty();
                             if last_progress.elapsed() > no_event_watchdog
+                                && has_active_sessions
                                 && !matches!(health, StreamHealthStatus::Degraded)
                             {
                                 emit_event(
@@ -610,6 +614,7 @@ impl StreamHub {
                                             }
                                             assistant_last_message_by_session
                                                 .insert(session_id.clone(), message_id.clone());
+                                            active_sessions.insert(session_id.clone());
                                         }
                                         StreamEvent::ToolStart {
                                             session_id,
@@ -637,6 +642,7 @@ impl StreamHub {
                                                     correlation_id,
                                                 },
                                             );
+                                            active_sessions.insert(session_id.clone());
                                         }
                                         StreamEvent::ToolEnd {
                                             session_id,
@@ -656,10 +662,12 @@ impl StreamHub {
                                             );
                                             pending_tools
                                                 .remove(&(session_id.clone(), part_id.clone()));
+                                            active_sessions.insert(session_id.clone());
                                         }
                                         StreamEvent::SessionIdle { session_id }
                                         | StreamEvent::SessionError { session_id, .. }
                                         | StreamEvent::RunFinished { session_id, .. } => {
+                                            active_sessions.remove(session_id);
                                             if let Some(last_message_id) =
                                                 assistant_last_message_by_session
                                                     .get(session_id)
@@ -800,6 +808,7 @@ impl StreamHub {
                                             query,
                                             ..
                                         } => {
+                                            active_sessions.insert(session_id.clone());
                                             if let Some(app_state) =
                                                 app.try_state::<crate::state::AppState>()
                                             {
@@ -830,6 +839,32 @@ impl StreamHub {
                                                     }
                                                 }
                                             }
+                                        }
+                                        StreamEvent::QuestionAsked { session_id, .. } => {
+                                            active_sessions.insert(session_id.clone());
+                                        }
+                                        StreamEvent::SessionStatus { session_id, status } => {
+                                            let terminal = [
+                                                "idle",
+                                                "completed",
+                                                "failed",
+                                                "error",
+                                                "cancelled",
+                                                "timeout",
+                                            ]
+                                            .contains(&status.as_str());
+                                            let running =
+                                                ["running", "in_progress", "executing"]
+                                                    .contains(&status.as_str());
+                                            if terminal {
+                                                active_sessions.remove(session_id);
+                                            } else if running {
+                                                active_sessions.insert(session_id.clone());
+                                            }
+                                        }
+                                        StreamEvent::RunStarted { session_id, .. }
+                                        | StreamEvent::RunConflict { session_id, .. } => {
+                                            active_sessions.insert(session_id.clone());
                                         }
                                         _ => {}
                                     }
