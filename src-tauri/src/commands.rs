@@ -6,7 +6,8 @@ use crate::keystore::{validate_api_key, validate_key_type, ApiKeyType, SecureKey
 use crate::logs::{self, LogFileInfo};
 use crate::memory::indexer::{index_workspace, IndexingStats};
 use crate::memory::types::{
-    ClearFileIndexResult, MemoryRetrievalMeta, MemoryStats, ProjectMemoryStats,
+    ClearFileIndexResult, EmbeddingHealth, MemoryRetrievalMeta, MemoryStats, MemoryTier,
+    ProjectMemoryStats, StoreMessageRequest,
 };
 use crate::modes::{ModeDefinition, ModeResolution, ModeScope, ResolvedMode};
 use crate::orchestrator::{
@@ -36,7 +37,8 @@ use std::process::Command;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tandem_core::{
-    migrate_legacy_storage_if_needed, resolve_shared_paths, SessionRepairStats, Storage,
+    migrate_legacy_storage_if_needed, normalize_workspace_path, resolve_shared_paths,
+    SessionRepairStats, Storage,
 };
 use tandem_observability::{emit_event, ObservabilityEvent, ProcessKind};
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -220,12 +222,18 @@ pub async fn get_memory_stats(state: State<'_, AppState>) -> Result<MemoryStats>
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct MemorySettings {
     pub auto_index_on_project_load: bool,
+    #[serde(default = "default_memory_embedding_status")]
+    pub embedding_status: String,
+    #[serde(default)]
+    pub embedding_reason: Option<String>,
 }
 
 #[tauri::command]
-pub fn get_memory_settings(app: AppHandle) -> MemorySettings {
+pub fn get_memory_settings(app: AppHandle, state: State<'_, AppState>) -> MemorySettings {
     let mut settings = MemorySettings {
         auto_index_on_project_load: true,
+        embedding_status: default_memory_embedding_status(),
+        embedding_reason: None,
     };
 
     if let Ok(store) = app.store("settings.json") {
@@ -236,7 +244,22 @@ pub fn get_memory_settings(app: AppHandle) -> MemorySettings {
         }
     }
 
+    let embedding_health = if let Some(manager) = &state.memory_manager {
+        tauri::async_runtime::block_on(manager.embedding_health())
+    } else {
+        EmbeddingHealth {
+            status: "unavailable".to_string(),
+            reason: Some("memory manager not initialized".to_string()),
+        }
+    };
+    settings.embedding_status = embedding_health.status;
+    settings.embedding_reason = embedding_health.reason;
+
     settings
+}
+
+fn default_memory_embedding_status() -> String {
+    "unknown".to_string()
 }
 
 #[tauri::command]
@@ -2302,6 +2325,8 @@ fn memory_retrieval_event(
     meta: &MemoryRetrievalMeta,
     latency_ms: u128,
     query_hash: String,
+    embedding_status: Option<String>,
+    embedding_reason: Option<String>,
 ) -> StreamEvent {
     StreamEvent::MemoryRetrieval {
         session_id: session_id.to_string(),
@@ -2315,6 +2340,8 @@ fn memory_retrieval_event(
         query_hash,
         score_min: meta.score_min,
         score_max: meta.score_max,
+        embedding_status,
+        embedding_reason,
     }
 }
 
@@ -2387,11 +2414,18 @@ fn emit_stream_event_pair(
 async fn prepare_prompt_with_memory_context(
     state: &AppState,
     session_id: &str,
-    content: &str,
+    prompt_content: &str,
+    retrieval_query: &str,
 ) -> (String, StreamEvent) {
-    let query_hash = short_query_hash(content);
+    let query_hash = short_query_hash(retrieval_query);
+    let embedding_health = if let Some(manager) = &state.memory_manager {
+        let health = manager.embedding_health().await;
+        (Some(health.status), health.reason)
+    } else {
+        (Some("unavailable".to_string()), Some("memory manager not initialized".to_string()))
+    };
 
-    if should_skip_memory_retrieval(content) {
+    if should_skip_memory_retrieval(retrieval_query) {
         let meta = default_memory_retrieval_meta();
         tracing::info!(
             target: "tandem.memory",
@@ -2407,8 +2441,16 @@ async fn prepare_prompt_with_memory_context(
             meta.score_max
         );
         return (
-            content.to_string(),
-            memory_retrieval_event(session_id, "not_attempted", &meta, 0, query_hash),
+            prompt_content.to_string(),
+            memory_retrieval_event(
+                session_id,
+                "not_attempted",
+                &meta,
+                0,
+                query_hash,
+                embedding_health.0,
+                embedding_health.1,
+            ),
         );
     }
 
@@ -2428,17 +2470,25 @@ async fn prepare_prompt_with_memory_context(
             meta.score_max
         );
         return (
-            content.to_string(),
-            memory_retrieval_event(session_id, "error_fallback", &meta, 0, query_hash),
+            prompt_content.to_string(),
+            memory_retrieval_event(
+                session_id,
+                "error_fallback",
+                &meta,
+                0,
+                query_hash,
+                embedding_health.0,
+                embedding_health.1,
+            ),
         );
     };
 
-    let active_project_id = state.active_project_id.read().unwrap().clone();
+    let resolved_project_id = resolve_memory_project_id_for_session(state, session_id).await;
     let started = Instant::now();
-    let (final_content, meta, latency_ms) = match manager
+    let (final_content, meta, latency_ms, retrieval_status) = match manager
         .retrieve_context_with_meta(
-            content,
-            active_project_id.as_deref(),
+            retrieval_query,
+            resolved_project_id.as_deref(),
             Some(session_id),
             None,
         )
@@ -2446,10 +2496,24 @@ async fn prepare_prompt_with_memory_context(
     {
         Ok((context, meta)) => {
             let context_text = context.format_for_injection();
-            let merged = build_message_content_with_memory_context(content, &context_text);
-            (merged, meta, started.elapsed().as_millis())
+            let merged = build_message_content_with_memory_context(prompt_content, &context_text);
+            (
+                merged,
+                meta.clone(),
+                started.elapsed().as_millis(),
+                if meta.used {
+                    "retrieved_used"
+                } else {
+                    "attempted_no_hits"
+                },
+            )
         }
         Err(e) => {
+            let status = if e.to_string().to_ascii_lowercase().contains("embeddings disabled") {
+                "degraded_disabled"
+            } else {
+                "error_fallback"
+            };
             tracing::warn!(
                 target: "tandem.memory",
                 "🧠 memory_retrieval status=error session_id={} error={}",
@@ -2457,9 +2521,10 @@ async fn prepare_prompt_with_memory_context(
                 e
             );
             (
-                content.to_string(),
+                prompt_content.to_string(),
                 default_memory_retrieval_meta(),
                 started.elapsed().as_millis(),
+                status,
             )
         }
     };
@@ -2482,16 +2547,96 @@ async fn prepare_prompt_with_memory_context(
         final_content,
         memory_retrieval_event(
             session_id,
-            if meta.used {
-                "retrieved_used"
-            } else {
-                "attempted_no_hits"
-            },
+            retrieval_status,
             &meta,
             latency_ms,
             query_hash,
+            embedding_health.0,
+            embedding_health.1,
         ),
     )
+}
+
+async fn resolve_memory_project_id_for_session(state: &AppState, session_id: &str) -> Option<String> {
+    if let Ok(session) = state.sidecar.get_session(session_id).await {
+        if let Some(pid) = session.project_id {
+            let trimmed = pid.trim();
+            if !trimmed.is_empty() {
+                return Some(trimmed.to_string());
+            }
+        }
+        if let Some(workspace_root) = session.workspace_root {
+            let normalized = normalize_workspace_path(&workspace_root)?;
+            let projects = state.user_projects.read().unwrap();
+            if let Some(project) = projects.iter().find(|p| {
+                normalize_workspace_path(&p.path)
+                    .map(|candidate| candidate == normalized)
+                    .unwrap_or(false)
+            }) {
+                return Some(project.id.clone());
+            }
+        }
+    }
+    state.active_project_id.read().unwrap().clone()
+}
+
+async fn store_user_message_in_memory(state: &AppState, session_id: &str, content: &str) {
+    if should_skip_memory_retrieval(content) {
+        return;
+    }
+    let Some(manager) = &state.memory_manager else {
+        return;
+    };
+    let active_project_id = resolve_memory_project_id_for_session(state, session_id).await;
+    let base_metadata = serde_json::json!({
+        "role": "user",
+        "source_kind": "chat_turn"
+    });
+
+    let session_req = StoreMessageRequest {
+        content: content.to_string(),
+        tier: MemoryTier::Session,
+        session_id: Some(session_id.to_string()),
+        project_id: active_project_id.clone(),
+        source: "user_message".to_string(),
+        source_path: None,
+        source_mtime: None,
+        source_size: None,
+        source_hash: None,
+        metadata: Some(base_metadata.clone()),
+    };
+    if let Err(err) = manager.store_message(session_req).await {
+        tracing::warn!(
+            target: "tandem.memory",
+            "Failed to store user session memory chunk: session_id={} error={}",
+            session_id,
+            err
+        );
+    }
+
+    if let Some(project_id) = active_project_id {
+        let project_req = StoreMessageRequest {
+            content: content.to_string(),
+            tier: MemoryTier::Project,
+            session_id: Some(session_id.to_string()),
+            project_id: Some(project_id.clone()),
+            source: "user_message".to_string(),
+            source_path: None,
+            source_mtime: None,
+            source_size: None,
+            source_hash: None,
+            metadata: Some(base_metadata),
+        };
+        if let Err(err) = manager.store_message(project_req).await {
+            tracing::warn!(
+                target: "tandem.memory",
+                "Failed to store user project memory chunk: session_id={} project_id={} error={}",
+                session_id,
+                project_id,
+                err
+            );
+        }
+    }
 }
 
 /// Send a message to a session (async, starts generation)
@@ -2584,6 +2729,8 @@ async fn send_message_and_start_run_internal(
     );
     set_session_mode(state, &session_id, mode_resolution.mode.clone());
 
+    store_user_message_in_memory(state, &session_id, &content).await;
+    let retrieval_query = content.clone();
     let base_prompt = if let Some(extra) = mode_resolution.mode.system_prompt_append.as_deref() {
         format!(
             "[Mode instructions]\n{}\n\n[User request]\n{}",
@@ -2594,7 +2741,8 @@ async fn send_message_and_start_run_internal(
     };
 
     let (prepared_content, retrieval_event) =
-        prepare_prompt_with_memory_context(state, &session_id, &base_prompt).await;
+        prepare_prompt_with_memory_context(state, &session_id, &base_prompt, &retrieval_query)
+            .await;
     emit_stream_event_pair(
         app,
         &retrieval_event,
@@ -7627,6 +7775,8 @@ mod tests {
             &meta,
             42,
             "abcdef123456".to_string(),
+            Some("ok".to_string()),
+            None,
         );
 
         match event {
@@ -7642,6 +7792,8 @@ mod tests {
                 query_hash,
                 score_min,
                 score_max,
+                embedding_status,
+                embedding_reason,
             } => {
                 assert_eq!(session_id, "session-1");
                 assert_eq!(status.as_deref(), Some("retrieved_used"));
@@ -7654,6 +7806,8 @@ mod tests {
                 assert_eq!(query_hash, "abcdef123456");
                 assert_eq!(score_min, Some(0.2));
                 assert_eq!(score_max, Some(0.9));
+                assert_eq!(embedding_status.as_deref(), Some("ok"));
+                assert_eq!(embedding_reason, None);
             }
             other => panic!("Unexpected event variant: {:?}", other),
         }

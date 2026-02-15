@@ -1,8 +1,9 @@
 use crate::error::Result;
+use crate::memory::types::{MemoryTier, StoreMessageRequest};
 use crate::sidecar::{SidecarManager, StreamEvent};
 use futures::StreamExt;
 use serde::Serialize;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tandem_observability::{emit_event, ObservabilityEvent, ProcessKind};
@@ -127,6 +128,10 @@ impl StreamHub {
         let task = tokio::spawn(async move {
             let mut health = StreamHealthStatus::Recovering;
             let mut pending_tools: HashMap<(String, String), PendingToolState> = HashMap::new();
+            let mut assistant_content_by_message: HashMap<(String, String), String> =
+                HashMap::new();
+            let mut assistant_last_message_by_session: HashMap<String, String> = HashMap::new();
+            let mut assistant_memory_stored: HashSet<(String, String)> = HashSet::new();
             let mut last_progress = Instant::now();
             let idle_timeout = Duration::from_secs(10 * 60);
             let no_event_watchdog = Duration::from_secs(45);
@@ -585,6 +590,27 @@ impl StreamHub {
                                         }
                                     }
                                     match &event {
+                                        StreamEvent::Content {
+                                            session_id,
+                                            message_id,
+                                            content,
+                                            delta,
+                                        } => {
+                                            let key = (session_id.clone(), message_id.clone());
+                                            if !content.trim().is_empty() {
+                                                assistant_content_by_message
+                                                    .insert(key.clone(), content.clone());
+                                            } else if let Some(delta_text) = delta {
+                                                if !delta_text.is_empty() {
+                                                    assistant_content_by_message
+                                                        .entry(key.clone())
+                                                        .or_default()
+                                                        .push_str(delta_text);
+                                                }
+                                            }
+                                            assistant_last_message_by_session
+                                                .insert(session_id.clone(), message_id.clone());
+                                        }
                                         StreamEvent::ToolStart {
                                             session_id,
                                             message_id,
@@ -634,6 +660,38 @@ impl StreamHub {
                                         StreamEvent::SessionIdle { session_id }
                                         | StreamEvent::SessionError { session_id, .. }
                                         | StreamEvent::RunFinished { session_id, .. } => {
+                                            if let Some(last_message_id) =
+                                                assistant_last_message_by_session
+                                                    .get(session_id)
+                                                    .cloned()
+                                            {
+                                                let key =
+                                                    (session_id.clone(), last_message_id.clone());
+                                                if !assistant_memory_stored.contains(&key) {
+                                                    if let Some(content) =
+                                                        assistant_content_by_message.get(&key)
+                                                    {
+                                                        if !content.trim().is_empty() {
+                                                            assistant_memory_stored
+                                                                .insert(key.clone());
+                                                            let app_clone = app.clone();
+                                                            let session_id_clone = session_id.clone();
+                                                            let message_id_clone =
+                                                                last_message_id.clone();
+                                                            let content_clone = content.clone();
+                                                            tokio::spawn(async move {
+                                                                persist_assistant_message_memory(
+                                                                    &app_clone,
+                                                                    &session_id_clone,
+                                                                    &message_id_clone,
+                                                                    &content_clone,
+                                                                )
+                                                                .await;
+                                                            });
+                                                        }
+                                                    }
+                                                }
+                                            }
                                             emit_event(
                                                 tracing::Level::INFO,
                                                 ProcessKind::Desktop,
@@ -966,4 +1024,76 @@ fn extract_websearch_query(args: Option<&serde_json::Value>) -> Option<String> {
         }
     }
     None
+}
+
+async fn persist_assistant_message_memory(
+    app: &AppHandle,
+    session_id: &str,
+    message_id: &str,
+    content: &str,
+) {
+    let Some(app_state) = app.try_state::<crate::state::AppState>() else {
+        return;
+    };
+    let Some(manager) = app_state.memory_manager.clone() else {
+        return;
+    };
+
+    let project_id = match app_state.sidecar.get_session(session_id).await {
+        Ok(session) => session.project_id,
+        Err(_) => app_state.active_project_id.read().unwrap().clone(),
+    };
+
+    let metadata = serde_json::json!({
+        "role": "assistant",
+        "source_kind": "chat_turn",
+        "message_id": message_id
+    });
+
+    let session_req = StoreMessageRequest {
+        content: content.to_string(),
+        tier: MemoryTier::Session,
+        session_id: Some(session_id.to_string()),
+        project_id: project_id.clone(),
+        source: "assistant_response".to_string(),
+        source_path: None,
+        source_mtime: None,
+        source_size: None,
+        source_hash: None,
+        metadata: Some(metadata.clone()),
+    };
+    if let Err(err) = manager.store_message(session_req).await {
+        tracing::warn!(
+            target: "tandem.memory",
+            "Failed to store assistant session memory chunk: session_id={} message_id={} error={}",
+            session_id,
+            message_id,
+            err
+        );
+    }
+
+    if let Some(pid) = project_id {
+        let project_req = StoreMessageRequest {
+            content: content.to_string(),
+            tier: MemoryTier::Project,
+            session_id: Some(session_id.to_string()),
+            project_id: Some(pid.clone()),
+            source: "assistant_response".to_string(),
+            source_path: None,
+            source_mtime: None,
+            source_size: None,
+            source_hash: None,
+            metadata: Some(metadata),
+        };
+        if let Err(err) = manager.store_message(project_req).await {
+            tracing::warn!(
+                target: "tandem.memory",
+                "Failed to store assistant project memory chunk: session_id={} project_id={} message_id={} error={}",
+                session_id,
+                pid,
+                message_id,
+                err
+            );
+        }
+    }
 }

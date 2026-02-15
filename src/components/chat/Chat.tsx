@@ -1565,6 +1565,8 @@ Start with task #1 and continue through each one. IMPORTANT: After verifying eac
                   used: event.used,
                   chunks_total: event.chunks_total,
                   latency_ms: event.latency_ms,
+                  embedding_status: event.embedding_status,
+                  embedding_reason: event.embedding_reason,
                 },
               },
             ];

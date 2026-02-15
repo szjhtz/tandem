@@ -21,6 +21,7 @@ tracing = "0.1"
 tandem-types = { path = "../tandem-types" }
 html2md = "0.2"
 tandem-skills = { path = "../tandem-skills" }
+tandem-memory = { path = "../tandem-memory" }
 
 [dev-dependencies]
 tempfile = "3"

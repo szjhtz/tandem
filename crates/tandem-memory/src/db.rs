@@ -1,7 +1,7 @@
 // Database Layer Module
 // SQLite + sqlite-vec for vector storage
 
-use crate::memory::types::{
+use crate::types::{
     ClearFileIndexResult, MemoryChunk, MemoryConfig, MemoryResult, MemoryStats, MemoryTier,
     ProjectMemoryStats, DEFAULT_EMBEDDING_DIMENSION,
 };
@@ -323,7 +323,7 @@ impl MemoryDatabase {
     pub async fn ensure_vector_tables_healthy(&self) -> MemoryResult<bool> {
         match self.validate_vector_tables().await {
             Ok(()) => Ok(false),
-            Err(crate::memory::types::MemoryError::Database(err))
+            Err(crate::types::MemoryError::Database(err))
                 if Self::is_vector_table_error(&err) =>
             {
                 tracing::warn!(
@@ -525,6 +525,7 @@ impl MemoryDatabase {
                 if let Some(pid) = project_id {
                     let sql = format!(
                         "SELECT c.id, c.content, c.session_id, c.project_id, c.source, c.created_at, c.token_count, c.metadata,
+                                c.source_path, c.source_mtime, c.source_size, c.source_hash,
                                 v.distance
                          FROM {} AS v
                          JOIN {} AS c ON v.chunk_id = c.id
@@ -535,13 +536,14 @@ impl MemoryDatabase {
                     let mut stmt = conn.prepare(&sql)?;
                     let results = stmt
                         .query_map(params![pid, embedding_json, limit], |row| {
-                            Ok((row_to_chunk(row, tier)?, row.get::<_, f64>(8)?))
+                            Ok((row_to_chunk(row, tier)?, row.get::<_, f64>(12)?))
                         })?
                         .collect::<Result<Vec<_>, _>>()?;
                     results
                 } else {
                     let sql = format!(
                         "SELECT c.id, c.content, c.session_id, c.project_id, c.source, c.created_at, c.token_count, c.metadata,
+                                c.source_path, c.source_mtime, c.source_size, c.source_hash,
                                 v.distance
                          FROM {} AS v
                          JOIN {} AS c ON v.chunk_id = c.id
@@ -552,7 +554,7 @@ impl MemoryDatabase {
                     let mut stmt = conn.prepare(&sql)?;
                     let results = stmt
                         .query_map(params![embedding_json, limit], |row| {
-                            Ok((row_to_chunk(row, tier)?, row.get::<_, f64>(8)?))
+                            Ok((row_to_chunk(row, tier)?, row.get::<_, f64>(12)?))
                         })?
                         .collect::<Result<Vec<_>, _>>()?;
                     results
@@ -606,7 +608,8 @@ impl MemoryDatabase {
         let conn = self.conn.lock().await;
 
         let mut stmt = conn.prepare(
-            "SELECT id, content, session_id, project_id, source, created_at, token_count, metadata
+            "SELECT id, content, session_id, project_id, source, created_at, token_count, metadata,
+                    source_path, source_mtime, source_size, source_hash
              FROM project_memory_chunks
              WHERE project_id = ?1
              ORDER BY created_at DESC",
@@ -1277,6 +1280,11 @@ fn row_to_chunk(row: &Row, tier: MemoryTier) -> Result<MemoryChunk, rusqlite::Er
         .filter(|s| !s.is_empty())
         .and_then(|s| serde_json::from_str(&s).ok());
 
+    let source_path = row.get::<_, Option<String>>("source_path").ok().flatten();
+    let source_mtime = row.get::<_, Option<i64>>("source_mtime").ok().flatten();
+    let source_size = row.get::<_, Option<i64>>("source_size").ok().flatten();
+    let source_hash = row.get::<_, Option<String>>("source_hash").ok().flatten();
+
     Ok(MemoryChunk {
         id,
         content,
@@ -1284,10 +1292,10 @@ fn row_to_chunk(row: &Row, tier: MemoryTier) -> Result<MemoryChunk, rusqlite::Er
         session_id,
         project_id,
         source,
-        source_path: None,
-        source_mtime: None,
-        source_size: None,
-        source_hash: None,
+        source_path,
+        source_mtime,
+        source_size,
+        source_hash,
         created_at,
         token_count,
         metadata,

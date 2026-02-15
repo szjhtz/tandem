@@ -764,6 +764,10 @@ pub enum StreamEvent {
         query_hash: String,
         score_min: Option<f64>,
         score_max: Option<f64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        embedding_status: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        embedding_reason: Option<String>,
     },
 }
 
@@ -4387,6 +4391,8 @@ mod tests {
             query_hash: "abc123def456".to_string(),
             score_min: Some(0.1),
             score_max: Some(0.8),
+            embedding_status: Some("ok".to_string()),
+            embedding_reason: None,
         };
 
         let value = serde_json::to_value(event).unwrap();

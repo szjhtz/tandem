@@ -15,6 +15,8 @@ use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 
 use futures_util::StreamExt;
+use tandem_memory::types::{MemorySearchResult, MemoryTier};
+use tandem_memory::MemoryManager;
 use tandem_types::{ToolResult, ToolSchema};
 
 #[async_trait]
@@ -59,6 +61,7 @@ impl ToolRegistry {
         map.insert("task".to_string(), Arc::new(TaskTool));
         map.insert("question".to_string(), Arc::new(QuestionTool));
         map.insert("skill".to_string(), Arc::new(SkillTool));
+        map.insert("memory_search".to_string(), Arc::new(MemorySearchTool));
         map.insert("apply_patch".to_string(), Arc::new(ApplyPatchTool));
         map.insert("batch".to_string(), Arc::new(BatchTool));
         map.insert("lsp".to_string(), Arc::new(LspTool));
@@ -1155,6 +1158,251 @@ impl Tool for QuestionTool {
     }
 }
 
+struct MemorySearchTool;
+#[async_trait]
+impl Tool for MemorySearchTool {
+    fn schema(&self) -> ToolSchema {
+        ToolSchema {
+            name: "memory_search".to_string(),
+            description: "Search tandem memory with strict session/project scoping. Requires session_id and/or project_id; global search is blocked.".to_string(),
+            input_schema: json!({
+                "type":"object",
+                "properties":{
+                    "query":{"type":"string"},
+                    "session_id":{"type":"string"},
+                    "project_id":{"type":"string"},
+                    "tier":{"type":"string","enum":["session","project"]},
+                    "limit":{"type":"integer","minimum":1,"maximum":20},
+                    "db_path":{"type":"string"}
+                },
+                "required":["query"]
+            }),
+        }
+    }
+
+    async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
+        let query = args
+            .get("query")
+            .or_else(|| args.get("q"))
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .unwrap_or("");
+        if query.is_empty() {
+            return Ok(ToolResult {
+                output: "memory_search requires a non-empty query".to_string(),
+                metadata: json!({"ok": false, "reason": "missing_query"}),
+            });
+        }
+
+        let session_id = args
+            .get("session_id")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(ToString::to_string);
+        let project_id = args
+            .get("project_id")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(ToString::to_string);
+        if session_id.is_none() && project_id.is_none() {
+            return Ok(ToolResult {
+                output: "memory_search requires at least one scope: session_id or project_id"
+                    .to_string(),
+                metadata: json!({"ok": false, "reason": "missing_scope"}),
+            });
+        }
+
+        let tier = match args
+            .get("tier")
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim().to_ascii_lowercase())
+        {
+            Some(t) if t == "session" => Some(MemoryTier::Session),
+            Some(t) if t == "project" => Some(MemoryTier::Project),
+            Some(t) if t == "global" => {
+                return Ok(ToolResult {
+                    output: "memory_search blocks global tier for strict isolation".to_string(),
+                    metadata: json!({"ok": false, "reason": "global_scope_blocked"}),
+                });
+            }
+            Some(_) => {
+                return Ok(ToolResult {
+                    output: "memory_search tier must be one of: session, project".to_string(),
+                    metadata: json!({"ok": false, "reason": "invalid_tier"}),
+                });
+            }
+            None => None,
+        };
+        if matches!(tier, Some(MemoryTier::Session)) && session_id.is_none() {
+            return Ok(ToolResult {
+                output: "tier=session requires session_id".to_string(),
+                metadata: json!({"ok": false, "reason": "missing_session_scope"}),
+            });
+        }
+        if matches!(tier, Some(MemoryTier::Project)) && project_id.is_none() {
+            return Ok(ToolResult {
+                output: "tier=project requires project_id".to_string(),
+                metadata: json!({"ok": false, "reason": "missing_project_scope"}),
+            });
+        }
+
+        let limit = args
+            .get("limit")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(5)
+            .clamp(1, 20);
+
+        let db_path = resolve_memory_db_path(&args);
+        let db_exists = db_path.exists();
+        if !db_exists {
+            return Ok(ToolResult {
+                output: "memory database not found".to_string(),
+                metadata: json!({
+                    "ok": false,
+                    "reason": "memory_db_missing",
+                    "db_path": db_path,
+                }),
+            });
+        }
+
+        let manager = MemoryManager::new(&db_path).await?;
+        let health = manager.embedding_health().await;
+        if health.status != "ok" {
+            return Ok(ToolResult {
+                output: "memory embeddings unavailable; semantic search is disabled".to_string(),
+                metadata: json!({
+                    "ok": false,
+                    "reason": "embeddings_unavailable",
+                    "embedding_status": health.status,
+                    "embedding_reason": health.reason,
+                }),
+            });
+        }
+
+        let mut results: Vec<MemorySearchResult> = Vec::new();
+        match tier {
+            Some(MemoryTier::Session) => {
+                results.extend(
+                    manager
+                        .search(
+                            query,
+                            Some(MemoryTier::Session),
+                            project_id.as_deref(),
+                            session_id.as_deref(),
+                            Some(limit),
+                        )
+                        .await?,
+                );
+            }
+            Some(MemoryTier::Project) => {
+                results.extend(
+                    manager
+                        .search(
+                            query,
+                            Some(MemoryTier::Project),
+                            project_id.as_deref(),
+                            session_id.as_deref(),
+                            Some(limit),
+                        )
+                        .await?,
+                );
+            }
+            _ => {
+                if session_id.is_some() {
+                    results.extend(
+                        manager
+                            .search(
+                                query,
+                                Some(MemoryTier::Session),
+                                project_id.as_deref(),
+                                session_id.as_deref(),
+                                Some(limit),
+                            )
+                            .await?,
+                    );
+                }
+                if project_id.is_some() {
+                    results.extend(
+                        manager
+                            .search(
+                                query,
+                                Some(MemoryTier::Project),
+                                project_id.as_deref(),
+                                session_id.as_deref(),
+                                Some(limit),
+                            )
+                            .await?,
+                    );
+                }
+            }
+        }
+
+        let mut dedup: HashMap<String, MemorySearchResult> = HashMap::new();
+        for result in results {
+            match dedup.get(&result.chunk.id) {
+                Some(existing) if existing.similarity >= result.similarity => {}
+                _ => {
+                    dedup.insert(result.chunk.id.clone(), result);
+                }
+            }
+        }
+        let mut merged = dedup.into_values().collect::<Vec<_>>();
+        merged.sort_by(|a, b| b.similarity.total_cmp(&a.similarity));
+        merged.truncate(limit as usize);
+
+        let output_rows = merged
+            .iter()
+            .map(|item| {
+                json!({
+                    "chunk_id": item.chunk.id,
+                    "tier": item.chunk.tier.to_string(),
+                    "session_id": item.chunk.session_id,
+                    "project_id": item.chunk.project_id,
+                    "source": item.chunk.source,
+                    "similarity": item.similarity,
+                    "content": item.chunk.content,
+                    "created_at": item.chunk.created_at,
+                })
+            })
+            .collect::<Vec<_>>();
+
+        Ok(ToolResult {
+            output: serde_json::to_string_pretty(&output_rows).unwrap_or_default(),
+            metadata: json!({
+                "ok": true,
+                "count": output_rows.len(),
+                "limit": limit,
+                "query": query,
+                "session_id": session_id,
+                "project_id": project_id,
+                "embedding_status": health.status,
+                "embedding_reason": health.reason,
+                "strict_scope": true,
+            }),
+        })
+    }
+}
+
+fn resolve_memory_db_path(args: &Value) -> PathBuf {
+    if let Some(path) = args
+        .get("db_path")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        return PathBuf::from(path);
+    }
+    if let Ok(path) = std::env::var("TANDEM_MEMORY_DB_PATH") {
+        let trimmed = path.trim();
+        if !trimmed.is_empty() {
+            return PathBuf::from(trimmed);
+        }
+    }
+    PathBuf::from("memory.sqlite")
+}
+
 struct SkillTool;
 #[async_trait]
 impl Tool for SkillTool {
@@ -1658,6 +1906,34 @@ mod tests {
         );
         assert!(text.contains("Hello World"));
         assert!(text.contains("link"));
+    }
+
+    #[tokio::test]
+    async fn memory_search_requires_scope() {
+        let tool = MemorySearchTool;
+        let result = tool
+            .execute(json!({"query": "deployment strategy"}))
+            .await
+            .expect("memory_search should return ToolResult");
+        assert!(result.output.contains("requires at least one scope"));
+        assert_eq!(result.metadata["ok"], json!(false));
+        assert_eq!(result.metadata["reason"], json!("missing_scope"));
+    }
+
+    #[tokio::test]
+    async fn memory_search_blocks_global_tier() {
+        let tool = MemorySearchTool;
+        let result = tool
+            .execute(json!({
+                "query": "deployment strategy",
+                "session_id": "ses_1",
+                "tier": "global"
+            }))
+            .await
+            .expect("memory_search should return ToolResult");
+        assert!(result.output.contains("blocks global tier"));
+        assert_eq!(result.metadata["ok"], json!(false));
+        assert_eq!(result.metadata["reason"], json!("global_scope_blocked"));
     }
 }
 

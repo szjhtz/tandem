@@ -16,6 +16,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Shared Permission Defaults**: Added centralized permission-default rule builder in `tandem-core` for desktop + TUI consistency.
 - **Skills Discovery Expansion**: Added multi-root skills discovery in `tandem-skills` for project and ecosystem directories (`.tandem/skill`, `.tandem/skills`, `~/.tandem/skills`, `~/.agents/skills`, `~/.claude/skills`, plus appdata compatibility).
 - **Agent Skill Activation Controls**: Added optional `skills` field to agent frontmatter/config so end users can scope which skills are active per agent.
+- **Strict `memory_search` Tool**: Added a new `memory_search` tool in `tandem-tools` with strict scope enforcement (requires `session_id` and/or `project_id`, blocks global-tier searches, validates tier/scope combinations).
+- **Embedding Health API Surface**: Added shared embedding health (`status` + `reason`) in memory runtime types and manager API for UI/event consumption.
 
 ### Changed
 
@@ -28,6 +30,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Markdown Pipeline**: TUI transcript path now uses `tui-markdown` preprocessing for assistant markdown content.
 - **Mode Tool Gating**: `skill` is now universal at mode level (not blocked by mode `allowed_tools` allowlists).
 - **Skill Tool Scope Behavior**: `skill` now respects agent-level equipped skill lists when present (filtered list/load), while still being callable from all modes.
+- **Memory Crate Integration**: `src-tauri` now consumes `crates/tandem-memory` directly via re-export facade and removed duplicated local memory implementation files.
+- **Memory/Embedding UX Telemetry**: `memory_retrieval` stream events and memory settings now include embedding health fields (`embedding_status`, `embedding_reason`), and chat/settings UI surface those states.
 
 ### Fixed
 
@@ -39,6 +43,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Permission Clarity in Plan Mode**: Request modal now shows mode/tool context and explains why permission is requested, including `tool: question` previews.
 - **Question Handling**: Added custom-answer support alongside multiple-choice options and fixed `permission(tool=question)` normalization into question-answer flow.
 - **Skills Discovery Determinism**: Duplicate skill names are now resolved by deterministic priority (project roots override global roots).
+- **Windows `tandem-memory` Test Linking**: Fixed MSVC CRT mismatch (`LNK2038`, `MT_StaticRelease` vs `MD_DynamicRelease`) by vendoring/patching `esaxx-rs` to avoid static CRT linkage in this workspace.
 
 ## [0.3.0] - 2026-02-14
 

@@ -4,6 +4,11 @@
 
 ### Highlights
 
+- **Memory architecture consolidation**: Desktop now consumes the shared `tandem-memory` crate directly, eliminating duplicated local memory implementation paths.
+- **Strict memory search scope guarantees**: Added a dedicated `memory_search` tool with explicit session/project scope requirements and blocked global-tier queries.
+- **Embedding health visibility**: Memory retrieval telemetry and settings now expose embedding backend status and reason, surfaced in chat/settings badges.
+- **Windows memory-test link fix**: Resolved CRT mismatch (`LNK2038`) in `tandem-memory` test linking by patching vendored `esaxx-rs` CRT behavior.
+
 - **Engine-owned skills system expansion**: Skills are now discovered from multiple ecosystem paths with deterministic priority and exposed through unified engine APIs/tooling for desktop + TUI parity.
 - **Per-agent skill activation**: Agents can now optionally define equipped skills (`skills`) to control which discovered skills are active for that agent.
 - **Universal skill access at mode level**: Mode allowlists no longer block the `skill` tool, preventing accidental lockout of installed skills.

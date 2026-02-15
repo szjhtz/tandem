@@ -457,7 +457,12 @@ export type StreamEvent =
   | {
       type: "memory_retrieval";
       session_id: string;
-      status?: "not_attempted" | "attempted_no_hits" | "retrieved_used" | "error_fallback";
+      status?:
+        | "not_attempted"
+        | "attempted_no_hits"
+        | "retrieved_used"
+        | "degraded_disabled"
+        | "error_fallback";
       used: boolean;
       chunks_total: number;
       session_chunks: number;
@@ -467,6 +472,8 @@ export type StreamEvent =
       query_hash: string;
       score_min?: number;
       score_max?: number;
+      embedding_status?: string;
+      embedding_reason?: string;
     }
   | { type: "raw"; event_type: string; data: unknown };
 
@@ -1447,6 +1454,8 @@ export async function getMemoryStats(): Promise<MemoryStats> {
 
 export interface MemorySettings {
   auto_index_on_project_load: boolean;
+  embedding_status?: string;
+  embedding_reason?: string | null;
 }
 
 export async function getMemorySettings(): Promise<MemorySettings> {

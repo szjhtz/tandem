@@ -6,6 +6,10 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
 
 - Skills: Expanded discovery to support multiple project/global ecosystem directories with deterministic project-over-global precedence.
 - Skills: Added per-agent `skills` activation controls and universal mode-level access for the `skill` tool.
+- Memory: Wired `src-tauri` to consume shared `crates/tandem-memory` directly and removed duplicated local memory implementation files.
+- Memory: Added strict `memory_search` tool in `tandem-tools` with enforced session/project scoping and blocked global tier access.
+- Memory UX: Added embedding health surface (`embedding_status`, `embedding_reason`) to memory retrieval events and settings, with chat/settings badges.
+- Windows: Fixed `cargo test -p tandem-memory --lib` link-time CRT mismatch (`LNK2038`) between `esaxx-rs` and `ort-sys` via vendored `esaxx-rs` build patch.
 
 ## v0.2.25 (2026-02-12)
 

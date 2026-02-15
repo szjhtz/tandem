@@ -238,10 +238,17 @@ export interface MessageProps {
   onOpenQuestionToolCall?: (args: { messageId: string; toolCallId: string }) => void;
   isQuestionToolCallPending?: (args: { messageId: string; toolCallId: string }) => boolean;
   memoryRetrieval?: {
-    status?: "not_attempted" | "attempted_no_hits" | "retrieved_used" | "error_fallback";
+    status?:
+      | "not_attempted"
+      | "attempted_no_hits"
+      | "retrieved_used"
+      | "degraded_disabled"
+      | "error_fallback";
     used: boolean;
     chunks_total: number;
     latency_ms: number;
+    embedding_status?: string;
+    embedding_reason?: string;
   } | null;
   renderMode?: "full" | "streaming-lite";
   disableMountAnimation?: boolean;
@@ -548,23 +555,40 @@ function MessageComponent({
             </span>
           )}
           {!isUser && !isSystem && memoryRetrieval && (
-            <span
-              className={cn(
-                "inline-flex items-center gap-1 text-[11px] rounded-md px-2 py-0.5 border",
-                memoryRetrieval.used
-                  ? "bg-primary/15 border-primary/40 text-primary"
-                  : "bg-warning/15 border-warning/40 text-warning"
+            <>
+              <span
+                className={cn(
+                  "inline-flex items-center gap-1 text-[11px] rounded-md px-2 py-0.5 border",
+                  memoryRetrieval.used
+                    ? "bg-primary/15 border-primary/40 text-primary"
+                    : "bg-warning/15 border-warning/40 text-warning"
+                )}
+              >
+                <Brain className="h-3 w-3" />
+                {memoryRetrieval.status === "retrieved_used" || memoryRetrieval.used
+                  ? `Memory: ${memoryRetrieval.chunks_total} chunks (${memoryRetrieval.latency_ms}ms)`
+                  : memoryRetrieval.status === "error_fallback"
+                    ? "Memory: fallback"
+                    : memoryRetrieval.status === "attempted_no_hits"
+                      ? "Memory: no hits"
+                      : memoryRetrieval.status === "degraded_disabled"
+                        ? "Memory: degraded"
+                        : "Memory: not attempted"}
+              </span>
+              {memoryRetrieval.embedding_status && (
+                <span
+                  title={memoryRetrieval.embedding_reason}
+                  className={cn(
+                    "inline-flex items-center gap-1 text-[11px] rounded-md px-2 py-0.5 border",
+                    memoryRetrieval.embedding_status === "ok"
+                      ? "bg-success/15 border-success/40 text-success"
+                      : "bg-warning/15 border-warning/40 text-warning"
+                  )}
+                >
+                  Embeddings: {memoryRetrieval.embedding_status}
+                </span>
               )}
-            >
-              <Brain className="h-3 w-3" />
-              {memoryRetrieval.status === "retrieved_used" || memoryRetrieval.used
-                ? `Memory: ${memoryRetrieval.chunks_total} chunks (${memoryRetrieval.latency_ms}ms)`
-                : memoryRetrieval.status === "error_fallback"
-                  ? "Memory: fallback"
-                  : memoryRetrieval.status === "attempted_no_hits"
-                    ? "Memory: no hits"
-                    : "Memory: not attempted"}
-            </span>
+            </>
           )}
         </div>
 

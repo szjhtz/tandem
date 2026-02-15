@@ -239,6 +239,15 @@ pub struct SearchMemoryRequest {
     pub limit: Option<i64>,
 }
 
+/// Embedding backend health surfaced to UI/events.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EmbeddingHealth {
+    /// "ok" when embeddings are available, "degraded_disabled" otherwise.
+    pub status: String,
+    /// Optional reason when degraded.
+    pub reason: Option<String>,
+}
+
 /// Memory error types
 #[derive(Error, Debug)]
 pub enum MemoryError {

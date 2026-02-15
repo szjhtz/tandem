@@ -15,3 +15,6 @@ members = [
     "crates/tandem-memory",
 ]
 resolver = "2"
+
+[patch.crates-io]
+esaxx-rs = { path = "third_party/esaxx-rs" }
