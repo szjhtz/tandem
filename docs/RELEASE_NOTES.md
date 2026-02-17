@@ -52,7 +52,12 @@
 - **Startup/PIN polish**: fullscreen-centered PIN prompt, stricter digit-only PIN entry, and animated connecting screen that waits for full engine readiness before switching views.
 - **Shared permission defaults**: desktop and TUI now consume centralized permission rule defaults from `tandem-core`.
 - **TUI interaction polish**: moved grid toggle to `Alt+G`, increased scroll speed, and reduced in-transcript request noise in favor of status/request UI.
-- **Markdown renderer integration**: assistant transcript pipeline now preprocesses markdown via `tui-markdown`.
+- **TUI composer/editor upgrade**: chat input now supports multiline editing with cursor navigation, delete-forward, and native paste insertion.
+- **Markdown renderer upgrade**: assistant transcript markdown now renders through a tandem-local `pulldown-cmark` pipeline adapted from codex patterns (replacing `tui-markdown` dependency).
+- **Streaming text correctness**: whitespace-only prompt deltas are preserved during active streaming instead of being dropped.
+- **Long-transcript rendering performance**: TUI transcript rendering now virtualizes line materialization to avoid flattening full history every frame.
+- **Render cache optimization**: added bounded per-message render cache (fingerprint + width keyed) to reduce repeated markdown/wrap work for large sessions.
+- **Stream merge correctness**: fixed reducer merge paths so shorter success/failure snapshots cannot overwrite richer locally finalized stream tails.
 
 ## Highlights
 

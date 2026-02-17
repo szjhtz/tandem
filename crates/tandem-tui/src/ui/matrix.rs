@@ -194,7 +194,7 @@ impl MatrixEffect {
         for y in box_area.y..box_area.y + box_area.height {
             for x in box_area.x..box_area.x + box_area.width {
                 if x < area.width && y < area.height {
-                    buf.get_mut(x, y).set_bg(Color::Black).set_char(' ');
+                    buf[(x, y)].set_bg(Color::Black).set_char(' ');
                 }
             }
         }
@@ -226,7 +226,7 @@ impl MatrixEffect {
                     continue;
                 }
 
-                let cell = buf.get_mut(x, y);
+                let cell = &mut buf[(x, y)];
                 cell.set_char(char).set_fg(LOGO_FG);
             }
         }
@@ -300,7 +300,7 @@ impl MatrixEffect {
 
         for y in area.y..area.y + area.height {
             for x in area.x..area.x + area.width {
-                buf.get_mut(x, y).set_bg(RAIN_DARK).set_char(' ');
+                buf[(x, y)].set_bg(RAIN_DARK).set_char(' ');
             }
         }
 
@@ -333,7 +333,7 @@ impl MatrixEffect {
                         RAIN_GREEN_DIM
                     };
 
-                    buf.get_mut(x + area.x, y + area.y)
+                    buf[(x + area.x, y + area.y)]
                         .set_char(*char)
                         .set_fg(color)
                         .set_bg(RAIN_DARK);

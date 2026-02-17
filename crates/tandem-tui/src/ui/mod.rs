@@ -7,6 +7,8 @@ use ratatui::{
 };
 
 pub mod components;
+pub mod markdown;
+pub mod markdown_stream;
 pub mod matrix;
 use crate::app::{
     AgentStatus, App, AppState, ChatMessage, ContentBlock, ModalState, PendingRequestKind,
@@ -184,7 +186,8 @@ fn draw_chat(f: &mut Frame, app: &App) {
         if request_panel_active {
             constraints.push(Constraint::Length(request_height as u16));
         }
-        constraints.push(Constraint::Length(3));
+        let input_height = command_input.desired_height(f.area().width);
+        constraints.push(Constraint::Length(input_height));
         constraints.push(Constraint::Length(1));
 
         let chunks = Layout::default()
@@ -231,7 +234,7 @@ fn draw_chat(f: &mut Frame, app: &App) {
             crate::app::EngineConnectionStatus::Connected => (Color::Green, " ● Online "),
             crate::app::EngineConnectionStatus::Error => (Color::Red, " ✖ Error "),
         };
-        let status_title = ratatui::widgets::block::Title::from(Span::styled(
+        let status_title = Line::from(Span::styled(
             status_text,
             Style::default()
                 .fg(status_color)
@@ -249,7 +252,7 @@ fn draw_chat(f: &mut Frame, app: &App) {
                         Block::default()
                             .borders(Borders::ALL)
                             .title(chat_title.as_str())
-                            .title(status_title.clone())
+                            .title_top(status_title.clone())
                             .border_style(Style::default().fg(Color::DarkGray)),
                     );
                 f.render_widget(empty_msg, messages_area);
@@ -259,7 +262,7 @@ fn draw_chat(f: &mut Frame, app: &App) {
                         .borders(Borders::ALL)
                         .borders(Borders::ALL)
                         .title(chat_title.as_str())
-                        .title(status_title)
+                        .title_top(status_title)
                         .border_style(Style::default().fg(Color::DarkGray)),
                 );
 
@@ -377,7 +380,7 @@ fn draw_chat(f: &mut Frame, app: &App) {
         // Input box with cursor
         let input_style = if command_input.is_empty() {
             Style::default().fg(Color::DarkGray)
-        } else if command_input.starts_with('/') {
+        } else if command_input.text().starts_with('/') {
             Style::default().fg(Color::Green)
         } else {
             Style::default().fg(Color::White)
@@ -385,7 +388,7 @@ fn draw_chat(f: &mut Frame, app: &App) {
         let input_display = if command_input.is_empty() {
             "Type prompt or /command... (Tab for autocomplete)".to_string()
         } else {
-            format!("{}|", command_input)
+            command_input.text().to_string()
         };
         let input_widget = Paragraph::new(input_display).style(input_style).block(
             Block::default()
@@ -394,6 +397,10 @@ fn draw_chat(f: &mut Frame, app: &App) {
                 .border_style(Style::default().fg(Color::Cyan)),
         );
         f.render_widget(input_widget, input_chunk);
+        if modal.is_none() {
+            let (cursor_x, cursor_y) = command_input.cursor_screen_pos(input_chunk);
+            f.set_cursor_position((cursor_x, cursor_y));
+        }
 
         // Autocomplete popup
         if app.show_autocomplete && !app.autocomplete_items.is_empty() {
@@ -639,7 +646,7 @@ fn draw_chat(f: &mut Frame, app: &App) {
             let area = centered_rect(58, 34, f.area());
             f.render_widget(Clear, area);
             let text = match modal_state {
-                ModalState::Help => "Keys:\nF1 Help\nTab/Shift+Tab switch agent\nAlt+1..9 jump agent\nCtrl+N new agent\nCtrl+W close agent\nCtrl+C cancel active run\nAlt+M cycle mode\nAlt+G toggle grid\nAlt+R open request center\nAlt+S / Alt+B demo streams\nShift+Enter newline\nEsc close modal/input\nCtrl+X quit",
+                ModalState::Help => "Keys:\nF1 Help\nTab/Shift+Tab switch agent\nAlt+1..9 jump agent\nCtrl+N new agent\nCtrl+W close agent\nCtrl+C cancel active run\nLeft/Right/Home/End move cursor\nCtrl+Up/Down move cursor line\nDelete/Backspace edit\nAlt+M cycle mode\nAlt+G toggle grid\nAlt+R open request center\nAlt+S / Alt+B demo streams\nShift+Enter or Alt+Enter newline\nEsc close modal/input\nCtrl+X quit\n\nMarkdown colors:\nHeading=yellow, Quote=green, List=blue, Code=gray",
                 ModalState::ConfirmCloseAgent { target_agent_id } => {
                     if target_agent_id.is_empty() {
                         "Close active agent and discard draft? (Y/N)"

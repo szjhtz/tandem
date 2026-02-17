@@ -1,7 +1,7 @@
 use std::io;
 
 use crossterm::{
-    event::{self, Event, KeyCode, KeyEvent, KeyEventKind},
+    event::{self, Event, KeyEventKind},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -109,6 +109,9 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> anyho
                     if let Some(action) = app.handle_mouse_event(mouse) {
                         app.update(action).await?;
                     }
+                }
+                Event::Paste(text) => {
+                    app.update(app::Action::PasteInput(text)).await?;
                 }
                 _ => {}
             }

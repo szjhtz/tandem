@@ -1,8 +1,5 @@
-use crossterm::{
-    event::{self, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEvent, MouseEventKind},
-    execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
-};
+use crate::ui::components::composer_input::ComposerInputState;
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Action {
@@ -23,7 +20,15 @@ pub enum Action {
     SubmitCommand,
     ClearCommand,
     BackspaceCommand,
+    DeleteForwardCommand,
     InsertNewline,
+    MoveCursorLeft,
+    MoveCursorRight,
+    MoveCursorHome,
+    MoveCursorEnd,
+    MoveCursorUp,
+    MoveCursorDown,
+    PasteInput(String),
     SwitchToChat,
     Autocomplete,
     AutocompleteNext,
@@ -113,6 +118,265 @@ pub enum Action {
     StartDemoStream,
     SpawnBackgroundDemo,
     OpenDocs,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    fn chat_app() -> App {
+        let mut app = App::new();
+        let session_id = "s-test".to_string();
+        let agent = App::make_agent_pane("A1".to_string(), session_id.clone());
+        app.state = AppState::Chat {
+            session_id,
+            command_input: ComposerInputState::new(),
+            messages: Vec::new(),
+            scroll_from_bottom: 0,
+            tasks: Vec::new(),
+            active_task_id: None,
+            agents: vec![agent],
+            active_agent_index: 0,
+            ui_mode: UiMode::Focus,
+            grid_page: 0,
+            modal: None,
+            pending_requests: Vec::new(),
+            request_cursor: 0,
+            permission_choice: 0,
+            plan_wizard: PlanFeedbackWizardState::default(),
+            last_plan_task_fingerprint: Vec::new(),
+            plan_awaiting_approval: false,
+        };
+        app
+    }
+
+    #[test]
+    fn keymap_cursor_and_edit_actions_in_chat() {
+        let app = chat_app();
+        assert_eq!(
+            app.handle_key_event(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE)),
+            Some(Action::MoveCursorLeft)
+        );
+        assert_eq!(
+            app.handle_key_event(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE)),
+            Some(Action::MoveCursorRight)
+        );
+        assert_eq!(
+            app.handle_key_event(KeyEvent::new(KeyCode::Home, KeyModifiers::NONE)),
+            Some(Action::MoveCursorHome)
+        );
+        assert_eq!(
+            app.handle_key_event(KeyEvent::new(KeyCode::End, KeyModifiers::NONE)),
+            Some(Action::MoveCursorEnd)
+        );
+        assert_eq!(
+            app.handle_key_event(KeyEvent::new(KeyCode::Delete, KeyModifiers::NONE)),
+            Some(Action::DeleteForwardCommand)
+        );
+        assert_eq!(
+            app.handle_key_event(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE)),
+            Some(Action::BackspaceCommand)
+        );
+    }
+
+    #[test]
+    fn keymap_line_nav_and_newline_shortcuts() {
+        let app = chat_app();
+        assert_eq!(
+            app.handle_key_event(KeyEvent::new(KeyCode::Up, KeyModifiers::CONTROL)),
+            Some(Action::MoveCursorUp)
+        );
+        assert_eq!(
+            app.handle_key_event(KeyEvent::new(KeyCode::Down, KeyModifiers::CONTROL)),
+            Some(Action::MoveCursorDown)
+        );
+        assert_eq!(
+            app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT)),
+            Some(Action::InsertNewline)
+        );
+        assert_eq!(
+            app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT)),
+            Some(Action::InsertNewline)
+        );
+        assert_eq!(
+            app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+            Some(Action::SubmitCommand)
+        );
+    }
+
+    #[test]
+    fn autocomplete_mode_keeps_cursor_keymap() {
+        let mut app = chat_app();
+        app.show_autocomplete = true;
+        assert_eq!(
+            app.handle_key_event(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE)),
+            Some(Action::MoveCursorLeft)
+        );
+        assert_eq!(
+            app.handle_key_event(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE)),
+            Some(Action::MoveCursorRight)
+        );
+        assert_eq!(
+            app.handle_key_event(KeyEvent::new(KeyCode::Delete, KeyModifiers::NONE)),
+            Some(Action::DeleteForwardCommand)
+        );
+    }
+
+    fn chat_assistant_text(app: &App) -> String {
+        let AppState::Chat { messages, .. } = &app.state else {
+            return String::new();
+        };
+        messages
+            .iter()
+            .filter(|m| matches!(m.role, MessageRole::Assistant))
+            .flat_map(|m| m.content.iter())
+            .filter_map(|b| match b {
+                ContentBlock::Text(t) => Some(t.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("")
+    }
+
+    #[tokio::test]
+    async fn reducer_stream_roundtrip_success_flushes_tail() {
+        let mut app = chat_app();
+        let session_id = "s-test".to_string();
+        let agent_id = "A1".to_string();
+        let source = "line1\nline2\ntail";
+
+        app.update(Action::PromptRunStarted {
+            session_id: session_id.clone(),
+            agent_id: agent_id.clone(),
+            run_id: Some("r1".to_string()),
+        })
+        .await
+        .unwrap();
+
+        for chunk in ["li", "ne1\nl", "ine2", "\n", "ta", "il"] {
+            app.update(Action::PromptDelta {
+                session_id: session_id.clone(),
+                agent_id: agent_id.clone(),
+                delta: chunk.to_string(),
+            })
+            .await
+            .unwrap();
+        }
+
+        let partial = chat_assistant_text(&app);
+        assert_eq!(partial, "line1\nline2\n");
+
+        app.update(Action::PromptSuccess {
+            session_id: session_id.clone(),
+            agent_id: agent_id.clone(),
+            messages: vec![],
+        })
+        .await
+        .unwrap();
+
+        let final_text = chat_assistant_text(&app);
+        assert_eq!(final_text, source);
+
+        if let AppState::Chat { agents, .. } = &app.state {
+            assert!(agents
+                .iter()
+                .find(|a| a.agent_id == agent_id)
+                .and_then(|a| a.stream_collector.as_ref())
+                .is_none());
+        }
+    }
+
+    #[tokio::test]
+    async fn reducer_stream_roundtrip_failure_flushes_tail_before_error() {
+        let mut app = chat_app();
+        let session_id = "s-test".to_string();
+        let agent_id = "A1".to_string();
+        let source = "alpha\nbeta\ngamma";
+
+        app.update(Action::PromptRunStarted {
+            session_id: session_id.clone(),
+            agent_id: agent_id.clone(),
+            run_id: Some("r2".to_string()),
+        })
+        .await
+        .unwrap();
+
+        for chunk in ["alpha\nbe", "ta\ng", "amma"] {
+            app.update(Action::PromptDelta {
+                session_id: session_id.clone(),
+                agent_id: agent_id.clone(),
+                delta: chunk.to_string(),
+            })
+            .await
+            .unwrap();
+        }
+
+        app.update(Action::PromptFailure {
+            session_id: session_id.clone(),
+            agent_id: agent_id.clone(),
+            error: "boom".to_string(),
+        })
+        .await
+        .unwrap();
+
+        let final_text = chat_assistant_text(&app);
+        assert_eq!(final_text, source);
+
+        if let AppState::Chat {
+            messages, agents, ..
+        } = &app.state
+        {
+            assert!(messages.iter().any(|m| {
+                matches!(m.role, MessageRole::System)
+                    && m.content.iter().any(
+                        |b| matches!(b, ContentBlock::Text(t) if t.contains("Prompt failed: boom")),
+                    )
+            }));
+            assert!(agents
+                .iter()
+                .find(|a| a.agent_id == agent_id)
+                .and_then(|a| a.stream_collector.as_ref())
+                .is_none());
+        }
+    }
+
+    #[tokio::test]
+    async fn reducer_stream_roundtrip_utf8_chunks() {
+        let mut app = chat_app();
+        let session_id = "s-test".to_string();
+        let agent_id = "A1".to_string();
+        let source = "🙂🙂🙂\n汉字漢字\nA\u{0304}B";
+
+        app.update(Action::PromptRunStarted {
+            session_id: session_id.clone(),
+            agent_id: agent_id.clone(),
+            run_id: Some("r3".to_string()),
+        })
+        .await
+        .unwrap();
+
+        for chunk in ["🙂", "🙂🙂\n汉", "字漢", "字\nA", "\u{0304}", "B"] {
+            app.update(Action::PromptDelta {
+                session_id: session_id.clone(),
+                agent_id: agent_id.clone(),
+                delta: chunk.to_string(),
+            })
+            .await
+            .unwrap();
+        }
+
+        app.update(Action::PromptSuccess {
+            session_id,
+            agent_id,
+            messages: vec![],
+        })
+        .await
+        .unwrap();
+
+        let final_text = chat_assistant_text(&app);
+        assert_eq!(final_text, source);
+    }
 }
 
 use crate::net::client::Session;
@@ -217,7 +481,8 @@ pub struct PendingRequest {
 pub struct AgentPane {
     pub agent_id: String,
     pub session_id: String,
-    pub draft: String,
+    pub draft: ComposerInputState,
+    pub stream_collector: Option<crate::ui::markdown_stream::MarkdownStreamCollector>,
     pub messages: Vec<ChatMessage>,
     pub scroll_from_bottom: u16,
     pub tasks: Vec<Task>,
@@ -240,7 +505,7 @@ pub enum AppState {
     MainMenu,
     Chat {
         session_id: String,
-        command_input: String,
+        command_input: ComposerInputState,
         messages: Vec<ChatMessage>,
         scroll_from_bottom: u16,
         tasks: Vec<Task>,
@@ -713,7 +978,8 @@ impl App {
         AgentPane {
             agent_id,
             session_id,
-            draft: String::new(),
+            draft: ComposerInputState::new(),
+            stream_collector: None,
             messages: Vec::new(),
             scroll_from_bottom: 0,
             tasks: Vec::new(),
@@ -1621,6 +1887,11 @@ impl App {
                         KeyCode::Down => Some(Action::AutocompleteNext),
                         KeyCode::Up => Some(Action::AutocompletePrev),
                         KeyCode::Backspace => Some(Action::BackspaceCommand),
+                        KeyCode::Delete => Some(Action::DeleteForwardCommand),
+                        KeyCode::Left => Some(Action::MoveCursorLeft),
+                        KeyCode::Right => Some(Action::MoveCursorRight),
+                        KeyCode::Home => Some(Action::MoveCursorHome),
+                        KeyCode::End => Some(Action::MoveCursorEnd),
                         KeyCode::Char(c) => Some(Action::CommandInput(c)),
                         _ => None,
                     }
@@ -1665,9 +1936,20 @@ impl App {
                         }
                         KeyCode::Enter => Some(Action::SubmitCommand),
                         KeyCode::Backspace => Some(Action::BackspaceCommand),
+                        KeyCode::Delete => Some(Action::DeleteForwardCommand),
                         KeyCode::Tab => Some(Action::SwitchAgentNext),
+                        KeyCode::Up if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            Some(Action::MoveCursorUp)
+                        }
+                        KeyCode::Down if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            Some(Action::MoveCursorDown)
+                        }
                         KeyCode::Up => Some(Action::ScrollUp),
                         KeyCode::Down => Some(Action::ScrollDown),
+                        KeyCode::Left => Some(Action::MoveCursorLeft),
+                        KeyCode::Right => Some(Action::MoveCursorRight),
+                        KeyCode::Home => Some(Action::MoveCursorHome),
+                        KeyCode::End => Some(Action::MoveCursorEnd),
                         KeyCode::PageUp => Some(Action::PageUp),
                         KeyCode::PageDown => Some(Action::PageDown),
                         KeyCode::Char(c)
@@ -2019,7 +2301,7 @@ impl App {
                                     Self::make_agent_pane("A1".to_string(), session.id.clone());
                                 self.state = AppState::Chat {
                                     session_id: session.id.clone(),
-                                    command_input: String::new(),
+                                    command_input: ComposerInputState::new(),
                                     messages: Vec::new(),
                                     scroll_from_bottom: 0,
                                     tasks: Vec::new(),
@@ -2055,7 +2337,7 @@ impl App {
                     first_agent.active_task_id = recalled_active_task_id.clone();
                     self.state = AppState::Chat {
                         session_id: session.id.clone(),
-                        command_input: String::new(),
+                        command_input: ComposerInputState::new(),
                         messages: loaded_messages,
                         scroll_from_bottom: 0,
                         tasks: recalled_tasks,
@@ -2077,8 +2359,8 @@ impl App {
 
             Action::CommandInput(c) => {
                 if let AppState::Chat { command_input, .. } = &mut self.state {
-                    command_input.push(c);
-                    let input = command_input.clone();
+                    command_input.insert_char(c);
+                    let input = command_input.text().to_string();
                     self.update_autocomplete_for_input(&input);
                 }
                 self.sync_active_agent_from_chat();
@@ -2086,8 +2368,8 @@ impl App {
 
             Action::BackspaceCommand => {
                 if let AppState::Chat { command_input, .. } = &mut self.state {
-                    command_input.pop();
-                    let input = command_input.clone();
+                    command_input.backspace();
+                    let input = command_input.text().to_string();
                     if input == "/" {
                         self.autocomplete_items = Self::COMMAND_HELP
                             .iter()
@@ -2102,10 +2384,62 @@ impl App {
                 }
                 self.sync_active_agent_from_chat();
             }
+            Action::DeleteForwardCommand => {
+                if let AppState::Chat { command_input, .. } = &mut self.state {
+                    command_input.delete_forward();
+                    let input = command_input.text().to_string();
+                    self.update_autocomplete_for_input(&input);
+                }
+                self.sync_active_agent_from_chat();
+            }
             Action::InsertNewline => {
                 if let AppState::Chat { command_input, .. } = &mut self.state {
-                    command_input.push('\n');
-                    let input = command_input.clone();
+                    command_input.insert_char('\n');
+                    let input = command_input.text().to_string();
+                    self.update_autocomplete_for_input(&input);
+                }
+                self.sync_active_agent_from_chat();
+            }
+            Action::MoveCursorLeft => {
+                if let AppState::Chat { command_input, .. } = &mut self.state {
+                    command_input.move_left();
+                }
+                self.sync_active_agent_from_chat();
+            }
+            Action::MoveCursorRight => {
+                if let AppState::Chat { command_input, .. } = &mut self.state {
+                    command_input.move_right();
+                }
+                self.sync_active_agent_from_chat();
+            }
+            Action::MoveCursorHome => {
+                if let AppState::Chat { command_input, .. } = &mut self.state {
+                    command_input.move_home();
+                }
+                self.sync_active_agent_from_chat();
+            }
+            Action::MoveCursorEnd => {
+                if let AppState::Chat { command_input, .. } = &mut self.state {
+                    command_input.move_end();
+                }
+                self.sync_active_agent_from_chat();
+            }
+            Action::MoveCursorUp => {
+                if let AppState::Chat { command_input, .. } = &mut self.state {
+                    command_input.move_line_up();
+                }
+                self.sync_active_agent_from_chat();
+            }
+            Action::MoveCursorDown => {
+                if let AppState::Chat { command_input, .. } = &mut self.state {
+                    command_input.move_line_down();
+                }
+                self.sync_active_agent_from_chat();
+            }
+            Action::PasteInput(text) => {
+                if let AppState::Chat { command_input, .. } = &mut self.state {
+                    command_input.insert_str(&text);
+                    let input = command_input.text().to_string();
                     self.update_autocomplete_for_input(&input);
                 }
                 self.sync_active_agent_from_chat();
@@ -2113,11 +2447,11 @@ impl App {
 
             Action::Autocomplete => {
                 if let AppState::Chat { command_input, .. } = &mut self.state {
-                    if !command_input.starts_with('/') {
+                    if !command_input.text().starts_with('/') {
                         command_input.clear();
-                        command_input.push('/');
+                        command_input.insert_char('/');
                     }
-                    let input = command_input.clone();
+                    let input = command_input.text().to_string();
                     self.update_autocomplete_for_input(&input);
                 }
             }
@@ -2146,13 +2480,13 @@ impl App {
                         command_input.clear();
                         match self.autocomplete_mode {
                             AutocompleteMode::Command => {
-                                command_input.push_str(&format!("/{} ", cmd));
+                                command_input.set_text(format!("/{} ", cmd));
                             }
                             AutocompleteMode::Provider => {
-                                command_input.push_str(&format!("/provider {}", cmd));
+                                command_input.set_text(format!("/provider {}", cmd));
                             }
                             AutocompleteMode::Model => {
-                                command_input.push_str(&format!("/model {}", cmd));
+                                command_input.set_text(format!("/model {}", cmd));
                             }
                         }
                     }
@@ -2527,7 +2861,7 @@ impl App {
                     } = &mut self.state
                     {
                         *modal = None;
-                        *command_input = follow_up;
+                        command_input.set_text(follow_up);
                     }
                     self.sync_active_agent_from_chat();
                     if let Some(tx) = &self.action_tx {
@@ -2801,7 +3135,7 @@ impl App {
                 } = &mut self.state
                 {
                     if let Some(agent) = agents.get(*active_agent_index) {
-                        if !agent.draft.trim().is_empty() {
+                        if !agent.draft.text().trim().is_empty() {
                             confirm = Some(agent.agent_id.clone());
                         }
                     }
@@ -3327,10 +3661,11 @@ impl App {
                     ..
                 } = &mut self.state
                 {
-                    if command_input.trim().is_empty() {
+                    let raw = command_input.text().to_string();
+                    if raw.trim().is_empty() {
                         return Ok(());
                     }
-                    let msg = command_input.trim().to_string();
+                    let msg = raw.trim().to_string();
                     command_input.clear();
                     let agent_id = agents
                         .get(*active_agent_index)
@@ -3343,7 +3678,8 @@ impl App {
                 };
 
                 if let Some(msg) = msg_to_send {
-                    if msg.starts_with("/tool ") {
+                    let is_single_line = !msg.contains('\n');
+                    if is_single_line && msg.starts_with("/tool ") {
                         // Pass through engine-native tool invocation syntax.
                         // The engine loop handles permission and execution for /tool.
                         if let AppState::Chat { messages, .. } = &mut self.state {
@@ -3494,7 +3830,7 @@ impl App {
                                 });
                             }
                         }
-                    } else if msg.starts_with('/') {
+                    } else if is_single_line && msg.starts_with('/') {
                         let response = self.execute_command(&msg).await;
                         if let AppState::Chat { messages, .. } = &mut self.state {
                             messages.push(ChatMessage {
@@ -3734,6 +4070,8 @@ impl App {
                         let agent = &mut agents[agent_idx];
                         agent.status = AgentStatus::Running;
                         agent.active_run_id = run_id;
+                        agent.stream_collector =
+                            Some(crate::ui::markdown_stream::MarkdownStreamCollector::new());
                         if *active_agent_index == agent_idx {
                             *session_id = agent.session_id.clone();
                         }
@@ -3745,6 +4083,7 @@ impl App {
                 agent_id,
                 messages: new_messages,
             } => {
+                let mut finalized_tail: Option<String> = None;
                 if let AppState::Chat {
                     agents,
                     active_agent_index,
@@ -3757,6 +4096,12 @@ impl App {
                         .iter_mut()
                         .find(|a| a.agent_id == agent_id && a.session_id == event_session_id)
                     {
+                        if let Some(collector) = &mut agent.stream_collector {
+                            let tail = collector.finalize();
+                            finalized_tail = Some(tail.clone());
+                            Self::append_assistant_delta(&mut agent.messages, &tail);
+                        }
+                        agent.stream_collector = None;
                         Self::merge_prompt_success_messages(&mut agent.messages, &new_messages);
                         agent.status = AgentStatus::Done;
                         agent.active_run_id = None;
@@ -3766,6 +4111,15 @@ impl App {
                         && agents[*active_agent_index].agent_id == agent_id
                         && agents[*active_agent_index].session_id == event_session_id
                     {
+                        if let Some(tail) = finalized_tail {
+                            Self::append_assistant_delta(messages, &tail);
+                        } else if let Some(agent) = agents.get_mut(*active_agent_index) {
+                            if let Some(collector) = &mut agent.stream_collector {
+                                let tail = collector.finalize();
+                                Self::append_assistant_delta(messages, &tail);
+                            }
+                            agent.stream_collector = None;
+                        }
                         Self::merge_prompt_success_messages(messages, &new_messages);
                         *scroll_from_bottom = 0;
                     }
@@ -3854,7 +4208,6 @@ impl App {
                 agent_id,
                 delta,
             } => {
-                let meaningful_delta = !delta.trim().is_empty();
                 if let AppState::Chat {
                     agents,
                     active_agent_index,
@@ -3863,50 +4216,25 @@ impl App {
                     ..
                 } = &mut self.state
                 {
+                    let mut committed = String::new();
                     if let Some(agent) = agents
                         .iter_mut()
                         .find(|a| a.agent_id == agent_id && a.session_id == event_session_id)
                     {
                         agent.status = AgentStatus::Streaming;
                         agent.scroll_from_bottom = 0;
-                        if let Some(ChatMessage {
-                            role: MessageRole::Assistant,
-                            content,
-                        }) = agent.messages.last_mut()
-                        {
-                            if let Some(ContentBlock::Text(existing)) = content.first_mut() {
-                                existing.push_str(&delta);
-                            } else {
-                                content.push(ContentBlock::Text(delta.clone()));
-                            }
-                        } else if meaningful_delta {
-                            agent.messages.push(ChatMessage {
-                                role: MessageRole::Assistant,
-                                content: vec![ContentBlock::Text(delta.clone())],
-                            });
-                        }
+                        let collector = agent.stream_collector.get_or_insert_with(
+                            crate::ui::markdown_stream::MarkdownStreamCollector::new,
+                        );
+                        committed = collector.push_delta_commit_complete(&delta);
+                        Self::append_assistant_delta(&mut agent.messages, &committed);
                     }
                     if *active_agent_index < agents.len()
                         && agents[*active_agent_index].agent_id == agent_id
                         && agents[*active_agent_index].session_id == event_session_id
                     {
                         *scroll_from_bottom = 0;
-                        if let Some(ChatMessage {
-                            role: MessageRole::Assistant,
-                            content,
-                        }) = messages.last_mut()
-                        {
-                            if let Some(ContentBlock::Text(existing)) = content.first_mut() {
-                                existing.push_str(&delta);
-                            } else {
-                                content.push(ContentBlock::Text(delta));
-                            }
-                        } else if meaningful_delta {
-                            messages.push(ChatMessage {
-                                role: MessageRole::Assistant,
-                                content: vec![ContentBlock::Text(delta)],
-                            });
-                        }
+                        Self::append_assistant_delta(messages, &committed);
                     }
                 }
             }
@@ -4007,6 +4335,7 @@ impl App {
                 agent_id,
                 error,
             } => {
+                let mut finalized_tail: Option<String> = None;
                 if let AppState::Chat {
                     agents,
                     active_agent_index,
@@ -4019,6 +4348,12 @@ impl App {
                         .iter_mut()
                         .find(|a| a.agent_id == agent_id && a.session_id == event_session_id)
                     {
+                        if let Some(collector) = &mut agent.stream_collector {
+                            let tail = collector.finalize();
+                            finalized_tail = Some(tail.clone());
+                            Self::append_assistant_delta(&mut agent.messages, &tail);
+                        }
+                        agent.stream_collector = None;
                         agent.status = AgentStatus::Error;
                         agent.active_run_id = None;
                         agent.scroll_from_bottom = 0;
@@ -4031,6 +4366,15 @@ impl App {
                         && agents[*active_agent_index].agent_id == agent_id
                         && agents[*active_agent_index].session_id == event_session_id
                     {
+                        if let Some(tail) = finalized_tail {
+                            Self::append_assistant_delta(messages, &tail);
+                        } else if let Some(agent) = agents.get_mut(*active_agent_index) {
+                            if let Some(collector) = &mut agent.stream_collector {
+                                let tail = collector.finalize();
+                                Self::append_assistant_delta(messages, &tail);
+                            }
+                            agent.stream_collector = None;
+                        }
                         *scroll_from_bottom = 0;
                         messages.push(ChatMessage {
                             role: MessageRole::System,
@@ -4686,7 +5030,7 @@ MULTI-AGENT KEYS:
             "provider" => {
                 let mut step = SetupStep::SelectProvider;
                 let mut selected_provider_index = 0;
-                let mut filter_model = String::new();
+                let filter_model = String::new();
 
                 if !args.is_empty() {
                     let provider_id = args[0];
@@ -6380,11 +6724,37 @@ MULTI-AGENT KEYS:
                             *last = new_messages[0].clone();
                             return;
                         }
+                        // Keep richer local assistant content if server success snapshot is regressive.
+                        if last_trimmed.starts_with(new_trimmed) {
+                            return;
+                        }
                     }
                 }
             }
         }
         target.extend_from_slice(new_messages);
+    }
+
+    fn append_assistant_delta(target: &mut Vec<ChatMessage>, delta: &str) {
+        if delta.is_empty() {
+            return;
+        }
+        if let Some(ChatMessage {
+            role: MessageRole::Assistant,
+            content,
+        }) = target.last_mut()
+        {
+            if let Some(ContentBlock::Text(existing)) = content.first_mut() {
+                existing.push_str(delta);
+                return;
+            }
+            content.push(ContentBlock::Text(delta.to_string()));
+            return;
+        }
+        target.push(ChatMessage {
+            role: MessageRole::Assistant,
+            content: vec![ContentBlock::Text(delta.to_string())],
+        });
     }
 
     fn assistant_text_of(message: &ChatMessage) -> Option<String> {

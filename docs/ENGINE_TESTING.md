@@ -51,7 +51,7 @@ From `tandem/`:
 ```bash
 cargo build -p tandem-ai
 cargo run -p tandem-ai -- serve --host 127.0.0.1 --port 39731
-cargo test -p tandem-server -p tandem-core -p tandem-engine
+cargo test -p tandem-server -p tandem-core -p tandem-ai
 ```
 
 ## API Token Security Validation
@@ -143,7 +143,7 @@ JSON
 Run:
 
 ```bash
-cargo test -p tandem-server -p tandem-core -p tandem-engine
+cargo test -p tandem-server -p tandem-core -p tandem-ai
 ```
 
 Coverage includes route shape/contracts like:

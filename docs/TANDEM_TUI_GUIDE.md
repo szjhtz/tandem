@@ -59,6 +59,12 @@ The chat interface is where you interact with agents.
 
 - **Enter**: Submit your prompt.
 - **Shift + Enter**: Insert a newline in your draft.
+- **Alt + Enter**: Insert a newline in your draft.
+- **Left / Right**: Move cursor inside draft.
+- **Home / End**: Jump to line start/end in draft.
+- **Ctrl + Up / Ctrl + Down**: Move cursor between draft lines.
+- **Delete / Backspace**: Delete next/previous character.
+- **Paste**: Multi-line paste is inserted at cursor position.
 - **Ctrl + N**: Add a new agent to the current session.
 - **Ctrl + W**: Close the active agent.
 - **Ctrl + C**: Cancel the currently running agent's operation.
@@ -79,6 +85,15 @@ When an agent needs permission to run a tool or asks a question, use the Request
 - **Enter**: Confirm/Approve choice.
 - **r / R**: Reject/Deny permission.
 - **Esc**: Close Request Center.
+
+### Markdown Style Legend
+
+Assistant markdown in the transcript uses a visual style map:
+
+- **Heading** lines (`#`, `##`, etc.) render in yellow.
+- **Blockquote** lines (`>`) render in green.
+- **List markers** (`-`, `*`, `1.`) render in blue.
+- **Code fences and code lines** render in gray tones.
 
 ## Keyboard Shortcut Reference
 

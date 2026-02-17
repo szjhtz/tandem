@@ -3,7 +3,7 @@ use ratatui::{
     layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, StatefulWidget, Widget},
+    widgets::{Block, StatefulWidget, Widget},
 };
 
 use crate::app::{Task, TaskStatus};
@@ -42,7 +42,7 @@ impl<'a> TaskList<'a> {
 impl<'a> StatefulWidget for TaskList<'a> {
     type State = TaskListState;
 
-    fn render(self, area: Rect, buf: &mut Buffer, state: &mut Self::State) {
+    fn render(self, area: Rect, buf: &mut Buffer, _state: &mut Self::State) {
         let area = if let Some(block) = self.block {
             let inner_area = block.inner(area);
             block.render(area, buf);

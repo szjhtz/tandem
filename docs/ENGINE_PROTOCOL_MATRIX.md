@@ -139,7 +139,7 @@ GET /session?scope=workspace&workspace=C:\Users\evang\work\frumu
       "tool": "todo_write",
       "state": {
         "status": "completed",
-        "output": { "todos": [{ "id": "t1", "content": "Audit contracts", "status": "open" }] }
+        "output": { "todos": [{ "id": "t1", "content": "Audit contracts", "status": "pending" }] }
       }
     }
   }
@@ -153,7 +153,7 @@ GET /session?scope=workspace&workspace=C:\Users\evang\work\frumu
   "type": "todo.updated",
   "properties": {
     "sessionID": "ses_123",
-    "todos": [{ "id": "t1", "content": "Audit contracts", "status": "open" }]
+    "todos": [{ "id": "t1", "content": "Audit contracts", "status": "pending" }]
   }
 }
 ```

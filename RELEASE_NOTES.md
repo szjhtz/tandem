@@ -8,6 +8,8 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
 - Desktop and TUI now have parity mission/routine control paths against engine-hosted APIs.
 - Phase 6 contract hardening (`W-019`) completed: mission/routine lifecycle events promoted to stable after snapshot + client parity validation.
 - Design control-plane docs (`docs/design/*`) now track execution IDs (`W-###`), progress logs, decisions, and release contract matrices.
+- TUI codex-parity uplift: multiline composer editing, native paste, markdown renderer replacement (`pulldown-cmark`), and stream-tail correctness hardening.
+- TUI long-session performance uplift: transcript virtualization + bounded per-message render cache with benchmark harness (`benchmark_virtualized_vs_naive_long_transcript`).
 
 ## v0.3.0 (Beta) - 2026-02-15
 

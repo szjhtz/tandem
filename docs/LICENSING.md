@@ -36,3 +36,15 @@ Desktop/web app licensing is unchanged in this pass. This document only changes 
 ## NOTICE Guidance (Apache-2.0 users)
 
 Apache-2.0 does not require a `NOTICE` file unless one is distributed with the work. If downstream redistributors add Apache attribution notices, they should preserve any applicable notices consistent with Apache-2.0 Section 4.
+
+## Tandem TUI Adaptation Notes
+
+`tandem-tui` includes tandem-local implementations adapted from design/code patterns in `codex` (Apache-2.0), including composer/editor behavior and markdown rendering strategy.
+
+Primary adapted source references:
+
+- `codex/codex-rs/tui/src/public_widgets/composer_input.rs`
+- `codex/codex-rs/tui/src/bottom_pane/textarea.rs`
+- `codex/codex-rs/tui/src/markdown_render.rs`
+
+These adaptations are rewrites for Tandem architecture and are not line-for-line copies.

@@ -11,7 +11,7 @@ The engine must be running for clients to connect.
 tandem-engine
 ```
 
-By default, the engine listens on `http://127.0.0.1:3000`. You can configure the port and other settings via environment variables (see [Configuration](./configuration.md) - *coming soon*).
+By default, the engine listens on `http://127.0.0.1:39731`. You can configure the port and other settings via environment variables (see [Configuration](./configuration.md) - _coming soon_).
 
 ## 2. Start the TUI
 
@@ -33,5 +33,5 @@ The TUI will attempt to connect to the local engine. If the engine is not runnin
 
 ## Troubleshooting
 
--   **Connection Refused**: Ensure `tandem-engine` is running in a separate terminal.
--   **Port Conflicts**: If port 3000 is in use, you may need to change the engine's port (TBD: add config instruction).
+- **Connection Refused**: Ensure `tandem-engine` is running in a separate terminal.
+- **Port Conflicts**: If port 39731 is in use, you may need to change the engine's port (TBD: add config instruction).

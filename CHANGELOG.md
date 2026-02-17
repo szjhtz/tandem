@@ -19,6 +19,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Routine Scheduler + APIs**: Added routine persistence/scheduler and APIs (`POST/GET /routines`, `PATCH/DELETE /routines/{id}`, `POST /routines/{id}/run_now`, `GET /routines/{id}/history`, `GET /routines/events`).
 - **Routine Policy Gates**: Added external side-effect gates emitting lifecycle events (`routine.fired`, `routine.approval_required`, `routine.blocked`) with history states.
 - **Desktop + TUI Mission/Routine Parity**: Added Desktop sidecar + TUI client command parity for mission/routine observe/control workflows.
+- **TUI Composer Upgrade**: Added multiline composer state with cursor navigation, delete-forward, and native paste event handling in `tandem-tui`.
+- **TUI Markdown/Stream Pipeline**: Added tandem-local markdown renderer + newline-gated stream collector with reducer-level tail-flush correctness tests.
+- **TUI Long-Transcript Performance Harness**: Added virtualization parity tests and ignored benchmark target for large transcript render profiling.
 
 ### Security
 
@@ -35,6 +38,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **TUI Key Sync Transport**: TUI now syncs unlocked keystore credentials to engine runtime via `/auth/{provider}` instead of writing keys through `/config`.
 - **Desktop Runtime Auth Sync**: Desktop now pushes provider credentials to sidecar runtime auth after sidecar start/restart, aligning with keystore-first secret handling.
 - **Config Layers**: Added an in-memory runtime config layer for ephemeral provider auth material (merged into effective config, never persisted).
+- **TUI Transcript Rendering**: Replaced `tui-markdown` usage with tandem-local `pulldown-cmark` rendering and virtualized transcript line materialization.
+- **TUI Render Throughput**: Added bounded per-message render cache (message fingerprint + width keyed) to reduce repeated markdown/wrap work per frame.
 
 ### Fixed
 
@@ -43,6 +48,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Plaintext Key Persistence Gap**: Fixed a regression where provider API keys could end up in Tandem config files under `%APPDATA%/tandem` when clients used config patch flows.
 - **OpenRouter Auth Regression After Scrub**: Fixed post-scrub provider failures by wiring runtime auth to provider resolution instead of relying on persisted config secrets.
 - **Browser CORS for Engine API**: Added CORS support to engine HTTP routes so browser-based examples using `X-Tandem-Token` work with preflight requests.
+- **TUI Stream Merge Regression**: Prevented regressive success/failure snapshots from overwriting richer locally-finalized assistant stream tails.
 
 ## [0.3.0] - 2026-02-15
 
