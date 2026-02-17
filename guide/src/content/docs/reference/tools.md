@@ -2,7 +2,7 @@
 title: Tools Reference
 ---
 
-The following tools are available in the Tandem Engine environment.
+The Tandem Engine tool registry currently exposes the following tools.
 
 ## File Operations
 
@@ -22,6 +22,8 @@ The following tools are available in the Tandem Engine environment.
 - **`websearch`**: Search the web (powered by Exa.ai).
   - Input: `query` (string), `limit` (integer)
 - **`codesearch`**: Semantic code search (if configured).
+- **`memory_search`**: Search persisted memory by query and scope.
+  - Input: `query` plus one or more scopes (e.g., session/workspace).
 
 ## Web
 
@@ -35,8 +37,10 @@ The following tools are available in the Tandem Engine environment.
 - **`bash`**: Run shell commands (PowerShell on Windows, Bash on Linux/Mac).
   - Input: `command` (string)
 - **`mcp_debug`**: Call an MCP tool directly.
-- **`todowrite`**: Update the Todo list.
+- **`todo_write`**: Update the Todo/task list.
+  - Aliases: `todowrite`, `update_todo_list`
 - **`task`**: Update the current task status.
+- **`question`**: Ask a structured question to the user and wait for input.
 
 ## Specialized
 

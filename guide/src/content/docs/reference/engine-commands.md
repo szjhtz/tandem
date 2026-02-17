@@ -14,15 +14,15 @@ tandem-engine serve [OPTIONS]
 
 **Options:**
 
-- `--hostname <HOSTNAME>` / `--host <HOSTNAME>`: The interface to bind to (default: `127.0.0.1`).
-- `--port <PORT>`: The port to listen on (default: `39731`).
+- `--hostname <HOSTNAME>` / `--host <HOSTNAME>`: The interface to bind to (default: `127.0.0.1`, env: `TANDEM_ENGINE_HOST`).
+- `--port <PORT>`: The port to listen on (default: `39731`, env: `TANDEM_ENGINE_PORT`).
 - `--state-dir <DIR>`: Custom directory for storing engine state (config, logs, storage).
 - `--in-process`: Run in in-process mode (for development/debugging).
 - `--provider <ID>`: Provider ID for this process (`openai`, `openrouter`, `anthropic`, `ollama`, `groq`, `mistral`, `together`, `azure`, `bedrock`, `vertex`, `copilot`, `cohere`).
 - `--model <ID>`: Provider model override for this process.
 - `--api-key <KEY>`: API key override for the selected provider for this process.
 - `--config <PATH>`: Override config file path.
-- `--api-token <TOKEN>`: Require token auth for HTTP endpoints (Authorization Bearer or `X-Tandem-Token`).
+- `--api-token <TOKEN>`: Require token auth for HTTP endpoints (Authorization Bearer or `X-Tandem-Token`, env: `TANDEM_API_TOKEN`).
 
 ## `run`
 
@@ -82,7 +82,7 @@ tandem-engine tool --json '<JSON_PAYLOAD>'
 
 ## `chat`
 
-(Experimental) Starts an interactive chat session directly in the terminal without looking for a client.
+Planned interactive REPL mode. This command is currently a placeholder.
 
 ## `parallel`
 

@@ -25,20 +25,23 @@ title: TUI Commands
 
 ## Chat Mode
 
-| Key           | Action                        |
-| ------------- | ----------------------------- |
-| `Esc`         | Initial "back" or dismiss     |
-| `Enter`       | Submit command / Send message |
-| `Shift+Enter` | Insert Newline                |
-| `Tab`         | Switch to Next Agent          |
-| `BackTab`     | Switch to Previous Agent      |
-| `Alt+[0-9]`   | Select Agent by Number        |
-| `Alt+G`       | Toggle UI Mode                |
-| `Alt+R`       | Open Request Center           |
-| `Alt+S`       | Start Demo Stream             |
-| `Alt+B`       | Spawn Background Demo         |
-| `[` / `]`     | Navigate Grid Pages           |
-| `Up` / `Down` | Scroll History                |
+| Key                         | Action                        |
+| --------------------------- | ----------------------------- |
+| `Esc`                       | Initial "back" or dismiss     |
+| `Enter`                     | Submit command / Send message |
+| `Shift+Enter` / `Alt+Enter` | Insert Newline                |
+| `Tab`                       | Switch to Next Agent          |
+| `BackTab`                   | Switch to Previous Agent      |
+| `Alt+1..9`                  | Select Agent by Number        |
+| `Alt+M`                     | Cycle mode                    |
+| `Alt+G`                     | Toggle UI Mode                |
+| `Alt+R`                     | Open Request Center           |
+| `Alt+S`                     | Start Demo Stream (dev)       |
+| `Alt+B`                     | Spawn Background Demo (dev)   |
+| `[` / `]`                   | Navigate Grid Pages           |
+| `Up` / `Down`               | Scroll History                |
+| `F1`                        | Open help modal               |
+| `F2`                        | Open docs                     |
 
 ## Slash Commands
 
@@ -67,4 +70,20 @@ Type `/` in the chat input to see autocomplete.
 - **/deny**: Deny a pending request
 - **/answer**: Answer a question (from a tool)
 - **/requests**: Open pending request center
+- **/routines**: List scheduled routines
+- **/routine_create**: Create interval routine
+- **/routine_edit**: Edit routine interval
+- **/routine_pause**: Pause a routine
+- **/routine_resume**: Resume a routine
+- **/routine_run_now**: Trigger a routine now
+- **/routine_delete**: Delete a routine
+- **/routine_history**: Show routine execution history
+- **/missions**: List engine missions
+- **/mission_create**: Create an engine mission
+- **/mission_get**: Get mission details
+- **/mission_event**: Apply mission event JSON
+- **/mission_start**: Apply mission started event
+- **/mission_review_ok**: Approve review gate
+- **/mission_test_ok**: Approve test gate
+- **/mission_review_no**: Deny review gate
 - **/config**: Show configuration

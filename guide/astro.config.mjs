@@ -12,6 +12,7 @@ export default defineConfig({
   integrations: [
     starlight({
       title: "Tandem Engine",
+      customCss: ["./src/styles/custom.css"],
       editLink: {
         baseUrl: `https://github.com/${owner}/${repo}/edit/main/tandem/guide/src/content/docs/`,
       },
@@ -22,7 +23,18 @@ export default defineConfig({
         },
         {
           label: "User Guide",
-          items: ["tui-guide", "configuration", "agents-and-sessions", "design-system"],
+          items: [
+            "desktop/overview",
+            "desktop/first-10-minutes",
+            "desktop/workflows",
+            "desktop/settings-and-safety",
+            "desktop/troubleshooting",
+            "desktop/learn-walkthroughs",
+            "tui-guide",
+            "configuration",
+            "agents-and-sessions",
+            "design-system",
+          ],
         },
         {
           label: "Reference",

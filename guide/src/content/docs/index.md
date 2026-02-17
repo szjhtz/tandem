@@ -11,6 +11,12 @@ Welcome to the Tandem Engine documentation.
 
 ## User Guide
 
+- [Desktop App Overview](./desktop/overview/)
+- [Desktop First 10 Minutes](./desktop/first-10-minutes/)
+- [Desktop Workflows](./desktop/workflows/)
+- [Desktop Settings & Safety](./desktop/settings-and-safety/)
+- [Desktop Troubleshooting](./desktop/troubleshooting/)
+- [Desktop Learn Walkthroughs](./desktop/learn-walkthroughs/)
 - [TUI Guide](./tui-guide/)
 - [Configuration](./configuration/)
 - [Agents & Sessions](./agents-and-sessions/)

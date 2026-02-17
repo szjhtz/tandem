@@ -81,3 +81,6 @@ engine/.tandem/
 
 # MdBook
 guide/book
+
+# Starlight/Astro generated cache
+guide/.astro/
