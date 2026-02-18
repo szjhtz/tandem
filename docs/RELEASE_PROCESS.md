@@ -32,6 +32,7 @@ Use the separate workflow `.github/workflows/publish-registries.yml` to publish 
   - `CARGO_REGISTRY_TOKEN`
 - npm publishing uses **Trusted Publishing (OIDC)** in GitHub Actions (no `NPM_TOKEN` required in CI).
 - npm publish job enforces tokenless npm config (`NPM_CONFIG_USERCONFIG`) so Trusted Publishing is used instead of stale token auth.
+- If Trusted Publishing is not configured yet on npm package settings, CI can fall back to `NPM_TOKEN` when that secret is present.
 - Validates manifest versions before publishing.
 - Preflight uses static Cargo manifest/order validation (not `cargo package`), because crates with intra-workspace dependencies can fail publish-dry checks until earlier crates are actually published and propagated on crates.io.
 - Skips already-published crate/npm versions so reruns are safe.
