@@ -1,6 +1,17 @@
 # Tandem TUI (npm Wrapper)
 
-Terminal user interface for Tandem. This npm package installs the `tandem-tui` CLI and downloads the matching release asset.
+```text
+TTTTT   A   N   N DDDD  EEEEE M   M
+  T    A A  NN  N D   D E     MM MM
+  T   AAAAA N N N D   D EEEE  M M M
+  T   A   A N  NN D   D E     M   M
+  T   A   A N   N DDDD  EEEEE M   M
+```
+
+## What This Is
+
+Prebuilt npm distribution of Tandem TUI for macOS, Linux, and Windows.  
+Installing this package gives you the `tandem-tui` terminal client binary without compiling Rust locally.
 
 If you want to build from Rust source instead, use the crate docs in `crates/tandem-tui/README.md`.
 

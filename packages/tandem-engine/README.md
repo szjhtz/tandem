@@ -1,6 +1,17 @@
 # Tandem Engine CLI (npm Wrapper)
 
-Prebuilt distribution of the Tandem Engine binary for macOS, Linux, and Windows. This npm package installs the `tandem-engine` CLI and downloads the matching release asset.
+```text
+TTTTT   A   N   N DDDD  EEEEE M   M
+  T    A A  NN  N D   D E     MM MM
+  T   AAAAA N N N D   D EEEE  M M M
+  T   A   A N  NN D   D E     M   M
+  T   A   A N   N DDDD  EEEEE M   M
+```
+
+## What This Is
+
+Prebuilt npm distribution of the Tandem engine for macOS, Linux, and Windows.  
+Installing this package gives you the `tandem-engine` CLI binary without compiling Rust locally.
 
 If you want to build from Rust source instead, use the crate docs in `engine/README.md`.
 

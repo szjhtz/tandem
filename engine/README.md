@@ -1,6 +1,17 @@
 # tandem-ai (tandem-engine)
 
-Rust crate for the Tandem engine service and CLI binary (`tandem-engine`).
+```text
+TTTTT   A   N   N DDDD  EEEEE M   M
+  T    A A  NN  N D   D E     MM MM
+  T   AAAAA N N N D   D EEEE  M M M
+  T   A   A N  NN D   D E     M   M
+  T   A   A N   N DDDD  EEEEE M   M
+```
+
+## What This Is
+
+`tandem-ai` is the Rust crate that builds the `tandem-engine` binary.  
+It runs the headless Tandem runtime (HTTP + SSE APIs, tools, sessions, orchestration/agent workflows).
 
 ## Build
 

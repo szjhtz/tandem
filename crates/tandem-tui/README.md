@@ -1,6 +1,17 @@
 # tandem-tui
 
-Rust crate for the Tandem terminal UI binary (`tandem-tui`).
+```text
+TTTTT   A   N   N DDDD  EEEEE M   M
+  T    A A  NN  N D   D E     MM MM
+  T   AAAAA N N N D   D EEEE  M M M
+  T   A   A N  NN D   D E     M   M
+  T   A   A N   N DDDD  EEEEE M   M
+```
+
+## What This Is
+
+`tandem-tui` is the Rust crate for the terminal client binary.  
+It connects to `tandem-engine` and provides a keyboard-first chat + agent workflow UI in the terminal.
 
 ## Build
 
