@@ -12,6 +12,7 @@ import { FileBrowser } from "@/components/files/FileBrowser";
 import { FilePreview } from "@/components/files/FilePreview";
 import { GitInitDialog } from "@/components/dialogs/GitInitDialog";
 import { OrchestratorPanel } from "@/components/orchestrate/OrchestratorPanel";
+import { CommandCenterPage } from "@/components/command-center/CommandCenterPage";
 import { type RunSummary } from "@/components/orchestrate/types";
 import { PacksPanel } from "@/components/packs";
 import { AppUpdateOverlay } from "@/components/updates/AppUpdateOverlay";
@@ -83,7 +84,15 @@ import whatsNewMarkdown from "../docs/WHATS_NEW_v0.3.0.md?raw";
 const WHATS_NEW_VERSION = "v0.3.0-beta";
 const WHATS_NEW_SEEN_KEY = "tandem_whats_new_seen_version";
 
-type View = "chat" | "extensions" | "settings" | "about" | "packs" | "onboarding" | "sidecar-setup";
+type View =
+  | "chat"
+  | "command-center"
+  | "extensions"
+  | "settings"
+  | "about"
+  | "packs"
+  | "onboarding"
+  | "sidecar-setup";
 
 // Hide the HTML splash screen once React is ready and vault is unlocked
 function hideSplashScreen() {
@@ -591,7 +600,8 @@ function App() {
             view !== "settings" &&
             view !== "about" &&
             view !== "packs" &&
-            view !== "extensions"
+            view !== "extensions" &&
+            view !== "command-center"
           ? "onboarding"
           : view;
 
@@ -1404,6 +1414,17 @@ function App() {
                 <MessageSquare className="h-5 w-5" />
               </button>
               <button
+                onClick={() => setView("command-center")}
+                className={`flex h-10 w-10 items-center justify-center rounded-lg transition-colors ${
+                  effectiveView === "command-center"
+                    ? "bg-primary/20 text-primary"
+                    : "text-text-muted hover:bg-surface-elevated hover:text-text"
+                }`}
+                title="Command Center"
+              >
+                <Sparkles className="h-5 w-5" />
+              </button>
+              <button
                 onClick={handleOpenPacks}
                 className={`flex h-10 w-10 items-center justify-center rounded-lg transition-colors ${
                   effectiveView === "packs"
@@ -1659,6 +1680,23 @@ function App() {
               </div>
               <About />
             </motion.div>
+          ) : effectiveView === "command-center" ? (
+            <motion.div
+              key="command-center"
+              className="h-full w-full app-background"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.2, ease: "easeOut" }}
+            >
+              <CommandCenterPage
+                onOpenOrchestrator={(runId) => {
+                  setCurrentOrchestratorRunId(runId ?? null);
+                  setOrchestratorOpen(true);
+                  setView("chat");
+                }}
+              />
+            </motion.div>
           ) : (
             <>
               {/* Chat Area */}
@@ -1673,6 +1711,7 @@ function App() {
                       // Reset to default agent when closing
                       setSelectedAgent(undefined);
                     }}
+                    onOpenCommandCenter={() => setView("command-center")}
                   />
                 ) : (
                   // Chat view

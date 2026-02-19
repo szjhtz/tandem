@@ -17,7 +17,6 @@ import {
 import { Button } from "@/components/ui";
 import { BudgetMeter } from "./BudgetMeter";
 import { TaskBoard } from "./TaskBoard";
-import { AgentCommandCenter } from "./AgentCommandCenter";
 import { ModelSelector } from "@/components/chat/ModelSelector";
 import { LogsDrawer } from "@/components/logs";
 import { getProvidersConfig, getSessionMessages, type SessionMessage } from "@/lib/tauri";
@@ -33,6 +32,7 @@ import type {
 
 interface OrchestratorPanelProps {
   onClose: () => void;
+  onOpenCommandCenter?: () => void;
   runId?: string | null;
   runSessionIdHint?: string | null;
 }
@@ -59,6 +59,7 @@ function extractSessionMessageText(message: SessionMessage): string {
 
 export function OrchestratorPanel({
   onClose,
+  onOpenCommandCenter,
   runId: initialRunId,
   runSessionIdHint,
 }: OrchestratorPanelProps) {
@@ -729,6 +730,16 @@ export function OrchestratorPanel({
             )}
           </div>
           <div className="flex items-center gap-2">
+            {onOpenCommandCenter ? (
+              <button
+                type="button"
+                onClick={onOpenCommandCenter}
+                className="rounded px-2 py-1 text-xs text-text-subtle hover:bg-surface-elevated hover:text-text"
+                title="Open Command Center"
+              >
+                Command Center
+              </button>
+            ) : null}
             <button
               type="button"
               onClick={() => setShowLogsDrawer(true)}
@@ -1046,9 +1057,7 @@ export function OrchestratorPanel({
                           {plannerTranscriptPreview}
                         </p>
                       ) : (
-                        <p className="text-xs text-text-muted">
-                          Waiting for planner output...
-                        </p>
+                        <p className="text-xs text-text-muted">Waiting for planner output...</p>
                       )}
                     </div>
                   </div>
@@ -1073,10 +1082,6 @@ export function OrchestratorPanel({
               {error}
             </div>
           )}
-
-          <div className="mt-4">
-            <AgentCommandCenter />
-          </div>
         </div>
       </div>
 

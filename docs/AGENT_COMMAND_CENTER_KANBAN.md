@@ -6,7 +6,6 @@ Owner: Platform / Agent Runtime
 ## In Progress
 
 - [ ] `ACC-015` Add role/template editor UX in desktop with safe policy validation preview.
-- [ ] Harden command-center payload guards to tolerate mixed snake_case/camelCase responses.
 
 ## Ready Next
 
@@ -35,6 +34,11 @@ Owner: Platform / Agent Runtime
 - [x] `ACC-013` Add desktop approvals inbox combining spawn approvals and tool approvals in one queue.
 - [x] `ACC-014` Add TUI command-center parity (`/agent-team` dashboard + approval actions).
 - [x] `ACC-016` Add exportable mission run report (JSON + markdown summary).
+- [x] `ACC-018` Realign IA: move Command Center to dedicated app page with left-nav discoverability.
+- [x] `ACC-019` Add `Task to Swarm` default flow (objective box, presets, launch, plan-preview approval, execute state).
+- [x] `ACC-020` Preserve existing operator tooling under `Advanced Controls` tab.
+- [x] `ACC-021` Add cross-navigation: `Command Center -> Edit in Orchestrator` and `Orchestrator -> Command Center`.
+- [x] `ACC-022` Remove embedded command center from Orchestrator panel to reduce UX confusion.
 
 ## Risks / Notes
 
