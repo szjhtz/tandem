@@ -168,7 +168,8 @@ export function AgentCommandCenter() {
   );
 
   const selectedInstance = useMemo(
-    () => instances.find((instance) => instance.instance_id === selectedInstanceDetailId) || null,
+    () =>
+      instances.find((instance) => instance.instance_id === selectedInstanceDetailId) || null,
     [instances, selectedInstanceDetailId]
   );
 
@@ -249,9 +250,7 @@ export function AgentCommandCenter() {
 
     const missionInstances = instances.filter((instance) => instance.mission_id === missionId);
     const depthById = new Map<string, number>();
-    const instanceById = new Map(
-      missionInstances.map((instance) => [instance.instance_id, instance])
-    );
+    const instanceById = new Map(missionInstances.map((instance) => [instance.instance_id, instance]));
 
     const getDepth = (instance: AgentTeamInstance): number => {
       const cached = depthById.get(instance.instance_id);
@@ -343,14 +342,7 @@ export function AgentCommandCenter() {
       if (a.depth !== b.depth) return a.depth - b.depth;
       return a.label.localeCompare(b.label);
     });
-  }, [
-    approvals.spawn_approvals,
-    approvals.tool_approvals,
-    instances,
-    selectedMission,
-    selectedMissionDetailId,
-    selectedMissionId,
-  ]);
+  }, [approvals.spawn_approvals, approvals.tool_approvals, instances, selectedMission, selectedMissionDetailId, selectedMissionId]);
 
   const toolApprovals = approvals.tool_approvals;
 
@@ -494,9 +486,7 @@ export function AgentCommandCenter() {
         </div>
         <div className="rounded-lg border border-border bg-surface/60 p-2">
           <div className="text-[10px] uppercase text-text-subtle">Spawn Approvals</div>
-          <div className="text-lg font-semibold text-amber-300">
-            {approvals.spawn_approvals.length}
-          </div>
+          <div className="text-lg font-semibold text-amber-300">{approvals.spawn_approvals.length}</div>
         </div>
       </div>
 
@@ -553,9 +543,7 @@ export function AgentCommandCenter() {
 
       <div className="rounded-lg border border-border bg-surface/50 p-3 space-y-2">
         <div className="flex items-center justify-between">
-          <div className="text-xs uppercase tracking-wide text-text-subtle">
-            Pending Spawn Approvals
-          </div>
+          <div className="text-xs uppercase tracking-wide text-text-subtle">Pending Spawn Approvals</div>
           <input
             className="w-56 rounded border border-border bg-surface p-1.5 text-xs text-text"
             value={actionReason}
@@ -605,7 +593,9 @@ export function AgentCommandCenter() {
       </div>
 
       <div className="rounded-lg border border-border bg-surface/50 p-3 space-y-3">
-        <div className="text-xs uppercase tracking-wide text-text-subtle">Search And Filters</div>
+        <div className="text-xs uppercase tracking-wide text-text-subtle">
+          Search And Filters
+        </div>
         <input
           className="w-full rounded border border-border bg-surface p-2 text-sm text-text"
           value={searchQuery}
@@ -670,8 +660,8 @@ export function AgentCommandCenter() {
             </select>
           </div>
           <div className="text-[11px] text-text-muted">
-            showing {filteredMissions.length}/{missions.length} missions and{" "}
-            {filteredInstances.length}/{instances.length} instances
+            showing {filteredMissions.length}/{missions.length} missions and {filteredInstances.length}/
+            {instances.length} instances
           </div>
         </div>
       </div>
@@ -737,9 +727,7 @@ export function AgentCommandCenter() {
                     <div>
                       <div className="text-sm text-text">
                         {instance.role}{" "}
-                        <span className="font-mono text-xs text-text-muted">
-                          {instance.instance_id}
-                        </span>
+                        <span className="font-mono text-xs text-text-muted">{instance.instance_id}</span>
                       </div>
                       <div className="text-xs text-text-muted">
                         mission {instance.mission_id} | {instance.status}
@@ -780,8 +768,8 @@ export function AgentCommandCenter() {
                   running {selectedMission.running_count} / total {selectedMission.instance_count}
                 </div>
                 <div>
-                  completed {selectedMission.completed_count} | failed{" "}
-                  {selectedMission.failed_count} | cancelled {selectedMission.cancelled_count}
+                  completed {selectedMission.completed_count} | failed {selectedMission.failed_count}{" "}
+                  | cancelled {selectedMission.cancelled_count}
                 </div>
                 <div className="pt-1">
                   tokens {selectedMission.token_used_total} | toolCalls{" "}
@@ -844,9 +832,7 @@ export function AgentCommandCenter() {
                 style={{ marginLeft: `${Math.min(event.depth, 6) * 14}px` }}
               >
                 <div className="flex items-center gap-2 text-xs text-text">
-                  <span
-                    className={`inline-block h-2 w-2 rounded-full ${toneDotClassName(event.tone)}`}
-                  />
+                  <span className={`inline-block h-2 w-2 rounded-full ${toneDotClassName(event.tone)}`} />
                   <span>{event.label}</span>
                   {event.status ? (
                     <span className="text-[10px] uppercase text-text-muted">{event.status}</span>
@@ -885,9 +871,7 @@ export function AgentCommandCenter() {
                   <div className="mt-2 flex gap-2">
                     <Button
                       size="sm"
-                      onClick={() =>
-                        void handleApproveTool(approval.session_id!, approval.tool_call_id)
-                      }
+                      onClick={() => void handleApproveTool(approval.session_id!, approval.tool_call_id)}
                     >
                       <CheckCircle2 className="mr-1 h-4 w-4" />
                       Approve Tool
@@ -895,9 +879,7 @@ export function AgentCommandCenter() {
                     <Button
                       size="sm"
                       variant="danger"
-                      onClick={() =>
-                        void handleDenyTool(approval.session_id!, approval.tool_call_id)
-                      }
+                      onClick={() => void handleDenyTool(approval.session_id!, approval.tool_call_id)}
                     >
                       <XCircle className="mr-1 h-4 w-4" />
                       Deny Tool
@@ -905,8 +887,7 @@ export function AgentCommandCenter() {
                   </div>
                 ) : (
                   <div className="mt-1 text-xs text-rose-100/80">
-                    Missing `sessionID`/`toolCallID` in approval payload; use request center
-                    fallback.
+                    Missing `sessionID`/`toolCallID` in approval payload; use request center fallback.
                   </div>
                 )}
               </div>
@@ -923,3 +904,4 @@ export function AgentCommandCenter() {
     </div>
   );
 }
+
