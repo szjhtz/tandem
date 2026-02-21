@@ -2402,11 +2402,97 @@ When calling `read`/`write`/`edit`, ALWAYS include a non-empty `path` string.\n\
             text.push_str(&task.acceptance_criteria.join(" "));
         }
         let lowered = text.to_lowercase();
-        let write_keywords = [
-            "write", "create", "update", "modify", "edit", "save", "file", "document", "artifact",
-            "markdown", ".md", ".ts", ".tsx", ".rs", ".json", ".yaml", ".yml", ".py", ".js",
+        let explicit_no_write_markers = [
+            "no code changes",
+            "read-only",
+            "read only",
+            "analysis only",
+            "do not modify",
+            "without modifying",
+            "without changes",
         ];
-        write_keywords.iter().any(|kw| lowered.contains(kw))
+        if explicit_no_write_markers
+            .iter()
+            .any(|kw| lowered.contains(kw))
+        {
+            return false;
+        }
+
+        let explicit_write_tool_markers = ["`write`", "`edit`", "`apply_patch`", "apply_patch"];
+        if explicit_write_tool_markers
+            .iter()
+            .any(|kw| lowered.contains(kw))
+        {
+            return true;
+        }
+
+        let write_verbs = [
+            "write",
+            "create",
+            "update",
+            "modify",
+            "edit",
+            "save",
+            "implement",
+            "add",
+            "patch",
+            "refactor",
+            "rewrite",
+            "generate",
+            "draft",
+            "produce",
+        ];
+        let artifact_terms = [
+            "file",
+            "files",
+            "document",
+            "documents",
+            "doc",
+            "docs",
+            "artifact",
+            "artifacts",
+            "markdown",
+            "readme",
+            "spec",
+            "specification",
+            ".md",
+            ".ts",
+            ".tsx",
+            ".rs",
+            ".json",
+            ".yaml",
+            ".yml",
+            ".py",
+            ".js",
+        ];
+        let read_only_intents = [
+            "review",
+            "read",
+            "analyze",
+            "analyse",
+            "audit",
+            "inspect",
+            "summarize",
+            "summarise",
+            "brainstorm",
+            "research",
+            "discover",
+            "map",
+            "plan",
+        ];
+
+        let has_write_verb = write_verbs.iter().any(|kw| lowered.contains(kw));
+        let has_artifact_term = artifact_terms.iter().any(|kw| lowered.contains(kw));
+        if has_write_verb && has_artifact_term {
+            return true;
+        }
+
+        let has_read_only_intent = read_only_intents.iter().any(|kw| lowered.contains(kw));
+        if has_read_only_intent && !has_write_verb {
+            return false;
+        }
+
+        false
     }
 
     fn extract_target_file_hints(task: &Task) -> Vec<String> {
