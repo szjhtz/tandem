@@ -1,14 +1,21 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Button } from "@/components/ui";
 import { AgentCommandCenter } from "@/components/orchestrate/AgentCommandCenter";
 import { ModelSelector } from "@/components/chat/ModelSelector";
 import { AgentModelRoutingPanel } from "@/components/orchestrate/AgentModelRoutingPanel";
+import { TaskBoard } from "@/components/orchestrate/TaskBoard";
+import { LogsDrawer } from "@/components/logs";
 import { ProjectSwitcher } from "@/components/sidebar";
 import {
   deleteOrchestratorRun,
+  getSidecarStartupHealth,
+  getSidecarStatus,
   getProvidersConfig,
+  setProvidersConfig,
   onSidecarEventV2,
+  type SidecarStartupHealth,
+  type SidecarState,
   type StreamEventEnvelopeV2,
   type UserProject,
 } from "@/lib/tauri";
@@ -20,7 +27,17 @@ import {
   type RunSnapshot,
   type Task,
 } from "@/components/orchestrate/types";
-import { CheckCircle2, Loader2, RefreshCw, Sparkles, Trash2 } from "lucide-react";
+import {
+  CheckCircle2,
+  ChevronDown,
+  ChevronUp,
+  Loader2,
+  RefreshCw,
+  RotateCcw,
+  ScrollText,
+  Sparkles,
+  Trash2,
+} from "lucide-react";
 
 type QualityPreset = "speed" | "balanced" | "quality";
 type SwarmStage = "idle" | "planning" | "awaiting_review" | "executing" | "completed" | "failed";
@@ -33,6 +50,60 @@ interface CommandCenterPageProps {
   onAddProject: () => void;
   onManageProjects: () => void;
   projectSwitcherLoading?: boolean;
+  initialRunId?: string | null;
+}
+
+interface RunModelSelection {
+  model?: string | null;
+  provider?: string | null;
+}
+
+function truncateForFeed(value: string, max = 64): string {
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+  return trimmed.length > max ? `${trimmed.slice(0, max)}...` : trimmed;
+}
+
+function formatStreamEventForFeed(payload: StreamEventEnvelopeV2["payload"]): string | null {
+  switch (payload.type) {
+    case "run_started":
+      return `run started ${payload.run_id}`;
+    case "run_finished":
+      return payload.error
+        ? `run finished ${payload.status}: ${truncateForFeed(payload.error)}`
+        : `run finished ${payload.status}`;
+    case "session_status":
+      return `session ${payload.status}`;
+    case "session_error":
+      return `session error ${truncateForFeed(payload.error)}`;
+    case "tool_start":
+      return `tool start ${payload.tool}`;
+    case "tool_end":
+      return payload.error
+        ? `tool failed ${payload.tool}: ${truncateForFeed(payload.error)}`
+        : `tool done ${payload.tool}`;
+    case "permission_asked":
+      return `permission asked${payload.tool ? ` for ${payload.tool}` : ""}`;
+    case "question_asked":
+      return `question asked (${payload.questions.length})`;
+    case "file_edited":
+      return `file edited ${truncateForFeed(payload.file_path, 52)}`;
+    case "content": {
+      const chunk = payload.delta || payload.content || "";
+      if (!chunk.trim()) return null;
+      return `llm streaming ${truncateForFeed(chunk, 80)}`;
+    }
+    case "raw":
+      if (
+        payload.event_type.startsWith("agent_team.") ||
+        payload.event_type.startsWith("session.run.")
+      ) {
+        return payload.event_type;
+      }
+      return null;
+    default:
+      return null;
+  }
 }
 
 function stageFromSnapshot(snapshot: RunSnapshot | null): SwarmStage {
@@ -52,6 +123,7 @@ export function CommandCenterPage({
   onAddProject,
   onManageProjects,
   projectSwitcherLoading = false,
+  initialRunId = null,
 }: CommandCenterPageProps) {
   const [tab, setTab] = useState<TabId>("task-to-swarm");
   const [objective, setObjective] = useState("");
@@ -63,13 +135,46 @@ export function CommandCenterPage({
   const [tasks, setTasks] = useState<Task[]>([]);
   const [eventFeed, setEventFeed] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [isRunActionLoading, setIsRunActionLoading] = useState(false);
+  const [runsCollapsed, setRunsCollapsed] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedModel, setSelectedModel] = useState<string | undefined>(undefined);
   const [selectedProvider, setSelectedProvider] = useState<string | undefined>(undefined);
+  const [sidecarStatus, setSidecarStatus] = useState<SidecarState>("stopped");
+  const [sidecarStartupHealth, setSidecarStartupHealth] = useState<SidecarStartupHealth | null>(
+    null
+  );
+  const [activeRunSessionId, setActiveRunSessionId] = useState<string | null>(null);
+  const [runModelSelection, setRunModelSelection] = useState<RunModelSelection | null>(null);
   const [modelRouting, setModelRouting] = useState<OrchestratorModelRouting>({});
+  const [showLogsDrawer, setShowLogsDrawer] = useState(false);
+  const [autoApproveTargetRunId, setAutoApproveTargetRunId] = useState<string | null>(null);
+  const lastSnapshotRef = useRef<RunSnapshot | null>(null);
+  const autoApproveInFlightRef = useRef(false);
+  const lastContentFeedMsRef = useRef(0);
+  const selectedModelRef = useRef<string | undefined>(undefined);
+  const selectedProviderRef = useRef<string | undefined>(undefined);
 
   const stage = stageFromSnapshot(snapshot);
   const workspacePath = activeProject?.path ?? null;
+  const sidecarStarting =
+    sidecarStatus === "starting" || !!(sidecarStartupHealth && !sidecarStartupHealth.ready);
+  const sidecarReady = sidecarStatus === "running" && !sidecarStarting;
+  const isWorking = stage === "planning" || stage === "awaiting_review" || stage === "executing";
+  const selectedRunSessionId = useMemo(
+    () => runs.find((run) => run.run_id === runId)?.session_id ?? null,
+    [runId, runs]
+  );
+  const selectedRunConsoleSessionIds = useMemo(() => {
+    const ids = new Set<string>();
+    if (selectedRunSessionId) ids.add(selectedRunSessionId);
+    if (activeRunSessionId) ids.add(activeRunSessionId);
+    for (const task of tasks) {
+      const sid = task.session_id?.trim();
+      if (sid) ids.add(sid);
+    }
+    return Array.from(ids);
+  }, [activeRunSessionId, selectedRunSessionId, tasks]);
 
   const loadRuns = useCallback(async () => {
     setRunsLoading(true);
@@ -89,6 +194,7 @@ export function CommandCenterPage({
     if (!runId) {
       setSnapshot(null);
       setTasks([]);
+      lastSnapshotRef.current = null;
       return;
     }
 
@@ -99,6 +205,30 @@ export function CommandCenterPage({
           invoke<Task[]>("orchestrator_list_tasks", { runId }),
         ]);
         if (disposed) return;
+        const prevSnapshot = lastSnapshotRef.current;
+        const nextEvents: string[] = [];
+        const now = new Date().toLocaleTimeString();
+        if (!prevSnapshot || prevSnapshot.status !== nextSnapshot.status) {
+          nextEvents.push(`${now} run.${nextSnapshot.status}`);
+        }
+        if (!prevSnapshot || prevSnapshot.current_task_id !== nextSnapshot.current_task_id) {
+          if (nextSnapshot.current_task_id) {
+            nextEvents.push(`${now} current task ${nextSnapshot.current_task_id}`);
+          }
+        }
+        if (!prevSnapshot || prevSnapshot.task_count !== nextSnapshot.task_count) {
+          nextEvents.push(`${now} planned tasks ${nextSnapshot.task_count}`);
+        }
+        if (
+          nextSnapshot.error_message &&
+          (!prevSnapshot || prevSnapshot.error_message !== nextSnapshot.error_message)
+        ) {
+          nextEvents.push(`${now} error ${nextSnapshot.error_message}`);
+        }
+        if (nextEvents.length > 0) {
+          setEventFeed((prev) => [...nextEvents, ...prev].slice(0, 20));
+        }
+        lastSnapshotRef.current = nextSnapshot;
         setSnapshot(nextSnapshot);
         setTasks(nextTasks);
       } catch {
@@ -119,8 +249,24 @@ export function CommandCenterPage({
     setSnapshot(null);
     setTasks([]);
     setEventFeed([]);
+    setActiveRunSessionId(null);
     void loadRuns();
   }, [activeProject?.id, loadRuns]);
+
+  useEffect(() => {
+    if (!initialRunId) return;
+    setRunId(initialRunId);
+    setTab("advanced");
+  }, [initialRunId]);
+
+  useEffect(() => {
+    if (!runId) {
+      setActiveRunSessionId(null);
+      return;
+    }
+    const summary = runs.find((run) => run.run_id === runId);
+    setActiveRunSessionId(summary?.session_id ?? null);
+  }, [runId, runs]);
 
   useEffect(() => {
     void loadRuns();
@@ -129,16 +275,54 @@ export function CommandCenterPage({
   }, [loadRuns]);
 
   useEffect(() => {
+    if (!autoApproveTargetRunId || !snapshot || runId !== autoApproveTargetRunId) {
+      return;
+    }
+    if (snapshot.status === "awaiting_approval") {
+      if (autoApproveInFlightRef.current) {
+        return;
+      }
+      autoApproveInFlightRef.current = true;
+      void (async () => {
+        try {
+          await invoke("orchestrator_approve", { runId: autoApproveTargetRunId });
+          const at = new Date().toLocaleTimeString();
+          setEventFeed((prev) =>
+            [`${at} auto-approved plan for ${autoApproveTargetRunId}`, ...prev].slice(0, 20)
+          );
+        } catch (e) {
+          const message = e instanceof Error ? e.message : String(e);
+          setError(`Auto-approve failed: ${message}`);
+        } finally {
+          autoApproveInFlightRef.current = false;
+          setAutoApproveTargetRunId(null);
+        }
+      })();
+      return;
+    }
+
+    if (
+      snapshot.status === "executing" ||
+      snapshot.status === "completed" ||
+      snapshot.status === "failed" ||
+      snapshot.status === "cancelled"
+    ) {
+      setAutoApproveTargetRunId(null);
+    }
+  }, [autoApproveTargetRunId, runId, snapshot]);
+
+  useEffect(() => {
     let disposed = false;
     const loadModelDefaults = async () => {
       try {
         const config = await getProvidersConfig();
         if (disposed) return;
         const model = config.selected_model?.model_id;
-        let provider = config.selected_model?.provider_id;
-        if (provider === "opencode") provider = "opencode_zen";
+        const provider = config.selected_model?.provider_id;
         if (model) setSelectedModel(model);
         if (provider) setSelectedProvider(provider);
+        selectedModelRef.current = model;
+        selectedProviderRef.current = provider;
       } catch {
         // best effort only
       }
@@ -151,30 +335,124 @@ export function CommandCenterPage({
 
   useEffect(() => {
     let unlisten: (() => void) | null = null;
+    const sessionScope = new Set(selectedRunConsoleSessionIds);
     const setup = async () => {
       unlisten = await onSidecarEventV2((envelope: StreamEventEnvelopeV2) => {
         const payload = envelope?.payload;
-        if (!payload || payload.type !== "raw") return;
-        if (
-          !payload.event_type.startsWith("agent_team.") &&
-          !payload.event_type.startsWith("session.run.")
-        ) {
+        if (!payload) return;
+        const eventRunId = ("run_id" in payload ? payload.run_id : null) ?? null;
+        if (runId && eventRunId && eventRunId !== runId) {
           return;
         }
+        const eventSessionId =
+          ("session_id" in payload ? payload.session_id : envelope.session_id) ?? null;
+        if (sessionScope.size > 0) {
+          if (eventSessionId && !sessionScope.has(eventSessionId)) {
+            return;
+          }
+        } else if (runId) {
+          // Prevent global cross-run bleed before we resolve the run session scope.
+          return;
+        }
+        const line = formatStreamEventForFeed(payload);
+        if (!line) return;
+        if (payload.type === "content") {
+          const nowMs = Date.now();
+          if (nowMs - lastContentFeedMsRef.current < 1500) {
+            return;
+          }
+          lastContentFeedMsRef.current = nowMs;
+        }
+        if (payload.type === "run_started" && payload.run_id === runId) {
+          setActiveRunSessionId(payload.session_id);
+        }
         const at = new Date().toLocaleTimeString();
-        setEventFeed((prev) => [`${at} ${payload.event_type}`, ...prev].slice(0, 12));
-        void loadRuns();
+        setEventFeed((prev) => [`${at} ${line}`, ...prev].slice(0, 40));
+        if (
+          payload.type === "run_started" ||
+          payload.type === "run_finished" ||
+          payload.type === "session_status" ||
+          payload.type === "session_error"
+        ) {
+          void loadRuns();
+        }
       });
     };
     void setup();
     return () => {
       if (unlisten) unlisten();
     };
-  }, [loadRuns]);
+  }, [loadRuns, runId, selectedRunConsoleSessionIds]);
+
+  useEffect(() => {
+    let disposed = false;
+    const refreshSidecar = async () => {
+      try {
+        const status = await getSidecarStatus();
+        if (disposed) return;
+        setSidecarStatus(status);
+        if (status === "starting" || status === "running") {
+          const health = await getSidecarStartupHealth();
+          if (disposed) return;
+          setSidecarStartupHealth(health);
+        } else {
+          setSidecarStartupHealth(null);
+        }
+      } catch {
+        if (disposed) return;
+        setSidecarStartupHealth(null);
+      }
+    };
+    void refreshSidecar();
+    const timer = setInterval(() => void refreshSidecar(), 1500);
+    return () => {
+      disposed = true;
+      clearInterval(timer);
+    };
+  }, []);
+
+  useEffect(() => {
+    let disposed = false;
+    if (!runId) {
+      setRunModelSelection(null);
+      return;
+    }
+    const loadRunModel = async () => {
+      try {
+        const modelSelection = await invoke<RunModelSelection>("orchestrator_get_run_model", {
+          runId,
+        });
+        if (disposed) return;
+        setRunModelSelection(modelSelection);
+      } catch {
+        if (disposed) return;
+        setRunModelSelection(null);
+      }
+    };
+    void loadRunModel();
+    const timer = setInterval(() => void loadRunModel(), 2500);
+    return () => {
+      disposed = true;
+      clearInterval(timer);
+    };
+  }, [runId]);
 
   const launchSwarm = async () => {
     if (!objective.trim()) {
       setError("Please enter an objective.");
+      return;
+    }
+    if (!sidecarReady) {
+      const detail = sidecarStartupHealth
+        ? `phase=${sidecarStartupHealth.phase} elapsed_ms=${sidecarStartupHealth.startup_elapsed_ms}`
+        : `state=${sidecarStatus}`;
+      setError(`Engine is still starting (${detail}). Please wait a moment and retry.`);
+      return;
+    }
+    const dispatchModel = selectedModelRef.current ?? selectedModel;
+    const dispatchProvider = selectedProviderRef.current ?? selectedProvider;
+    if (!dispatchModel || !dispatchProvider) {
+      setError("Please select a provider/model before launching the swarm.");
       return;
     }
     setIsLoading(true);
@@ -189,6 +467,7 @@ export function CommandCenterPage({
         ...DEFAULT_ORCHESTRATOR_CONFIG,
         max_total_tokens: 250_000,
         max_tokens_per_step: 25_000,
+        max_task_retries: 5,
         max_parallel_tasks: configByPreset[preset].max_parallel_tasks,
         llm_parallel: configByPreset[preset].llm_parallel,
         fs_write_parallel: 1,
@@ -198,12 +477,14 @@ export function CommandCenterPage({
       const createdRunId = await invoke<string>("orchestrator_create_run", {
         objective: objective.trim(),
         config,
-        model: selectedModel,
-        provider: selectedProvider,
+        model: dispatchModel,
+        provider: dispatchProvider,
         agentModelRouting: modelRouting,
       });
       setRunId(createdRunId);
+      setTab("task-to-swarm");
       await invoke("orchestrator_start", { runId: createdRunId });
+      setAutoApproveTargetRunId(createdRunId);
       await loadRuns();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -226,6 +507,62 @@ export function CommandCenterPage({
   };
 
   const pendingTasks = useMemo(() => tasks.filter((task) => task.state !== "done").length, [tasks]);
+  const selectedRunSummary = useMemo(
+    () => runs.find((run) => run.run_id === runId) ?? null,
+    [runId, runs]
+  );
+
+  const loadRunIntoEngine = useCallback(async (targetRunId: string) => {
+    await invoke("orchestrator_load_run", { runId: targetRunId });
+  }, []);
+
+  const handleSelectRun = async (targetRunId: string) => {
+    setIsRunActionLoading(true);
+    setError(null);
+    try {
+      await loadRunIntoEngine(targetRunId);
+      setRunId(targetRunId);
+      const summary = runs.find((run) => run.run_id === targetRunId);
+      if (summary?.objective) {
+        setObjective(summary.objective);
+      }
+      setEventFeed((prev) => {
+        const at = new Date().toLocaleTimeString();
+        return [`${at} loaded run ${targetRunId}`, ...prev].slice(0, 40);
+      });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setIsRunActionLoading(false);
+    }
+  };
+
+  const handleContinueRun = async () => {
+    if (!runId || !snapshot) return;
+    setIsRunActionLoading(true);
+    setError(null);
+    try {
+      await loadRunIntoEngine(runId);
+      if (snapshot.status === "awaiting_approval") {
+        await invoke("orchestrator_approve", { runId });
+      } else if (snapshot.status === "paused") {
+        await invoke("orchestrator_resume", { runId });
+      } else if (snapshot.status === "failed" || snapshot.status === "cancelled") {
+        await invoke("orchestrator_restart_run", { runId });
+      } else if (snapshot.status === "completed") {
+        await invoke("orchestrator_restart_run", { runId });
+      } else if (snapshot.status === "revision_requested") {
+        await invoke("orchestrator_start", { runId });
+      }
+      const at = new Date().toLocaleTimeString();
+      setEventFeed((prev) => [`${at} continue requested for ${runId}`, ...prev].slice(0, 40));
+      await loadRuns();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setIsRunActionLoading(false);
+    }
+  };
 
   const handleDeleteRun = async (targetRunId: string) => {
     try {
@@ -247,9 +584,10 @@ export function CommandCenterPage({
         <div className="rounded-lg border border-border bg-surface p-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="space-y-2">
-              <h2 className="text-lg font-semibold text-text">Command Center</h2>
+              <h2 className="text-lg font-semibold text-text">Command Center (beta)</h2>
               <p className="text-sm text-text-muted">
-                Launch swarms from one objective, then drill into advanced operator controls.
+                Launch orchestrator missions from one objective, then use operator controls for
+                manual swarm intervention.
               </p>
               <div className="w-full max-w-xl">
                 <ProjectSwitcher
@@ -269,13 +607,38 @@ export function CommandCenterPage({
             <div className="flex items-center gap-2">
               <ModelSelector
                 currentModel={selectedModel}
-                align="right"
+                align="left"
                 side="bottom"
-                onModelSelect={(modelId, providerId) => {
+                onModelSelect={async (modelId, providerIdRaw) => {
+                  const providerId = providerIdRaw === "opencode" ? "opencode_zen" : providerIdRaw;
+                  const providerIdForSidecar =
+                    providerId === "opencode_zen" ? "opencode" : providerId;
+                  try {
+                    const config = await getProvidersConfig();
+                    await setProvidersConfig({
+                      ...config,
+                      selected_model: {
+                        provider_id: providerId,
+                        model_id: modelId,
+                      },
+                    });
+                  } catch (error) {
+                    console.error("Failed to persist swarm model selection:", error);
+                  }
                   setSelectedModel(modelId);
-                  setSelectedProvider(providerId);
+                  setSelectedProvider(providerIdForSidecar);
+                  selectedModelRef.current = modelId;
+                  selectedProviderRef.current = providerIdForSidecar;
                 }}
               />
+              <button
+                type="button"
+                onClick={() => setShowLogsDrawer(true)}
+                className="rounded p-1 text-text-subtle hover:bg-surface-elevated hover:text-text"
+                title="Open logs"
+              >
+                <ScrollText className="h-4 w-4" />
+              </button>
               <Button
                 variant={tab === "task-to-swarm" ? "primary" : "secondary"}
                 size="sm"
@@ -299,15 +662,36 @@ export function CommandCenterPage({
             <div className="rounded-lg border border-border bg-surface p-4 space-y-3">
               <div className="flex items-center justify-between">
                 <div className="text-xs uppercase tracking-wide text-text-subtle">Runs</div>
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => void loadRuns()}
-                  disabled={runsLoading}
-                >
-                  <RefreshCw className={`mr-1 h-3.5 w-3.5 ${runsLoading ? "animate-spin" : ""}`} />
-                  Refresh
-                </Button>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => void loadRuns()}
+                    disabled={runsLoading}
+                  >
+                    <RefreshCw
+                      className={`mr-1 h-3.5 w-3.5 ${runsLoading ? "animate-spin" : ""}`}
+                    />
+                    Refresh
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setRunsCollapsed((prev) => !prev)}
+                  >
+                    {runsCollapsed ? (
+                      <>
+                        <ChevronDown className="mr-1 h-3.5 w-3.5" />
+                        Expand
+                      </>
+                    ) : (
+                      <>
+                        <ChevronUp className="mr-1 h-3.5 w-3.5" />
+                        Collapse
+                      </>
+                    )}
+                  </Button>
+                </div>
               </div>
               <button
                 className={`w-full rounded border px-3 py-2 text-left text-xs ${
@@ -319,10 +703,24 @@ export function CommandCenterPage({
               >
                 New run
               </button>
+              {runsCollapsed ? (
+                <div className="rounded border border-border/70 bg-surface-elevated/30 p-2 text-xs text-text-muted">
+                  {selectedRunSummary ? (
+                    <div className="space-y-1">
+                      <div className="truncate text-text">{selectedRunSummary.objective}</div>
+                      <div>{selectedRunSummary.status.replace("_", " ")}</div>
+                    </div>
+                  ) : (
+                    "Collapsed. Expand to select a run."
+                  )}
+                </div>
+              ) : null}
               {runs.length === 0 ? (
                 <div className="text-xs text-text-muted">No runs yet for this project.</div>
               ) : (
-                <div className="max-h-96 space-y-2 overflow-y-auto">
+                <div
+                  className={`space-y-2 overflow-y-auto ${runsCollapsed ? "hidden" : "max-h-96"}`}
+                >
                   {runs.map((run) => (
                     <div
                       key={run.run_id}
@@ -334,12 +732,14 @@ export function CommandCenterPage({
                     >
                       <button
                         className="w-full text-left"
-                        onClick={() => setRunId(run.run_id)}
+                        onClick={() => void handleSelectRun(run.run_id)}
                         title={run.objective}
+                        disabled={isRunActionLoading}
                       >
                         <div className="truncate text-xs text-text">{run.objective}</div>
                         <div className="mt-1 text-[11px] text-text-muted">
-                          {run.status.replace("_", " ")} • {new Date(run.updated_at).toLocaleString()}
+                          {run.status.replace("_", " ")} |{" "}
+                          {new Date(run.updated_at).toLocaleString()}
                         </div>
                       </button>
                       <button
@@ -360,7 +760,7 @@ export function CommandCenterPage({
               <textarea
                 value={objective}
                 onChange={(e) => setObjective(e.target.value)}
-                placeholder="Describe the task. The orchestrator will plan, delegate workers/reviewers/testers, then execute after your single approval."
+                placeholder="Describe the mission. The orchestrator will plan role-assigned tasks, preview for approval, then execute."
                 className="min-h-[120px] w-full rounded-lg border border-border bg-surface-elevated p-3 text-sm text-text placeholder:text-text-muted focus:border-primary focus:outline-none"
               />
               <div className="flex flex-wrap gap-2">
@@ -381,7 +781,13 @@ export function CommandCenterPage({
               <div className="flex flex-wrap gap-2">
                 <Button
                   onClick={() => void launchSwarm()}
-                  disabled={isLoading || !objective.trim()}
+                  disabled={
+                    isLoading ||
+                    !objective.trim() ||
+                    !selectedModel ||
+                    !selectedProvider ||
+                    !sidecarReady
+                  }
                 >
                   {isLoading ? (
                     <Loader2 className="mr-1 h-4 w-4 animate-spin" />
@@ -390,6 +796,11 @@ export function CommandCenterPage({
                   )}
                   Launch Swarm
                 </Button>
+                {!sidecarReady ? (
+                  <div className="text-xs text-text-muted">
+                    Engine is starting. Launch enables automatically when ready.
+                  </div>
+                ) : null}
               </div>
               {error ? (
                 <div className="rounded border border-red-500/30 bg-red-500/10 p-2 text-xs text-red-200">
@@ -400,10 +811,72 @@ export function CommandCenterPage({
 
             <div className="rounded-lg border border-border bg-surface p-4 space-y-3">
               <div className="text-xs uppercase tracking-wide text-text-subtle">Live Status</div>
+              <div className="flex items-center gap-2 text-xs text-text-muted">
+                {isWorking ? <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" /> : null}
+                <span>
+                  {isWorking
+                    ? "Swarm running. Planning/execution can take a bit on larger tasks."
+                    : sidecarStarting
+                      ? "Engine starting. Launch will unlock when ready."
+                      : "Idle."}
+                </span>
+              </div>
+              <div className="text-xs text-text-muted">Engine: {sidecarStatus}</div>
+              {sidecarStartupHealth && !sidecarStartupHealth.ready ? (
+                <div className="text-xs text-text-muted">
+                  Engine phase: {sidecarStartupHealth.phase} (
+                  {sidecarStartupHealth.startup_elapsed_ms}ms)
+                </div>
+              ) : null}
               <div className="text-sm text-text">Stage: {stage.replace("_", " ")}</div>
               <div className="text-xs text-text-muted">Run: {runId || "none"}</div>
+              <div className="text-xs text-text-muted">
+                Run model:{" "}
+                {runModelSelection?.provider && runModelSelection?.model
+                  ? `${runModelSelection.provider} / ${runModelSelection.model}`
+                  : "pending"}
+              </div>
               <div className="text-xs text-text-muted">Tasks: {tasks.length}</div>
               <div className="text-xs text-text-muted">Pending: {pendingTasks}</div>
+              {runId &&
+              snapshot &&
+              [
+                "awaiting_approval",
+                "paused",
+                "failed",
+                "cancelled",
+                "completed",
+                "revision_requested",
+              ].includes(snapshot.status) ? (
+                <Button
+                  size="sm"
+                  variant={
+                    snapshot.status === "failed" ||
+                    snapshot.status === "cancelled" ||
+                    snapshot.status === "completed"
+                      ? "secondary"
+                      : "primary"
+                  }
+                  onClick={() => void handleContinueRun()}
+                  disabled={isRunActionLoading}
+                >
+                  {isRunActionLoading ? (
+                    <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+                  ) : (
+                    <RotateCcw className="mr-1 h-4 w-4" />
+                  )}
+                  {snapshot.status === "failed" ||
+                  snapshot.status === "cancelled" ||
+                  snapshot.status === "completed"
+                    ? "Restart Run"
+                    : "Continue Run"}
+                </Button>
+              ) : null}
+              {snapshot?.error_message ? (
+                <div className="rounded border border-red-500/30 bg-red-500/10 p-2 text-xs text-red-200">
+                  {snapshot.error_message}
+                </div>
+              ) : null}
               {stage === "awaiting_review" ? (
                 <Button size="sm" onClick={() => void approvePlan()} disabled={isLoading}>
                   <CheckCircle2 className="mr-1 h-4 w-4" />
@@ -436,21 +909,80 @@ export function CommandCenterPage({
                 </div>
               )}
             </div>
+            <div className="xl:col-span-4 rounded-lg border border-border bg-surface p-4">
+              <div className="mb-3 text-xs uppercase tracking-wide text-text-subtle">
+                Task Board
+              </div>
+              <TaskBoard tasks={tasks} currentTaskId={snapshot?.current_task_id} />
+            </div>
           </div>
         ) : (
           <div className="space-y-3">
+            <div className="rounded-lg border border-border bg-surface p-4 space-y-3">
+              <div className="text-xs uppercase tracking-wide text-text-subtle">Start Mission</div>
+              <textarea
+                value={objective}
+                onChange={(e) => setObjective(e.target.value)}
+                placeholder="Enter the mission objective, then launch. This triggers the orchestrator run."
+                className="min-h-[90px] w-full rounded-lg border border-border bg-surface-elevated p-3 text-sm text-text placeholder:text-text-muted focus:border-primary focus:outline-none"
+              />
+              <div className="flex flex-wrap gap-2">
+                {(["speed", "balanced", "quality"] as QualityPreset[]).map((nextPreset) => (
+                  <button
+                    key={nextPreset}
+                    className={`rounded-full border px-3 py-1 text-xs ${
+                      preset === nextPreset
+                        ? "border-primary/50 bg-primary/10 text-primary"
+                        : "border-border text-text-muted"
+                    }`}
+                    onClick={() => setPreset(nextPreset)}
+                  >
+                    {nextPreset}
+                  </button>
+                ))}
+                <Button
+                  onClick={() => void launchSwarm()}
+                  disabled={
+                    isLoading ||
+                    !objective.trim() ||
+                    !selectedModel ||
+                    !selectedProvider ||
+                    !sidecarReady
+                  }
+                >
+                  {isLoading ? (
+                    <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+                  ) : (
+                    <Sparkles className="mr-1 h-4 w-4" />
+                  )}
+                  Launch Swarm
+                </Button>
+              </div>
+              {error ? (
+                <div className="rounded border border-red-500/30 bg-red-500/10 p-2 text-xs text-red-200">
+                  {error}
+                </div>
+              ) : null}
+            </div>
             <AgentModelRoutingPanel routing={modelRouting} onChange={setModelRouting} />
             <div className="rounded-lg border border-border bg-surface-elevated/40 p-3 text-xs text-text-muted">
-              Agent model routing is applied to newly launched swarm runs from this page.
+              Orchestrator role model routing applies to newly launched runs from this page.
             </div>
             <div className="rounded-lg border border-border bg-surface p-3 text-xs text-text-muted">
-              Advanced Controls are for operator workflows: manual spawn, approval triage,
+              Operator Controls use agent-team mission APIs for manual spawn, approval triage,
               mission/instance cancellation, and forensic exports.
             </div>
             <AgentCommandCenter />
           </div>
         )}
       </div>
+      {showLogsDrawer && (
+        <LogsDrawer
+          onClose={() => setShowLogsDrawer(false)}
+          sessionId={selectedRunSessionId ?? activeRunSessionId}
+          sessionIds={selectedRunConsoleSessionIds}
+        />
+      )}
     </div>
   );
 }

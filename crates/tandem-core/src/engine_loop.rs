@@ -9,7 +9,7 @@ use tandem_observability::{emit_event, ObservabilityEvent, ProcessKind};
 use tandem_providers::{ChatMessage, ProviderRegistry, StreamChunk, TokenUsage};
 use tandem_tools::{validate_tool_schemas, ToolRegistry};
 use tandem_types::{
-    EngineEvent, Message, MessagePart, MessagePartInput, MessageRole, SendMessageRequest,
+    EngineEvent, Message, MessagePart, MessagePartInput, MessageRole, ModelSpec, SendMessageRequest,
 };
 use tandem_wire::WireMessagePart;
 use tokio_util::sync::CancellationToken;
@@ -151,18 +151,19 @@ impl EngineLoop {
         req: SendMessageRequest,
         correlation_id: Option<String>,
     ) -> anyhow::Result<()> {
-        let session_provider = self
+        let session_model = self
             .storage
             .get_session(&session_id)
             .await
-            .and_then(|s| s.provider);
-        let provider_hint = req
-            .model
-            .as_ref()
-            .map(|m| m.provider_id.clone())
-            .or(session_provider);
+            .and_then(|s| s.model);
+        let (provider_id, model_id_value) =
+            resolve_model_route(req.model.as_ref(), session_model.as_ref()).ok_or_else(|| {
+                anyhow::anyhow!(
+                "MODEL_SELECTION_REQUIRED: explicit provider/model is required for this request."
+            )
+            })?;
         let correlation_ref = correlation_id.as_deref();
-        let model_id = req.model.as_ref().map(|m| m.model_id.as_str());
+        let model_id = Some(model_id_value.as_str());
         let cancel = self.cancellations.create(&session_id).await;
         emit_event(
             Level::INFO,
@@ -174,7 +175,7 @@ impl EngineLoop {
                 session_id: Some(&session_id),
                 run_id: None,
                 message_id: None,
-                provider_id: provider_hint.as_deref(),
+                provider_id: Some(provider_id.as_str()),
                 model_id,
                 status: Some("start"),
                 error_code: None,
@@ -309,7 +310,7 @@ impl EngineLoop {
                             session_id: Some(&session_id),
                             run_id: None,
                             message_id: Some(&user_message_id),
-                            provider_id: provider_hint.as_deref(),
+                            provider_id: Some(provider_id.as_str()),
                             model_id,
                             status: Some("failed"),
                             error_code: Some("TOOL_SCHEMA_INVALID"),
@@ -321,7 +322,8 @@ impl EngineLoop {
                 let stream = self
                     .providers
                     .stream_for_provider(
-                        provider_hint.as_deref(),
+                        Some(provider_id.as_str()),
+                        Some(model_id_value.as_str()),
                         messages,
                         Some(tool_schemas),
                         cancel.clone(),
@@ -341,7 +343,7 @@ impl EngineLoop {
                                 session_id: Some(&session_id),
                                 run_id: None,
                                 message_id: Some(&user_message_id),
-                                provider_id: provider_hint.as_deref(),
+                                provider_id: Some(provider_id.as_str()),
                                 model_id,
                                 status: Some("failed"),
                                 error_code: Some(error_code),
@@ -370,7 +372,7 @@ impl EngineLoop {
                                     session_id: Some(&session_id),
                                     run_id: None,
                                     message_id: Some(&user_message_id),
-                                    provider_id: provider_hint.as_deref(),
+                                    provider_id: Some(provider_id.as_str()),
                                     model_id,
                                     status: Some("failed"),
                                     error_code: Some(error_code),
@@ -395,7 +397,7 @@ impl EngineLoop {
                                         session_id: Some(&session_id),
                                         run_id: None,
                                         message_id: Some(&user_message_id),
-                                        provider_id: provider_hint.as_deref(),
+                                        provider_id: Some(provider_id.as_str()),
                                         model_id,
                                         status: Some("streaming"),
                                         error_code: None,
@@ -591,7 +593,8 @@ impl EngineLoop {
                     .generate_final_narrative_without_tools(
                         &session_id,
                         &active_agent,
-                        provider_hint.as_deref(),
+                        Some(provider_id.as_str()),
+                        Some(model_id_value.as_str()),
                         cancel.clone(),
                         &last_tool_outputs,
                     )
@@ -624,7 +627,7 @@ impl EngineLoop {
                 session_id: Some(&session_id),
                 run_id: None,
                 message_id: Some(&user_message_id),
-                provider_id: provider_hint.as_deref(),
+                provider_id: Some(provider_id.as_str()),
                 model_id,
                 status: Some("ok"),
                 error_code: None,
@@ -699,7 +702,7 @@ impl EngineLoop {
         provider_id: Option<&str>,
     ) -> anyhow::Result<String> {
         self.providers
-            .complete_for_provider(provider_id, &prompt)
+            .complete_for_provider(provider_id, &prompt, None)
             .await
     }
 
@@ -1089,6 +1092,7 @@ impl EngineLoop {
         session_id: &str,
         active_agent: &AgentDefinition,
         provider_hint: Option<&str>,
+        model_id: Option<&str>,
         cancel: CancellationToken,
         tool_outputs: &[String],
     ) -> Option<String> {
@@ -1116,7 +1120,7 @@ impl EngineLoop {
         });
         let stream = self
             .providers
-            .stream_for_provider(provider_hint, messages, None, cancel.clone())
+            .stream_for_provider(provider_hint, model_id, messages, None, cancel.clone())
             .await
             .ok()?;
         tokio::pin!(stream);
@@ -1139,6 +1143,24 @@ impl EngineLoop {
             Some(completion)
         }
     }
+}
+
+fn resolve_model_route(
+    request_model: Option<&ModelSpec>,
+    session_model: Option<&ModelSpec>,
+) -> Option<(String, String)> {
+    fn normalize(spec: &ModelSpec) -> Option<(String, String)> {
+        let provider_id = spec.provider_id.trim();
+        let model_id = spec.model_id.trim();
+        if provider_id.is_empty() || model_id.is_empty() {
+            return None;
+        }
+        Some((provider_id.to_string(), model_id.to_string()))
+    }
+
+    request_model
+        .and_then(normalize)
+        .or_else(|| session_model.and_then(normalize))
 }
 
 fn truncate_text(input: &str, max_len: usize) -> String {

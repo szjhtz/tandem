@@ -7,7 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-- No unreleased changes.
+### Fixed
+
+- Model/provider routing is now strict end-to-end: chat, queue, rewind, undo, and command-center/orchestrator dispatches now require explicit provider+model instead of silently falling back.
+- Fixed persistent model-selection drift by saving picker selections to `providers_config.selected_model` from both Chat and Command Center model selectors.
+- Provider execution now respects per-request model overrides in runtime calls (instead of default-model bleed-through), preventing unintended `gpt-4o-mini` execution when another model is selected.
+- OpenRouter attribution headers are now sent consistently from provider calls so requests are identified as Tandem instead of unknown source.
+- Memory startup reliability improved: corrupted/incompatible vector DB state is detected, backed up, and self-healed automatically, preventing repeated startup failures (`chunks iter error` / SQL logic errors).
 
 ## [0.3.8] - 2026-02-19
 

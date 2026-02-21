@@ -4,7 +4,11 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
 
 ## Unreleased
 
-- No unreleased changes.
+- Fixed incorrect model/provider execution routing where requests could run on fallback/default models instead of the selected model.
+- Fixed chat + command-center model picker persistence by saving explicit `selected_model` routing in provider config.
+- Fixed provider-side model override behavior so runtime calls honor the request model for completions/streaming.
+- Added OpenRouter attribution headers for Tandem-origin requests.
+- Fixed memory manager startup failures caused by malformed/incompatible vector tables with automatic backup + self-heal recovery.
 
 ## v0.3.8 - 2026-02-19
 

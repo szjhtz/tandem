@@ -1,3 +1,15 @@
+# Tandem Release Notes
+
+## Unreleased Hotfixes (2026-02-21)
+
+- Fixed incorrect model/provider execution routing so selected models are used consistently across Chat and Command Center flows.
+- Fixed model picker persistence by writing selected provider/model into `providers_config.selected_model`.
+- Fixed provider runtime override behavior so per-request model selection is honored during streaming/completions.
+- Added OpenRouter attribution headers to identify Tandem-origin traffic.
+- Fixed memory initialization failures from malformed/incompatible vector DB state with startup backup + self-heal recovery.
+
+---
+
 # Tandem v0.3.8 Release Notes
 
 ## Release Date: 2026-02-19
@@ -24,6 +36,16 @@
 - **Agent-Team spawn approval decisions**: Added dedicated decision endpoints:
   - `POST /agent-team/approvals/spawn/{id}/approve`
   - `POST /agent-team/approvals/spawn/{id}/deny`
+- **Control Center role routing migration**: Orchestrator model routing now supports canonical role-map keys (`orchestrator`, `delegator`, `worker`, `watcher`, `reviewer`, `tester`) with compatibility aliases from legacy keys (`planner`, `builder`, `validator`, `researcher`).
+
+### Orchestrator Routing Migration Notes
+
+- Legacy run payloads and API requests using `planner`/`builder`/`validator` continue to load and are normalized automatically.
+- New routing payloads can be sent as direct role-key maps; unknown roles are preserved but execution falls back to worker behavior when needed.
+- Task schema now supports role metadata:
+  - `assigned_role` (default: `worker`)
+  - `template_id` (optional hint)
+  - `gate` (`review` or `test`, optional)
 
 ### Complete Feature List - tandem-channels v0.3.8
 
@@ -60,13 +82,11 @@
   - `TANDEM_WEB_UI`, `TANDEM_WEB_UI_PREFIX`
 - Updated engine command docs to include web-admin serve options.
 
-
 ---
 
 # Tandem v0.3.7 Release Notes
 
 ## Release Date: 2026-02-18
-
 
 ### Highlights
 
@@ -901,4 +921,3 @@ _Release attempt failed on 2026-02-09 due to GitHub release asset upload errors 
 
 - **Vector Memory Store**: Implemented a local, zero-trust vector database (`sqlite-vec`) to store and retrieve semantic embeddings of your codebase and conversation history.
 - **Memory Context Injection**: The AI now automatically receives relevant context snippets based on your current query, reducing hallucinations and "I don't know" responses about your own code.
-
