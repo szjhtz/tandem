@@ -142,24 +142,109 @@ impl OrchestratorEngine {
         Self::existing_dir_string(&path)
     }
 
-    fn orchestrator_permission_rules() -> Vec<crate::sidecar::PermissionRule> {
-        let mut rules = tandem_core::build_mode_permission_rules(None)
-            .into_iter()
-            .map(|mut rule| {
-                if matches!(
-                    rule.permission.as_str(),
-                    "bash" | "shell" | "cmd" | "terminal" | "run_command"
-                ) {
-                    rule.action = "allow".to_string();
-                }
-                rule
-            })
-            .map(|rule| crate::sidecar::PermissionRule {
-                permission: rule.permission,
-                pattern: rule.pattern,
-                action: rule.action,
-            })
-            .collect::<Vec<_>>();
+    fn role_tool_allowlist(role: AgentRole) -> Vec<&'static str> {
+        match role {
+            AgentRole::Orchestrator | AgentRole::Planner | AgentRole::Delegator => vec![
+                "ls",
+                "list",
+                "glob",
+                "search",
+                "grep",
+                "codesearch",
+                "read",
+                "todowrite",
+                "todo_write",
+                "update_todo_list",
+                "websearch",
+                "webfetch_document",
+                "task",
+            ],
+            AgentRole::Worker | AgentRole::Builder => vec![
+                "ls",
+                "list",
+                "glob",
+                "search",
+                "grep",
+                "codesearch",
+                "read",
+                "write",
+                "edit",
+                "apply_patch",
+                "todowrite",
+                "todo_write",
+                "update_todo_list",
+                "websearch",
+                "webfetch_document",
+            ],
+            AgentRole::Watcher | AgentRole::Researcher => vec![
+                "ls",
+                "list",
+                "glob",
+                "search",
+                "grep",
+                "codesearch",
+                "read",
+                "websearch",
+                "webfetch_document",
+            ],
+            AgentRole::Reviewer | AgentRole::Validator | AgentRole::Tester => vec![
+                "ls",
+                "list",
+                "glob",
+                "search",
+                "grep",
+                "codesearch",
+                "read",
+                "websearch",
+                "webfetch_document",
+            ],
+        }
+    }
+
+    fn known_orchestrator_tools() -> &'static [&'static str] {
+        &[
+            "ls",
+            "list",
+            "glob",
+            "search",
+            "grep",
+            "codesearch",
+            "read",
+            "write",
+            "edit",
+            "apply_patch",
+            "todowrite",
+            "todo_write",
+            "update_todo_list",
+            "websearch",
+            "webfetch_document",
+            "bash",
+            "task",
+            "spawn_agent",
+            "batch",
+        ]
+    }
+
+    fn orchestrator_permission_rules(role: AgentRole) -> Vec<crate::sidecar::PermissionRule> {
+        let allowlist = Self::role_tool_allowlist(role);
+        let allow_set = allowlist
+            .iter()
+            .map(|tool| tool.to_string())
+            .collect::<HashSet<_>>();
+
+        let mut rules = tandem_core::build_mode_permission_rules(Some(
+            &allowlist
+                .iter()
+                .map(|tool| tool.to_string())
+                .collect::<Vec<_>>(),
+        ))
+        .into_iter()
+        .map(|rule| crate::sidecar::PermissionRule {
+            permission: rule.permission,
+            pattern: rule.pattern,
+            action: rule.action,
+        })
+        .collect::<Vec<_>>();
 
         for permission in [
             "write",
@@ -170,13 +255,25 @@ impl OrchestratorEngine {
             "update_todo_list",
             "websearch",
             "webfetch_document",
-            "batch",
             "task",
         ] {
+            if allow_set.contains(permission) {
+                rules.push(crate::sidecar::PermissionRule {
+                    permission: permission.to_string(),
+                    pattern: "*".to_string(),
+                    action: "allow".to_string(),
+                });
+            }
+        }
+
+        for permission in Self::known_orchestrator_tools() {
+            if allow_set.contains(*permission) {
+                continue;
+            }
             rules.push(crate::sidecar::PermissionRule {
-                permission: permission.to_string(),
+                permission: (*permission).to_string(),
                 pattern: "*".to_string(),
-                action: "allow".to_string(),
+                action: "deny".to_string(),
             });
         }
 
@@ -881,7 +978,10 @@ impl OrchestratorEngine {
         // stuck in `in_progress` (otherwise the orphan-recovery logic will keep re-queuing
         // it forever and budgets will "explode").
         let execution_result: Result<(String, bool, Option<ValidationResult>)> = async {
-            let mut session_id = self.get_or_create_task_session_id(&task).await?;
+            let execution_role = self.resolve_task_execution_role(&task).await;
+            let mut session_id = self
+                .get_or_create_task_session_id(&task, execution_role)
+                .await?;
             self.emit_task_trace(&task_id, Some(&session_id), "EXEC_STARTED", None);
 
             self.emit_event(OrchestratorEvent::TaskStarted {
@@ -896,7 +996,6 @@ impl OrchestratorEngine {
             // Build context for execution role
             let file_context = self.get_task_file_context(&task).await?;
 
-            let execution_role = self.resolve_task_execution_role(&task).await;
             if let Some(template_id) = task.template_id.as_deref() {
                 self.emit_task_trace(
                     &task_id,
@@ -1322,7 +1421,7 @@ You MUST perform concrete file edits now.\n\
         Ok(())
     }
 
-    async fn get_or_create_task_session_id(&self, task: &Task) -> Result<String> {
+    async fn get_or_create_task_session_id(&self, task: &Task, role: AgentRole) -> Result<String> {
         use crate::sidecar::CreateSessionRequest;
 
         if !self.workspace_path.is_dir() {
@@ -1354,7 +1453,7 @@ You MUST perform concrete file edits now.\n\
             Err(e) => return Err(e),
         };
 
-        let permission = Some(Self::orchestrator_permission_rules());
+        let permission = Some(Self::orchestrator_permission_rules(role));
 
         let provider = base_session.provider.clone();
         let model = match (base_session.model.clone(), provider.clone()) {
@@ -1437,7 +1536,7 @@ You MUST perform concrete file edits now.\n\
                         session_id
                     );
                     self.invalidate_task_session(&task.id).await;
-                    *session_id = self.get_or_create_task_session_id(task).await?;
+                    *session_id = self.get_or_create_task_session_id(task, role).await?;
                 }
                 Err(e)
                     if Self::is_invalid_tool_args_error(&e.to_string())
@@ -1466,7 +1565,7 @@ For `write`, always include a non-empty `content` string.\n\
 If unsure, run `glob` first to discover files, then call `read` with a concrete path."
                     );
                     self.invalidate_task_session(&task.id).await;
-                    *session_id = self.get_or_create_task_session_id(task).await?;
+                    *session_id = self.get_or_create_task_session_id(task, role).await?;
                 }
                 Err(e)
                     if Self::is_path_not_found_error(&e.to_string())
@@ -1496,7 +1595,7 @@ When calling `read`/`write`/`edit`, ALWAYS include a non-empty `path` string.\n\
 - If creating a new file, ensure the parent directory exists first."
                     );
                     self.invalidate_task_session(&task.id).await;
-                    *session_id = self.get_or_create_task_session_id(task).await?;
+                    *session_id = self.get_or_create_task_session_id(task, role).await?;
                 }
                 Err(e)
                     if Self::is_transient_timeout_error(&e.to_string())
@@ -1521,7 +1620,7 @@ When calling `read`/`write`/`edit`, ALWAYS include a non-empty `path` string.\n\
                         )),
                     );
                     self.invalidate_task_session(&task.id).await;
-                    *session_id = self.get_or_create_task_session_id(task).await?;
+                    *session_id = self.get_or_create_task_session_id(task, role).await?;
                 }
                 Err(e) => return Err(e),
             }
@@ -1573,7 +1672,7 @@ When calling `read`/`write`/`edit`, ALWAYS include a non-empty `path` string.\n\
             )),
             model,
             provider: run_provider,
-            permission: Some(Self::orchestrator_permission_rules()),
+            permission: Some(Self::orchestrator_permission_rules(AgentRole::Orchestrator)),
             directory: Self::existing_dir_string(&self.workspace_path),
             workspace_root: Self::existing_dir_string(&self.workspace_path),
         };

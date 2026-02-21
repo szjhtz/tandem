@@ -8111,17 +8111,24 @@ fn to_orchestrator_model_routing(routing: AgentModelRouting) -> OrchestratorMode
 }
 
 fn orchestrator_permission_rules() -> Vec<crate::sidecar::PermissionRule> {
-    let mut rules = tandem_core::build_mode_permission_rules(None)
+    let allowed_tools = vec![
+        "ls".to_string(),
+        "list".to_string(),
+        "glob".to_string(),
+        "search".to_string(),
+        "grep".to_string(),
+        "codesearch".to_string(),
+        "read".to_string(),
+        "todowrite".to_string(),
+        "todo_write".to_string(),
+        "update_todo_list".to_string(),
+        "websearch".to_string(),
+        "webfetch_document".to_string(),
+        "task".to_string(),
+    ];
+
+    let mut rules = tandem_core::build_mode_permission_rules(Some(&allowed_tools))
         .into_iter()
-        .map(|mut rule| {
-            if matches!(
-                rule.permission.as_str(),
-                "bash" | "shell" | "cmd" | "terminal" | "run_command"
-            ) {
-                rule.action = "allow".to_string();
-            }
-            rule
-        })
         .map(|rule| crate::sidecar::PermissionRule {
             permission: rule.permission,
             pattern: rule.pattern,
@@ -8130,21 +8137,32 @@ fn orchestrator_permission_rules() -> Vec<crate::sidecar::PermissionRule> {
         .collect::<Vec<_>>();
 
     for permission in [
-        "write",
-        "edit",
-        "apply_patch",
         "todowrite",
         "todo_write",
         "update_todo_list",
         "websearch",
         "webfetch_document",
-        "batch",
         "task",
     ] {
         rules.push(crate::sidecar::PermissionRule {
             permission: permission.to_string(),
             pattern: "*".to_string(),
             action: "allow".to_string(),
+        });
+    }
+
+    for permission in [
+        "write",
+        "edit",
+        "apply_patch",
+        "bash",
+        "batch",
+        "spawn_agent",
+    ] {
+        rules.push(crate::sidecar::PermissionRule {
+            permission: permission.to_string(),
+            pattern: "*".to_string(),
+            action: "deny".to_string(),
         });
     }
 
