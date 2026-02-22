@@ -55,16 +55,22 @@ You should see events including:
 - `mcp.tools.updated`
 - `routine.run.created`
 
-## Mission/Automation Cold Start Benchmark
+## Mission/Automation Benchmarks
 
-If you want to answer "how long does it take to launch the engine and start a mission/automation run?", use the benchmark scripts in this folder.
+Use the benchmark scripts in this folder to measure mission trigger latency in two modes:
 
-What is measured per trial:
-
-1. `engine_boot_ms`: engine process launch -> `/global/health` reports `ready=true`
-2. `run_now_ack_ms`: `POST /routines/{id}/run_now` (or `/automations/{id}/run_now`) request latency
-3. `run_visible_ms`: `run_now` sent -> `GET /routines/runs/{run_id}` (or `/automations/runs/{run_id}`) first returns 200
-4. `cold_start_to_run_visible_ms`: `engine_boot_ms + run_visible_ms`
+1. **Cold start** (`benchmark_cold_start.sh` / `.ps1`):
+   - starts a fresh engine process every trial
+   - measures:
+     - `engine_boot_ms`
+     - `mission_trigger_ack_ms`
+     - `mission_target_ms` (depends on `BENCH_TARGET_PHASE`)
+     - `cold_start_to_mission_target_ms`
+2. **Warm engine** (`benchmark_warm_trigger.sh`):
+   - expects an already-running engine
+   - measures:
+     - `mission_trigger_ack_ms`
+     - `mission_target_ms`
 
 ### PowerShell
 
@@ -85,7 +91,7 @@ Optional env:
 ```bash
 cd examples/headless/mcp_tools_allowlist
 chmod +x benchmark_cold_start.sh
-BENCH_RUNS=10 ./benchmark_cold_start.sh
+BENCH_RUNS=10 BENCH_TARGET_PHASE=trigger ./benchmark_cold_start.sh
 ```
 
 Optional env:
@@ -93,5 +99,20 @@ Optional env:
 - `TANDEM_AUTOMATION_API=routines|automations` (default: `routines`)
 - `TANDEM_BASE_URL` (default: `http://127.0.0.1:39731`)
 - `TANDEM_ENGINE_CMD` (override engine launch command)
+- `BENCH_TARGET_PHASE=trigger|started|terminal` (default: `trigger`)
+- `TANDEM_API_TOKEN` (if engine auth is enabled)
 
-Both scripts write raw trial data to `cold_start_results.json` in this folder so you can post exact p50/p95 numbers publicly.
+### Warm Engine (Bash)
+
+Start engine separately, then run:
+
+```bash
+cd examples/headless/mcp_tools_allowlist
+chmod +x benchmark_warm_trigger.sh
+BENCH_RUNS=20 BENCH_TARGET_PHASE=trigger ./benchmark_warm_trigger.sh
+```
+
+Outputs:
+
+- Cold start: `cold_start_results.json`
+- Warm trigger: `warm_trigger_results.json`
