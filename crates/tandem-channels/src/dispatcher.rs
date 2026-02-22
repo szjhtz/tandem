@@ -438,9 +438,11 @@ async fn run_in_session(
         "parts": [{ "type": "text", "text": content }]
     });
 
-    // Fire-and-forget: prompt_async returns immediately with {runID}
+    // Request run metadata so we can bind SSE to this specific run.
     let resp = add_auth(
-        client.post(format!("{base_url}/session/{session_id}/prompt_async")),
+        client.post(format!(
+            "{base_url}/session/{session_id}/prompt_async?return=run"
+        )),
         api_token,
     )
     .json(&body)
@@ -453,7 +455,16 @@ async fn run_in_session(
         anyhow::bail!("prompt_async failed ({status}): {err}");
     }
 
-    let fire_json: serde_json::Value = resp.json().await?;
+    // Newer engines may return 204/empty when no run payload is emitted.
+    // Treat empty as "no run id" rather than surfacing a decode failure.
+    let fire_text = resp.text().await?;
+    let fire_json: serde_json::Value = if fire_text.trim().is_empty() {
+        serde_json::json!({})
+    } else {
+        serde_json::from_str(&fire_text).map_err(|e| {
+            anyhow::anyhow!("prompt_async run payload parse failed: {e}: {fire_text}")
+        })?
+    };
     let run_id = fire_json
         .get("runID")
         .or_else(|| fire_json.get("run_id"))
