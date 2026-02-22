@@ -535,7 +535,8 @@ pub struct AppState {
     pub routines: Arc<RwLock<std::collections::HashMap<String, RoutineSpec>>>,
     pub routine_history: Arc<RwLock<std::collections::HashMap<String, Vec<RoutineHistoryEvent>>>>,
     pub routine_runs: Arc<RwLock<std::collections::HashMap<String, RoutineRunRecord>>>,
-    pub routine_session_policies: Arc<RwLock<std::collections::HashMap<String, RoutineSessionPolicy>>>,
+    pub routine_session_policies:
+        Arc<RwLock<std::collections::HashMap<String, RoutineSessionPolicy>>>,
     pub routines_path: PathBuf,
     pub routine_history_path: PathBuf,
     pub routine_runs_path: PathBuf,
@@ -957,10 +958,9 @@ impl AppState {
             return Ok(());
         }
         let raw = fs::read_to_string(&self.routine_runs_path).await?;
-        let parsed = serde_json::from_str::<
-            std::collections::HashMap<String, RoutineRunRecord>,
-        >(&raw)
-        .unwrap_or_default();
+        let parsed =
+            serde_json::from_str::<std::collections::HashMap<String, RoutineRunRecord>>(&raw)
+                .unwrap_or_default();
         let mut guard = self.routine_runs.write().await;
         *guard = parsed;
         Ok(())
@@ -1275,10 +1275,7 @@ impl AppState {
             .insert(session_id, policy);
     }
 
-    pub async fn routine_session_policy(
-        &self,
-        session_id: &str,
-    ) -> Option<RoutineSessionPolicy> {
+    pub async fn routine_session_policy(&self, session_id: &str) -> Option<RoutineSessionPolicy> {
         self.routine_session_policies
             .read()
             .await
@@ -1287,7 +1284,10 @@ impl AppState {
     }
 
     pub async fn clear_routine_session_policy(&self, session_id: &str) {
-        self.routine_session_policies.write().await.remove(session_id);
+        self.routine_session_policies
+            .write()
+            .await
+            .remove(session_id);
     }
 
     pub async fn update_routine_run_status(
@@ -1869,7 +1869,11 @@ pub async fn run_routine_executor(state: AppState) {
         if let Err(error) = state.storage.save_session(session).await {
             let detail = format!("failed to create routine session: {error}");
             let _ = state
-                .update_routine_run_status(&run.run_id, RoutineRunStatus::Failed, Some(detail.clone()))
+                .update_routine_run_status(
+                    &run.run_id,
+                    RoutineRunStatus::Failed,
+                    Some(detail.clone()),
+                )
                 .await;
             state.event_bus.publish(EngineEvent::new(
                 "routine.run.failed",
@@ -1913,7 +1917,10 @@ pub async fn run_routine_executor(state: AppState) {
             .await;
 
         state.clear_routine_session_policy(&session_id).await;
-        state.engine_loop.clear_session_allowed_tools(&session_id).await;
+        state
+            .engine_loop
+            .clear_session_allowed_tools(&session_id)
+            .await;
 
         match run_result {
             Ok(()) => {
@@ -1975,15 +1982,106 @@ async fn build_routine_prompt(state: &AppState, run: &RoutineRunRecord) -> Strin
         };
         return format!("/tool {} {}", normalized_entrypoint, args);
     }
-    if let Some(prompt) = run.args.get("prompt").and_then(|v| v.as_str()) {
-        if !prompt.trim().is_empty() {
-            return prompt.trim().to_string();
-        }
+
+    if let Some(objective) = routine_objective_from_args(run) {
+        return build_routine_mission_prompt(run, &objective);
     }
+
     format!(
         "Execute routine '{}' using entrypoint '{}' with args: {}",
         run.routine_id, run.entrypoint, run.args
     )
+}
+
+fn routine_objective_from_args(run: &RoutineRunRecord) -> Option<String> {
+    run.args
+        .get("prompt")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(ToString::to_string)
+}
+
+fn routine_mode_from_args(args: &Value) -> &str {
+    args.get("mode")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .unwrap_or("standalone")
+}
+
+fn routine_success_criteria_from_args(args: &Value) -> Vec<String> {
+    args.get("success_criteria")
+        .and_then(|v| v.as_array())
+        .map(|rows| {
+            rows.iter()
+                .filter_map(|row| row.as_str())
+                .map(str::trim)
+                .filter(|row| !row.is_empty())
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default()
+}
+
+fn build_routine_mission_prompt(run: &RoutineRunRecord, objective: &str) -> String {
+    let mode = routine_mode_from_args(&run.args);
+    let success_criteria = routine_success_criteria_from_args(&run.args);
+    let orchestrator_only_tool_calls = run
+        .args
+        .get("orchestrator_only_tool_calls")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    let mut lines = vec![
+        format!("Automation ID: {}", run.routine_id),
+        format!("Run ID: {}", run.run_id),
+        format!("Mode: {}", mode),
+        format!("Mission Objective: {}", objective),
+    ];
+
+    if !success_criteria.is_empty() {
+        lines.push("Success Criteria:".to_string());
+        for criterion in success_criteria {
+            lines.push(format!("- {}", criterion));
+        }
+    }
+
+    if run.allowed_tools.is_empty() {
+        lines.push("Allowed Tools: all available by current policy".to_string());
+    } else {
+        lines.push(format!("Allowed Tools: {}", run.allowed_tools.join(", ")));
+    }
+
+    if run.output_targets.is_empty() {
+        lines.push("Output Targets: none configured".to_string());
+    } else {
+        lines.push("Output Targets:".to_string());
+        for target in &run.output_targets {
+            lines.push(format!("- {}", target));
+        }
+    }
+
+    if mode.eq_ignore_ascii_case("orchestrated") {
+        lines.push("Execution Pattern: Plan -> Do -> Verify -> Notify".to_string());
+        lines
+            .push("Role Contract: Orchestrator owns final decisions and final output.".to_string());
+        if orchestrator_only_tool_calls {
+            lines.push(
+                "Tool Policy: only the orchestrator may execute tools; helper roles propose actions/results."
+                    .to_string(),
+            );
+        }
+    } else {
+        lines.push("Execution Pattern: Standalone mission run".to_string());
+    }
+
+    lines.push(
+        "Deliverable: produce a concise final report that states what was done, what was verified, and final artifact locations."
+            .to_string(),
+    );
+
+    lines.join("\n")
 }
 
 fn truncate_text(input: &str, max_len: usize) -> String {
@@ -2487,5 +2585,82 @@ mod tests {
             policy.allowed_tools,
             vec!["read".to_string(), "mcp.arcade.search".to_string()]
         );
+    }
+
+    #[test]
+    fn routine_mission_prompt_includes_orchestrated_contract() {
+        let run = RoutineRunRecord {
+            run_id: "run-orchestrated-1".to_string(),
+            routine_id: "automation-orchestrated".to_string(),
+            trigger_type: "manual".to_string(),
+            run_count: 1,
+            status: RoutineRunStatus::Queued,
+            created_at_ms: 1_000,
+            updated_at_ms: 1_000,
+            fired_at_ms: Some(1_000),
+            started_at_ms: None,
+            finished_at_ms: None,
+            requires_approval: true,
+            approval_reason: None,
+            denial_reason: None,
+            paused_reason: None,
+            detail: None,
+            entrypoint: "mission.default".to_string(),
+            args: serde_json::json!({
+                "prompt": "Coordinate a multi-step release readiness check.",
+                "mode": "orchestrated",
+                "success_criteria": ["All blockers listed", "Output artifact written"],
+                "orchestrator_only_tool_calls": true
+            }),
+            allowed_tools: vec!["read".to_string(), "webfetch_document".to_string()],
+            output_targets: vec!["file://reports/release-readiness.md".to_string()],
+            artifacts: vec![],
+        };
+
+        let objective = routine_objective_from_args(&run).expect("objective");
+        let prompt = build_routine_mission_prompt(&run, &objective);
+
+        assert!(prompt.contains("Mode: orchestrated"));
+        assert!(prompt.contains("Plan -> Do -> Verify -> Notify"));
+        assert!(prompt.contains("only the orchestrator may execute tools"));
+        assert!(prompt.contains("Allowed Tools: read, webfetch_document"));
+        assert!(prompt.contains("file://reports/release-readiness.md"));
+    }
+
+    #[test]
+    fn routine_mission_prompt_includes_standalone_defaults() {
+        let run = RoutineRunRecord {
+            run_id: "run-standalone-1".to_string(),
+            routine_id: "automation-standalone".to_string(),
+            trigger_type: "manual".to_string(),
+            run_count: 1,
+            status: RoutineRunStatus::Queued,
+            created_at_ms: 2_000,
+            updated_at_ms: 2_000,
+            fired_at_ms: Some(2_000),
+            started_at_ms: None,
+            finished_at_ms: None,
+            requires_approval: false,
+            approval_reason: None,
+            denial_reason: None,
+            paused_reason: None,
+            detail: None,
+            entrypoint: "mission.default".to_string(),
+            args: serde_json::json!({
+                "prompt": "Summarize top engineering updates.",
+                "success_criteria": ["Three bullet summary"]
+            }),
+            allowed_tools: vec![],
+            output_targets: vec![],
+            artifacts: vec![],
+        };
+
+        let objective = routine_objective_from_args(&run).expect("objective");
+        let prompt = build_routine_mission_prompt(&run, &objective);
+
+        assert!(prompt.contains("Mode: standalone"));
+        assert!(prompt.contains("Execution Pattern: Standalone mission run"));
+        assert!(prompt.contains("Allowed Tools: all available by current policy"));
+        assert!(prompt.contains("Output Targets: none configured"));
     }
 }

@@ -81,6 +81,11 @@ function buildMissionDraft(brief: string, tools: string[]): MissionDraft {
   return { objective, successCriteria, suggestedMode };
 }
 
+function modeFromArgs(args: Record<string, unknown> | undefined): string {
+  const value = typeof args?.["mode"] === "string" ? args["mode"].trim() : "";
+  return value || "standalone";
+}
+
 interface AgentAutomationPageProps {
   userProjects: UserProject[];
   activeProject: UserProject | null;
@@ -841,7 +846,8 @@ export function AgentAutomationPage({
                               {routine.routine_id}
                             </div>
                             <div className="truncate text-[11px] text-text-subtle">
-                              {routine.entrypoint} · {routine.status}
+                              {routine.entrypoint} | {routine.status} | mode:{" "}
+                              {modeFromArgs(routine.args)}
                             </div>
                             {typeof routine.args?.["prompt"] === "string" &&
                             routine.args["prompt"].trim().length > 0 ? (
@@ -895,10 +901,10 @@ export function AgentAutomationPage({
                       <div className="flex items-center justify-between gap-2">
                         <div className="min-w-0">
                           <div className="truncate text-xs font-semibold text-text">
-                            {run.routine_id} · {run.status}
+                            {run.routine_id} | {run.status}
                           </div>
                           <div className="mt-0.5 truncate text-[11px] text-text-muted">
-                            run {run.run_id} · {run.trigger_type}
+                            run {run.run_id} | {run.trigger_type} | mode: {modeFromArgs(run.args)}
                           </div>
                           {run.allowed_tools.length > 0 ? (
                             <div className="mt-1 flex flex-wrap gap-1">

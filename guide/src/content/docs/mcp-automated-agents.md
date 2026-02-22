@@ -140,6 +140,14 @@ curl -sS "http://127.0.0.1:39731/routines/runs?routine_id=daily-mcp-research&lim
 
 Each run record includes `allowed_tools` so you can verify tool scope at execution time.
 
+Preferred API naming is now `automations/*` (the `routines/*` endpoints remain compatible):
+
+```bash
+curl -sS -X POST http://127.0.0.1:39731/automations/auto-digest/run_now \
+  -H "content-type: application/json" \
+  -d '{}'
+```
+
 ## 2.5) Which Tools Should You Start With?
 
 For autonomous bots, start narrow and expand only when runs are stable.
@@ -276,6 +284,16 @@ Use it to:
 - apply the draft into the automation form before saving
 
 The resulting mission is stored in routine args (`prompt` + `success_criteria`) and is what the run executes.
+
+### Mission Modes (Desktop + Headless)
+
+- `standalone`: one agent executes the mission directly.
+- `orchestrated`: run prompt uses a `Plan -> Do -> Verify -> Notify` contract and expects orchestrator-style behavior.
+
+For orchestrated mode with stricter tool discipline, set:
+
+- `mode: "orchestrated"`
+- `orchestrator_only_tool_calls: true`
 
 ## 4) SSE Visibility
 
