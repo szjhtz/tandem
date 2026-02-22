@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.12]
+
+### Fixed
+
+- **MCP runtime compatibility hotfix**: Desktop now falls back to MCP server `tool_cache` via `GET /mcp` when legacy/mixed engine builds return `404` for `GET /mcp/tools`, preventing Extensions MCP tab load failures (`Failed to load MCP runtime`).
+- **Registry publish pipeline ordering**: Fixed crates publish order and dependency coverage in CI scripts/workflow so tandem workspace crate dependencies publish in valid sequence.
+
 ## [0.3.11]
 
 ### Changed
@@ -914,7 +921,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Project-based organization
 - Real-time streaming responses
 
-[0.3.11]: https://github.com/frumu-ai/tandem/compare/v0.3.10...HEAD
+[0.3.12]: https://github.com/frumu-ai/tandem/compare/v0.3.11...HEAD
+[0.3.11]: https://github.com/frumu-ai/tandem/compare/v0.3.10...v0.3.11
 [0.3.10]: https://github.com/frumu-ai/tandem/compare/v0.3.9...v0.3.10
 [0.3.9]: https://github.com/frumu-ai/tandem/compare/v0.3.7...v0.3.9
 [0.3.7]: https://github.com/frumu-ai/tandem/compare/v0.3.6...v0.3.7

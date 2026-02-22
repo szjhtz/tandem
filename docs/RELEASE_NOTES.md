@@ -1,4 +1,16 @@
-# Tandem v0.3.11 Release Notes (Unreleased)
+# Tandem v0.3.12 Release Notes (Unreleased)
+
+### Highlights
+
+- **MCP runtime compatibility hotfix**:
+  - Desktop now falls back to MCP server `tool_cache` from `GET /mcp` when `GET /mcp/tools` is unavailable (404) on mixed-version engines.
+  - Prevents Extensions MCP tab runtime-load failures during app/engine version skew.
+- **Registry publish workflow hotfix**:
+  - Corrected crate publish ordering and dependency coverage for tandem workspace crates (`tandem-providers` before `tandem-memory`, plus `tandem-document` before `tandem-tools`).
+
+---
+
+# Tandem v0.3.11 Release Notes
 
 ### Highlights
 
