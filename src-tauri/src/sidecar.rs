@@ -3994,13 +3994,54 @@ impl SidecarManager {
 
     pub async fn mcp_list_tools(&self) -> Result<Vec<McpRemoteTool>> {
         self.check_circuit_breaker().await?;
-        let url = format!("{}/mcp/tools", self.base_url().await?);
+        let base = self.base_url().await?;
+        let url = format!("{}/mcp/tools", base);
         let response = self
             .http_client
             .get(&url)
             .send()
             .await
             .map_err(|e| TandemError::Sidecar(format!("Failed to list MCP tools: {}", e)))?;
+        if response.status() == reqwest::StatusCode::NOT_FOUND {
+            tracing::warn!(
+                "MCP tools endpoint unavailable (404) at {}. Falling back to /mcp tool_cache.",
+                url
+            );
+            let fallback_url = format!("{}/mcp", base);
+            let fallback = self
+                .http_client
+                .get(&fallback_url)
+                .send()
+                .await
+                .map_err(|e| {
+                    TandemError::Sidecar(format!(
+                        "Failed to list MCP servers for tools fallback: {}",
+                        e
+                    ))
+                })?;
+            let payload: HashMap<String, McpServerRecord> = self.handle_response(fallback).await?;
+            let mut servers = payload.into_values().collect::<Vec<_>>();
+            servers.sort_by(|a, b| a.name.cmp(&b.name));
+            let mut out = Vec::new();
+            for server in servers {
+                let server_slug = mcp_slug_segment(&server.name);
+                let mut tools = server.tool_cache.clone();
+                tools.sort_by(|a, b| a.tool_name.cmp(&b.tool_name));
+                for tool in tools {
+                    let tool_slug = mcp_slug_segment(&tool.tool_name);
+                    out.push(McpRemoteTool {
+                        server_name: server.name.clone(),
+                        tool_name: tool.tool_name,
+                        namespaced_name: format!("mcp.{server_slug}.{tool_slug}"),
+                        description: tool.description,
+                        input_schema: tool.input_schema,
+                        fetched_at_ms: tool.fetched_at_ms,
+                        schema_hash: tool.schema_hash,
+                    });
+                }
+            }
+            return Ok(out);
+        }
         self.handle_response(response).await
     }
 
@@ -5190,6 +5231,32 @@ impl SidecarManager {
                 status, body
             )))
         }
+    }
+}
+
+fn mcp_slug_segment(raw: &str) -> String {
+    let mut out = String::new();
+    let mut previous_dot = false;
+    for ch in raw.chars() {
+        let normalized = ch.to_ascii_lowercase();
+        if normalized.is_ascii_alphanumeric() || normalized == '_' || normalized == '-' {
+            out.push(normalized);
+            previous_dot = false;
+        } else if !previous_dot {
+            out.push('.');
+            previous_dot = true;
+        }
+    }
+    while out.starts_with('.') {
+        out.remove(0);
+    }
+    while out.ends_with('.') {
+        out.pop();
+    }
+    if out.is_empty() {
+        "server".to_string()
+    } else {
+        out
     }
 }
 
