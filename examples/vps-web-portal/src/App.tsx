@@ -8,6 +8,7 @@ import { SwarmDashboard } from "./pages/SwarmDashboard";
 import { TextAdventure } from "./pages/TextAdventure";
 import { SecondBrainDashboard } from "./pages/SecondBrainDashboard";
 import { ConnectorsDashboard } from "./pages/ConnectorsDashboard";
+import { OpsWorkspace } from "./pages/OpsWorkspace";
 import {
   LayoutDashboard,
   Users,
@@ -15,6 +16,7 @@ import {
   BrainCircuit,
   LogOut,
   Cable,
+  ShieldCheck,
 } from "lucide-react";
 
 const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
@@ -71,6 +73,12 @@ const NavigationLayout = ({ children }: { children: React.ReactNode }) => {
             className="flex items-center gap-3 text-gray-300 hover:text-white hover:bg-gray-800 p-2 rounded-md"
           >
             <Cable size={20} /> Connectors
+          </Link>
+          <Link
+            to="/ops"
+            className="flex items-center gap-3 text-gray-300 hover:text-white hover:bg-gray-800 p-2 rounded-md"
+          >
+            <ShieldCheck size={20} /> Ops
           </Link>
         </nav>
         <div className="p-4 border-t border-gray-800">
@@ -149,6 +157,16 @@ export default function App() {
                     <SecondBrainDashboard />
                   </NavigationLayout>
                 </ProviderReadyRoute>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/ops"
+            element={
+              <ProtectedRoute>
+                <NavigationLayout>
+                  <OpsWorkspace />
+                </NavigationLayout>
               </ProtectedRoute>
             }
           />

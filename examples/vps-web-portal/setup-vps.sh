@@ -370,6 +370,52 @@ WantedBy=multi-user.target
 EOF
 fi
 
+# Install a tightly scoped engine control helper for portal process actions.
+ENGINE_CTL_SCRIPT="/usr/local/bin/tandem-engine-ctl"
+"${SUDO_CMD[@]}" tee "$ENGINE_CTL_SCRIPT" >/dev/null <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+ACTION="${1:-}"
+SERVICE="${2:-tandem-engine.service}"
+
+case "$ACTION" in
+  status|start|stop|restart) ;;
+  *)
+    echo '{"ok":false,"error":"invalid action"}'
+    exit 2
+    ;;
+esac
+
+if [[ "$SERVICE" != "tandem-engine.service" ]]; then
+  echo '{"ok":false,"error":"invalid service"}'
+  exit 2
+fi
+
+if [[ "$ACTION" == "status" ]]; then
+  ACTIVE_STATE="$(systemctl show "$SERVICE" -p ActiveState --value || true)"
+  SUB_STATE="$(systemctl show "$SERVICE" -p SubState --value || true)"
+  LOADED_STATE="$(systemctl show "$SERVICE" -p LoadState --value || true)"
+  UNIT_FILE_STATE="$(systemctl show "$SERVICE" -p UnitFileState --value || true)"
+  TS="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  printf '{"ok":true,"serviceName":"%s","activeState":"%s","subState":"%s","loadedState":"%s","unitFileState":"%s","timestamp":"%s"}\n' \
+    "$SERVICE" "$ACTIVE_STATE" "$SUB_STATE" "$LOADED_STATE" "$UNIT_FILE_STATE" "$TS"
+  exit 0
+fi
+
+systemctl "$ACTION" "$SERVICE"
+exec "$0" status "$SERVICE"
+EOF
+"${SUDO_CMD[@]}" chmod 755 "$ENGINE_CTL_SCRIPT"
+"${SUDO_CMD[@]}" chown root:root "$ENGINE_CTL_SCRIPT"
+
+# Allow the portal service user to invoke only the helper script without password.
+SUDOERS_PATH="/etc/sudoers.d/tandem-portal-engine-control"
+"${SUDO_CMD[@]}" tee "$SUDOERS_PATH" >/dev/null <<EOF
+$SERVICE_USER ALL=(root) NOPASSWD: $ENGINE_CTL_SCRIPT
+EOF
+"${SUDO_CMD[@]}" chmod 440 "$SUDOERS_PATH"
+
 "${SUDO_CMD[@]}" systemctl daemon-reload
 "${SUDO_CMD[@]}" systemctl enable --now tandem-engine
 "${SUDO_CMD[@]}" systemctl restart tandem-engine
@@ -422,6 +468,21 @@ fi
 
 if ! grep -q '^VITE_TANDEM_ENGINE_URL=' "$PROJECT_DIR/.env"; then
   echo "VITE_TANDEM_ENGINE_URL=http://127.0.0.1:39731" >> "$PROJECT_DIR/.env"
+fi
+if ! grep -q '^TANDEM_SYSTEM_CONTROL_MODE=' "$PROJECT_DIR/.env"; then
+  echo "TANDEM_SYSTEM_CONTROL_MODE=systemd" >> "$PROJECT_DIR/.env"
+fi
+if ! grep -q '^TANDEM_ENGINE_SERVICE_NAME=' "$PROJECT_DIR/.env"; then
+  echo "TANDEM_ENGINE_SERVICE_NAME=tandem-engine.service" >> "$PROJECT_DIR/.env"
+fi
+if ! grep -q '^TANDEM_ENGINE_CONTROL_SCRIPT=' "$PROJECT_DIR/.env"; then
+  echo "TANDEM_ENGINE_CONTROL_SCRIPT=/usr/local/bin/tandem-engine-ctl" >> "$PROJECT_DIR/.env"
+fi
+if ! grep -q '^TANDEM_ARTIFACT_READ_ROOTS=' "$PROJECT_DIR/.env"; then
+  echo "TANDEM_ARTIFACT_READ_ROOTS=$STATE_DIR" >> "$PROJECT_DIR/.env"
+fi
+if ! grep -q '^TANDEM_PORTAL_MAX_ARTIFACT_BYTES=' "$PROJECT_DIR/.env"; then
+  echo "TANDEM_PORTAL_MAX_ARTIFACT_BYTES=1048576" >> "$PROJECT_DIR/.env"
 fi
 
 "${SUDO_CMD[@]}" tee /etc/systemd/system/tandem-portal.service >/dev/null <<EOF

@@ -223,6 +223,9 @@ On first login (or when no provider/model is configured), the portal now opens a
 2. Enter an API key (if required)
 3. Pick a default model
 
+The new **Ops** workspace is available immediately after login (it does not require provider setup),
+so you can manage missions, automations/routines, MCP, channels, and agent-team controls even before model defaults are set.
+
 Storage behavior:
 
 - Provider API keys are sent via engine runtime auth (`PUT /auth/{provider}`), which is runtime-only.
@@ -241,6 +244,33 @@ For production persistence across restarts:
 3. **Interactive RPG:** An AI Text Adventure game demonstrating the `Questions API` over Streaming SSE.
 4. **Second Brain:** Grant an agent local system context using Local MCP (Model Context Protocol).
 5. **Connectors:** Setup Slack, Discord, or Telegram bots so your team can @ the engine directly.
+6. **Ops Workspace:** Unified mission/automation/MCP/agent-team/channel control center with live global events, run artifact browser, and engine process controls.
+
+### Ops Workspace Highlights
+
+- Full mission lifecycle controls (`/mission`, `/mission/{id}`, `/mission/{id}/event`)
+- Dual automation compatibility (`/automations/*` and `/routines/*`)
+- Agent-team operations (`/agent-team/*`) including spawn approvals and cancellation
+- MCP lifecycle and tool visibility (`/mcp/*`, `/mcp/tools`, `/tool/ids`)
+- Channel config + status (`/channels/config`, `/channels/status`, `/channels/{name}`)
+- Unified live SSE stream view (`/global/event`)
+- Run artifact browser (`/{automations|routines}/runs/{id}/artifacts`) with safe local preview
+- Engine process controls via portal backend (`/portal/system/engine/*`)
+
+### Engine Process Controls (systemd)
+
+`setup-vps.sh` now installs:
+
+- `/usr/local/bin/tandem-engine-ctl` (restricted helper: `status|start|stop|restart`)
+- `/etc/sudoers.d/tandem-portal-engine-control` (passwordless execution only for that helper)
+
+Portal `.env` includes:
+
+- `TANDEM_SYSTEM_CONTROL_MODE=systemd`
+- `TANDEM_ENGINE_SERVICE_NAME=tandem-engine.service`
+- `TANDEM_ENGINE_CONTROL_SCRIPT=/usr/local/bin/tandem-engine-ctl`
+- `TANDEM_ARTIFACT_READ_ROOTS=/srv/tandem`
+- `TANDEM_PORTAL_MAX_ARTIFACT_BYTES=1048576`
 
 ## Security Note
 
