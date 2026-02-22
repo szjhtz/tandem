@@ -82,7 +82,7 @@ curl -sS -X POST http://127.0.0.1:39731/mcp/arcade/connect
 
 ### Provider Notes: Composio
 
-For Composio MCP URLs, make sure your project’s MCP URL security requirements are satisfied.
+For Composio MCP URLs, make sure your project's MCP URL security requirements are satisfied.
 
 Important dates from Composio changelog:
 
@@ -106,6 +106,18 @@ curl -sS -X POST http://127.0.0.1:39731/mcp/composio/connect
 ```
 
 ## 2) Create a Scheduled Agent With Tool Allowlist
+
+### What The Bot Actually Does On Each Run
+
+Each scheduled run executes this loop:
+
+1. Load automation definition: mission, mode, tool policy, model policy, outputs.
+2. Build run prompt from objective and success criteria.
+3. Enforce policy gates (`allowed_tools`, approval flags, external side-effect settings).
+4. Execute and stream run events over SSE.
+5. Persist run status/history and attach output artifacts.
+
+Mission quality is the primary control lever. If the mission objective is vague, run behavior will be vague.
 
 Create a routine that only allows selected tools:
 
@@ -346,6 +358,14 @@ Recommended starting examples:
 - OpenCode Zen fast profile: `opencode_zen/zen/fast`
 - OpenCode Zen quality profile: `opencode_zen/zen/pro`
 
+To clear model policy on a patch/update, send an empty object:
+
+```json
+{
+  "model_policy": {}
+}
+```
+
 ## 4) SSE Visibility
 
 Watch routine stream:
@@ -418,6 +438,30 @@ Watch for:
 
 Run `tandem-engine serve` under a process supervisor (systemd, PM2, container orchestrator, or Windows Task Scheduler/service wrapper) so it auto-restarts after reboots/crashes.
 
+
+## 7) App Testing Checklist (Release Readiness)
+
+Use this checklist before shipping:
+
+1. MCP connectors:
+   - add, enable/disable, connect/disconnect, refresh
+   - verify `mcp.tools.updated` events appear
+2. Automation creation:
+   - create standalone + orchestrated bots
+   - verify interval is interpreted as seconds
+   - verify `webfetch_document` appears in allowed tools
+3. Model routing:
+   - apply a preset (OpenRouter/OpenCode Zen)
+   - verify selected provider/model appears in routine/run cards
+   - verify run emits model selection event (`routine.run.model_selected`)
+4. Approval flow:
+   - verify pending approval run can be approved/denied
+   - verify blocked/failed filters surface problem runs
+5. Run details:
+   - verify timeline chips, timestamps, reason text, outputs, artifacts
+6. Headless:
+   - run `examples/headless/mcp_tools_allowlist/flow.sh` or `.ps1`
+   - confirm runs execute and artifacts are produced without desktop UI
 ## Safety Notes
 
 - Keep connector secrets in headers/env, not logs.
@@ -431,3 +475,5 @@ Run `tandem-engine serve` under a process supervisor (systemd, PM2, container or
 - [WebMCP for Agents](./webmcp-for-agents/)
 - [Engine Commands](./reference/engine-commands/)
 - [Tools Reference](./reference/tools/)
+
+

@@ -106,6 +106,7 @@ interface BotTemplate {
   outputTargets: string[];
   missionObjective: string;
   successCriteria: string[];
+  recommendedModelPreset?: string;
 }
 
 interface WorkshopMessage {
@@ -223,6 +224,14 @@ function extractRunNote(eventType: string, data: unknown): string | undefined {
   }
   if (eventType === "routine.run.failed" || eventType === "run.failed") {
     return asString(data["reason"]) ?? asString(data["detail"]) ?? "Run failed";
+  }
+  if (eventType === "routine.run.model_selected") {
+    const provider = asString(data["providerID"]);
+    const model = asString(data["modelID"]);
+    if (provider && model) {
+      return `model ${provider}/${model}`;
+    }
+    return "Model selected";
   }
   if (eventType === "routine.run.artifact_added") {
     const artifact = data["artifact"];
@@ -379,6 +388,7 @@ export function AgentAutomationPage({
           "Writes an artifact to the configured report path.",
           "Highlights uncertain claims and verification notes.",
         ],
+        recommendedModelPreset: "openrouter-balanced",
       },
       {
         id: "issue-triage",
@@ -398,6 +408,7 @@ export function AgentAutomationPage({
           "Includes suggested owner/team when inferable.",
           "Produces a machine-readable triage artifact.",
         ],
+        recommendedModelPreset: "openrouter-balanced",
       },
       {
         id: "release-reporter",
@@ -417,6 +428,7 @@ export function AgentAutomationPage({
           "Writes a markdown status report artifact.",
           "Runs unattended without policy violations.",
         ],
+        recommendedModelPreset: "opencode-zen-fast",
       },
     ],
     []
@@ -677,6 +689,15 @@ export function AgentAutomationPage({
     setRoutineModeDraft("standalone");
     setRoutineRoleModelDrafts({});
     setRoutineOrchestratorOnlyToolCallsDraft(false);
+    if (template.recommendedModelPreset) {
+      const preset = MODEL_PRESETS.find((row) => row.id === template.recommendedModelPreset);
+      if (preset) {
+        setRoutineModelPresetDraft(preset.id);
+        setRoutineModelProviderDraft(preset.defaultModel.provider_id);
+        setRoutineModelIdDraft(preset.defaultModel.model_id);
+        setRoutineRoleModelDrafts(preset.roleModels ?? {});
+      }
+    }
   };
 
   useEffect(() => {
@@ -916,6 +937,10 @@ export function AgentAutomationPage({
   const blockedRuns = routineRuns.filter((run) => run.status === "blocked_policy").length;
   const failedRuns = routineRuns.filter((run) => run.status === "failed").length;
   const artifactCount = routineRuns.reduce((sum, run) => sum + run.artifacts.length, 0);
+  const previewOutputCount = routineOutputTargetsDraft
+    .split(",")
+    .map((value) => value.trim())
+    .filter((value) => value.length > 0).length;
   const visibleRuns = routineRuns.filter((run) => {
     if (runFilter === "pending") return run.status === "pending_approval";
     if (runFilter === "blocked") return run.status === "blocked_policy";
@@ -1128,6 +1153,26 @@ export function AgentAutomationPage({
                       className="min-h-[64px] w-full rounded border border-border bg-surface px-2 py-1 text-xs text-text outline-none focus:border-primary/60"
                       placeholder="Success criteria (one per line)"
                     />
+                    <div className="rounded border border-border bg-surface p-2">
+                      <div className="text-[10px] uppercase tracking-wide text-text-subtle">
+                        Execution Preview
+                      </div>
+                      <div className="mt-1 text-[11px] text-text-subtle">
+                        This bot will run {formatIntervalHint(routineIntervalSecondsDraft)} in{" "}
+                        <span className="font-semibold text-text">{routineModeDraft}</span> mode, use{" "}
+                        <span className="font-semibold text-text">
+                          {routineAllowedToolsDraft.length}
+                        </span>{" "}
+                        allowed tools, and target{" "}
+                        <span className="font-semibold text-text">{previewOutputCount}</span> output
+                        destination{previewOutputCount === 1 ? "" : "s"}.
+                      </div>
+                      {routineMissionObjectiveDraft.trim().length > 0 ? (
+                        <div className="mt-1 line-clamp-2 text-[11px] text-text-muted">
+                          Mission: {routineMissionObjectiveDraft.trim()}
+                        </div>
+                      ) : null}
+                    </div>
                     <div className="grid grid-cols-2 gap-2">
                       <label className="text-[11px] text-text-subtle">
                         Mode

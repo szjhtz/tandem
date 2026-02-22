@@ -405,6 +405,8 @@ struct AutomationCreateInput {
     policy: Option<AutomationPolicyInput>,
     #[serde(default)]
     output_targets: Option<Vec<String>>,
+    #[serde(default)]
+    model_policy: Option<Value>,
     creator_type: Option<String>,
     creator_id: Option<String>,
     next_fire_at_ms: Option<u64>,
@@ -437,6 +439,8 @@ struct AutomationPatchInput {
     policy: Option<AutomationPolicyInput>,
     #[serde(default)]
     output_targets: Option<Vec<String>>,
+    #[serde(default)]
+    model_policy: Option<Value>,
     next_fire_at_ms: Option<u64>,
 }
 
@@ -581,6 +585,36 @@ pub async fn serve(addr: SocketAddr, state: AppState) -> anyhow::Result<()> {
         agent_team_supervisor_state,
     ));
 
+    // --- Memory hygiene background task (runs every 12 hours) ---
+    // Opens a fresh connection to memory.sqlite each cycle — safe because WAL
+    // mode allows concurrent readers alongside the main engine connection.
+    let hygiene_task = tokio::spawn(async move {
+        // Initial delay so startup is not impacted.
+        tokio::time::sleep(Duration::from_secs(60)).await;
+        loop {
+            let retention_days: u32 = std::env::var("TANDEM_MEMORY_RETENTION_DAYS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(30);
+            if retention_days > 0 {
+                match tandem_core::resolve_shared_paths() {
+                    Ok(paths) => {
+                        match tandem_memory::db::MemoryDatabase::new(&paths.memory_db_path).await {
+                            Ok(db) => {
+                                if let Err(e) = db.run_hygiene(retention_days).await {
+                                    tracing::warn!("memory hygiene failed: {}", e);
+                                }
+                            }
+                            Err(e) => tracing::warn!("memory hygiene: could not open DB: {}", e),
+                        }
+                    }
+                    Err(e) => tracing::warn!("memory hygiene: could not resolve paths: {}", e),
+                }
+            }
+            tokio::time::sleep(Duration::from_secs(12 * 60 * 60)).await;
+        }
+    });
+
     // --- Channel listeners (optional) ---
     // Reads TANDEM_TELEGRAM_BOT_TOKEN, TANDEM_DISCORD_BOT_TOKEN, TANDEM_SLACK_BOT_TOKEN etc.
     // If no channels are configured the server starts normally without them.
@@ -609,6 +643,7 @@ pub async fn serve(addr: SocketAddr, state: AppState) -> anyhow::Result<()> {
     routine_scheduler.abort();
     routine_executor.abort();
     agent_team_supervisor.abort();
+    hygiene_task.abort();
     if let Some(mut set) = channel_listener_set {
         set.abort_all();
     }
@@ -5608,6 +5643,48 @@ fn normalize_automation_mode(raw: Option<&str>) -> Result<String, String> {
     Err("mode must be one of standalone|orchestrated".to_string())
 }
 
+fn validate_model_spec_object(value: &Value, path: &str) -> Result<(), String> {
+    let obj = value
+        .as_object()
+        .ok_or_else(|| format!("{path} must be an object"))?;
+    let provider_id = obj
+        .get("provider_id")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .ok_or_else(|| format!("{path}.provider_id is required"))?;
+    let model_id = obj
+        .get("model_id")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .ok_or_else(|| format!("{path}.model_id is required"))?;
+    if provider_id.is_empty() || model_id.is_empty() {
+        return Err(format!(
+            "{path}.provider_id and {path}.model_id are required"
+        ));
+    }
+    Ok(())
+}
+
+fn validate_model_policy(value: &Value) -> Result<(), String> {
+    let obj = value
+        .as_object()
+        .ok_or_else(|| "model_policy must be an object".to_string())?;
+    if let Some(default_model) = obj.get("default_model") {
+        validate_model_spec_object(default_model, "model_policy.default_model")?;
+    }
+    if let Some(role_models) = obj.get("role_models") {
+        let role_obj = role_models
+            .as_object()
+            .ok_or_else(|| "model_policy.role_models must be an object".to_string())?;
+        for (role, spec) in role_obj {
+            validate_model_spec_object(spec, &format!("model_policy.role_models.{role}"))?;
+        }
+    }
+    Ok(())
+}
+
 fn routine_to_automation_wire(routine: RoutineSpec) -> Value {
     json!({
         "automation_id": routine.routine_id,
@@ -5637,6 +5714,7 @@ fn routine_to_automation_wire(routine: RoutineSpec) -> Value {
                 "requires_approval": routine.requires_approval
             }
         },
+        "model_policy": routine.args.get("model_policy").cloned(),
         "output_targets": routine.output_targets,
         "creator_type": routine.creator_type,
         "creator_id": routine.creator_id,
@@ -5671,6 +5749,7 @@ fn routine_run_to_automation_wire(run: RoutineRunRecord) -> Value {
                 "requires_approval": run.requires_approval
             }
         },
+        "model_policy": run.args.get("model_policy").cloned(),
         "requires_approval": run.requires_approval,
         "approval_reason": run.approval_reason,
         "denial_reason": run.denial_reason,
@@ -5691,6 +5770,7 @@ fn routine_event_to_run_event(event: &EngineEvent) -> Option<EngineEvent> {
         "routine.run.failed" => "run.failed",
         "routine.approval_required" => "approval.required",
         "routine.run.artifact_added" => "run.step",
+        "routine.run.model_selected" => "run.step",
         "routine.blocked" => "run.failed",
         _ => return None,
     };
@@ -5704,7 +5784,9 @@ fn routine_event_to_run_event(event: &EngineEvent) -> Option<EngineEvent> {
             .expect("object")
             .insert("automationID".to_string(), Value::String(routine_id));
     }
-    if event.event_type == "routine.run.started" || event.event_type == "routine.run.artifact_added"
+    if event.event_type == "routine.run.started"
+        || event.event_type == "routine.run.artifact_added"
+        || event.event_type == "routine.run.model_selected"
     {
         props
             .as_object_mut()
@@ -5737,6 +5819,12 @@ fn automation_create_to_routine(input: AutomationCreateInput) -> Result<RoutineS
                     Value::Bool(value),
                 );
             }
+        }
+    }
+    if let Some(model_policy) = input.model_policy {
+        validate_model_policy(&model_policy)?;
+        if let Some(obj) = args.as_object_mut() {
+            obj.insert("model_policy".to_string(), model_policy);
         }
     }
     let (allowed_tools, external_integrations_allowed, requires_approval) =
@@ -5853,6 +5941,38 @@ async fn automations_patch(
     }
     if let Some(output_targets) = input.output_targets.as_ref() {
         routine.output_targets = output_targets.clone();
+    }
+    if let Some(model_policy) = input.model_policy.as_ref() {
+        let mut args = routine.args.as_object().cloned().unwrap_or_default();
+        if model_policy
+            .as_object()
+            .map(|obj| obj.is_empty())
+            .unwrap_or(false)
+        {
+            args.remove("model_policy");
+        } else if model_policy.is_object() {
+            validate_model_policy(model_policy).map_err(|detail| {
+                (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({
+                        "error": "Invalid automation patch",
+                        "code": "AUTOMATION_INVALID",
+                        "detail": detail,
+                    })),
+                )
+            })?;
+            args.insert("model_policy".to_string(), model_policy.clone());
+        } else {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(json!({
+                    "error": "Invalid automation patch",
+                    "code": "AUTOMATION_INVALID",
+                    "detail": "model_policy must be an object (use {} to clear)",
+                })),
+            ));
+        }
+        routine.args = Value::Object(args);
     }
     if let Some(policy) = input.policy.as_ref() {
         if let Some(allowed) = policy.tool.run_allowlist.as_ref() {
