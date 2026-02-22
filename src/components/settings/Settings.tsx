@@ -88,6 +88,12 @@ interface LatestReleaseSummary {
   publishedAt: string | null;
 }
 
+interface LatestJsonPayload {
+  version?: string;
+  notes?: string;
+  pub_date?: string;
+}
+
 export function Settings({
   onClose,
   onProjectChange,
@@ -252,7 +258,8 @@ export function Settings({
   const loadLatestReleaseNotes = async () => {
     setLatestReleaseLoading(true);
     setLatestReleaseError(null);
-    try {
+
+    const fromGitHubApi = async (): Promise<LatestReleaseSummary> => {
       const response = await globalThis.fetch(
         "https://api.github.com/repos/frumu-ai/tandem/releases/latest",
         {
@@ -273,11 +280,55 @@ export function Settings({
         typeof payload.published_at === "string" && payload.published_at.trim().length > 0
           ? payload.published_at
           : null;
-      setLatestRelease({ tag, title, body, htmlUrl, publishedAt });
+      return { tag, title, body, htmlUrl, publishedAt };
+    };
+
+    const fromUpdaterLatestJson = async (): Promise<LatestReleaseSummary> => {
+      const response = await globalThis.fetch(
+        "https://github.com/frumu-ai/tandem/releases/latest/download/latest.json",
+        {
+          headers: {
+            Accept: "application/json",
+          },
+        }
+      );
+      if (!response.ok) {
+        throw new Error(`latest.json request failed (${response.status})`);
+      }
+      const payload = (await response.json()) as LatestJsonPayload;
+      const rawVersion = typeof payload.version === "string" ? payload.version.trim() : "latest";
+      const tag = rawVersion.startsWith("v") ? rawVersion : `v${rawVersion}`;
+      const body = typeof payload.notes === "string" ? payload.notes.trim() : "";
+      const publishedAt =
+        typeof payload.pub_date === "string" && payload.pub_date.trim().length > 0
+          ? payload.pub_date
+          : null;
+      return {
+        tag,
+        title: tag,
+        body,
+        htmlUrl: `https://github.com/frumu-ai/tandem/releases/tag/${encodeURIComponent(tag)}`,
+        publishedAt,
+      };
+    };
+
+    try {
+      const apiResult = await fromGitHubApi();
+      setLatestRelease(apiResult);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      setLatestReleaseError(message);
-      setLatestRelease(null);
+      const primaryError = error instanceof Error ? error.message : String(error);
+      try {
+        const latestJsonResult = await fromUpdaterLatestJson();
+        setLatestRelease(latestJsonResult);
+        setLatestReleaseError(null);
+      } catch (fallbackError) {
+        const fallbackMessage =
+          fallbackError instanceof Error ? fallbackError.message : String(fallbackError);
+        setLatestReleaseError(
+          `Failed to fetch release metadata: ${primaryError}; ${fallbackMessage}`
+        );
+        setLatestRelease(null);
+      }
     } finally {
       setLatestReleaseLoading(false);
     }

@@ -7,6 +7,10 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
 - Issue #14 fix (custom providers + live model lists):
   - Fixed `custom` provider routing so custom endpoint/model selections are honored for chat/automation dispatch.
   - Provider settings now prefer engine-catalog model IDs (OpenAI/Anthropic/OpenCode Zen) when available, instead of static-only dropdown content.
+- Updates + release metadata reliability:
+  - Settings release notes now fall back to updater `latest.json` when GitHub Releases API is unavailable.
+  - Desktop CSP now explicitly allows GitHub release metadata hosts used by updater/release note fetches.
+  - Sidecar updater status now reports bundled-engine version from app metadata instead of stale stored beta values.
 
 ## v0.3.9 (Unreleased)
 

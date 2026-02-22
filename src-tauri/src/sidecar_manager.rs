@@ -225,12 +225,24 @@ fn get_asset_name() -> &'static str {
     return "tandem-engine-linux-arm64.tar.gz";
 }
 
-/// Get the installed version from the store
-fn get_installed_version(app: &AppHandle) -> Option<String> {
-    let store = app.store("settings.json").ok()?;
-    store
-        .get("sidecar_version")
-        .and_then(|v| v.as_str().map(String::from))
+/// Get the installed sidecar version.
+///
+/// If the sidecar is running from AppData (downloaded updater binary), prefer the persisted
+/// sidecar version from settings. If the sidecar is bundled with the desktop app resources,
+/// report the app package version to avoid stale values from old beta downloads.
+fn get_installed_version(app: &AppHandle, binary_path: Option<&Path>) -> Option<String> {
+    let in_app_data = binary_path
+        .and_then(|path| shared_app_data_dir(app).map(|dir| path.starts_with(dir)))
+        .unwrap_or(false);
+
+    if in_app_data {
+        let store = app.store("settings.json").ok()?;
+        return store
+            .get("sidecar_version")
+            .and_then(|v| v.as_str().map(String::from));
+    }
+
+    Some(format!("v{}", app.package_info().version))
 }
 
 /// Save the installed version to the store
@@ -264,7 +276,7 @@ pub async fn check_sidecar_status(app: &AppHandle) -> Result<SidecarStatus> {
         .unwrap_or(false);
 
     let version = if installed {
-        get_installed_version(app)
+        get_installed_version(app, binary_path.as_deref())
     } else {
         None
     };

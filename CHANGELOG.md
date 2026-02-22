@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Custom provider routing and validation (#14)**: Fixed `custom` provider resolution in desktop Tauri routing so explicit custom provider/model selections dispatch correctly for chat and automation flows.
 - **Custom provider selection persistence**: Saving/enabling a custom provider now updates `providers_config.selected_model` when a model is provided, preventing silent fallback to unrelated provider/model selections.
+- **Release notes fallback in Settings**: Release notes now fall back to updater `latest.json` metadata when GitHub Releases API fetch fails.
+- **Bundled sidecar version reporting**: Sidecar updater status now reports bundled-engine version from app package metadata, avoiding stale beta values from old downloaded sidecar records.
 
 ## [0.3.9]
 

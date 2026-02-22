@@ -66,6 +66,7 @@ import {
 import { type FileAttachment } from "@/components/chat/ChatInput";
 import { open } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
+import { getVersion } from "@tauri-apps/api/app";
 import {
   Settings as SettingsIcon,
   MessageSquare,
@@ -82,9 +83,8 @@ import {
   Blocks,
   Loader2,
 } from "lucide-react";
-import whatsNewMarkdown from "../docs/WHATS_NEW_v0.3.0.md?raw";
+import whatsNewMarkdown from "../docs/WHATS_NEW_v0.3.10.md?raw";
 
-const WHATS_NEW_VERSION = "v0.3.0-beta";
 const WHATS_NEW_SEEN_KEY = "tandem_whats_new_seen_version";
 
 type View =
@@ -246,22 +246,33 @@ function App() {
   );
   const [migrationResult, setMigrationResult] = useState<StorageMigrationRunResult | null>(null);
   const [showWhatsNew, setShowWhatsNew] = useState(false);
+  const [whatsNewVersion, setWhatsNewVersion] = useState<string | null>(null);
   const migrationCheckedRef = useRef(false);
   const engineLeaseIdRef = useRef<string | null>(null);
   const engineLeaseTimerRef = useRef<ReturnType<typeof globalThis.setInterval> | null>(null);
 
   useEffect(() => {
+    const normalize = (version: string): string =>
+      version.startsWith("v") ? version : `v${version}`;
+    void getVersion()
+      .then((version) => setWhatsNewVersion(normalize(version)))
+      .catch(() => setWhatsNewVersion("v0.0.0"));
+  }, []);
+
+  useEffect(() => {
     if (!vaultUnlocked) return;
+    if (!whatsNewVersion) return;
     const seenVersion = localStorage.getItem(WHATS_NEW_SEEN_KEY);
-    if (seenVersion !== WHATS_NEW_VERSION) {
+    if (seenVersion !== whatsNewVersion) {
       setShowWhatsNew(true);
     }
-  }, [vaultUnlocked]);
+  }, [vaultUnlocked, whatsNewVersion]);
 
   const dismissWhatsNew = useCallback(() => {
-    localStorage.setItem(WHATS_NEW_SEEN_KEY, WHATS_NEW_VERSION);
+    if (!whatsNewVersion) return;
+    localStorage.setItem(WHATS_NEW_SEEN_KEY, whatsNewVersion);
     setShowWhatsNew(false);
-  }, []);
+  }, [whatsNewVersion]);
 
   // Auto-index workspace files when a project becomes active (if enabled in settings).
   useEffect(() => {
@@ -1946,7 +1957,7 @@ function App() {
         <AppUpdateOverlay />
         <WhatsNewOverlay
           open={shouldShowWhatsNew}
-          version={WHATS_NEW_VERSION}
+          version={whatsNewVersion ?? "v0.0.0"}
           markdown={whatsNewMarkdown}
           onClose={dismissWhatsNew}
         />

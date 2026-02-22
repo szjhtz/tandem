@@ -5,6 +5,10 @@
 - **Issue #14 fix (custom providers + live model lists)**:
   - Fixed `custom` provider routing so custom endpoint/model selections are honored for chat/automation dispatch.
   - Provider settings now prefer engine-catalog model IDs (OpenAI/Anthropic/OpenCode Zen) when available, instead of static-only dropdown content.
+- **Update + release metadata reliability**:
+  - Settings release notes now fall back to updater `latest.json` when GitHub Releases API fetches fail.
+  - Desktop CSP now allows GitHub release metadata hosts used by updater/release notes fetch paths.
+  - Sidecar updater status now reports bundled-engine version from app metadata to avoid stale beta-version prompts.
 
 ---
 
