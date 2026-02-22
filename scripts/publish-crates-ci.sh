@@ -33,6 +33,7 @@ CRATES=(
   "crates/tandem-types"
   "crates/tandem-wire"
   "crates/tandem-observability"
+  "crates/tandem-document"
   "crates/tandem-providers"
   "crates/tandem-memory"
   "crates/tandem-skills"
