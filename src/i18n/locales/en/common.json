@@ -46,6 +46,7 @@
   },
   "navigation": {
     "chat": "Chat",
+    "agentAutomation": "Agent Automation",
     "files": "Files",
     "settings": "Settings",
     "about": "About",

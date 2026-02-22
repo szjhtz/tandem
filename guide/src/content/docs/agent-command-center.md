@@ -15,7 +15,7 @@ The Agent Command Center is the desktop control surface for Agent Teams.
 
 ## Where It Lives
 
-- Desktop: `Orchestrator` panel now includes an `Agent Command Center` section.
+- Desktop: `Agent Automation` page (robot icon in left nav) under the `Agent Ops` tab.
 - Backend source of truth remains `tandem-server` (`/agent-team/*`).
 
 ## UX Goals

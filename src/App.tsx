@@ -13,6 +13,7 @@ import { FilePreview } from "@/components/files/FilePreview";
 import { GitInitDialog } from "@/components/dialogs/GitInitDialog";
 import { OrchestratorPanel } from "@/components/orchestrate/OrchestratorPanel";
 import { CommandCenterPage } from "@/components/command-center/CommandCenterPage";
+import { AgentAutomationPage } from "@/components/agent-automation/AgentAutomationPage";
 import { type RunSummary } from "@/components/orchestrate/types";
 import { PacksPanel } from "@/components/packs";
 import { AppUpdateOverlay } from "@/components/updates/AppUpdateOverlay";
@@ -77,6 +78,7 @@ import {
   Palette,
   Sparkles,
   Rocket,
+  Bot,
   Blocks,
   Loader2,
 } from "lucide-react";
@@ -88,6 +90,7 @@ const WHATS_NEW_SEEN_KEY = "tandem_whats_new_seen_version";
 type View =
   | "chat"
   | "command-center"
+  | "agent-automation"
   | "extensions"
   | "settings"
   | "about"
@@ -615,7 +618,8 @@ function App() {
             view !== "about" &&
             view !== "packs" &&
             view !== "extensions" &&
-            view !== "command-center"
+            view !== "command-center" &&
+            view !== "agent-automation"
           ? "onboarding"
           : view;
 
@@ -1489,6 +1493,17 @@ function App() {
                 <Rocket className="h-5 w-5" />
               </button>
               <button
+                onClick={() => setView("agent-automation")}
+                className={`flex h-10 w-10 items-center justify-center rounded-lg transition-colors ${
+                  effectiveView === "agent-automation"
+                    ? "bg-primary/20 text-primary"
+                    : "text-text-muted hover:bg-surface-elevated hover:text-text"
+                }`}
+                title={t("navigation.agentAutomation", { ns: "common" })}
+              >
+                <Bot className="h-5 w-5" />
+              </button>
+              <button
                 onClick={handleOpenPacks}
                 className={`flex h-10 w-10 items-center justify-center rounded-lg transition-colors ${
                   effectiveView === "packs"
@@ -1798,6 +1813,28 @@ function App() {
                   )}
                 </AnimatePresence>
               </div>
+            </motion.div>
+          ) : effectiveView === "agent-automation" ? (
+            <motion.div
+              key="agent-automation"
+              className="h-full w-full app-background"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.2, ease: "easeOut" }}
+            >
+              <AgentAutomationPage
+                userProjects={userProjects}
+                activeProject={activeProject}
+                onSwitchProject={handleSwitchProject}
+                onAddProject={handleAddProject}
+                onManageProjects={handleManageProjects}
+                projectSwitcherLoading={projectSwitcherLoading}
+                onOpenMcpExtensions={() => {
+                  setExtensionsInitialTab("mcp");
+                  setView("extensions");
+                }}
+              />
             </motion.div>
           ) : (
             <>

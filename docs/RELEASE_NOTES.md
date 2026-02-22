@@ -19,6 +19,7 @@
   - `GET /memory`
   - `DELETE /memory/{id}`
 - **Agent Command Center (Desktop)**: Added an orchestrator-embedded command center surface for Agent Teams with live mission/instance/approval visibility.
+- **Agent Automation IA split (Desktop)**: Added a dedicated `Agent Automation` page (robot icon) for MCP connector operations, scheduled bot wiring, and routine run monitoring; `Command Center` now stays focused on swarm/orchestrator runs.
 - **Agent-Team spawn approval decisions**: Added dedicated decision endpoints:
   - `POST /agent-team/approvals/spawn/{id}/approve`
   - `POST /agent-team/approvals/spawn/{id}/deny`

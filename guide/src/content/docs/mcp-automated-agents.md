@@ -10,7 +10,7 @@ Set up scheduled agents that can use MCP connector tools with explicit per-agent
 - Auto MCP tool discovery on connect (`initialize` + `tools/list`)
 - Namespaced MCP tools in the global tool registry (for example `mcp.arcade.search`)
 - Routine-level `allowed_tools` policy for scheduled bots
-- Command Center visibility for connector status and scheduled runs
+- Agent Automation visibility for connector status and scheduled runs
 
 ## 1) Configure MCP Connector
 
@@ -88,12 +88,12 @@ curl -sS "http://127.0.0.1:39731/routines/runs?routine_id=daily-mcp-research&lim
 
 Each run record includes `allowed_tools` so you can verify tool scope at execution time.
 
-## 3) Desktop Flow (Command Center)
+## 3) Desktop Flow (Agent Automation)
 
 From desktop:
 
 1. Open `Extensions -> MCP` and add/connect connector servers.
-2. Open `Command Center -> Automation Wiring`.
+2. Open `Agent Automation` (robot icon in the left nav) and use `Automated Bots`.
 3. Create a scheduled bot:
    - choose interval
    - choose entrypoint (for example `mcp.arcade.search`)

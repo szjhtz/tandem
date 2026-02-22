@@ -46,6 +46,7 @@
   },
   "navigation": {
     "chat": "聊天",
+    "agentAutomation": "Agent Automation",
     "files": "文件",
     "settings": "设置",
     "about": "关于",

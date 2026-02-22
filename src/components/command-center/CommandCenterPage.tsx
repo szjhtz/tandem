@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Button } from "@/components/ui";
 import { FileBrowser } from "@/components/files/FileBrowser";
-import { AgentCommandCenter } from "@/components/orchestrate/AgentCommandCenter";
 import { BudgetMeter } from "@/components/orchestrate/BudgetMeter";
 import { ModelSelector } from "@/components/chat/ModelSelector";
 import { AgentModelRoutingPanel } from "@/components/orchestrate/AgentModelRoutingPanel";
@@ -16,20 +15,6 @@ import {
   getSidecarStatus,
   getProvidersConfig,
   setProvidersConfig,
-  mcpListServers,
-  mcpListTools,
-  routinesCreate,
-  routinesList,
-  routinesPatch,
-  routinesRunApprove,
-  routinesRunDeny,
-  routinesRunPause,
-  routinesRunResume,
-  routinesRunsAll,
-  type McpRemoteTool,
-  type McpServerRecord,
-  type RoutineSpec,
-  type RoutineRunRecord,
   onSidecarEventV2,
   type FileEntry,
   type SidecarStartupHealth,
@@ -207,22 +192,6 @@ export function CommandCenterPage({
   const [runModelSelection, setRunModelSelection] = useState<RunModelSelection | null>(null);
   const [modelRouting, setModelRouting] = useState<OrchestratorModelRouting>({});
   const [selectedRunObjectiveExpanded, setSelectedRunObjectiveExpanded] = useState(false);
-  const [mcpServers, setMcpServers] = useState<McpServerRecord[]>([]);
-  const [mcpTools, setMcpTools] = useState<McpRemoteTool[]>([]);
-  const [mcpLoading, setMcpLoading] = useState(false);
-  const [routineRuns, setRoutineRuns] = useState<RoutineRunRecord[]>([]);
-  const [routineRunsLoading, setRoutineRunsLoading] = useState(false);
-  const [routineActionBusyRunId, setRoutineActionBusyRunId] = useState<string | null>(null);
-  const [routines, setRoutines] = useState<RoutineSpec[]>([]);
-  const [routinesLoading, setRoutinesLoading] = useState(false);
-  const [createRoutineLoading, setCreateRoutineLoading] = useState(false);
-  const [routineNameDraft, setRoutineNameDraft] = useState("MCP Automation");
-  const [routineEntrypointDraft, setRoutineEntrypointDraft] = useState("mission.default");
-  const [routineIntervalSecondsDraft, setRoutineIntervalSecondsDraft] = useState(300);
-  const [routineAllowedToolsDraft, setRoutineAllowedToolsDraft] = useState<string[]>([]);
-  const [routineOutputTargetsDraft, setRoutineOutputTargetsDraft] = useState("");
-  const [routineRequiresApprovalDraft, setRoutineRequiresApprovalDraft] = useState(true);
-  const [routineExternalAllowedDraft, setRoutineExternalAllowedDraft] = useState(true);
   const [showLogsDrawer, setShowLogsDrawer] = useState(false);
   const [autoApproveTargetRunId, setAutoApproveTargetRunId] = useState<string | null>(null);
   const [selectedWorkspaceFile, setSelectedWorkspaceFile] = useState<FileEntry | null>(null);
@@ -270,21 +239,6 @@ export function CommandCenterPage({
     }
     return Array.from(ids);
   }, [activeRunSessionId, selectedRunSessionId, tasks]);
-  const mcpToolIds = useMemo(
-    () =>
-      [...new Set(mcpTools.map((tool) => tool.namespaced_name))]
-        .filter((tool) => tool.trim().length > 0)
-        .sort(),
-    [mcpTools]
-  );
-  const allowlistChoices = useMemo(
-    () =>
-      [...new Set(["read", "write", "bash", "websearch", ...mcpToolIds])]
-        .filter((tool) => tool.trim().length > 0)
-        .sort(),
-    [mcpToolIds]
-  );
-
   const loadRuns = useCallback(async () => {
     setRunsLoading(true);
     try {
@@ -398,72 +352,6 @@ export function CommandCenterPage({
     return () => clearInterval(timer);
   }, [loadRuns]);
 
-  const loadMcpStatus = useCallback(async () => {
-    setMcpLoading(true);
-    try {
-      const [servers, tools] = await Promise.all([mcpListServers(), mcpListTools()]);
-      setMcpServers(servers);
-      setMcpTools(tools);
-    } catch {
-      setMcpServers([]);
-      setMcpTools([]);
-    } finally {
-      setMcpLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    void loadMcpStatus();
-    const timer = setInterval(() => void loadMcpStatus(), 10000);
-    return () => clearInterval(timer);
-  }, [loadMcpStatus]);
-
-  const loadRoutineRuns = useCallback(async () => {
-    setRoutineRunsLoading(true);
-    try {
-      const merged = await routinesRunsAll(undefined, 30);
-      setRoutineRuns(merged.sort((a, b) => b.created_at_ms - a.created_at_ms));
-    } catch {
-      setRoutineRuns([]);
-    } finally {
-      setRoutineRunsLoading(false);
-    }
-  }, []);
-
-  const loadRoutines = useCallback(async () => {
-    setRoutinesLoading(true);
-    try {
-      const rows = await routinesList();
-      rows.sort((a, b) => a.routine_id.localeCompare(b.routine_id));
-      setRoutines(rows);
-    } catch {
-      setRoutines([]);
-    } finally {
-      setRoutinesLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    void loadRoutineRuns();
-    const timer = setInterval(() => void loadRoutineRuns(), 10000);
-    return () => clearInterval(timer);
-  }, [loadRoutineRuns]);
-
-  useEffect(() => {
-    void loadRoutines();
-    const timer = setInterval(() => void loadRoutines(), 15000);
-    return () => clearInterval(timer);
-  }, [loadRoutines]);
-
-  useEffect(() => {
-    if (routineAllowedToolsDraft.length > 0) return;
-    if (mcpToolIds.length === 0) return;
-    setRoutineAllowedToolsDraft(["read", mcpToolIds[0]]);
-    if (routineEntrypointDraft === "mission.default") {
-      setRoutineEntrypointDraft(mcpToolIds[0]);
-    }
-  }, [mcpToolIds, routineAllowedToolsDraft.length, routineEntrypointDraft]);
-
   useEffect(() => {
     if (!autoApproveTargetRunId || !snapshot || runId !== autoApproveTargetRunId) {
       return;
@@ -572,12 +460,6 @@ export function CommandCenterPage({
         }
         const at = new Date().toLocaleTimeString();
         setEventFeed((prev) => [`${at} ${line}`, ...prev].slice(0, 40));
-        if (payload.type === "raw" && payload.event_type.startsWith("mcp.")) {
-          void loadMcpStatus();
-        }
-        if (payload.type === "raw" && payload.event_type.startsWith("routine.")) {
-          void loadRoutineRuns();
-        }
         if (
           payload.type === "run_started" ||
           payload.type === "run_finished" ||
@@ -592,93 +474,7 @@ export function CommandCenterPage({
     return () => {
       if (unlisten) unlisten();
     };
-  }, [loadMcpStatus, loadRoutineRuns, loadRuns, runId, selectedRunConsoleSessionIds]);
-
-  const handleRoutineRunAction = async (
-    run: RoutineRunRecord,
-    action: "approve" | "deny" | "pause" | "resume"
-  ) => {
-    setRoutineActionBusyRunId(run.run_id);
-    try {
-      if (action === "approve") {
-        await routinesRunApprove(run.run_id);
-      } else if (action === "deny") {
-        await routinesRunDeny(run.run_id);
-      } else if (action === "pause") {
-        await routinesRunPause(run.run_id);
-      } else {
-        await routinesRunResume(run.run_id);
-      }
-      await loadRoutineRuns();
-    } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
-      setError(`Routine run action failed: ${message}`);
-    } finally {
-      setRoutineActionBusyRunId(null);
-    }
-  };
-
-  const toggleRoutineAllowedTool = (toolId: string) => {
-    setRoutineAllowedToolsDraft((prev) => {
-      if (prev.includes(toolId)) {
-        return prev.filter((row) => row !== toolId);
-      }
-      return [...prev, toolId];
-    });
-  };
-
-  const handleCreateRoutine = async () => {
-    const trimmedName = routineNameDraft.trim();
-    if (!trimmedName) {
-      setError("Routine name is required.");
-      return;
-    }
-    const intervalSeconds = Math.max(1, Math.floor(routineIntervalSecondsDraft));
-    const outputTargets = routineOutputTargetsDraft
-      .split(",")
-      .map((value) => value.trim())
-      .filter((value) => value.length > 0);
-    setCreateRoutineLoading(true);
-    try {
-      await routinesCreate({
-        name: trimmedName,
-        schedule: {
-          interval_seconds: {
-            seconds: intervalSeconds,
-          },
-        },
-        entrypoint: routineEntrypointDraft.trim() || "mission.default",
-        args: {},
-        allowed_tools: routineAllowedToolsDraft,
-        output_targets: outputTargets,
-        requires_approval: routineRequiresApprovalDraft,
-        external_integrations_allowed: routineExternalAllowedDraft,
-      });
-      await Promise.all([loadRoutines(), loadRoutineRuns()]);
-      setRoutineNameDraft("MCP Automation");
-      setRoutineIntervalSecondsDraft(300);
-      setRoutineOutputTargetsDraft("");
-      const at = new Date().toLocaleTimeString();
-      setEventFeed((prev) => [`${at} routine created ${trimmedName}`, ...prev].slice(0, 40));
-    } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
-      setError(`Create routine failed: ${message}`);
-    } finally {
-      setCreateRoutineLoading(false);
-    }
-  };
-
-  const handleToggleRoutineStatus = async (routine: RoutineSpec) => {
-    try {
-      await routinesPatch(routine.routine_id, {
-        status: routine.status === "active" ? "paused" : "active",
-      });
-      await loadRoutines();
-    } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
-      setError(`Update routine failed: ${message}`);
-    }
-  };
+  }, [loadRuns, runId, selectedRunConsoleSessionIds]);
 
   useEffect(() => {
     let disposed = false;
@@ -1083,317 +879,6 @@ export function CommandCenterPage({
                 Advanced Controls
               </Button>
             </div>
-          </div>
-        </div>
-
-        <div className="rounded-lg border border-border bg-surface p-4">
-          <div className="flex items-center justify-between gap-2">
-            <div className="text-xs uppercase tracking-wide text-text-subtle">Automation Wiring</div>
-            <div className="text-xs text-text-muted">
-              {routinesLoading ? "Refreshing..." : `${routines.length} configured`}
-            </div>
-          </div>
-          <div className="mt-2 grid grid-cols-1 gap-3 lg:grid-cols-2">
-            <div className="rounded-md border border-border bg-surface-elevated/40 p-3">
-              <div className="text-xs font-semibold text-text">Create Scheduled Bot</div>
-              <div className="mt-2 space-y-2">
-                <input
-                  value={routineNameDraft}
-                  onChange={(event) => setRoutineNameDraft(event.target.value)}
-                  className="w-full rounded border border-border bg-surface px-2 py-1 text-xs text-text outline-none focus:border-primary/60"
-                  placeholder="Routine name"
-                />
-                <div className="grid grid-cols-2 gap-2">
-                  <input
-                    type="number"
-                    min={1}
-                    value={routineIntervalSecondsDraft}
-                    onChange={(event) =>
-                      setRoutineIntervalSecondsDraft(Number.parseInt(event.target.value || "300", 10))
-                    }
-                    className="w-full rounded border border-border bg-surface px-2 py-1 text-xs text-text outline-none focus:border-primary/60"
-                    placeholder="Interval seconds"
-                  />
-                  <select
-                    value={routineEntrypointDraft}
-                    onChange={(event) => setRoutineEntrypointDraft(event.target.value)}
-                    className="w-full rounded border border-border bg-surface px-2 py-1 text-xs text-text outline-none focus:border-primary/60"
-                  >
-                    <option value="mission.default">mission.default</option>
-                    {mcpToolIds.map((toolId) => (
-                      <option key={toolId} value={toolId}>
-                        {toolId}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div className="grid grid-cols-2 gap-2 text-[11px] text-text-subtle">
-                  <label className="inline-flex items-center gap-1">
-                    <input
-                      type="checkbox"
-                      checked={routineRequiresApprovalDraft}
-                      onChange={(event) => setRoutineRequiresApprovalDraft(event.target.checked)}
-                    />
-                    Requires approval
-                  </label>
-                  <label className="inline-flex items-center gap-1">
-                    <input
-                      type="checkbox"
-                      checked={routineExternalAllowedDraft}
-                      onChange={(event) => setRoutineExternalAllowedDraft(event.target.checked)}
-                    />
-                    External allowed
-                  </label>
-                </div>
-                <div className="rounded border border-border bg-surface p-2">
-                  <div className="text-[10px] uppercase tracking-wide text-text-subtle">
-                    Allowed Tools
-                  </div>
-                  <div className="mt-1 max-h-32 space-y-1 overflow-y-auto pr-1">
-                    {allowlistChoices.map((toolId) => (
-                      <label
-                        key={`allowlist-${toolId}`}
-                        className="flex items-center gap-2 text-[11px] text-text"
-                      >
-                        <input
-                          type="checkbox"
-                          checked={routineAllowedToolsDraft.includes(toolId)}
-                          onChange={() => toggleRoutineAllowedTool(toolId)}
-                        />
-                        <span className="truncate font-mono text-[10px]">{toolId}</span>
-                      </label>
-                    ))}
-                    {allowlistChoices.length === 0 ? (
-                      <div className="text-[11px] text-text-muted">
-                        No tools available yet. Connect MCP servers to populate options.
-                      </div>
-                    ) : null}
-                  </div>
-                </div>
-                <input
-                  value={routineOutputTargetsDraft}
-                  onChange={(event) => setRoutineOutputTargetsDraft(event.target.value)}
-                  className="w-full rounded border border-border bg-surface px-2 py-1 text-xs text-text outline-none focus:border-primary/60"
-                  placeholder="Output targets (comma-separated URIs)"
-                />
-                <Button
-                  size="sm"
-                  variant="primary"
-                  disabled={createRoutineLoading}
-                  onClick={() => void handleCreateRoutine()}
-                >
-                  {createRoutineLoading ? "Creating..." : "Create routine"}
-                </Button>
-              </div>
-            </div>
-            <div className="rounded-md border border-border bg-surface-elevated/40 p-3">
-              <div className="text-xs font-semibold text-text">Configured Routines</div>
-              <div className="mt-2 space-y-2">
-                {routines.slice(0, 8).map((routine) => (
-                  <div
-                    key={routine.routine_id}
-                    className="rounded border border-border bg-surface px-2 py-2"
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="min-w-0">
-                        <div className="truncate text-xs font-semibold text-text">{routine.name}</div>
-                        <div className="truncate text-[11px] text-text-muted">{routine.routine_id}</div>
-                        <div className="truncate text-[11px] text-text-subtle">
-                          {routine.entrypoint} · {routine.status}
-                        </div>
-                        {routine.output_targets.length > 0 ? (
-                          <div className="truncate text-[11px] text-text-subtle">
-                            outputs: {routine.output_targets.length}
-                          </div>
-                        ) : null}
-                      </div>
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        onClick={() => void handleToggleRoutineStatus(routine)}
-                      >
-                        {routine.status === "active" ? "Pause" : "Resume"}
-                      </Button>
-                    </div>
-                  </div>
-                ))}
-                {!routinesLoading && routines.length === 0 ? (
-                  <div className="rounded border border-border bg-surface px-2 py-2 text-xs text-text-muted">
-                    No routines configured.
-                  </div>
-                ) : null}
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div className="rounded-lg border border-border bg-surface p-4">
-          <div className="flex items-center justify-between gap-2">
-            <div className="text-xs uppercase tracking-wide text-text-subtle">Scheduled Bots</div>
-            <div className="text-xs text-text-muted">
-              {routineRunsLoading ? "Refreshing..." : `${routineRuns.length} recent runs`}
-            </div>
-          </div>
-          <div className="mt-2 grid grid-cols-1 gap-2">
-            <div className="grid grid-cols-1 gap-2 sm:grid-cols-4">
-              <div className="rounded-md border border-border bg-surface-elevated/50 px-3 py-2">
-                <div className="text-[10px] uppercase tracking-wide text-text-subtle">
-                  Needs Approval
-                </div>
-                <div className="text-sm font-semibold text-text">
-                  {routineRuns.filter((run) => run.status === "pending_approval").length}
-                </div>
-              </div>
-              <div className="rounded-md border border-border bg-surface-elevated/50 px-3 py-2">
-                <div className="text-[10px] uppercase tracking-wide text-text-subtle">Blocked</div>
-                <div className="text-sm font-semibold text-text">
-                  {routineRuns.filter((run) => run.status === "blocked_policy").length}
-                </div>
-              </div>
-              <div className="rounded-md border border-border bg-surface-elevated/50 px-3 py-2">
-                <div className="text-[10px] uppercase tracking-wide text-text-subtle">Paused</div>
-                <div className="text-sm font-semibold text-text">
-                  {routineRuns.filter((run) => run.status === "paused").length}
-                </div>
-              </div>
-              <div className="rounded-md border border-border bg-surface-elevated/50 px-3 py-2">
-                <div className="text-[10px] uppercase tracking-wide text-text-subtle">
-                  Artifacts
-                </div>
-                <div className="text-sm font-semibold text-text">
-                  {routineRuns.reduce((sum, run) => sum + run.artifacts.length, 0)}
-                </div>
-              </div>
-            </div>
-            {routineRuns.slice(0, 8).map((run) => {
-              const busy = routineActionBusyRunId === run.run_id;
-              return (
-                <div
-                  key={run.run_id}
-                  className="rounded-md border border-border bg-surface-elevated/50 px-3 py-2"
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="min-w-0">
-                      <div className="truncate text-xs font-semibold text-text">
-                        {run.routine_id} · {run.status}
-                      </div>
-                      <div className="mt-0.5 truncate text-[11px] text-text-muted">
-                        run {run.run_id} · {run.trigger_type}
-                      </div>
-                      {run.artifacts.length > 0 ? (
-                        <div className="mt-0.5 text-[11px] text-text-subtle">
-                          {run.artifacts.length} artifact{run.artifacts.length === 1 ? "" : "s"}
-                        </div>
-                      ) : null}
-                      {run.allowed_tools.length > 0 ? (
-                        <div className="mt-1 flex flex-wrap gap-1">
-                          {run.allowed_tools.slice(0, 3).map((toolId) => (
-                            <span
-                              key={`${run.run_id}-${toolId}`}
-                              className="rounded border border-border bg-surface px-1.5 py-0.5 text-[10px] text-text-subtle"
-                            >
-                              {toolId}
-                            </span>
-                          ))}
-                          {run.allowed_tools.length > 3 ? (
-                            <span className="rounded border border-border bg-surface px-1.5 py-0.5 text-[10px] text-text-subtle">
-                              +{run.allowed_tools.length - 3} more
-                            </span>
-                          ) : null}
-                        </div>
-                      ) : (
-                        <div className="mt-0.5 text-[11px] text-text-subtle">tool scope: all</div>
-                      )}
-                      {run.output_targets.length > 0 ? (
-                        <div className="mt-0.5 text-[11px] text-text-subtle">
-                          outputs: {run.output_targets.length}
-                        </div>
-                      ) : null}
-                    </div>
-                    <div className="flex items-center gap-1">
-                      {run.status === "pending_approval" ? (
-                        <>
-                          <Button
-                            size="sm"
-                            variant="secondary"
-                            disabled={busy}
-                            onClick={() => void handleRoutineRunAction(run, "approve")}
-                          >
-                            Approve
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            disabled={busy}
-                            onClick={() => void handleRoutineRunAction(run, "deny")}
-                          >
-                            Deny
-                          </Button>
-                        </>
-                      ) : null}
-                      {run.status === "queued" || run.status === "running" ? (
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          disabled={busy}
-                          onClick={() => void handleRoutineRunAction(run, "pause")}
-                        >
-                          Pause
-                        </Button>
-                      ) : null}
-                      {run.status === "paused" ? (
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          disabled={busy}
-                          onClick={() => void handleRoutineRunAction(run, "resume")}
-                        >
-                          Resume
-                        </Button>
-                      ) : null}
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-            {!routineRunsLoading && routineRuns.length === 0 ? (
-              <div className="rounded-md border border-border bg-surface-elevated/50 px-3 py-2 text-xs text-text-muted">
-                No recent routine runs.
-              </div>
-            ) : null}
-          </div>
-        </div>
-
-        <div className="rounded-lg border border-border bg-surface p-4">
-          <div className="flex items-center justify-between gap-2">
-            <div className="text-xs uppercase tracking-wide text-text-subtle">Connectors</div>
-            <div className="text-xs text-text-muted">
-              {mcpLoading
-                ? "Refreshing..."
-                : `${mcpServers.filter((row) => row.connected).length}/${mcpServers.length} connected`}
-            </div>
-          </div>
-          <div className="mt-2 grid grid-cols-1 gap-2 md:grid-cols-2">
-            {mcpServers.slice(0, 6).map((server) => {
-              const count = mcpTools.filter((tool) => tool.server_name === server.name).length;
-              return (
-                <div
-                  key={server.name}
-                  className="rounded-md border border-border bg-surface-elevated/50 px-3 py-2"
-                >
-                  <div className="text-xs font-semibold text-text">{server.name}</div>
-                  <div className="mt-0.5 text-[11px] text-text-muted">
-                    {server.enabled ? "enabled" : "disabled"} ·{" "}
-                    {server.connected ? "connected" : "disconnected"} · {count} tools
-                  </div>
-                </div>
-              );
-            })}
-            {!mcpLoading && mcpServers.length === 0 ? (
-              <div className="rounded-md border border-border bg-surface-elevated/50 px-3 py-2 text-xs text-text-muted">
-                No MCP connectors configured.
-              </div>
-            ) : null}
           </div>
         </div>
 
@@ -2128,11 +1613,6 @@ export function CommandCenterPage({
             <div className="rounded-lg border border-border bg-surface-elevated/40 p-3 text-xs text-text-muted">
               Orchestrator role model routing applies to newly launched runs from this page.
             </div>
-            <div className="rounded-lg border border-border bg-surface p-3 text-xs text-text-muted">
-              Operator Controls use agent-team mission APIs for manual spawn, approval triage,
-              mission/instance cancellation, and forensic exports.
-            </div>
-            <AgentCommandCenter />
           </div>
         )}
       </div>
