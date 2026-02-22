@@ -405,6 +405,10 @@ export function AgentAutomationPage({
           void loadRoutineRuns();
           return;
         }
+        if (eventType.startsWith("run.") || eventType.startsWith("approval.")) {
+          void loadRoutineRuns();
+          return;
+        }
         if (eventType.startsWith("agent_team.")) {
           // Agent Ops tab handles its own refresh; this keeps page-level state simple.
         }
