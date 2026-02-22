@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.10]
+
+### Changed
+
+- **Provider model selection now catalog-backed in Settings**: OpenAI, Anthropic, and OpenCode Zen settings now prefer live engine catalog model IDs when available instead of static-only model lists.
+
+### Fixed
+
+- **Custom provider routing and validation (#14)**: Fixed `custom` provider resolution in desktop Tauri routing so explicit custom provider/model selections dispatch correctly for chat and automation flows.
+- **Custom provider selection persistence**: Saving/enabling a custom provider now updates `providers_config.selected_model` when a model is provided, preventing silent fallback to unrelated provider/model selections.
+
 ## [0.3.9]
 
 ### Added
@@ -901,7 +912,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Project-based organization
 - Real-time streaming responses
 
-[0.3.9]: https://github.com/frumu-ai/tandem/compare/v0.3.7...HEAD
+[0.3.10]: https://github.com/frumu-ai/tandem/compare/v0.3.9...HEAD
+[0.3.9]: https://github.com/frumu-ai/tandem/compare/v0.3.7...v0.3.9
 [0.3.7]: https://github.com/frumu-ai/tandem/compare/v0.3.6...v0.3.7
 [0.3.6]: https://github.com/frumu-ai/tandem/compare/v0.3.5...v0.3.6
 [0.3.5]: https://github.com/frumu-ai/tandem/compare/v0.3.2...v0.3.5

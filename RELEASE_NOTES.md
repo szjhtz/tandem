@@ -2,6 +2,12 @@
 
 Canonical release notes live in `docs/RELEASE_NOTES.md`.
 
+## v0.3.10 (Unreleased)
+
+- Issue #14 fix (custom providers + live model lists):
+  - Fixed `custom` provider routing so custom endpoint/model selections are honored for chat/automation dispatch.
+  - Provider settings now prefer engine-catalog model IDs (OpenAI/Anthropic/OpenCode Zen) when available, instead of static-only dropdown content.
+
 ## v0.3.9 (Unreleased)
 
 - Memory Consolidation: Added opt-in LLM summarization of session memory using the cheapest available configured provider (prioritizing local/free options like Ollama, Groq, OpenRouter). Automatically triggers as a background task when a session completes.

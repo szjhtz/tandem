@@ -96,6 +96,7 @@ interface ProviderCardProps {
   endpoint: string;
   defaultEndpoint?: string; // Default endpoint for reset functionality
   model?: string;
+  catalogModelIds?: string[];
   isDefault?: boolean;
   enabled: boolean;
   onEnabledChange: (enabled: boolean) => void;
@@ -113,6 +114,7 @@ export function ProviderCard({
   endpoint,
   defaultEndpoint,
   model,
+  catalogModelIds = [],
   isDefault = false,
   enabled,
   onEnabledChange,
@@ -138,14 +140,26 @@ export function ProviderCard({
   const [endpointInput, setEndpointInput] = useState(endpoint);
   const [isEditingEndpoint, setIsEditingEndpoint] = useState(false);
 
+  type ModelOption = { id: string; name: string; description?: string };
+
   const isTextInputProvider = TEXT_INPUT_PROVIDERS.includes(id);
-  const availableModels = PROVIDER_MODELS[id] || [];
+  const staticModels: ModelOption[] = PROVIDER_MODELS[id] || [];
+  const catalogModels = [...new Set(catalogModelIds.map((m) => m.trim()).filter(Boolean))];
+  const availableModels: ModelOption[] =
+    catalogModels.length > 0
+      ? catalogModels.map((modelId) => ({
+          id: modelId,
+          name: modelId,
+        }))
+      : staticModels;
 
   // Use discovered models for Ollama suggestions, otherwise fallback to static ones
   const suggestions =
     id === "ollama" && discoveredModels.length > 0
       ? discoveredModels.map((m) => m.id)
-      : SUGGESTED_MODELS[id] || [];
+      : catalogModels.length > 0
+        ? catalogModels
+        : SUGGESTED_MODELS[id] || [];
 
   const selectedModel = model || availableModels[0]?.id || "";
   const selectedModelInfo = availableModels.find((m) => m.id === selectedModel);

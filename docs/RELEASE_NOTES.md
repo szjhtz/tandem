@@ -1,4 +1,14 @@
-# Tandem v0.3.9 Release Notes (Unreleased)
+# Tandem v0.3.10 Release Notes (Unreleased)
+
+### Highlights
+
+- **Issue #14 fix (custom providers + live model lists)**:
+  - Fixed `custom` provider routing so custom endpoint/model selections are honored for chat/automation dispatch.
+  - Provider settings now prefer engine-catalog model IDs (OpenAI/Anthropic/OpenCode Zen) when available, instead of static-only dropdown content.
+
+---
+
+# Tandem v0.3.9 Release Notes
 
 ### Highlights
 

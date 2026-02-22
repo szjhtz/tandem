@@ -62,6 +62,7 @@ import {
   getStorageMigrationStatus,
   runStorageMigration,
   getEngineApiToken,
+  listModels,
   type EngineApiTokenInfo,
   type ProvidersConfig,
   type CustomBackgroundInfo,
@@ -150,12 +151,21 @@ export function Settings({
   const [latestRelease, setLatestRelease] = useState<LatestReleaseSummary | null>(null);
   const [latestReleaseLoading, setLatestReleaseLoading] = useState(false);
   const [latestReleaseError, setLatestReleaseError] = useState<string | null>(null);
+  const [providerCatalogModels, setProviderCatalogModels] = useState<Record<string, string[]>>({});
 
   useEffect(() => {
     loadSettings();
     void loadCustomBackground();
     void loadLatestReleaseNotes();
+    void loadProviderCatalogModels();
     getVersion().then(setAppVersion);
+  }, []);
+
+  useEffect(() => {
+    const timer = globalThis.setInterval(() => {
+      void loadProviderCatalogModels();
+    }, 20000);
+    return () => globalThis.clearInterval(timer);
   }, []);
 
   useEffect(() => {
@@ -270,6 +280,34 @@ export function Settings({
       setLatestRelease(null);
     } finally {
       setLatestReleaseLoading(false);
+    }
+  };
+
+  const normalizeProviderId = (providerId: string): string => {
+    const trimmed = providerId.trim().toLowerCase();
+    if (trimmed === "opencode" || trimmed === "zen") {
+      return "opencode_zen";
+    }
+    return trimmed;
+  };
+
+  const loadProviderCatalogModels = async () => {
+    try {
+      const models = await listModels();
+      const grouped: Record<string, Set<string>> = {};
+      for (const model of models) {
+        if (!model.provider || !model.id) continue;
+        const providerId = normalizeProviderId(model.provider);
+        if (!grouped[providerId]) grouped[providerId] = new Set();
+        grouped[providerId].add(model.id);
+      }
+      const next: Record<string, string[]> = {};
+      for (const [providerId, ids] of Object.entries(grouped)) {
+        next[providerId] = [...ids].sort((a, b) => a.localeCompare(b));
+      }
+      setProviderCatalogModels(next);
+    } catch {
+      setProviderCatalogModels({});
     }
   };
 
@@ -526,6 +564,11 @@ export function Settings({
 
   const handleCustomProviderSave = async () => {
     if (!providers || !customEndpoint.trim()) return;
+    const normalizedModel = customModel.trim();
+    const selectedModel =
+      customEnabled && normalizedModel.length > 0
+        ? { provider_id: "custom", model_id: normalizedModel }
+        : (providers.selected_model ?? null);
 
     // When enabling custom provider, disable all others
     const updated: ProvidersConfig = {
@@ -540,11 +583,11 @@ export function Settings({
           enabled: customEnabled,
           default: customEnabled,
           endpoint: customEndpoint,
-          model: customModel || undefined,
+          model: normalizedModel || undefined,
           has_key: false, // Custom provider key checking not implemented yet
         },
       ],
-      selected_model: providers.selected_model ?? null,
+      selected_model: selectedModel,
     };
 
     setProviders(updated);
@@ -564,6 +607,7 @@ export function Settings({
     setCustomEnabled(enabled);
 
     if (enabled && providers) {
+      const normalizedModel = customModel.trim();
       // When enabling custom provider, disable all others
       const updated: ProvidersConfig = {
         openrouter: { ...providers.openrouter, enabled: false, default: false },
@@ -577,20 +621,28 @@ export function Settings({
             enabled: true,
             default: true,
             endpoint: customEndpoint || "https://api.example.com/v1",
-            model: customModel || undefined,
+            model: normalizedModel || undefined,
             has_key: false, // Custom provider key checking not implemented yet
           },
         ],
-        selected_model: providers.selected_model ?? null,
+        selected_model:
+          normalizedModel.length > 0
+            ? { provider_id: "custom", model_id: normalizedModel }
+            : (providers.selected_model ?? null),
       };
 
       setProviders(updated);
       await setProvidersConfig(updated);
     } else if (!enabled && providers) {
       // Disable custom provider
+      const selectedModel = providers.selected_model;
       const updated: ProvidersConfig = {
         ...providers,
         custom: [],
+        selected_model:
+          selectedModel?.provider_id?.trim().toLowerCase() === "custom"
+            ? null
+            : (selectedModel ?? null),
       };
 
       setProviders(updated);
@@ -1427,6 +1479,7 @@ export function Settings({
                 endpoint={providers.opencode_zen.endpoint}
                 defaultEndpoint="https://opencode.ai/zen/v1"
                 model={providers.opencode_zen.model}
+                catalogModelIds={providerCatalogModels.opencode_zen ?? []}
                 isDefault={providers.opencode_zen.default}
                 enabled={providers.opencode_zen.enabled}
                 onEnabledChange={(enabled) => handleProviderChange("opencode_zen", enabled)}
@@ -1444,6 +1497,7 @@ export function Settings({
                 endpoint={providers.openrouter.endpoint}
                 defaultEndpoint="https://openrouter.ai/api/v1"
                 model={providers.openrouter.model}
+                catalogModelIds={providerCatalogModels.openrouter ?? []}
                 isDefault={providers.openrouter.default}
                 enabled={providers.openrouter.enabled}
                 onEnabledChange={(enabled) => handleProviderChange("openrouter", enabled)}
@@ -1461,6 +1515,7 @@ export function Settings({
                 endpoint={providers.anthropic.endpoint}
                 defaultEndpoint="https://api.anthropic.com"
                 model={providers.anthropic.model}
+                catalogModelIds={providerCatalogModels.anthropic ?? []}
                 isDefault={providers.anthropic.default}
                 enabled={providers.anthropic.enabled}
                 onEnabledChange={(enabled) => handleProviderChange("anthropic", enabled)}
@@ -1478,6 +1533,7 @@ export function Settings({
                 endpoint={providers.openai.endpoint}
                 defaultEndpoint="https://api.openai.com/v1"
                 model={providers.openai.model}
+                catalogModelIds={providerCatalogModels.openai ?? []}
                 isDefault={providers.openai.default}
                 enabled={providers.openai.enabled}
                 onEnabledChange={(enabled) => handleProviderChange("openai", enabled)}
@@ -1495,6 +1551,7 @@ export function Settings({
                 endpoint={providers.ollama.endpoint}
                 defaultEndpoint="http://localhost:11434"
                 model={providers.ollama.model}
+                catalogModelIds={providerCatalogModels.ollama ?? []}
                 isDefault={providers.ollama.default}
                 enabled={providers.ollama.enabled}
                 onEnabledChange={(enabled) => handleProviderChange("ollama", enabled)}
@@ -1512,6 +1569,7 @@ export function Settings({
                 endpoint={providers.poe.endpoint}
                 defaultEndpoint="https://api.poe.com/v1"
                 model={providers.poe.model}
+                catalogModelIds={providerCatalogModels.poe ?? []}
                 isDefault={providers.poe.default}
                 enabled={providers.poe.enabled}
                 onEnabledChange={(enabled) => handleProviderChange("poe", enabled)}

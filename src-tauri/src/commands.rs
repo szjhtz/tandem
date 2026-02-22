@@ -537,6 +537,8 @@ fn resolve_default_provider_and_model(
         ("ollama", &config.ollama),
         ("poe", &config.poe),
     ];
+    let custom_default = config.custom.iter().find(|c| c.enabled && c.default);
+    let custom_enabled = config.custom.iter().find(|c| c.enabled);
 
     if let Some((provider_id, provider)) = candidates
         .iter()
@@ -546,10 +548,18 @@ fn resolve_default_provider_and_model(
         return (Some(provider_id.to_string()), provider.model.clone());
     }
 
+    if let Some(provider) = custom_default {
+        return (Some("custom".to_string()), provider.model.clone());
+    }
+
     for (provider_id, provider) in candidates {
         if provider.enabled {
             return (Some(provider_id.to_string()), provider.model.clone());
         }
+    }
+
+    if let Some(provider) = custom_enabled {
+        return (Some("custom".to_string()), provider.model.clone());
     }
 
     (None, None)
@@ -569,6 +579,7 @@ fn selected_provider_slot(config: &ProvidersConfig) -> Option<&'static str> {
         "poe" => Some("poe"),
         "opencode" | "opencode_zen" | "zen" => Some("opencode_zen"),
         "ollama" => Some("ollama"),
+        "custom" => Some("custom"),
         _ => None,
     }
 }
@@ -583,6 +594,7 @@ fn provider_slot_active(config: &ProvidersConfig, slot: &str) -> bool {
         "openai" => config.openai.enabled || selected_active,
         "poe" => config.poe.enabled || selected_active,
         "ollama" => config.ollama.enabled || selected_active,
+        "custom" => config.custom.iter().any(|provider| provider.enabled) || selected_active,
         _ => selected_active,
     }
 }
@@ -698,6 +710,10 @@ async fn validate_model_provider_in_sidecar_catalog(
 
     let model = model.unwrap();
     let provider = provider.unwrap().to_lowercase();
+    if provider == "custom" {
+        return Ok(());
+    }
+
     let models = state.sidecar.list_models().await.map_err(|e| {
         TandemError::Sidecar(format!(
             "Failed to validate selected model/provider against sidecar catalog: {}",
