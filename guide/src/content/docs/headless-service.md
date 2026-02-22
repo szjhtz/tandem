@@ -76,6 +76,7 @@ curl -s http://127.0.0.1:39731/channels/status \
 ## See Also
 
 - [Engine Commands](./reference/engine-commands/)
+- [MCP Automated Agents](./mcp-automated-agents/)
 - [Configuration](./configuration/)
 - [Running Tandem](./usage/)
 - [Headless Deployment (Docker/systemd)](./desktop/headless-deployment/)

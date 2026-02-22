@@ -13,6 +13,7 @@ Welcome to the Tandem documentation focused on the TUI and engine runtime.
 - [Installation (Legacy Entry)](./installation/)
 - [Running Tandem](./usage/)
 - [Headless Service](./headless-service/)
+- [MCP Automated Agents](./mcp-automated-agents/)
 
 ## User Guide
 
@@ -22,6 +23,7 @@ Welcome to the Tandem documentation focused on the TUI and engine runtime.
 - [Headless Deployment](./desktop/headless-deployment/)
 - [Agent Teams](./agent-teams/)
 - [Agent Command Center](./agent-command-center/)
+- [MCP Automated Agents](./mcp-automated-agents/)
 - [Agent Teams Rollout Plan](./agent-teams-rollout/)
 - [Design System](./design-system/)
 
