@@ -92,9 +92,14 @@ Each run record includes `allowed_tools` so you can verify tool scope at executi
 From desktop:
 
 1. Open `Extensions -> MCP` and add/connect connector servers.
-2. Open `Command Center` to monitor scheduled bots and connector status.
-3. Use run actions (`Approve`, `Deny`, `Pause`, `Resume`) for gated runs.
-4. In Scheduled Bots, inspect tool scope shown on each run card.
+2. Open `Command Center -> Automation Wiring`.
+3. Create a scheduled bot:
+   - choose interval
+   - choose entrypoint (for example `mcp.arcade.search`)
+   - choose `allowed_tools` from MCP and built-ins
+4. Use `Configured Routines` actions to pause/resume routines.
+5. Use `Scheduled Bots` run actions (`Approve`, `Deny`, `Pause`, `Resume`) for gated runs.
+6. In `Scheduled Bots`, inspect tool scope shown on each run card.
 
 ## 4) SSE Visibility
 
