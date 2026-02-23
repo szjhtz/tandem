@@ -288,6 +288,24 @@ If you intentionally need pnpm fallback, set SETUP_ALLOW_PNPM_FALLBACK=1."
   run_as_service_user "$npm_path" --prefix "$npm_install_prefix" install -g @frumu/tandem
 }
 
+refresh_tandem_engine_latest() {
+  local npm_path="$1"
+  if [[ -z "$npm_path" || ! -x "$npm_path" ]]; then
+    log "Skipping tandem engine refresh: npm unavailable"
+    return 0
+  fi
+  local npm_install_prefix="$NPM_INSTALL_PREFIX"
+  if [[ -z "$npm_install_prefix" ]]; then
+    npm_install_prefix="$(resolve_npm_install_prefix "$npm_path" || true)"
+  fi
+  if [[ -z "$npm_install_prefix" ]]; then
+    log "Skipping tandem engine refresh: unable to resolve npm install prefix"
+    return 0
+  fi
+  log "Refreshing @frumu/tandem to latest via npm"
+  run_as_service_user "$npm_path" --prefix "$npm_install_prefix" install -g @frumu/tandem@latest
+}
+
 validate_tandem_engine() {
   if [[ -n "${ENGINE_PATH:-}" && -x "${ENGINE_PATH:-}" ]]; then
     if run_as_service_user "$ENGINE_PATH" --version >/dev/null 2>&1; then
@@ -350,6 +368,17 @@ if [[ -n "$ENGINE_PATH" ]]; then
         log "tandem-engine is still unusable after npm reinstall; forcing npx fallback runtime"
         ENGINE_PATH=""
       fi
+    fi
+  fi
+fi
+
+if [[ "${SETUP_ENGINE_AUTO_UPDATE:-1}" == "1" ]]; then
+  refresh_tandem_engine_latest "$NPM_PATH" || true
+  ENGINE_PATH="$(resolve_tandem_engine || true)"
+  if [[ -n "$ENGINE_PATH" ]]; then
+    if ! validate_tandem_engine; then
+      log "Latest npm install produced unusable tandem-engine; switching to npx fallback runtime"
+      ENGINE_PATH=""
     fi
   fi
 fi

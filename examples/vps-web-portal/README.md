@@ -79,8 +79,9 @@ Tool resolution is deterministic and does not depend on interactive shell startu
 
 1. Prefer `npm` for `@frumu/tandem` global install (ensures native postinstall runs consistently).
 2. Fallback to `pnpm` only when explicitly enabled with `SETUP_ALLOW_PNPM_FALLBACK=1`.
-3. Resolve `node` and `tandem-engine` from absolute paths for use in systemd `ExecStart`.
-4. If no standalone `tandem-engine` binary is usable, fallback to `npx -y @frumu/tandem`.
+3. Refresh `@frumu/tandem` to `@latest` on each setup run (disable with `SETUP_ENGINE_AUTO_UPDATE=0`).
+4. Resolve `node` and `tandem-engine` from absolute paths for use in systemd `ExecStart`.
+5. If no standalone `tandem-engine` binary is usable, fallback to `npx -y @frumu/tandem`.
 
 Or follow the manual steps below.
 
