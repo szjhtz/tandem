@@ -20,6 +20,12 @@ cd examples/vps-web-portal
 sudo TANDEM_STATE_DIR=/srv/tandem bash setup-vps.sh
 ```
 
+To keep the engine sandbox limited to `TANDEM_STATE_DIR` only (no `/home/$USER` access), run:
+
+```bash
+sudo TANDEM_ALLOW_HOME_ACCESS=0 bash ./setup-vps.sh
+```
+
 Optional: pre-create `.env` in this folder with provider keys (`OPENROUTER_API_KEY`, etc.).  
 The script merges those into `/etc/tandem/engine.env` automatically.
 

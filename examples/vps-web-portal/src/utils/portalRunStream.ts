@@ -37,7 +37,56 @@ export const attachPortalRunStream = (
   eventSourceRef.current = source;
   let finalized = false;
   let sawRunEvent = false;
+  let streamedAssistantText = "";
+  const textSnapshots = new Map<string, string>();
   const runTimeoutMs = options?.runTimeoutMs;
+
+  const hydrateFinalAssistantText = async () => {
+    try {
+      const messages = await api.getSessionMessages(sessionId);
+      let latestAssistantText = "";
+      for (let i = messages.length - 1; i >= 0; i--) {
+        const msg = messages[i];
+        if (msg.info?.role !== "assistant") continue;
+        const text = (msg.parts || [])
+          .filter((p) => p.type === "text" && p.text)
+          .map((p) => p.text)
+          .join("\n")
+          .trim();
+        if (text) {
+          latestAssistantText = text;
+          break;
+        }
+      }
+      if (!latestAssistantText) return;
+
+      if (!streamedAssistantText) {
+        handlers.addTextDelta(latestAssistantText);
+        handlers.addSystemLog("Recovered final assistant output from session history.");
+        return;
+      }
+
+      if (latestAssistantText.startsWith(streamedAssistantText)) {
+        const suffix = latestAssistantText.slice(streamedAssistantText.length);
+        if (suffix) {
+          handlers.addTextDelta(suffix);
+          handlers.addSystemLog(
+            "Recovered missing trailing assistant output from session history."
+          );
+        }
+        return;
+      }
+
+      if (latestAssistantText !== streamedAssistantText) {
+        handlers.addTextDelta(`\n${latestAssistantText}`);
+        handlers.addSystemLog(
+          "Assistant output differed from live stream; synced from session history."
+        );
+      }
+    } catch {
+      // best-effort hydration; leave stream finalize path intact
+    }
+  };
 
   const finalize = (status: string) => {
     if (finalized) return;
@@ -47,11 +96,14 @@ export const attachPortalRunStream = (
       window.clearTimeout(runTimeout);
     }
     window.clearInterval(runStatePoll);
-    handlers.onFinalize(status);
-    source.close();
-    if (eventSourceRef.current === source) {
-      eventSourceRef.current = null;
-    }
+    void (async () => {
+      await hydrateFinalAssistantText();
+      handlers.onFinalize(status);
+      source.close();
+      if (eventSourceRef.current === source) {
+        eventSourceRef.current = null;
+      }
+    })();
   };
 
   const watchdog = window.setTimeout(async () => {
@@ -186,8 +238,32 @@ export const attachPortalRunStream = (
       }
 
       const delta = data?.properties?.delta;
-      if (part.type === "text" && typeof delta === "string" && delta.length > 0) {
-        handlers.addTextDelta(delta);
+      if (part.type === "text") {
+        if (typeof delta === "string" && delta.length > 0) {
+          streamedAssistantText += delta;
+          handlers.addTextDelta(delta);
+          return;
+        }
+        const fullText = typeof part?.text === "string" ? part.text : "";
+        if (fullText.length > 0) {
+          const key = String(
+            part?.id ||
+              part?.partID ||
+              data?.properties?.messageID ||
+              data?.properties?.id ||
+              "text-part"
+          );
+          const prev = textSnapshots.get(key) || "";
+          if (fullText.startsWith(prev) && fullText.length > prev.length) {
+            const inferredDelta = fullText.slice(prev.length);
+            streamedAssistantText += inferredDelta;
+            handlers.addTextDelta(inferredDelta);
+          } else if (!prev && !streamedAssistantText) {
+            streamedAssistantText += fullText;
+            handlers.addTextDelta(fullText);
+          }
+          textSnapshots.set(key, fullText);
+        }
       }
     } catch {
       handlers.addSystemLog("Failed to parse stream event payload.");
