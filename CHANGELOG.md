@@ -956,7 +956,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Project-based organization
 - Real-time streaming responses
 
-[0.3.14]: https://github.com/frumu-ai/tandem/compare/v0.3.13...HEAD
+[0.3.15]: https://github.com/frumu-ai/tandem/compare/v0.3.14...v0.3.15
+[0.3.14]: https://github.com/frumu-ai/tandem/compare/v0.3.13...v0.3.14
 [0.3.12]: https://github.com/frumu-ai/tandem/compare/v0.3.11...v0.3.12
 [0.3.11]: https://github.com/frumu-ai/tandem/compare/v0.3.10...v0.3.11
 [0.3.10]: https://github.com/frumu-ai/tandem/compare/v0.3.9...v0.3.10

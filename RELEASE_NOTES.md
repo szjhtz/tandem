@@ -2,7 +2,7 @@
 
 Canonical release notes live in `docs/RELEASE_NOTES.md`.
 
-## v0.3.15 (Unreleased)
+## v0.3.15
 
 - Breaking web tool migration:
   - `webfetch_document` was removed.
