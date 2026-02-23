@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **What's New release-note mismatch**: Desktop now fetches release notes for the installed app tag from GitHub at runtime instead of relying on a hardcoded local markdown import.
 - **Safe fallback behavior**: If release-note fetch fails or a version body is unavailable, the What's New overlay shows no stale notes and links users to the latest GitHub release page.
+- **Plan task execution integrity**: "Execute Pending Tasks" now uses a strict completion contract and validates task completion from actual `todowrite`-driven todo status updates, not assistant text claims.
+- **Pending-task payload correctness**: Chat execution now receives pending-only tasks (instead of all todos), so execution prompts and sidebar counts stay consistent.
 
 ## [0.3.15]
 

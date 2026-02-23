@@ -5,6 +5,10 @@
 - **What's New release-note alignment hotfix**:
   - The desktop What's New overlay now fetches release notes for the installed app tag from GitHub at runtime.
   - If release-note fetch fails or the matched release has no body text, the overlay avoids stale local note content and links users to the latest release page.
+- **Plan execution task-state integrity**:
+  - `Execute Pending Tasks` now requires real todo state transitions (`todowrite`) before Tandem considers execution complete.
+  - Assistant-only completion claims no longer mark execution as successful when todo statuses remain pending.
+  - Execution now targets pending-only tasks, keeping prompt payloads in sync with the Tasks sidebar.
 
 ---
 

@@ -7,6 +7,10 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
 - AI hotfix: What's New release-note alignment
   - The What's New overlay now fetches release notes by installed app tag from GitHub at runtime.
   - If release-note fetch fails or body text is unavailable, the overlay no longer shows stale bundled notes and instead points users to the latest release page.
+- Plan execution task-state integrity
+  - **Execute Pending Tasks** now enforces a strict completion contract: task execution is only considered complete when todo statuses are updated via `todowrite`.
+  - Assistant text like "all tasks completed" is no longer trusted on its own; mismatches now surface an explicit execution-incomplete error.
+  - Execution payload now includes pending-only tasks so the chat prompt and Tasks sidebar stay aligned.
 
 ## v0.3.15
 
