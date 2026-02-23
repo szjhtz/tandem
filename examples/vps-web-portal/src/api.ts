@@ -28,6 +28,25 @@ export const setPortalWorkspaceRoot = (value: string | null): void => {
 const asString = (value: unknown): string | null =>
   typeof value === "string" && value.trim().length > 0 ? value : null;
 
+const splitCommandLine = (raw: string): string[] => {
+  const input = raw.trim();
+  if (!input) return [];
+  // Minimal shell-like tokenizer for quoted args in UI shortcuts.
+  const tokens = input.match(/"[^"]*"|'[^']*'|[^\s]+/g) || [];
+  return tokens
+    .map((token) => token.trim())
+    .filter((token) => token.length > 0)
+    .map((token) => {
+      if (
+        (token.startsWith('"') && token.endsWith('"')) ||
+        (token.startsWith("'") && token.endsWith("'"))
+      ) {
+        return token.slice(1, -1);
+      }
+      return token;
+    });
+};
+
 const parseRunId = (payload: JsonObject): string => {
   const direct =
     asString(payload.id) ||
@@ -412,11 +431,16 @@ export class EngineAPI {
     stderr?: string;
     [key: string]: unknown;
   }> {
+    const parts = splitCommandLine(command);
+    if (parts.length === 0) {
+      throw new Error("Command is empty");
+    }
+    const [bin, ...args] = parts;
     return this.request<{ ok?: boolean; output?: string; stdout?: string; stderr?: string }>(
       `/session/${encodeURIComponent(sessionId)}/command`,
       {
         method: "POST",
-        body: JSON.stringify({ command }),
+        body: JSON.stringify({ command: bin, args }),
       }
     );
   }
