@@ -234,8 +234,10 @@ fn strip_persisted_secrets(value: &mut Value) {
         if let Some(channels) = root.get_mut("channels").and_then(|v| v.as_object_mut()) {
             for channel in ["telegram", "discord", "slack"] {
                 if let Some(cfg) = channels.get_mut(channel).and_then(|v| v.as_object_mut()) {
-                    cfg.remove("bot_token");
-                    cfg.remove("botToken");
+                    if channel_has_runtime_secret(channel) {
+                        cfg.remove("bot_token");
+                        cfg.remove("botToken");
+                    }
                 }
             }
         }
@@ -256,6 +258,18 @@ fn strip_persisted_secrets(value: &mut Value) {
             }
         }
     }
+}
+
+fn channel_has_runtime_secret(channel_id: &str) -> bool {
+    let key = match channel_id {
+        "telegram" => "TANDEM_TELEGRAM_BOT_TOKEN",
+        "discord" => "TANDEM_DISCORD_BOT_TOKEN",
+        "slack" => "TANDEM_SLACK_BOT_TOKEN",
+        _ => return false,
+    };
+    std::env::var(key)
+        .map(|v| !v.trim().is_empty())
+        .unwrap_or(false)
 }
 
 async fn scrub_persisted_secrets(value: &mut Value, path: Option<&Path>) -> anyhow::Result<()> {
@@ -647,7 +661,7 @@ mod tests {
     }
 
     #[test]
-    fn strip_persisted_secrets_removes_channel_bot_tokens() {
+    fn strip_persisted_secrets_keeps_channel_bot_tokens_without_runtime_env() {
         let mut value = json!({
             "channels": {
                 "telegram": {
@@ -673,21 +687,21 @@ mod tests {
             .get("channels")
             .and_then(|v| v.get("telegram"))
             .and_then(Value::as_object)
-            .is_some_and(|obj| !obj.contains_key("bot_token")));
+            .is_some_and(|obj| obj.contains_key("bot_token")));
         assert!(value
             .get("channels")
             .and_then(|v| v.get("discord"))
             .and_then(Value::as_object)
-            .is_some_and(|obj| !obj.contains_key("botToken")));
+            .is_some_and(|obj| obj.contains_key("botToken")));
         assert!(value
             .get("channels")
             .and_then(|v| v.get("slack"))
             .and_then(Value::as_object)
-            .is_some_and(|obj| !obj.contains_key("bot_token")));
+            .is_some_and(|obj| obj.contains_key("bot_token")));
     }
 
     #[tokio::test]
-    async fn scrub_persisted_secrets_rewrites_channel_tokens_on_disk() {
+    async fn scrub_persisted_secrets_keeps_channel_tokens_on_disk_without_runtime_env() {
         let path = unique_temp_file("scrub");
         let original = json!({
             "channels": {
@@ -716,8 +730,51 @@ mod tests {
             .get("channels")
             .and_then(|v| v.get("telegram"))
             .and_then(Value::as_object)
-            .is_some_and(|obj| !obj.contains_key("bot_token")));
+            .is_some_and(|obj| obj.contains_key("bot_token")));
 
         let _ = fs::remove_file(&path).await;
+    }
+
+    #[test]
+    fn strip_persisted_secrets_removes_channel_bot_tokens_with_runtime_env() {
+        std::env::set_var("TANDEM_TELEGRAM_BOT_TOKEN", "runtime-secret");
+        std::env::set_var("TANDEM_DISCORD_BOT_TOKEN", "runtime-secret");
+        std::env::set_var("TANDEM_SLACK_BOT_TOKEN", "runtime-secret");
+
+        let mut value = json!({
+            "channels": {
+                "telegram": {
+                    "bot_token": "tg-secret"
+                },
+                "discord": {
+                    "botToken": "dc-secret"
+                },
+                "slack": {
+                    "bot_token": "sl-secret"
+                }
+            }
+        });
+
+        strip_persisted_secrets(&mut value);
+
+        assert!(value
+            .get("channels")
+            .and_then(|v| v.get("telegram"))
+            .and_then(Value::as_object)
+            .is_some_and(|obj| !obj.contains_key("bot_token")));
+        assert!(value
+            .get("channels")
+            .and_then(|v| v.get("discord"))
+            .and_then(Value::as_object)
+            .is_some_and(|obj| !obj.contains_key("botToken")));
+        assert!(value
+            .get("channels")
+            .and_then(|v| v.get("slack"))
+            .and_then(Value::as_object)
+            .is_some_and(|obj| !obj.contains_key("bot_token")));
+
+        std::env::remove_var("TANDEM_TELEGRAM_BOT_TOKEN");
+        std::env::remove_var("TANDEM_DISCORD_BOT_TOKEN");
+        std::env::remove_var("TANDEM_SLACK_BOT_TOKEN");
     }
 }
