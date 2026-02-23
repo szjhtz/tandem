@@ -100,6 +100,12 @@ interface ChatProps {
   activeChatRunningCount?: number;
 }
 
+interface PendingExecutionContract {
+  active: boolean;
+  expectedTaskIds: Set<string>;
+  completedTaskIds: Set<string>;
+}
+
 function startupPhaseLabel(
   t: (key: string, options?: Record<string, unknown>) => string,
   phase?: string | null
@@ -465,6 +471,13 @@ export function Chat({
   const assistantFlushFrameRef = useRef<number | null>(null);
   const generationTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const statusBannerTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const executionContractTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const executionContractRef = useRef<PendingExecutionContract>({
+    active: false,
+    expectedTaskIds: new Set(),
+    completedTaskIds: new Set(),
+  });
+  const pendingTasksRef = useRef<TodoItem[]>(pendingTasks || []);
   const lastEventAtRef = useRef<number | null>(null);
   const prevPropSessionIdRef = useRef<string | null>(null);
   // Track the currently active session without causing re-renders (used by stream handlers).
@@ -746,6 +759,127 @@ export function Chat({
     []
   );
 
+  const buildExecuteTasksMessage = useCallback((tasks: TodoItem[]) => {
+    const taskList = tasks.map((task, index) => `${index + 1}. ${task.content}`).join("\n");
+    return `Please implement the following tasks from our plan:
+
+${taskList}
+
+Start with task #1 and continue through each one. IMPORTANT: After verifying each task is done, you MUST use the 'todowrite' tool to set its status to "completed" in the task list. Call 'todowrite' with status="completed" for each task ID.`;
+  }, []);
+
+  const syncExecutionContractProgress = useCallback((tasks: TodoItem[]) => {
+    pendingTasksRef.current = tasks;
+    const contract = executionContractRef.current;
+    if (!contract.active || contract.expectedTaskIds.size === 0) {
+      return;
+    }
+
+    const pendingIds = new Set(tasks.map((task) => task.id));
+    contract.expectedTaskIds.forEach((taskId) => {
+      if (!pendingIds.has(taskId)) {
+        contract.completedTaskIds.add(taskId);
+      }
+    });
+  }, []);
+
+  const resetExecutionContract = useCallback(() => {
+    if (executionContractTimerRef.current) {
+      clearTimeout(executionContractTimerRef.current);
+      executionContractTimerRef.current = null;
+    }
+    executionContractRef.current = {
+      active: false,
+      expectedTaskIds: new Set(),
+      completedTaskIds: new Set(),
+    };
+  }, []);
+
+  const validateExecutionContract = useCallback(
+    (reason: string) => {
+      const contract = executionContractRef.current;
+      if (!contract.active || contract.expectedTaskIds.size === 0) {
+        return;
+      }
+
+      const completedCount = contract.completedTaskIds.size;
+      const expectedCount = contract.expectedTaskIds.size;
+
+      if (completedCount < expectedCount) {
+        setError(
+          `Task execution incomplete (${completedCount}/${expectedCount} tasks marked completed). Tandem requires todowrite updates before considering execution complete.`
+        );
+      } else if (reason === "session_idle") {
+        setStatusBanner(`Execution confirmed: ${completedCount}/${expectedCount} tasks completed.`);
+      }
+
+      resetExecutionContract();
+    },
+    [resetExecutionContract]
+  );
+
+  const scheduleExecutionContractValidation = useCallback(
+    (reason: string) => {
+      if (!executionContractRef.current.active) {
+        return;
+      }
+
+      if (executionContractTimerRef.current) {
+        clearTimeout(executionContractTimerRef.current);
+      }
+
+      executionContractTimerRef.current = setTimeout(() => {
+        syncExecutionContractProgress(pendingTasksRef.current);
+        validateExecutionContract(reason);
+      }, 350);
+    },
+    [syncExecutionContractProgress, validateExecutionContract]
+  );
+
+  const startExecutionContract = useCallback(
+    (tasks: TodoItem[]) => {
+      if (!tasks.length) {
+        return;
+      }
+
+      const expectedTaskIds = new Set(
+        tasks
+          .map((task) => task.id)
+          .filter((taskId) => typeof taskId === "string" && taskId.length > 0)
+      );
+      if (expectedTaskIds.size === 0) {
+        return;
+      }
+
+      if (executionContractTimerRef.current) {
+        clearTimeout(executionContractTimerRef.current);
+        executionContractTimerRef.current = null;
+      }
+
+      executionContractRef.current = {
+        active: true,
+        expectedTaskIds,
+        completedTaskIds: new Set(),
+      };
+      syncExecutionContractProgress(tasks);
+      setError(null);
+    },
+    [syncExecutionContractProgress]
+  );
+
+  useEffect(() => {
+    syncExecutionContractProgress(pendingTasks || []);
+  }, [pendingTasks, syncExecutionContractProgress]);
+
+  useEffect(
+    () => () => {
+      if (executionContractTimerRef.current) {
+        clearTimeout(executionContractTimerRef.current);
+      }
+    },
+    []
+  );
+
   // Handle execute pending tasks from sidebar
   useEffect(() => {
     if (
@@ -756,22 +890,16 @@ export function Chat({
       pendingTasks &&
       pendingTasks.length > 0
     ) {
-      // Build a message with actual task content - use action-oriented prompts
-      const taskList = pendingTasks.map((t, i) => `${i + 1}. ${t.content}`).join("\n");
-
-      const message = `Please implement the following tasks from our plan:
-
-${taskList}
-
-Start with task #1 and continue through each one. IMPORTANT: After verifying each task is done, you MUST use the 'todowrite' tool to set its status to "completed" in the task list. Call 'todowrite' with status="completed" for each task ID.`;
+      startExecutionContract(pendingTasks);
+      const message = buildExecuteTasksMessage(pendingTasks);
 
       // Small delay to ensure state is ready
       setTimeout(() => {
-        handleSend(message);
+        handleSend(message, undefined, "immediate");
       }, 100);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [executePendingTasksTrigger]);
+  }, [buildExecuteTasksMessage, executePendingTasksTrigger, startExecutionContract]);
 
   // Auto-scroll to bottom smoothly (only when new messages arrive or generation ends)
   const previousMessageCountRef = useRef(0);
@@ -1490,7 +1618,8 @@ Start with task #1 and continue through each one. IMPORTANT: After verifying eac
   // Update ref when session changes (but this doesn't cause handleStreamEvent to recreate)
   useEffect(() => {
     currentSessionIdRef.current = currentSessionId;
-  }, [currentSessionId]);
+    resetExecutionContract();
+  }, [currentSessionId, resetExecutionContract]);
 
   useEffect(() => {
     messagesRef.current = messages;
@@ -1878,6 +2007,7 @@ Start with task #1 and continue through each one. IMPORTANT: After verifying eac
           }
           if (event.status !== "completed") {
             finalizePendingToolCalls(event.error || `run_${event.status}`);
+            scheduleExecutionContractValidation(`run_finished_${event.status}`);
           }
           break;
         }
@@ -1976,6 +2106,7 @@ Start with task #1 and continue through each one. IMPORTANT: After verifying eac
         case "session_idle": {
           console.log("[StreamEvent] Session idle - completing generation");
           finalizePendingToolCalls("interrupted");
+          scheduleExecutionContractValidation("session_idle");
 
           // Capture final content before any async operations
           const finalContent = currentAssistantMessageRef.current;
@@ -2095,6 +2226,7 @@ Start with task #1 and continue through each one. IMPORTANT: After verifying eac
         case "session_error": {
           console.error("[StreamEvent] Session error:", event.error);
           finalizePendingToolCalls(event.error || "interrupted");
+          scheduleExecutionContractValidation("session_error");
 
           // Display the error to the user
           setError(`Session error: ${event.error}`);
@@ -2354,6 +2486,7 @@ Start with task #1 and continue through each one. IMPORTANT: After verifying eac
       scheduleAssistantFlush,
       finalizePendingToolCalls,
       showStatusBanner,
+      scheduleExecutionContractValidation,
     ]
   );
 
@@ -3408,15 +3541,10 @@ After making the changes, present the updated plan in full (including the comple
                                   );
                                   // Switch to immediate mode for execution
                                   setUsePlanMode(false);
+                                  startExecutionContract(pendingTasks);
+                                  const message = `EXECUTION MODE: ${buildExecuteTasksMessage(pendingTasks)}
 
-                                  const taskList = pendingTasks
-                                    .map((t, i) => `${i + 1}. ${t.content}`)
-                                    .join("\n");
-                                  const message = `EXECUTION MODE: Please implement the following approved tasks now. Create the files and write the content directly.
-
-${taskList}
-
-Start with task #1 and execute each one. Use the 'write' tool to create files immediately. IMPORTANT: As you finish each task, you MUST use the 'todowrite' tool to mark it as "completed".`;
+Use the 'write' tool to create files immediately.`;
                                   // Force immediate mode for this specific message
                                   handleSend(message, undefined, "immediate");
                                 }

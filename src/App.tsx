@@ -584,6 +584,10 @@ function App() {
 
   // Todos for task sidebar
   const todosData = useTodos(currentSessionId);
+  const pendingTodos = useMemo(
+    () => todosData.todos.filter((todo) => todo.status === "pending"),
+    [todosData.todos]
+  );
 
   // Start with sidecar setup, then onboarding if no workspace, otherwise chat
   const [view, setView] = useState<View>(() => "sidecar-setup");
@@ -1924,7 +1928,7 @@ function App() {
                     onToggleTaskSidebar={() => setTaskSidebarOpen(!taskSidebarOpen)}
                     executePendingTasksTrigger={executePendingTrigger}
                     onGeneratingChange={setIsExecutingTasks}
-                    pendingTasks={todosData.todos}
+                    pendingTasks={pendingTodos}
                     fileToAttach={fileToAttach || undefined}
                     onFileAttached={() => setFileToAttach(null)}
                     selectedAgent={selectedAgent}
