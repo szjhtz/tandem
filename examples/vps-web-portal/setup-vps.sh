@@ -482,6 +482,8 @@ Type=simple
 User=$SERVICE_USER
 Group=$SERVICE_USER
 EnvironmentFile=/etc/tandem/engine.env
+WorkingDirectory=$PROJECT_DIR
+Environment=PATH=$SERVICE_PATH
 ExecStart=$ENGINE_PATH serve --hostname 127.0.0.1 --port 39731
 Restart=on-failure
 RestartSec=5
