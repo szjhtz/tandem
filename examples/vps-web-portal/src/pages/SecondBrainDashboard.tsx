@@ -59,6 +59,7 @@ export const SecondBrainDashboard: React.FC = () => {
   const [messages, setMessages] = useState<ChatEvent[]>([]);
   const [runtimeTrace, setRuntimeTrace] = useState<RuntimeTraceEntry[]>([]);
   const [pendingApprovals, setPendingApprovals] = useState<PendingApproval[]>([]);
+  const [availableTools, setAvailableTools] = useState<string[]>([]);
   const [input, setInput] = useState("");
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [currentWorkspace, setCurrentWorkspace] = useState<string | null>(null);
@@ -108,6 +109,28 @@ export const SecondBrainDashboard: React.FC = () => {
       return pending;
     } catch {
       return [];
+    }
+  };
+
+  const refreshToolCatalog = async () => {
+    try {
+      const toolIds = await api.listToolIds();
+      const normalized = Array.isArray(toolIds)
+        ? [...new Set(toolIds.map((id) => String(id).trim()).filter(Boolean))]
+        : [];
+      setAvailableTools(normalized);
+      if (normalized.length === 0) {
+        addTrace("Engine reports 0 registered tools. Tool calls cannot run.");
+      } else {
+        const preview = normalized.slice(0, 12).join(", ");
+        addTrace(
+          `Engine tools available: ${normalized.length} (${preview}${normalized.length > 12 ? ", ..." : ""})`
+        );
+      }
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      addTrace(`Failed to load tool catalog: ${errorMessage}`);
+      setAvailableTools([]);
     }
   };
 
@@ -306,6 +329,7 @@ export const SecondBrainDashboard: React.FC = () => {
       setSessionId(sid);
       localStorage.setItem(SECOND_BRAIN_SESSION_KEY, sid);
       addTrace(`Loading session ${sid.substring(0, 8)}.`);
+      void refreshToolCatalog();
       void refreshPendingApprovals(sid);
       const workspacePath = (await readSessionWorkspace(sid)) || "unknown";
       setCurrentWorkspace(workspacePath);
@@ -384,6 +408,7 @@ Operational rules:
         addTrace(
           `Created new session ${sid.substring(0, 8)} with workspace ${workspacePath} and primed instructions.`
         );
+        void refreshToolCatalog();
         setMessages([
           {
             id: "welcome",
@@ -549,6 +574,7 @@ Operational rules:
       setCurrentWorkspace(workspacePath);
       addTrace(`Session reset. New session ${sid.substring(0, 8)}.`);
       addTrace(`Session workspace: ${workspacePath}`);
+      void refreshToolCatalog();
       setMessages([
         {
           id: "welcome",
@@ -602,6 +628,14 @@ Operational rules:
           </p>
           <p className="text-gray-500 mt-2 text-xs">
             Demonstrates MCP integration running on the local VPS engine daemon.
+          </p>
+          <p className="text-gray-500 mt-1 text-xs">
+            Registered tools:{" "}
+            <span className="text-gray-300">
+              {availableTools.length > 0
+                ? `${availableTools.length} (${availableTools.slice(0, 6).join(", ")}${availableTools.length > 6 ? ", ..." : ""})`
+                : "0"}
+            </span>
           </p>
           <p className="text-gray-400 mt-1 text-xs">
             Current workspace:{" "}
