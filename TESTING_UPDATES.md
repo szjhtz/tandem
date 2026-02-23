@@ -30,8 +30,21 @@ Or let GitHub auto-generate notes from commits (current setup).
 
 ### Step 1: Create Initial Release (v0.1.0)
 
+Update all version fields:
+
+**Windows (PowerShell)**:
+
 ```powershell
-# Ensure version is 0.1.0 in tauri.conf.json
+./scripts/bump-version.ps1 0.1.0
+```
+
+**macOS/Linux (bash)**:
+
+```bash
+./scripts/bump-version.sh 0.1.0
+```
+
+```powershell
 git add .
 git commit -m "Release v0.1.0"
 git tag v0.1.0
@@ -56,10 +69,21 @@ Wait for GitHub Actions to:
 
 ### Step 3: Create a New Release (v0.2.0)
 
-```powershell
-# Update version in tauri.conf.json to 0.2.0
-# Make a visible change (e.g., update About page text)
+Update all version fields:
 
+**Windows (PowerShell)**:
+
+```powershell
+./scripts/bump-version.ps1 0.2.0
+```
+
+**macOS/Linux (bash)**:
+
+```bash
+./scripts/bump-version.sh 0.2.0
+```
+
+```powershell
 git add .
 git commit -m "Release v0.2.0"
 git tag v0.2.0
