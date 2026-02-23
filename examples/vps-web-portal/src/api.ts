@@ -479,6 +479,26 @@ export class EngineAPI {
     );
   }
 
+  async listPortalDirectories(path?: string): Promise<PortalDirectoryListResponse> {
+    const qs = path && path.trim().length > 0 ? `?path=${encodeURIComponent(path.trim())}` : "";
+    return this.request<PortalDirectoryListResponse>(`/fs/directories${qs}`, {}, { portal: true });
+  }
+
+  async createPortalDirectory(input: {
+    parentPath?: string;
+    name?: string;
+    path?: string;
+  }): Promise<PortalMkdirResponse> {
+    return this.request<PortalMkdirResponse>(
+      `/fs/mkdir`,
+      {
+        method: "POST",
+        body: JSON.stringify(input),
+      },
+      { portal: true }
+    );
+  }
+
   async setProviderAuth(providerId: string, apiKey: string): Promise<void> {
     await this.request<void>(`/auth/${encodeURIComponent(providerId)}`, {
       method: "PUT",
@@ -839,6 +859,24 @@ export interface ProviderKeyPreviewResponse {
   present: boolean;
   envVar: string | null;
   preview: string;
+}
+
+export interface PortalDirectoryEntry {
+  name: string;
+  path: string;
+}
+
+export interface PortalDirectoryListResponse {
+  ok: boolean;
+  current: string;
+  parent: string | null;
+  directories: PortalDirectoryEntry[];
+}
+
+export interface PortalMkdirResponse {
+  ok: boolean;
+  path: string;
+  parentPath: string | null;
 }
 
 export interface EngineMessage {

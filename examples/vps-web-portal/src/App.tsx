@@ -40,6 +40,9 @@ import {
   PenTool,
   Code,
   FolderOpen,
+  RefreshCw,
+  FolderPlus,
+  ArrowUp,
 } from "lucide-react";
 import { api, getPortalWorkspaceRoot, setPortalWorkspaceRoot } from "./api";
 
@@ -67,6 +70,13 @@ const NavigationLayout = ({ children }: { children: React.ReactNode }) => {
   const [approving, setApproving] = useState(false);
   const [workspaceInput, setWorkspaceInput] = useState("");
   const [workspaceSaved, setWorkspaceSaved] = useState<string | null>(null);
+  const [workspaceDirs, setWorkspaceDirs] = useState<Array<{ name: string; path: string }>>([]);
+  const [workspaceDirPath, setWorkspaceDirPath] = useState<string>("");
+  const [workspaceParentPath, setWorkspaceParentPath] = useState<string | null>(null);
+  const [workspaceBrowseLoading, setWorkspaceBrowseLoading] = useState(false);
+  const [workspaceBrowseError, setWorkspaceBrowseError] = useState<string | null>(null);
+  const [newDirectoryName, setNewDirectoryName] = useState("");
+  const [creatingDirectory, setCreatingDirectory] = useState(false);
 
   useEffect(() => {
     const key = "tandem_portal_setup_hint_dismissed";
@@ -77,6 +87,28 @@ const NavigationLayout = ({ children }: { children: React.ReactNode }) => {
     if (!localStorage.getItem(key)) {
       setShowSetupHint(true);
     }
+  }, []);
+
+  const loadWorkspaceDirectories = async (targetPath?: string) => {
+    setWorkspaceBrowseLoading(true);
+    setWorkspaceBrowseError(null);
+    try {
+      const response = await api.listPortalDirectories(targetPath);
+      setWorkspaceDirs(response.directories || []);
+      setWorkspaceDirPath(response.current || "");
+      setWorkspaceParentPath(response.parent || null);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setWorkspaceBrowseError(message);
+    } finally {
+      setWorkspaceBrowseLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    const initial = getPortalWorkspaceRoot() || undefined;
+    void loadWorkspaceDirectories(initial);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -157,6 +189,28 @@ const NavigationLayout = ({ children }: { children: React.ReactNode }) => {
     setWorkspaceSaved(`Workspace set for new sessions: ${trimmed}`);
   };
 
+  const createDirectory = async () => {
+    const name = newDirectoryName.trim();
+    if (!name || creatingDirectory) return;
+    setCreatingDirectory(true);
+    setWorkspaceBrowseError(null);
+    try {
+      const created = await api.createPortalDirectory({
+        parentPath: workspaceDirPath || workspaceInput || undefined,
+        name,
+      });
+      setNewDirectoryName("");
+      setWorkspaceInput(created.path);
+      setWorkspaceSaved(`Created directory: ${created.path}`);
+      await loadWorkspaceDirectories(created.parentPath || workspaceDirPath || undefined);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setWorkspaceBrowseError(message);
+    } finally {
+      setCreatingDirectory(false);
+    }
+  };
+
   return (
     <div className="flex h-screen bg-gray-950">
       {/* Sidebar */}
@@ -204,6 +258,80 @@ const NavigationLayout = ({ children }: { children: React.ReactNode }) => {
               >
                 Clear
               </button>
+            </div>
+            <div className="mt-2 rounded border border-gray-800 bg-gray-900/70 p-2">
+              <div className="flex items-center justify-between gap-2 mb-2">
+                <p className="text-[10px] text-gray-400">Available directories on this machine</p>
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => void loadWorkspaceDirectories(workspaceParentPath || undefined)}
+                    disabled={!workspaceParentPath || workspaceBrowseLoading}
+                    className="rounded border border-gray-700 px-1.5 py-1 text-[10px] text-gray-300 hover:text-white hover:bg-gray-800 disabled:opacity-40"
+                    title="Go to parent directory"
+                  >
+                    <ArrowUp size={12} />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void loadWorkspaceDirectories(workspaceDirPath || undefined)}
+                    disabled={workspaceBrowseLoading}
+                    className="rounded border border-gray-700 px-1.5 py-1 text-[10px] text-gray-300 hover:text-white hover:bg-gray-800 disabled:opacity-40"
+                    title="Refresh directory list"
+                  >
+                    <RefreshCw size={12} className={workspaceBrowseLoading ? "animate-spin" : ""} />
+                  </button>
+                </div>
+              </div>
+              <p className="text-[10px] text-gray-500 break-all mb-2">
+                Browsing:{" "}
+                <span className="text-gray-300">{workspaceDirPath || "(loading...)"}</span>
+              </p>
+              <div className="max-h-28 overflow-y-auto space-y-1 pr-1">
+                {workspaceBrowseLoading && (
+                  <p className="text-[10px] text-gray-500">Loading directories...</p>
+                )}
+                {!workspaceBrowseLoading && workspaceDirs.length === 0 && (
+                  <p className="text-[10px] text-gray-500">No child directories found.</p>
+                )}
+                {!workspaceBrowseLoading &&
+                  workspaceDirs.map((entry) => (
+                    <button
+                      key={entry.path}
+                      type="button"
+                      onClick={() => {
+                        setWorkspaceInput(entry.path);
+                        setWorkspaceSaved(null);
+                        void loadWorkspaceDirectories(entry.path);
+                      }}
+                      className="w-full text-left rounded border border-gray-800 px-2 py-1 text-[10px] text-gray-300 hover:text-white hover:bg-gray-800"
+                      title={entry.path}
+                    >
+                      {entry.name}
+                    </button>
+                  ))}
+              </div>
+              <div className="mt-2 flex items-center gap-1">
+                <input
+                  type="text"
+                  value={newDirectoryName}
+                  onChange={(e) => setNewDirectoryName(e.target.value)}
+                  placeholder="new-folder"
+                  className="flex-1 rounded border border-gray-700 bg-gray-900 px-2 py-1 text-[10px] text-gray-200 placeholder:text-gray-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                />
+                <button
+                  type="button"
+                  onClick={() => void createDirectory()}
+                  disabled={!newDirectoryName.trim() || creatingDirectory}
+                  className="rounded border border-gray-700 px-2 py-1 text-[10px] text-gray-300 hover:text-white hover:bg-gray-800 disabled:opacity-40"
+                  title="Create directory"
+                >
+                  <FolderPlus size={12} />
+                </button>
+              </div>
+              {workspaceBrowseError && (
+                <p className="mt-1 text-[10px] text-rose-300 break-all">{workspaceBrowseError}</p>
+              )}
             </div>
             <p className="mt-2 text-[10px] text-gray-500">
               Applies to new sessions. Use absolute paths (no `~`).

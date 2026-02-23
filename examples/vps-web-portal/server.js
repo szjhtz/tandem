@@ -219,6 +219,27 @@ const maskKeyPreview = (value) => {
   return `${value.slice(0, 6)}...`;
 };
 
+const expandUserPath = (raw) => {
+  const input = String(raw || '').trim();
+  if (!input) return process.env.HOME || '/';
+  if (input === '~') return process.env.HOME || '/';
+  if (input.startsWith('~/')) {
+    return path.join(process.env.HOME || '/', input.slice(2));
+  }
+  return input;
+};
+
+const resolveDirectoryPath = async (rawPath) => {
+  const expanded = expandUserPath(rawPath);
+  const absolute = path.isAbsolute(expanded) ? expanded : path.resolve(expanded);
+  const real = await fs.realpath(absolute).catch(() => absolute);
+  const stat = await fs.stat(real);
+  if (!stat.isDirectory()) {
+    throw new Error('Path is not a directory');
+  }
+  return real;
+};
+
 app.get('/portal/system/capabilities', requireAuth, async (_req, res) => {
   const caps = await getControlCapabilities();
   res.json(caps);
@@ -303,6 +324,67 @@ app.get('/portal/provider/key-preview', requireAuth, async (req, res) => {
     envVar: candidates[0] || null,
     preview: '',
   });
+});
+
+app.get('/portal/fs/directories', requireAuth, async (req, res) => {
+  try {
+    const current = await resolveDirectoryPath(req.query.path);
+    const entries = await fs.readdir(current, { withFileTypes: true });
+    const directories = entries
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => ({
+        name: entry.name,
+        path: path.join(current, entry.name),
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+
+    const parent = path.dirname(current);
+    res.json({
+      ok: true,
+      current,
+      parent: parent !== current ? parent : null,
+      directories,
+    });
+  } catch (error) {
+    res.status(400).json({ ok: false, error: String(error.message || error) });
+  }
+});
+
+app.post('/portal/fs/mkdir', requireAuth, async (req, res) => {
+  try {
+    const parentPathRaw = typeof req.body?.parentPath === 'string' ? req.body.parentPath : '';
+    const explicitPathRaw = typeof req.body?.path === 'string' ? req.body.path : '';
+    const nameRaw = typeof req.body?.name === 'string' ? req.body.name.trim() : '';
+
+    let targetPath = '';
+    if (explicitPathRaw) {
+      targetPath = path.isAbsolute(explicitPathRaw)
+        ? explicitPathRaw
+        : path.resolve(expandUserPath(explicitPathRaw));
+    } else {
+      if (!nameRaw) {
+        res.status(400).json({ ok: false, error: 'name or path is required' });
+        return;
+      }
+      if (nameRaw.includes('/') || nameRaw.includes('\\') || nameRaw.includes('\0')) {
+        res.status(400).json({ ok: false, error: 'name must be a single directory segment' });
+        return;
+      }
+      const parentPath = await resolveDirectoryPath(parentPathRaw);
+      targetPath = path.join(parentPath, nameRaw);
+    }
+
+    await fs.mkdir(targetPath, { recursive: true });
+    const createdPath = await fs.realpath(targetPath).catch(() => targetPath);
+    const parentPath = path.dirname(createdPath);
+    res.json({
+      ok: true,
+      path: createdPath,
+      parentPath: parentPath !== createdPath ? parentPath : null,
+    });
+  } catch (error) {
+    res.status(400).json({ ok: false, error: String(error.message || error) });
+  }
 });
 
 app.use(
