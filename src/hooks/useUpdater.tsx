@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect, useCallback } fr
 import { invoke } from "@tauri-apps/api/core";
 import { check, type Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
+import { stopSidecar } from "../lib/tauri";
 
 export type UpdateStatus =
   | "idle"
@@ -82,6 +83,13 @@ export function UpdaterProvider({ children }: { children: React.ReactNode }) {
       const updateAny = updateInfo as unknown as {
         downloadAndInstall: (onEvent?: (event: any) => void) => Promise<void>;
       };
+
+      // Ensure the bundled engine binary is not locked during replacement.
+      try {
+        await stopSidecar();
+      } catch (sidecarErr) {
+        console.warn("Failed to stop sidecar before update install:", sidecarErr);
+      }
 
       await updateAny.downloadAndInstall((event: any) => {
         // https://v2.tauri.app/reference/javascript/updater/

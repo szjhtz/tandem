@@ -635,11 +635,74 @@ async fn run_in_session(
         }
     }
 
-    Ok(if content_buf.is_empty() {
-        "(no response)".to_string()
-    } else {
-        content_buf
-    })
+    if content_buf.is_empty() {
+        if let Ok(Some(fallback)) =
+            fetch_latest_assistant_message(&client, base_url, api_token, session_id).await
+        {
+            return Ok(fallback);
+        }
+        return Ok("(no response)".to_string());
+    }
+
+    Ok(content_buf)
+}
+
+/// Fallback for channel delivery: if the SSE stream did not emit text deltas,
+/// fetch persisted session history and return the latest assistant text.
+async fn fetch_latest_assistant_message(
+    client: &reqwest::Client,
+    base_url: &str,
+    api_token: &str,
+    session_id: &str,
+) -> anyhow::Result<Option<String>> {
+    let url = format!("{base_url}/session/{session_id}/message");
+    let resp = add_auth(client.get(&url), api_token).send().await?;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let err = resp.text().await.unwrap_or_default();
+        anyhow::bail!("session message fallback failed ({status}): {err}");
+    }
+
+    let messages: serde_json::Value = resp.json().await?;
+    let Some(items) = messages.as_array() else {
+        return Ok(None);
+    };
+
+    for msg in items.iter().rev() {
+        let role = msg
+            .get("info")
+            .and_then(|info| info.get("role"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        if role != "assistant" {
+            continue;
+        }
+
+        let Some(parts) = msg.get("parts").and_then(|v| v.as_array()) else {
+            continue;
+        };
+
+        let mut text = String::new();
+        for part in parts {
+            let part_type = part.get("type").and_then(|v| v.as_str()).unwrap_or("");
+            if part_type == "text" || part_type == "reasoning" || part_type.is_empty() {
+                if let Some(chunk) = part.get("text").and_then(|v| v.as_str()) {
+                    if !chunk.trim().is_empty() {
+                        if !text.is_empty() {
+                            text.push('\n');
+                        }
+                        text.push_str(chunk);
+                    }
+                }
+            }
+        }
+
+        if !text.trim().is_empty() {
+            return Ok(Some(text));
+        }
+    }
+
+    Ok(None)
 }
 
 /// Send an approve or deny decision to the tandem-server tool approval endpoint.
