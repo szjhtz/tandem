@@ -1,3 +1,27 @@
+# Tandem v0.3.19 Release Notes (Unreleased)
+
+### Highlights
+
+- **Stress benchmark parity and accuracy uplift (VPS portal)**:
+  - Server-side Stress Lab prompt scenarios now execute async runs and wait for completion, so latency reflects true end-to-end provider/tool execution.
+  - Server-side stress runner now resolves and passes explicit provider/model payloads for prompt runs, preventing accidental non-LLM timing paths.
+  - Stress chart rendering was hardened for empty/all-zero samples to avoid NaN polyline failures in browser.
+- **Tandem vs OpenCode comparison surface (portal)**:
+  - Added OpenCode benchmark read integration for:
+    - `GET /results/latest`
+    - `GET /results/history?days=30`
+    - `GET /results/by-date/{yyyy-mm-dd}`
+    - `GET /health` (with compatibility handling)
+  - Added scenario-mapped comparison panel showing Tandem vs OpenCode avg/p95 deltas and recent error context.
+- **Engine performance diagnostics improvements**:
+  - Added request-latency instrumentation for core server routes under load:
+    - `session.command`
+    - `session.get`
+    - `session.list`
+  - Improves bottleneck visibility for providerless and mixed endpoint soak analysis.
+
+---
+
 # Tandem v0.3.18 Release Notes (Unreleased)
 
 ### Highlights

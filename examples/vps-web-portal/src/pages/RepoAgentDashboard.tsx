@@ -205,9 +205,10 @@ export const RepoAgentDashboard: React.FC = () => {
 Your Goal: ${goal}.
 Instructions:
 1. Examine the codebase to plan the fix.
-2. Produce a patch or write your implementation.
-3. Write a PR description in out/pr_description.md.
-4. IMPORTANT: Once you have planned and drafted the changes, wait for the user to approve before committing. Ask the user "Do you approve these changes?"
+2. Produce a minimal patch with clear reasoning and avoid unrelated refactors.
+3. Add or update tests when behavior changes.
+4. Write a PR description in out/pr_description.md with: problem, root cause, fix, risk, and test plan.
+5. IMPORTANT: Once you have planned and drafted the changes, wait for the user to approve before committing. Ask the user "Do you approve these changes?"
 Use your tools to achieve this.`;
 
       const { runId } = await api.startAsyncRun(sessionId, prompt);
@@ -249,8 +250,8 @@ Use your tools to achieve this.`;
   };
 
   return (
-    <div className="flex h-full bg-gray-950">
-      <div className="flex-1 flex flex-col p-6 overflow-hidden">
+    <div className="flex h-full flex-col xl:flex-row bg-gray-950">
+      <div className="flex-1 min-h-0 flex flex-col p-3 sm:p-4 lg:p-6 overflow-hidden">
         <div className="mb-6 flex justify-between items-start">
           <div>
             <h2 className="text-2xl font-bold text-white flex items-center gap-2">
@@ -280,12 +281,15 @@ Use your tools to achieve this.`;
           )}
         </div>
 
-        <form onSubmit={handleStart} className="flex gap-4 mb-6 shrink-0">
+        <form
+          onSubmit={handleStart}
+          className="flex flex-col gap-3 sm:flex-row sm:gap-4 mb-6 shrink-0"
+        >
           <input
             type="text"
             value={goal}
             onChange={(e) => setGoal(e.target.value)}
-            placeholder="E.g., Fix the off-by-one bug in the pagination component"
+            placeholder="E.g., Fix websocket reconnect race in stream client and add regression tests for dropped SSE connections"
             className="flex-1 bg-gray-900 border border-gray-800 rounded-lg px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
             disabled={isRunning || approvalPending}
           />
@@ -357,7 +361,7 @@ Use your tools to achieve this.`;
         </div>
       </div>
 
-      <div className="w-80 shrink-0 border-l border-gray-800 bg-gray-900">
+      <div className="w-full xl:w-80 shrink-0 border-t xl:border-t-0 xl:border-l border-gray-800 bg-gray-900 max-h-[45vh] xl:max-h-none">
         <SessionHistory
           currentSessionId={currentSessionId}
           onSelectSession={loadSession}

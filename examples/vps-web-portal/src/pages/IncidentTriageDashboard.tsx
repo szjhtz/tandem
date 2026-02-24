@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import { api } from "../api";
-import { FileWarning, Send, Loader2 } from "lucide-react";
+import { FileWarning, Send, Loader2, List, History, X } from "lucide-react";
 import { SessionHistory } from "../components/SessionHistory";
 import { ToolCallResult } from "../components/ToolCallResult";
 import { attachPortalRunStream } from "../utils/portalRunStream";
@@ -43,6 +43,8 @@ export const IncidentTriageDashboard: React.FC = () => {
   const [isRunning, setIsRunning] = useState(false);
   const [logs, setLogs] = useState<LogEvent[]>([]);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
+  const [historyOpen, setHistoryOpen] = useState(true);
+  const [mobileHistoryOpen, setMobileHistoryOpen] = useState(false);
   const logsEndRef = useRef<HTMLDivElement>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
 
@@ -190,8 +192,14 @@ Instructions:
 1. Analyze the logs to correlate the timeline and identify the root cause.
 2. Read related configuration and application logs from the workspace to confirm the issue.
 3. Propose runbook steps or remediation actions.
-4. Output your formal incident report to 'out/incident_report.md'.
-5. Output proposed mitigation actions to 'out/proposed_actions.md'.
+4. Include confidence levels and evidence for each hypothesis.
+5. Output your formal incident report to 'out/incident_report.md' with:
+   - Impact summary
+   - Timeline
+   - Root cause hypothesis + confidence
+   - Immediate containment
+   - Permanent fixes
+6. Output proposed mitigation actions to 'out/proposed_actions.md'.
 Use your tools to achieve this.`;
 
       const { runId } = await api.startAsyncRun(sessionId, prompt);
@@ -204,8 +212,8 @@ Use your tools to achieve this.`;
   };
 
   return (
-    <div className="flex h-full bg-gray-950">
-      <div className="flex-1 flex flex-col p-6 overflow-hidden">
+    <div className="flex h-full flex-col xl:flex-row bg-gray-950">
+      <div className="flex-1 min-h-0 flex flex-col p-3 sm:p-4 lg:p-6 overflow-hidden">
         <div className="mb-6 flex justify-between items-start">
           <div>
             <h2 className="text-2xl font-bold text-white flex items-center gap-2">
@@ -217,13 +225,34 @@ Use your tools to achieve this.`;
               output a detailed incident report and mitigation plan.
             </p>
           </div>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => setHistoryOpen((prev) => !prev)}
+              className="hidden sm:flex items-center gap-2 text-sm text-gray-300 border border-gray-700 rounded-full px-3 py-1 hover:border-white"
+            >
+              <List size={16} />
+              {historyOpen ? "Hide History" : "Show History"}
+            </button>
+            <button
+              type="button"
+              onClick={() => setMobileHistoryOpen(true)}
+              className="sm:hidden flex items-center gap-2 text-sm text-gray-300 border border-gray-700 rounded-full px-3 py-1 hover:border-white"
+            >
+              <History size={16} />
+              Preview Sessions
+            </button>
+          </div>
         </div>
 
-        <form onSubmit={handleStart} className="flex gap-4 mb-6 shrink-0">
+        <form
+          onSubmit={handleStart}
+          className="flex flex-col gap-3 sm:flex-row sm:gap-4 mb-6 shrink-0"
+        >
           <textarea
             value={incidentLogs}
             onChange={(e) => setIncidentLogs(e.target.value)}
-            placeholder="E.g., Production database latency spiked to 5000ms. Log trace: ..."
+            placeholder="E.g., 2026-02-22 10:14:12Z API p95 jumped 120ms->4800ms; pod restarts increased; postgres connections at max=500; deploy sha=4b19f2 rolled out 8 minutes earlier..."
             className="flex-1 bg-gray-900 border border-gray-800 rounded-lg px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-orange-500 min-h-[80px]"
             disabled={isRunning}
           />
@@ -297,15 +326,55 @@ Use your tools to achieve this.`;
         </div>
       </div>
 
-      <div className="w-80 shrink-0 border-l border-gray-800 bg-gray-900">
-        <SessionHistory
-          currentSessionId={currentSessionId}
-          onSelectSession={loadSession}
-          query="Incident:"
-          scopePrefix="Incident:"
-          className="w-full"
-        />
-      </div>
+      {historyOpen && (
+        <div className="w-full xl:w-80 shrink-0 border-t xl:border-t-0 xl:border-l border-gray-800 bg-gray-900 max-h-[45vh] xl:max-h-none">
+          <SessionHistory
+            currentSessionId={currentSessionId}
+            onSelectSession={loadSession}
+            query="Incident:"
+            scopePrefix="Incident:"
+            className="w-full"
+          />
+        </div>
+      )}
+
+      {mobileHistoryOpen && (
+        <div className="fixed inset-0 z-50 xl:hidden">
+          <button
+            type="button"
+            onClick={() => setMobileHistoryOpen(false)}
+            className="absolute inset-0 bg-black/60"
+            aria-label="Close session history"
+          />
+          <div className="absolute inset-x-0 bottom-0 max-h-[75vh] rounded-t-xl border border-gray-800 bg-gray-900 shadow-2xl flex flex-col">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-gray-800">
+              <h3 className="text-sm font-semibold text-gray-200 flex items-center gap-2">
+                <History size={15} />
+                Recent Sessions
+              </h3>
+              <button
+                type="button"
+                onClick={() => setMobileHistoryOpen(false)}
+                className="rounded border border-gray-700 p-1 text-gray-300 hover:text-white hover:bg-gray-800"
+              >
+                <X size={14} />
+              </button>
+            </div>
+            <div className="min-h-0 flex-1 overflow-y-auto">
+              <SessionHistory
+                currentSessionId={currentSessionId}
+                onSelectSession={(id) => {
+                  setMobileHistoryOpen(false);
+                  void loadSession(id);
+                }}
+                query="Incident:"
+                scopePrefix="Incident:"
+                className="w-full"
+              />
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

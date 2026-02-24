@@ -20,6 +20,8 @@ export interface PortalRunStreamHandlers {
 
 export interface PortalRunStreamOptions {
   runTimeoutMs?: number;
+  reconnectMaxAttempts?: number;
+  reconnectBaseDelayMs?: number;
 }
 
 export const attachPortalRunStream = (
@@ -33,13 +35,17 @@ export const attachPortalRunStream = (
     eventSourceRef.current.close();
   }
 
-  const source = new EventSource(api.getEventStreamUrl(sessionId, runId));
-  eventSourceRef.current = source;
+  let activeRunId = runId;
+  let source: EventSource | null = null;
   let finalized = false;
   let sawRunEvent = false;
   let streamedAssistantText = "";
   const textSnapshots = new Map<string, string>();
   const runTimeoutMs = options?.runTimeoutMs;
+  const reconnectMaxAttempts = Math.max(1, options?.reconnectMaxAttempts ?? 8);
+  const reconnectBaseDelayMs = Math.max(500, options?.reconnectBaseDelayMs ?? 1200);
+  let reconnectAttempts = 0;
+  let reconnectTimer: number | null = null;
 
   const hydrateFinalAssistantText = async () => {
     try {
@@ -91,6 +97,10 @@ export const attachPortalRunStream = (
   const finalize = (status: string) => {
     if (finalized) return;
     finalized = true;
+    if (reconnectTimer) {
+      window.clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
     window.clearTimeout(watchdog);
     if (runTimeout) {
       window.clearTimeout(runTimeout);
@@ -99,11 +109,59 @@ export const attachPortalRunStream = (
     void (async () => {
       await hydrateFinalAssistantText();
       handlers.onFinalize(status);
-      source.close();
-      if (eventSourceRef.current === source) {
+      if (source) {
+        source.close();
+      }
+      if (eventSourceRef.current === source && source) {
         eventSourceRef.current = null;
       }
     })();
+  };
+
+  const getRunId = (active: unknown): string => {
+    const state = (active || {}) as { runID?: unknown; runId?: unknown; run_id?: unknown };
+    return String(state.runID || state.runId || state.run_id || "").trim();
+  };
+
+  const scheduleReconnect = async (reason: string) => {
+    if (finalized) return;
+    reconnectAttempts += 1;
+
+    try {
+      const runState = await api.getActiveRun(sessionId);
+      const active = runState?.active || null;
+      const nextRunId = getRunId(active);
+      if (!nextRunId) {
+        handlers.addSystemLog(
+          `Stream disconnected (${reason}) and no active run remains. Finalizing.`
+        );
+        finalize("inactive");
+        return;
+      }
+      if (nextRunId !== activeRunId) {
+        activeRunId = nextRunId;
+        handlers.addSystemLog(`Detected updated active run (${nextRunId.substring(0, 8)}).`);
+      }
+    } catch {
+      // If run-state query fails, continue reconnect attempts.
+    }
+
+    if (reconnectAttempts > reconnectMaxAttempts) {
+      handlers.addSystemLog("Live stream reconnection limit reached. Finalizing run stream.");
+      finalize("stream_error");
+      return;
+    }
+
+    const delay = Math.min(8000, reconnectBaseDelayMs * reconnectAttempts);
+    handlers.addSystemLog(
+      `Stream interrupted. Reconnecting (${reconnectAttempts}/${reconnectMaxAttempts}) in ${Math.round(delay / 100) / 10}s...`
+    );
+    reconnectTimer = window.setTimeout(() => {
+      reconnectTimer = null;
+      if (!finalized) {
+        openStream();
+      }
+    }, delay);
   };
 
   const watchdog = window.setTimeout(async () => {
@@ -148,7 +206,7 @@ export const attachPortalRunStream = (
     }
   }, 5000);
 
-  source.onmessage = (evt) => {
+  const handleMessage = (evt: MessageEvent<string>) => {
     try {
       const data = JSON.parse(evt.data);
       if (data.type !== "server.connected" && data.type !== "engine.lifecycle.ready") {
@@ -270,8 +328,30 @@ export const attachPortalRunStream = (
     }
   };
 
-  source.onerror = () => {
-    handlers.addSystemLog("Stream disconnected.");
-    finalize("stream_error");
+  const openStream = () => {
+    if (finalized) return;
+    if (source) {
+      source.close();
+    }
+    const currentSource = new EventSource(api.getEventStreamUrl(sessionId, activeRunId));
+    source = currentSource;
+    eventSourceRef.current = currentSource;
+
+    currentSource.onopen = () => {
+      reconnectAttempts = 0;
+    };
+    currentSource.onmessage = handleMessage;
+    currentSource.onerror = () => {
+      currentSource.close();
+      if (source === currentSource) {
+        source = null;
+      }
+      if (eventSourceRef.current === currentSource) {
+        eventSourceRef.current = null;
+      }
+      void scheduleReconnect("sse_error");
+    };
   };
+
+  openStream();
 };

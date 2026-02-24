@@ -2,6 +2,19 @@
 
 Canonical release notes live in `docs/RELEASE_NOTES.md`.
 
+## v0.3.19 (Unreleased)
+
+- Stress benchmark parity + reliability upgrade
+  - Server-side VPS Stress Lab scenarios (`remote`, `file`, `inline`) now measure true end-to-end async run completion (provider/tool included), not fast submit-path timing.
+  - Added explicit provider/model resolution + injection for server-side stress prompt runs so LLM calls are guaranteed in prompt scenarios.
+  - Fixed Stress Lab line-chart NaN rendering edge cases on sparse/all-zero series.
+- Cross-system comparison support (Tandem vs OpenCode)
+  - Added OpenCode benchmark API client wiring in portal (`/results/latest`, `/results/history`, `/results/by-date`, `/health`).
+  - Added in-page comparison panel with scenario-mapped deltas (avg/p95 and error context) and 30-day baseline context.
+- Engine + diagnostics improvements
+  - Added request latency instrumentation for key engine routes: `session.command`, `session.get`, and `session.list`.
+  - Improved external benchmark-service compatibility by aligning `/api/v1` health/read routing expectations.
+
 ## v0.3.18 (Unreleased)
 
 - Provider model selection hotfix (OpenRouter/API-key env interactions)

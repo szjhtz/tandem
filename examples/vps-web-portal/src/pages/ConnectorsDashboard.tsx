@@ -126,7 +126,7 @@ export const ConnectorsDashboard: React.FC = () => {
   };
 
   return (
-    <div className="flex flex-col h-full bg-gray-950 p-6 overflow-y-auto">
+    <div className="flex flex-col h-full bg-gray-950 p-3 sm:p-4 lg:p-6 overflow-y-auto">
       <div className="mb-8">
         <h2 className="text-2xl font-bold text-white flex items-center gap-2">
           <Cable className="text-orange-500" />
@@ -287,7 +287,7 @@ export const ConnectorsDashboard: React.FC = () => {
         </div>
       )}
 
-      <div className="mt-4 flex gap-2">
+      <div className="mt-4 flex flex-wrap gap-2">
         <button
           onClick={() => void load()}
           className="bg-gray-800 hover:bg-gray-700 text-white rounded-md py-2 px-4 text-sm"

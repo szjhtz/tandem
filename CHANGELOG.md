@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.19]
+
+### Changed
+
+- **VPS Stress Lab parity upgrade**: Server-side stress scenarios (`remote`, `file`, `inline`) now execute true async run flows and wait for run completion, aligning Tandem latency measurement with end-to-end provider/tool execution instead of submission-only timing.
+- **Cross-system benchmark comparison in portal**: Added OpenCode benchmark ingestion (`latest`, `history`, `by-date`, `health`) and in-UI Tandem vs OpenCode delta reporting for matched stress scenarios.
+- **OpenCode benchmark runtime mode**: Added warm attached execution support (`opencode serve` + `run --attach`) to avoid cold-start CLI overhead during repeated benchmark runs.
+- **Portal Caddy/API routing compatibility**: Standardized `/api/v1` compatibility behavior and health endpoint support for external benchmark-service integration.
+
+### Fixed
+
+- **Engine request observability coverage**: Added explicit timing/slow-request instrumentation for `session.command`, `session.get`, and `session.list` server routes to improve bottleneck diagnosis under load.
+- **Stress chart rendering stability**: Fixed NaN polyline generation in Stress Lab line charts when metric series are all-zero or sparsely initialized.
+- **Server-side model selection for stress runs**: Portal server stress runner now resolves and injects an explicit provider/model for prompt scenarios, preventing misleading providerless-like latency readings in LLM tests.
+
 ## [0.3.18]
 
 ### Fixed

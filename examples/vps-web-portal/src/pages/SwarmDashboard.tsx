@@ -13,16 +13,18 @@ interface AgentResponse {
 const personas = [
   {
     name: "The Critic",
-    prompt: "You are a harsh critic. Analyze the following and point out all flaws: ",
+    prompt:
+      "You are a rigorous critic. Identify failure modes, blind spots, and hidden costs. End with a risk score (1-10): ",
   },
   {
     name: "The Optimist",
-    prompt: "You are an eternal optimist. Point out the best features and potential of: ",
+    prompt:
+      "You are an ambitious optimist. Identify upside, leverage points, and breakout potential. End with an upside score (1-10): ",
   },
   {
     name: "The Engineer",
     prompt:
-      "You are a pragmatic software engineer. Evaluate the technical feasibility and edge cases of: ",
+      "You are a pragmatic software engineer. Evaluate technical feasibility, architecture choices, and operational risks. End with a buildability score (1-10): ",
   },
 ];
 
@@ -275,7 +277,7 @@ export const SwarmDashboard: React.FC = () => {
   };
 
   return (
-    <div className="flex flex-col h-full bg-gray-950 p-6">
+    <div className="flex flex-col h-full bg-gray-950 p-3 sm:p-4 lg:p-6">
       <div className="mb-6">
         <h2 className="text-2xl font-bold text-white flex items-center gap-2">
           <Users className="text-purple-500" />
@@ -286,19 +288,19 @@ export const SwarmDashboard: React.FC = () => {
         </p>
       </div>
 
-      <form onSubmit={handleStart} className="flex gap-4 mb-6">
+      <form onSubmit={handleStart} className="flex flex-col gap-3 sm:flex-row sm:gap-4 mb-6">
         <input
           type="text"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="E.g., A mobile app that reminds you to drink water by locking your screen."
+          placeholder="E.g., Build an AI incident co-pilot for on-call teams that reads logs, proposes fixes, and drafts status updates."
           className="flex-1 bg-gray-900 border border-gray-800 rounded-lg px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-purple-500"
           disabled={isRunning}
         />
         <button
           type="submit"
           disabled={isRunning || !query.trim()}
-          className="bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white px-6 py-3 rounded-lg font-medium flex items-center gap-2 transition-colors"
+          className="bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white px-6 py-3 rounded-lg font-medium flex items-center justify-center gap-2 transition-colors sm:w-auto"
         >
           {isRunning ? <Loader2 className="animate-spin" size={20} /> : <Users size={20} />}
           {isRunning ? "Deploying Swarm..." : "Run Swarm Review"}

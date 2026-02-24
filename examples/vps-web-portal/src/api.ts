@@ -1,6 +1,7 @@
 export type JsonObject = Record<string, unknown>;
 import { isLikelyToolCapableModel, toolCapablePolicyReason } from "./config/toolCapableModels";
 const PORTAL_WORKSPACE_ROOT_KEY = "tandem_portal_workspace_root";
+export const PORTAL_AUTH_EXPIRED_EVENT = "tandem_portal_auth_expired";
 
 const readWorkspaceRootSetting = (): string | null => {
   if (typeof window === "undefined") return null;
@@ -286,6 +287,16 @@ export class EngineAPI {
     }
 
     if (!res.ok) {
+      if (res.status === 401) {
+        if (typeof window !== "undefined") {
+          window.dispatchEvent(
+            new CustomEvent(PORTAL_AUTH_EXPIRED_EVENT, {
+              detail: { path, portal: !!options.portal },
+            })
+          );
+        }
+        throw new Error("Session expired or invalid server key. Sign in again.");
+      }
       const body = await res.text().catch(() => "");
       throw new Error(`Request failed (${res.status} ${res.statusText}): ${body}`);
     }
@@ -882,10 +893,148 @@ export class EngineAPI {
       { portal: true }
     );
   }
+
+  getServerStressStreamUrl(params: ServerStressStreamParams): string {
+    const search = new URLSearchParams();
+    search.set("scenario", params.scenario);
+    search.set("profile", params.profile);
+    search.set("concurrency", String(params.concurrency));
+    search.set("duration_seconds", String(params.durationSeconds));
+    search.set("cycle_delay_ms", String(params.cycleDelayMs));
+    if (params.command?.trim()) {
+      search.set("command", params.command.trim());
+    }
+    if (params.prompt?.trim()) {
+      search.set("prompt", params.prompt.trim());
+    }
+    if (params.filePath?.trim()) {
+      search.set("file_path", params.filePath.trim());
+    }
+    if (params.inlineBody?.trim()) {
+      search.set("inline_body", params.inlineBody.trim());
+    }
+    if (this.token) {
+      search.set("token", this.token);
+    }
+    return `${this.portalBaseUrl}/stress/stream?${search.toString()}`;
+  }
+
+  getServerProviderlessStressStreamUrl(params: ServerProviderlessStressParams): string {
+    return this.getServerStressStreamUrl({
+      scenario: "providerless",
+      ...params,
+    });
+  }
 }
 
 // Global singleton
 export const api = new EngineAPI();
+
+const OPENCODE_BENCH_BASE_URL = (
+  typeof import.meta !== "undefined" &&
+  (import.meta as { env?: Record<string, string | undefined> }).env?.VITE_OPENCODE_BENCH_BASE_URL
+    ? (import.meta as { env?: Record<string, string | undefined> }).env!
+        .VITE_OPENCODE_BENCH_BASE_URL!
+    : "https://tests.frumu.ai/api/v1"
+).replace(/\/+$/, "");
+
+export interface OpencodeBenchScenarioResult {
+  name: string;
+  samples: number;
+  completed: number;
+  errors: number;
+  avg_ms: number;
+  p50_ms: number;
+  p95_ms: number;
+  p99_ms: number;
+  min_ms: number;
+  max_ms: number;
+  timeout_count?: number;
+  last_error?: string | null;
+}
+
+export interface OpencodeBenchLatestResult {
+  schema_version?: number;
+  run_id: string;
+  timestamp_utc: string;
+  status: string;
+  service?: string;
+  service_version?: string;
+  git_commit?: string;
+  scenarios: OpencodeBenchScenarioResult[];
+}
+
+export interface OpencodeBenchHistoryResponse {
+  count: number;
+  items: OpencodeBenchLatestResult[];
+}
+
+class OpencodeBenchAPI {
+  private baseUrl: string;
+  private requestTimeoutMs: number;
+
+  constructor(baseUrl = OPENCODE_BENCH_BASE_URL) {
+    this.baseUrl = baseUrl;
+    this.requestTimeoutMs = 20000;
+  }
+
+  private async request<T>(path: string): Promise<T> {
+    const controller = new AbortController();
+    const timeoutHandle = window.setTimeout(() => controller.abort(), this.requestTimeoutMs);
+    try {
+      const res = await fetch(`${this.baseUrl}${path}`, {
+        method: "GET",
+        headers: { "Content-Type": "application/json" },
+        signal: controller.signal,
+      });
+      if (!res.ok) {
+        const payload = await res.text().catch(() => "");
+        throw new Error(`OpenCode API ${res.status}: ${payload || res.statusText}`);
+      }
+      return (await res.json()) as T;
+    } finally {
+      window.clearTimeout(timeoutHandle);
+    }
+  }
+
+  async getLatest(): Promise<OpencodeBenchLatestResult> {
+    return this.request<OpencodeBenchLatestResult>(`/results/latest`);
+  }
+
+  async getHistory(days = 30): Promise<OpencodeBenchHistoryResponse> {
+    return this.request<OpencodeBenchHistoryResponse>(
+      `/results/history?days=${encodeURIComponent(String(days))}`
+    );
+  }
+
+  async getByDate(yyyyMmDd: string): Promise<OpencodeBenchLatestResult> {
+    return this.request<OpencodeBenchLatestResult>(
+      `/results/by-date/${encodeURIComponent(yyyyMmDd)}`
+    );
+  }
+
+  async getHealth(): Promise<SystemHealth> {
+    try {
+      return await this.request<SystemHealth>(`/health`);
+    } catch {
+      // Some setups may expose health outside /api/v1; keep a fallback path.
+      const controller = new AbortController();
+      const timeoutHandle = window.setTimeout(() => controller.abort(), this.requestTimeoutMs);
+      try {
+        const res = await fetch("https://tests.frumu.ai/health", {
+          method: "GET",
+          signal: controller.signal,
+        });
+        if (!res.ok) throw new Error(`OpenCode health ${res.status}`);
+        return (await res.json()) as SystemHealth;
+      } finally {
+        window.clearTimeout(timeoutHandle);
+      }
+    }
+  }
+}
+
+export const opencodeBenchApi = new OpencodeBenchAPI();
 
 export interface EngineModelSpec {
   providerID: string;
@@ -1197,4 +1346,25 @@ export interface PermissionRuleRecord {
 export interface PermissionSnapshotResponse {
   requests?: PermissionRequestRecord[];
   rules?: PermissionRuleRecord[];
+}
+
+export interface ServerProviderlessStressParams {
+  scenario?: "providerless";
+  profile: "command_only" | "get_session_only" | "list_sessions_only" | "mixed" | "soak_mixed";
+  concurrency: number;
+  durationSeconds: number;
+  cycleDelayMs: number;
+  command?: string;
+}
+
+export interface ServerStressStreamParams {
+  scenario: "remote" | "file" | "inline" | "providerless";
+  profile: "command_only" | "get_session_only" | "list_sessions_only" | "mixed" | "soak_mixed";
+  concurrency: number;
+  durationSeconds: number;
+  cycleDelayMs: number;
+  command?: string;
+  prompt?: string;
+  filePath?: string;
+  inlineBody?: string;
 }

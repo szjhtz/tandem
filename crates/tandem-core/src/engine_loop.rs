@@ -1747,6 +1747,23 @@ fn normalize_tool_args(
                 missing_terminal_reason = Some("WRITE_CONTENT_MISSING".to_string());
             }
         }
+    } else if matches!(normalized_tool.as_str(), "webfetch" | "webfetch_html") {
+        if let Some(url) = extract_webfetch_url_arg(&args) {
+            args = set_webfetch_url_arg(args, url);
+        } else if let Some(inferred) = infer_url_from_text(latest_assistant_context) {
+            args_source = "inferred_from_context".to_string();
+            args_integrity = "recovered".to_string();
+            args = set_webfetch_url_arg(args, inferred);
+        } else if let Some(inferred) = infer_url_from_text(latest_user_text) {
+            args_source = "inferred_from_user".to_string();
+            args_integrity = "recovered".to_string();
+            args = set_webfetch_url_arg(args, inferred);
+        } else {
+            args_source = "missing".to_string();
+            args_integrity = "empty".to_string();
+            missing_terminal = true;
+            missing_terminal_reason = Some("WEBFETCH_URL_MISSING".to_string());
+        }
     }
 
     NormalizedToolArgs {
@@ -2007,6 +2024,35 @@ fn set_websearch_query_and_source(args: Value, query: Option<String>, query_sour
     Value::Object(obj)
 }
 
+fn set_webfetch_url_arg(args: Value, url: String) -> Value {
+    let mut obj = args.as_object().cloned().unwrap_or_default();
+    obj.insert("url".to_string(), Value::String(url));
+    Value::Object(obj)
+}
+
+fn extract_webfetch_url_arg(args: &Value) -> Option<String> {
+    const URL_KEYS: [&str; 5] = ["url", "uri", "link", "href", "target_url"];
+    for key in URL_KEYS {
+        if let Some(value) = args.get(key).and_then(|v| v.as_str()) {
+            if let Some(url) = sanitize_url_candidate(value) {
+                return Some(url);
+            }
+        }
+    }
+    for container in ["arguments", "args", "input", "params"] {
+        if let Some(obj) = args.get(container) {
+            for key in URL_KEYS {
+                if let Some(value) = obj.get(key).and_then(|v| v.as_str()) {
+                    if let Some(url) = sanitize_url_candidate(value) {
+                        return Some(url);
+                    }
+                }
+            }
+        }
+    }
+    args.as_str().and_then(sanitize_url_candidate)
+}
+
 fn extract_websearch_query(args: &Value) -> Option<String> {
     const QUERY_KEYS: [&str; 5] = ["query", "q", "search_query", "searchQuery", "keywords"];
     for key in QUERY_KEYS {
@@ -2123,6 +2169,65 @@ fn infer_file_path_from_text(text: &str) -> Option<String> {
     }
 
     deduped.into_iter().next()
+}
+
+fn infer_url_from_text(text: &str) -> Option<String> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let mut candidates: Vec<String> = Vec::new();
+
+    // Prefer backtick-delimited URLs when available.
+    let mut in_tick = false;
+    let mut tick_buf = String::new();
+    for ch in trimmed.chars() {
+        if ch == '`' {
+            if in_tick {
+                if let Some(url) = sanitize_url_candidate(&tick_buf) {
+                    candidates.push(url);
+                }
+                tick_buf.clear();
+            }
+            in_tick = !in_tick;
+            continue;
+        }
+        if in_tick {
+            tick_buf.push(ch);
+        }
+    }
+
+    // Fallback: scan whitespace tokens.
+    for raw in trimmed.split_whitespace() {
+        if let Some(url) = sanitize_url_candidate(raw) {
+            candidates.push(url);
+        }
+    }
+
+    let mut seen = HashSet::new();
+    candidates
+        .into_iter()
+        .find(|candidate| seen.insert(candidate.clone()))
+}
+
+fn sanitize_url_candidate(raw: &str) -> Option<String> {
+    let token = raw
+        .trim()
+        .trim_matches(|c: char| matches!(c, '`' | '"' | '\'' | '*' | '|'))
+        .trim_start_matches(['(', '[', '{', '<'])
+        .trim_end_matches([',', ';', ':', ')', ']', '}', '>'])
+        .trim_end_matches('.')
+        .trim();
+
+    if token.is_empty() {
+        return None;
+    }
+    let lower = token.to_ascii_lowercase();
+    if !(lower.starts_with("http://") || lower.starts_with("https://")) {
+        return None;
+    }
+    Some(token.to_string())
 }
 
 fn sanitize_path_candidate(raw: &str) -> Option<String> {
@@ -3689,6 +3794,49 @@ Call: todowrite(task_id=3, status="in_progress")
         assert!(normalized.missing_terminal);
         assert_eq!(normalized.args_source, "missing");
         assert_eq!(normalized.args_integrity, "empty");
+    }
+
+    #[test]
+    fn normalize_tool_args_webfetch_infers_url_from_user_prompt() {
+        let normalized = normalize_tool_args(
+            "webfetch",
+            json!({}),
+            "Please fetch `https://tandem.frumu.ai/docs/` in markdown mode",
+            "",
+        );
+        assert!(!normalized.missing_terminal);
+        assert_eq!(
+            normalized.args.get("url").and_then(|v| v.as_str()),
+            Some("https://tandem.frumu.ai/docs/")
+        );
+        assert_eq!(normalized.args_source, "inferred_from_user");
+        assert_eq!(normalized.args_integrity, "recovered");
+    }
+
+    #[test]
+    fn normalize_tool_args_webfetch_recovers_nested_url_alias() {
+        let normalized = normalize_tool_args(
+            "webfetch",
+            json!({"args":{"uri":"https://example.com/page"}}),
+            "",
+            "",
+        );
+        assert!(!normalized.missing_terminal);
+        assert_eq!(
+            normalized.args.get("url").and_then(|v| v.as_str()),
+            Some("https://example.com/page")
+        );
+        assert_eq!(normalized.args_source, "provider_json");
+    }
+
+    #[test]
+    fn normalize_tool_args_webfetch_fails_when_url_unrecoverable() {
+        let normalized = normalize_tool_args("webfetch", json!({}), "fetch the site", "");
+        assert!(normalized.missing_terminal);
+        assert_eq!(
+            normalized.missing_terminal_reason.as_deref(),
+            Some("WEBFETCH_URL_MISSING")
+        );
     }
 
     #[test]

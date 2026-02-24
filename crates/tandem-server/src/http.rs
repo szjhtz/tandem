@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use axum::extract::ws::{Message as WsMessage, WebSocket, WebSocketUpgrade};
@@ -1365,8 +1365,11 @@ fn parse_permission_rule_input(
 
 async fn list_sessions(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Query(query): Query<ListSessionsQuery>,
 ) -> Json<Vec<WireSession>> {
+    let request_id = request_id_from_headers(&headers);
+    let started = Instant::now();
     let workspace_from_query = query
         .workspace
         .as_deref()
@@ -1439,13 +1442,26 @@ async fn list_sessions(
         .take(page_size)
         .map(Into::into)
         .collect::<Vec<WireSession>>();
-    tracing::debug!(
-        "session.list scope={:?} matched={} page={} page_size={}",
+    let elapsed_ms = started.elapsed().as_millis();
+    tracing::info!(
+        "session.list request_id={} scope={:?} matched={} returned={} page={} page_size={} elapsed_ms={}",
+        request_id,
         effective_scope,
         total_after_scope,
+        items.len(),
         page,
-        page_size
+        page_size,
+        elapsed_ms
     );
+    if elapsed_ms >= 1_000 {
+        tracing::warn!(
+            "slow request request_id={} route=GET /session elapsed_ms={} scope={:?} archived_filter={}",
+            request_id,
+            elapsed_ms,
+            effective_scope,
+            query.archived.is_some()
+        );
+    }
     Json(items)
 }
 
@@ -1506,14 +1522,35 @@ async fn grant_workspace_override(
 
 async fn get_session(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<Json<WireSession>, StatusCode> {
-    state
+    let request_id = request_id_from_headers(&headers);
+    let started = Instant::now();
+    let result = state
         .storage
         .get_session(&id)
         .await
         .map(|session| Json(session.into()))
-        .ok_or(StatusCode::NOT_FOUND)
+        .ok_or(StatusCode::NOT_FOUND);
+    let elapsed_ms = started.elapsed().as_millis();
+    let status = if result.is_ok() { "ok" } else { "not_found" };
+    tracing::info!(
+        "session.get request_id={} session_id={} status={} elapsed_ms={}",
+        request_id,
+        id,
+        status,
+        elapsed_ms
+    );
+    if elapsed_ms >= 500 {
+        tracing::warn!(
+            "slow request request_id={} route=GET /session/{{id}} session_id={} elapsed_ms={}",
+            request_id,
+            id,
+            elapsed_ms
+        );
+    }
+    result
 }
 
 async fn delete_session(
@@ -3438,14 +3475,19 @@ async fn command_list() -> Json<Value> {
 }
 async fn run_command(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Path(id): Path<String>,
     Json(input): Json<CommandRunInput>,
 ) -> Result<Json<Value>, StatusCode> {
+    let request_id = request_id_from_headers(&headers);
+    let started = Instant::now();
+    let lookup_started = Instant::now();
     let session = state
         .storage
         .get_session(&id)
         .await
         .ok_or(StatusCode::NOT_FOUND)?;
+    let lookup_ms = lookup_started.elapsed().as_millis();
     let workspace_root = session
         .workspace_root
         .as_deref()
@@ -3481,16 +3523,50 @@ async fn run_command(
     };
     cmd.current_dir(&effective_cwd);
 
+    let command_started = Instant::now();
     let output = cmd
         .output()
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let command_ms = command_started.elapsed().as_millis();
+    let elapsed_ms = started.elapsed().as_millis();
+    tracing::info!(
+        "session.command request_id={} session_id={} command={} ok={} elapsed_ms={} lookup_ms={} command_ms={}",
+        request_id,
+        id,
+        command,
+        output.status.success(),
+        elapsed_ms,
+        lookup_ms,
+        command_ms
+    );
+    if elapsed_ms >= 2_000 {
+        tracing::warn!(
+            "slow request request_id={} route=POST /session/{{id}}/command session_id={} command={} elapsed_ms={} lookup_ms={} command_ms={}",
+            request_id,
+            id,
+            command,
+            elapsed_ms,
+            lookup_ms,
+            command_ms
+        );
+    }
     Ok(Json(json!({
         "ok": output.status.success(),
         "cwd": effective_cwd,
         "stdout": String::from_utf8_lossy(&output.stdout).to_string(),
         "stderr": String::from_utf8_lossy(&output.stderr).to_string()
     })))
+}
+
+fn request_id_from_headers(headers: &HeaderMap) -> String {
+    headers
+        .get("x-tandem-correlation-id")
+        .and_then(|v| v.to_str().ok())
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(|v| v.to_string())
+        .unwrap_or_else(|| Uuid::new_v4().simple().to_string())
 }
 
 async fn run_shell(Json(input): Json<ShellRunInput>) -> Result<Json<Value>, StatusCode> {

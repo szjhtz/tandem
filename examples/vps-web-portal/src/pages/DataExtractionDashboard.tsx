@@ -19,7 +19,7 @@ const DATA_EXTRACT_SESSION_KEY = "tandem_portal_data_extract_session_id";
 export const DataExtractionDashboard: React.FC = () => {
   const [sourceData, setSourceData] = useState("");
   const [jsonSchema, setJsonSchema] = useState(
-    '{\n  "type": "object",\n  "properties": {\n    "name": { "type": "string" },\n    "price": { "type": "number" }\n  }\n}'
+    '{\n  "type": "array",\n  "items": {\n    "type": "object",\n    "properties": {\n      "sku": { "type": "string" },\n      "name": { "type": "string" },\n      "price_usd": { "type": "number" },\n      "availability": { "type": "string" },\n      "source_url": { "type": "string" }\n    },\n    "required": ["sku", "name", "price_usd"]\n  }\n}'
   );
   const [isRunning, setIsRunning] = useState(false);
   const [logs, setLogs] = useState<LogEvent[]>([]);
@@ -189,7 +189,8 @@ Instructions:
 3. Validate your output against the schema.
 4. Output the final structured JSON records to 'out/records.json'.
 5. Additionally, generate a CSV version in 'out/records.csv'.
-6. If any fields could not be mapped, write a note in 'out/validation_report.md'.`;
+6. If any fields could not be mapped, write a note in 'out/validation_report.md' with row-level reasons.
+7. Include confidence notes for any inferred values.`;
 
       const { runId } = await api.startAsyncRun(sessionId, prompt);
       attachRunStream(sessionId, runId);
@@ -201,8 +202,8 @@ Instructions:
   };
 
   return (
-    <div className="flex h-full bg-gray-950">
-      <div className="flex-1 flex flex-col p-6 overflow-hidden">
+    <div className="flex h-full flex-col xl:flex-row bg-gray-950">
+      <div className="flex-1 min-h-0 flex flex-col p-3 sm:p-4 lg:p-6 overflow-hidden">
         <div className="mb-6 flex justify-between items-start">
           <div>
             <h2 className="text-2xl font-bold text-white flex items-center gap-2">
@@ -231,7 +232,7 @@ Instructions:
             type="text"
             value={sourceData}
             onChange={(e) => setSourceData(e.target.value)}
-            placeholder="Target Source (e.g., https://example.com/products or /var/www/data.html)"
+            placeholder="Target Source (e.g., https://news.ycombinator.com, https://example.com/pricing, /srv/tandem/invoices.html)"
             className="w-full bg-gray-900 border border-gray-800 rounded-lg px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
             disabled={isRunning}
           />
@@ -239,7 +240,7 @@ Instructions:
             <textarea
               value={jsonSchema}
               onChange={(e) => setJsonSchema(e.target.value)}
-              placeholder="Target JSON Schema..."
+              placeholder="Target JSON Schema (records the agent should enforce)..."
               className="flex-1 bg-gray-900 border border-t-[4px] border-t-gray-800 border-gray-800 rounded-lg px-4 py-3 text-emerald-400 font-mono text-xs focus:outline-none focus:ring-2 focus:ring-blue-500 min-h-[140px]"
               disabled={isRunning}
             />
@@ -314,7 +315,7 @@ Instructions:
         </div>
       </div>
 
-      <div className="w-80 shrink-0 border-l border-gray-800 bg-gray-900">
+      <div className="w-full xl:w-80 shrink-0 border-t xl:border-t-0 xl:border-l border-gray-800 bg-gray-900 max-h-[45vh] xl:max-h-none">
         <SessionHistory
           currentSessionId={currentSessionId}
           onSelectSession={loadSession}

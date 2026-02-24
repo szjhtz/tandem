@@ -1,6 +1,6 @@
 /* eslint-disable react-refresh/only-export-components */
-import React, { createContext, useContext, useState, useEffect } from "react";
-import { api } from "./api";
+import React, { createContext, useContext, useState, useEffect, useCallback } from "react";
+import { api, PORTAL_AUTH_EXPIRED_EVENT } from "./api";
 
 interface AuthContextType {
   token: string | null;
@@ -62,6 +62,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setProviderLoading(false);
   };
 
+  const logout = useCallback(() => {
+    localStorage.removeItem("tandem_portal_token");
+    api.setToken("");
+    setToken(null);
+    setProviderConfigured(false);
+    setProviderLoading(false);
+  }, []);
+
   useEffect(() => {
     const storedToken = localStorage.getItem("tandem_portal_token");
     if (storedToken) {
@@ -73,6 +81,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     // eslint-disable-next-line
     setIsLoading(false);
   }, []);
+
+  useEffect(() => {
+    const handleAuthExpired = () => {
+      logout();
+    };
+    window.addEventListener(PORTAL_AUTH_EXPIRED_EVENT, handleAuthExpired);
+    return () => {
+      window.removeEventListener(PORTAL_AUTH_EXPIRED_EVENT, handleAuthExpired);
+    };
+  }, [logout]);
 
   const login = async (newToken: string) => {
     try {
@@ -89,13 +107,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       api.setToken(""); // clear bad token
       return false;
     }
-  };
-
-  const logout = () => {
-    localStorage.removeItem("tandem_portal_token");
-    api.setToken("");
-    setToken(null);
-    setProviderConfigured(false);
   };
 
   return (

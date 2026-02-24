@@ -19,7 +19,7 @@ const HTML_SESSION_KEY = "tandem_portal_html_session_id";
 export const HtmlExtractorDashboard: React.FC = () => {
   const [targetUrl, setTargetUrl] = useState("");
   const [extractGoal, setExtractGoal] = useState(
-    "Extract a clean markdown summary of the page, then return any structured entities found."
+    "Extract pricing tiers, limits, and feature differences from this page into structured JSON."
   );
   const [isRunning, setIsRunning] = useState(false);
   const [logs, setLogs] = useState<LogEvent[]>([]);
@@ -189,9 +189,9 @@ Target URL: ${targetUrl}
 Extraction Goal: ${extractGoal}
 
 Instructions:
-1. First fetch and analyze the URL in Markdown mode.
+1. First call tool \`webfetch\` with explicit args: {"url":"${targetUrl}","mode":"markdown"}.
 2. Produce a concise markdown extraction report and write it to 'out/url_extract.md'.
-3. If key data appears missing in Markdown, use webfetch in "html" mode with a reason that explains what was missing.
+3. If key data appears missing in Markdown, call \`webfetch_html\` with explicit args: {"url":"${targetUrl}","reason":"<what markdown missed>"}.
 4. If you used raw HTML fallback, extract hidden/script payloads and include them in 'out/dom_extract.json'.
 5. Always provide final structured entities in 'out/url_entities.json'.`;
 
@@ -205,8 +205,8 @@ Instructions:
   };
 
   return (
-    <div className="flex h-full bg-gray-950">
-      <div className="flex-1 flex flex-col p-6 overflow-hidden">
+    <div className="flex h-full flex-col xl:flex-row bg-gray-950">
+      <div className="flex-1 min-h-0 flex flex-col p-3 sm:p-4 lg:p-6 overflow-hidden">
         <div className="mb-6 flex justify-between items-start">
           <div>
             <h2 className="text-2xl font-bold text-white flex items-center gap-2">
@@ -235,7 +235,7 @@ Instructions:
               type="text"
               value={targetUrl}
               onChange={(e) => setTargetUrl(e.target.value)}
-              placeholder="https://example.com/data-heavy-page"
+              placeholder="https://openai.com/pricing or another data-heavy product page"
               className="flex-1 bg-gray-950 border border-gray-800 rounded px-3 py-2 text-white placeholder-gray-600 focus:outline-none focus:border-sky-500"
               disabled={isRunning}
             />
@@ -245,7 +245,7 @@ Instructions:
             <textarea
               value={extractGoal}
               onChange={(e) => setExtractGoal(e.target.value)}
-              placeholder="What hidden DOM node or script payload are you looking for?"
+              placeholder="What exact fields do you need (e.g., plan_name, monthly_price, included_tokens, rate_limits)?"
               className="w-full bg-gray-950 border border-gray-800 rounded px-3 py-2 text-white placeholder-gray-600 focus:outline-none focus:border-sky-500 min-h-[80px]"
               disabled={isRunning}
             />
@@ -322,7 +322,7 @@ Instructions:
         </div>
       </div>
 
-      <div className="w-80 shrink-0 border-l border-gray-800 bg-gray-900">
+      <div className="w-full xl:w-80 shrink-0 border-t xl:border-t-0 xl:border-l border-gray-800 bg-gray-900 max-h-[45vh] xl:max-h-none">
         <SessionHistory
           currentSessionId={currentSessionId}
           onSelectSession={loadSession}

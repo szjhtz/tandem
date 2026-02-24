@@ -496,7 +496,7 @@ export const OpsWorkspace: React.FC = () => {
     str(row.automation_id) || str(row.routine_id) || str(row.id);
 
   return (
-    <div className="flex flex-col h-full bg-gray-950 text-white p-6 gap-4 overflow-auto">
+    <div className="flex flex-col h-full bg-gray-950 text-white p-3 sm:p-4 lg:p-6 gap-4 overflow-auto">
       <div>
         <h2 className="text-2xl font-bold">Ops Workspace</h2>
         <p className="text-sm text-gray-400">

@@ -184,10 +184,11 @@ Instructions:
 1. Fetch the target URL using your webfetch tool.
 2. Check your memory store or tool outputs for a previous snapshot of this URL.
 3. Compare the new content with the old snapshot.
-4. Output a digest of the changes to 'out/digest.md'.
-5. If there are diffs, save them in 'out/diffs/'.
-6. Save the new snapshot state to 'out/watch_state.json'.
-7. Queue a notification or summary of the digest for the user.`;
+4. Ignore cosmetic-only changes (timestamps, ad slots, tracking params) unless they alter meaning.
+5. Output a digest of the changes to 'out/digest.md' with sections: New, Removed, Changed, Why it matters.
+6. If there are diffs, save them in 'out/diffs/'.
+7. Save the new snapshot state to 'out/watch_state.json'.
+8. Queue a notification or summary of the digest for the user.`;
 
       const { runId } = await api.startAsyncRun(sessionId, prompt);
       attachRunStream(sessionId, runId);
@@ -199,8 +200,8 @@ Instructions:
   };
 
   return (
-    <div className="flex h-full bg-gray-950">
-      <div className="flex-1 flex flex-col p-6 overflow-hidden">
+    <div className="flex h-full flex-col xl:flex-row bg-gray-950">
+      <div className="flex-1 min-h-0 flex flex-col p-3 sm:p-4 lg:p-6 overflow-hidden">
         <div className="mb-6 flex justify-between items-start">
           <div>
             <h2 className="text-2xl font-bold text-white flex items-center gap-2">
@@ -224,7 +225,7 @@ Instructions:
               type="text"
               value={targetUrl}
               onChange={(e) => setTargetUrl(e.target.value)}
-              placeholder="https://news.ycombinator.com or https://github.com/microsoft/vscode/releases"
+              placeholder="https://github.com/kubernetes/kubernetes/releases or https://status.openai.com/"
               className="flex-1 bg-gray-950 border border-gray-800 rounded px-3 py-2 text-white placeholder-gray-600 focus:outline-none focus:border-pink-500"
               disabled={isRunning}
             />
@@ -235,7 +236,7 @@ Instructions:
               type="text"
               value={schedule}
               onChange={(e) => setSchedule(e.target.value)}
-              placeholder="0 9 * * *"
+              placeholder="*/15 * * * *"
               className="w-48 bg-gray-950 border border-gray-800 rounded px-3 py-2 text-white font-mono placeholder-gray-600 focus:outline-none focus:border-pink-500"
               disabled={isRunning}
             />
@@ -315,7 +316,7 @@ Instructions:
         </div>
       </div>
 
-      <div className="w-80 shrink-0 border-l border-gray-800 bg-gray-900">
+      <div className="w-full xl:w-80 shrink-0 border-t xl:border-t-0 xl:border-l border-gray-800 bg-gray-900 max-h-[45vh] xl:max-h-none">
         <SessionHistory
           currentSessionId={currentSessionId}
           onSelectSession={loadSession}

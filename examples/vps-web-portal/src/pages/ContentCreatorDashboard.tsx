@@ -180,10 +180,11 @@ The user wants a comprehensive blog post and social media snippets about: "${top
 
 Instructions - Follow this exact pipeline:
 1. Research Strategy (Plan + Todo): Create an outline and research plan. Save to 'out/todos.json' and 'out/outline.md'.
-2. Ingestion: Use the webfetch or websearch tools to gather context. **Pay attention to and explicitly report the Webfetch Markdown compression stats in your final summary.**
-3. Drafting: Write a comprehensive, well-structured markdown post.
+2. Ingestion: Use the webfetch or websearch tools to gather context and capture source links.
+3. Drafting: Write a comprehensive, well-structured markdown post with concrete examples.
 4. Editing: Review against best practices, refine the headers. Save the final blog post to 'out/post.md'.
-5. Distribution: Generate 3 platform-specific variants (e.g. Twitter, LinkedIn hook). Save to 'out/social_snippets.md'.
+5. Distribution: Generate 3 platform-specific variants (X thread opener, LinkedIn post, newsletter blurb). Save to 'out/social_snippets.md'.
+6. Include a short "fact-check notes" section listing which claims require verification.
 Complete all steps autonomously without stopping.`;
 
       const { runId } = await api.startAsyncRun(sessionId, prompt);
@@ -196,8 +197,8 @@ Complete all steps autonomously without stopping.`;
   };
 
   return (
-    <div className="flex h-full bg-gray-950">
-      <div className="flex-1 flex flex-col p-6 overflow-hidden">
+    <div className="flex h-full flex-col xl:flex-row bg-gray-950">
+      <div className="flex-1 min-h-0 flex flex-col p-3 sm:p-4 lg:p-6 overflow-hidden">
         <div className="mb-6 flex justify-between items-start">
           <div>
             <h2 className="text-2xl font-bold text-white flex items-center gap-2">
@@ -211,12 +212,15 @@ Complete all steps autonomously without stopping.`;
           </div>
         </div>
 
-        <form onSubmit={handleStart} className="flex gap-4 mb-6 shrink-0">
+        <form
+          onSubmit={handleStart}
+          className="flex flex-col gap-3 sm:flex-row sm:gap-4 mb-6 shrink-0"
+        >
           <input
             type="text"
             value={topic}
             onChange={(e) => setTopic(e.target.value)}
-            placeholder="E.g., The state of AI Agent tooling in 2026, comparing Tandem vs generic orchestrators..."
+            placeholder="E.g., Write a practical CTO guide: 'How to deploy AI agents in production without creating a security nightmare'"
             className="flex-1 bg-gray-900 border border-gray-800 rounded-lg px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-purple-500"
             disabled={isRunning}
           />
@@ -290,7 +294,7 @@ Complete all steps autonomously without stopping.`;
         </div>
       </div>
 
-      <div className="w-80 shrink-0 border-l border-gray-800 bg-gray-900">
+      <div className="w-full xl:w-80 shrink-0 border-t xl:border-t-0 xl:border-l border-gray-800 bg-gray-900 max-h-[45vh] xl:max-h-none">
         <SessionHistory
           currentSessionId={currentSessionId}
           onSelectSession={loadSession}

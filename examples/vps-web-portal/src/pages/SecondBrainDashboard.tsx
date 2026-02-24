@@ -1,9 +1,21 @@
 import React, { useState, useEffect, useRef } from "react";
 import { api } from "../api";
-import { BrainCircuit, Send, FileCode2, Database, FolderGit2, Loader2 } from "lucide-react";
+import {
+  BrainCircuit,
+  Send,
+  FileCode2,
+  Database,
+  FolderGit2,
+  Loader2,
+  History,
+  X,
+} from "lucide-react";
 import { SessionHistory } from "../components/SessionHistory";
 import { ToolCallResult } from "../components/ToolCallResult";
 import { attachPortalRunStream } from "../utils/portalRunStream";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import rehypeSanitize from "rehype-sanitize";
 
 interface ChatEvent {
   id: string;
@@ -65,6 +77,8 @@ export const SecondBrainDashboard: React.FC = () => {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [currentWorkspace, setCurrentWorkspace] = useState<string | null>(null);
   const [isThinking, setIsThinking] = useState(false);
+  const [mobileSessionsOpen, setMobileSessionsOpen] = useState(false);
+  const [mobileTraceOpen, setMobileTraceOpen] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
   const lastUserPromptRef = useRef<string | null>(null);
@@ -84,6 +98,21 @@ export const SecondBrainDashboard: React.FC = () => {
       return next.slice(-120);
     });
   };
+
+  const renderTraceEntries = () => (
+    <div className="px-3 py-2 max-h-24 overflow-y-auto space-y-1">
+      {runtimeTrace.length === 0 ? (
+        <p className="text-[11px] text-gray-600">No runtime events yet.</p>
+      ) : (
+        runtimeTrace.slice(-8).map((entry) => (
+          <p key={entry.id} className="text-[11px] text-gray-300 font-mono">
+            <span className="text-gray-500 mr-2">{entry.timestamp.toLocaleTimeString()}</span>
+            {entry.content}
+          </p>
+        ))
+      )}
+    </div>
+  );
 
   const buildSecondBrainPrimePrompt = (workspacePath: string): string =>
     `${SECOND_BRAIN_PRIME_MARKER}
@@ -607,7 +636,7 @@ Operational rules:
   };
 
   return (
-    <div className="flex h-full bg-gray-950 text-white">
+    <div className="flex h-full flex-col xl:flex-row bg-gray-950 text-white">
       <div className="flex-1 flex flex-col overflow-hidden">
         {/* Header */}
         <div className="bg-gray-900 border-b border-gray-800 p-6 shrink-0">
@@ -616,13 +645,31 @@ Operational rules:
               <BrainCircuit />
               Unified Local Brain
             </h2>
-            <button
-              type="button"
-              onClick={resetSession}
-              className="px-3 py-1.5 text-xs border border-gray-700 rounded text-gray-300 hover:text-white hover:bg-gray-800"
-            >
-              Reset Session
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setMobileSessionsOpen(true)}
+                className="xl:hidden px-3 py-1.5 text-xs border border-gray-700 rounded text-gray-300 hover:text-white hover:bg-gray-800 flex items-center gap-1.5"
+              >
+                <History size={14} />
+                Sessions
+              </button>
+              <button
+                type="button"
+                onClick={() => setMobileTraceOpen(true)}
+                className="xl:hidden px-3 py-1.5 text-xs border border-gray-700 rounded text-gray-300 hover:text-white hover:bg-gray-800 flex items-center gap-1.5"
+              >
+                <FileCode2 size={14} />
+                Trace
+              </button>
+              <button
+                type="button"
+                onClick={resetSession}
+                className="px-3 py-1.5 text-xs border border-gray-700 rounded text-gray-300 hover:text-white hover:bg-gray-800"
+              >
+                Reset Session
+              </button>
+            </div>
           </div>
           <p className="text-gray-400 mt-2 text-sm flex items-center gap-4">
             <span>
@@ -650,7 +697,7 @@ Operational rules:
             Current workspace:{" "}
             <span className="font-mono text-gray-300">{currentWorkspace || "(loading...)"}</span>
           </p>
-          <div className="mt-3 border border-gray-800 rounded bg-gray-950/70">
+          <div className="hidden xl:block mt-3 border border-gray-800 rounded bg-gray-950/70">
             <div className="px-3 py-1.5 text-[11px] tracking-wide text-gray-400 border-b border-gray-800 flex items-center justify-between gap-2">
               <span>RUNTIME TRACE</span>
               <div className="flex items-center gap-2">
@@ -669,20 +716,7 @@ Operational rules:
                 </button>
               </div>
             </div>
-            <div className="px-3 py-2 max-h-24 overflow-y-auto space-y-1">
-              {runtimeTrace.length === 0 ? (
-                <p className="text-[11px] text-gray-600">No runtime events yet.</p>
-              ) : (
-                runtimeTrace.slice(-8).map((entry) => (
-                  <p key={entry.id} className="text-[11px] text-gray-300 font-mono">
-                    <span className="text-gray-500 mr-2">
-                      {entry.timestamp.toLocaleTimeString()}
-                    </span>
-                    {entry.content}
-                  </p>
-                ))
-              )}
-            </div>
+            {renderTraceEntries()}
           </div>
         </div>
 
@@ -701,7 +735,15 @@ Operational rules:
                       : "bg-gray-800 text-gray-200 border border-gray-700"
                   }`}
                 >
-                  <p className="whitespace-pre-wrap leading-relaxed">{m.content}</p>
+                  {m.role === "user" ? (
+                    <p className="whitespace-pre-wrap leading-relaxed">{m.content}</p>
+                  ) : (
+                    <div className="prose prose-invert prose-sm max-w-none prose-pre:bg-gray-900/70 prose-pre:border prose-pre:border-gray-700 prose-a:text-blue-400 hover:prose-a:text-blue-300">
+                      <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeSanitize]}>
+                        {m.content}
+                      </ReactMarkdown>
+                    </div>
+                  )}
                 </div>
               )}
               {m.type === "tool_start" && (
@@ -763,8 +805,8 @@ Operational rules:
         </div>
       </div>
 
-      {/* Sidebar right for Session History */}
-      <div className="w-80 shrink-0 border-l border-gray-800 bg-gray-900 overflow-y-auto">
+      {/* Desktop sidebar for Session History */}
+      <div className="hidden xl:block w-80 shrink-0 border-l border-gray-800 bg-gray-900 overflow-y-auto">
         <SessionHistory
           currentSessionId={sessionId}
           onSelectSession={loadSession}
@@ -773,6 +815,93 @@ Operational rules:
           className="w-full"
         />
       </div>
+
+      {/* Mobile sessions drawer */}
+      {mobileSessionsOpen && (
+        <div className="fixed inset-0 z-50 xl:hidden">
+          <button
+            type="button"
+            onClick={() => setMobileSessionsOpen(false)}
+            className="absolute inset-0 bg-black/60"
+            aria-label="Close session history"
+          />
+          <div className="absolute inset-x-0 bottom-0 max-h-[75vh] rounded-t-xl border border-gray-800 bg-gray-900 shadow-2xl flex flex-col">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-gray-800">
+              <h3 className="text-sm font-semibold text-gray-200 flex items-center gap-2">
+                <History size={15} />
+                Recent Sessions
+              </h3>
+              <button
+                type="button"
+                onClick={() => setMobileSessionsOpen(false)}
+                className="rounded border border-gray-700 p-1 text-gray-300 hover:text-white hover:bg-gray-800"
+              >
+                <X size={14} />
+              </button>
+            </div>
+            <div className="min-h-0 flex-1 overflow-y-auto">
+              <SessionHistory
+                currentSessionId={sessionId}
+                onSelectSession={(id) => {
+                  setMobileSessionsOpen(false);
+                  void loadSession(id);
+                }}
+                query="Second Brain"
+                scopePrefix="Second Brain"
+                className="w-full"
+              />
+            </div>
+          </div>
+        </div>
+      )}
+      {mobileTraceOpen && (
+        <div className="fixed inset-0 z-50 xl:hidden">
+          <button
+            type="button"
+            onClick={() => setMobileTraceOpen(false)}
+            className="absolute inset-0 bg-black/60"
+            aria-label="Close runtime trace"
+          />
+          <div className="absolute inset-x-0 bottom-0 max-h-[75vh] rounded-t-xl border border-gray-800 bg-gray-900 shadow-2xl flex flex-col">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-gray-800">
+              <h3 className="text-sm font-semibold text-gray-200 flex items-center gap-2">
+                <FileCode2 size={15} />
+                Runtime Trace
+              </h3>
+              <button
+                type="button"
+                onClick={() => setMobileTraceOpen(false)}
+                className="rounded border border-gray-700 p-1 text-gray-300 hover:text-white hover:bg-gray-800"
+              >
+                <X size={14} />
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto px-3">
+              <div className="mt-3 border border-gray-800 rounded bg-gray-950/70">
+                <div className="px-3 py-1.5 text-[11px] tracking-wide text-gray-400 border-b border-gray-800 flex items-center justify-between gap-2">
+                  <span>RUNTIME TRACE</span>
+                  <div className="flex items-center gap-2">
+                    {pendingApprovals.length > 0 && (
+                      <span className="text-amber-300">
+                        Pending approvals: {pendingApprovals.length}
+                      </span>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => void approvePendingForSession()}
+                      disabled={!sessionId || pendingApprovals.length === 0}
+                      className="px-2 py-0.5 rounded border border-gray-700 text-gray-300 hover:text-white hover:bg-gray-800 disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      Approve Pending
+                    </button>
+                  </div>
+                </div>
+                {renderTraceEntries()}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

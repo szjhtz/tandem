@@ -230,9 +230,10 @@ ${ticketContent}
 Instructions:
 1. Read the ticket and classify the issue.
 2. Search the codebase or use the webfetch tool to retrieve the relevant Knowledge Base articles to diagnose or solve the issue.
-3. Once you determine the mitigation, draft a highly polite and empathetic email response for the customer.
-4. Output the triage metadata (urgency, category) to 'out/triage.json'.
-5. Do NOT send the email. Instead, output the drafted response to 'out/drafts/response.md' for human-in-the-loop review.
+3. Estimate severity and business impact with a short rationale.
+4. Once you determine the mitigation, draft a highly polite and empathetic email response for the customer.
+5. Output the triage metadata (urgency, category, confidence, owner_team) to 'out/triage.json'.
+6. Do NOT send the email. Instead, output the drafted response to 'out/drafts/response.md' for human-in-the-loop review.
 Use your tools to achieve this.`;
 
       const { runId } = await api.startAsyncRun(sessionId, prompt);
@@ -245,8 +246,8 @@ Use your tools to achieve this.`;
   };
 
   return (
-    <div className="flex h-full bg-gray-950">
-      <div className="flex-1 flex flex-col p-6 overflow-hidden">
+    <div className="flex h-full flex-col xl:flex-row bg-gray-950">
+      <div className="flex-1 min-h-0 flex flex-col p-3 sm:p-4 lg:p-6 overflow-hidden">
         <div className="mb-6 flex justify-between items-start">
           <div>
             <h2 className="text-2xl font-bold text-white flex items-center gap-2">
@@ -260,7 +261,10 @@ Use your tools to achieve this.`;
           </div>
         </div>
 
-        <form onSubmit={handleStart} className="flex gap-4 mb-6 shrink-0">
+        <form
+          onSubmit={handleStart}
+          className="flex flex-col gap-3 sm:flex-row sm:gap-4 mb-6 shrink-0"
+        >
           <div className="flex-1 flex gap-4 bg-gray-900 border border-gray-800 rounded-lg p-2 focus-within:ring-2 focus-within:ring-indigo-500 transition-shadow">
             <div className="flex items-center pl-2 text-indigo-400">
               <Inbox size={24} />
@@ -268,7 +272,7 @@ Use your tools to achieve this.`;
             <textarea
               value={ticketContent}
               onChange={(e) => setTicketContent(e.target.value)}
-              placeholder="Paste an incoming customer ticket: E.g., 'Hello, I forgot my password but I don't have access to my email anymore...'"
+              placeholder="Paste an incoming customer ticket: E.g., 'After upgrading to v4.2, SSO logins fail for all EU users with error oauth_invalid_redirect. Revenue-impacting for enterprise tenants.'"
               className="flex-1 bg-transparent px-2 py-2 text-white placeholder:text-gray-500 focus:outline-none min-h-[80px]"
               disabled={isRunning}
             />
@@ -343,7 +347,7 @@ Use your tools to achieve this.`;
         </div>
       </div>
 
-      <div className="w-80 shrink-0 border-l border-gray-800 bg-gray-900">
+      <div className="w-full xl:w-80 shrink-0 border-t xl:border-t-0 xl:border-l border-gray-800 bg-gray-900 max-h-[45vh] xl:max-h-none">
         <SessionHistory
           currentSessionId={currentSessionId}
           onSelectSession={loadSession}

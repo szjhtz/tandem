@@ -230,7 +230,19 @@ export const ResearchDashboard: React.FC = () => {
       addLog({ type: "system", content: `Session Created: ${sessionId.substring(0, 8)}` });
 
       // 2. Start the Run
-      const prompt = `Use the webfetch and websearch tools to deeply research the following topic: ${query}. Give me a final unified summary of your findings.`;
+      const prompt = `You are a senior research analyst.
+Research topic: ${query}
+
+Instructions:
+1. Clarify scope and key assumptions before gathering evidence.
+2. Use websearch/webfetch to collect multiple high-quality sources with publication dates.
+3. Compare at least 2 competing viewpoints, including where they disagree.
+4. Flag outdated or uncertain claims explicitly.
+5. Produce a concise decision memo in markdown with sections:
+   - Executive Summary
+   - Evidence Table (claim | source | date | confidence)
+   - Risks and Unknowns
+   - Recommended Next Actions`;
       const { runId } = await api.startAsyncRun(sessionId, prompt);
       addLog({ type: "system", content: `Run Started: ${runId.substring(0, 8)}` });
 
@@ -243,8 +255,8 @@ export const ResearchDashboard: React.FC = () => {
   };
 
   return (
-    <div className="flex h-full bg-gray-950">
-      <div className="flex-1 flex flex-col p-6 overflow-hidden">
+    <div className="flex h-full flex-col xl:flex-row bg-gray-950">
+      <div className="flex-1 min-h-0 flex flex-col p-3 sm:p-4 lg:p-6 overflow-hidden">
         <div className="mb-6">
           <h2 className="text-2xl font-bold text-white flex items-center gap-2">
             <BotMessageSquare className="text-blue-500" />
@@ -255,12 +267,15 @@ export const ResearchDashboard: React.FC = () => {
           </p>
         </div>
 
-        <form onSubmit={handleStart} className="flex gap-4 mb-6 shrink-0">
+        <form
+          onSubmit={handleStart}
+          className="flex flex-col gap-3 sm:flex-row sm:gap-4 mb-6 shrink-0"
+        >
           <input
             type="text"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="E.g., What are the latest advancements in quantum computing?"
+            placeholder="E.g., Should a 50-person startup adopt AI coding agents in 2026? Compare ROI, security risk, and rollout strategy."
             className="flex-1 bg-gray-900 border border-gray-800 rounded-lg px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
             disabled={isRunning}
           />
@@ -334,7 +349,7 @@ export const ResearchDashboard: React.FC = () => {
       </div>
 
       {/* Sidebar right for Session History */}
-      <div className="w-80 shrink-0 border-l border-gray-800 bg-gray-900">
+      <div className="w-full xl:w-80 shrink-0 border-t xl:border-t-0 xl:border-l border-gray-800 bg-gray-900 max-h-[45vh] xl:max-h-none">
         <SessionHistory
           currentSessionId={currentSessionId}
           onSelectSession={loadSession}
