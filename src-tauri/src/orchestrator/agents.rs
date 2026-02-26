@@ -206,9 +206,13 @@ Complete this task now."#,
         task: &Task,
         changes_diff: &str,
         build_output: Option<&str>,
+        changed_file_evidence: Option<&str>,
     ) -> String {
         let build_section = build_output
             .map(|o| format!("\n## Build/Test Output\n```\n{}\n```\n", o))
+            .unwrap_or_default();
+        let evidence_section = changed_file_evidence
+            .map(|o| format!("\n## Changed File Evidence\n{}\n", o))
             .unwrap_or_default();
 
         format!(
@@ -227,8 +231,12 @@ Complete this task now."#,
 {diff}
 ```
 {build_section}
+{evidence_section}
 ## Your Job
 Evaluate whether the changes satisfy ALL acceptance criteria.
+Use the changed-file evidence and diff entries as primary proof.
+If acceptance criteria require specific document sections or findings, verify those sections are present in file evidence.
+If evidence is insufficient to verify completion, return `"passed": false` and explain exactly what is missing.
 
 ## Output Format
 You MUST output a JSON object with:
@@ -265,6 +273,7 @@ Be strict but fair. Output ONLY the JSON object."#,
                 .join("\n"),
             diff = changes_diff,
             build_section = build_section,
+            evidence_section = evidence_section,
         )
     }
 

@@ -3643,6 +3643,9 @@ impl SidecarManager {
 
         const ENGINE_STARTUP_RETRIES: usize = 10;
         const ENGINE_STARTUP_RETRY_MS: u64 = 450;
+        const RUN_CONFLICT_RETRIES: usize = 20;
+        const MAX_PROMPT_ASYNC_RETRIES: usize = RUN_CONFLICT_RETRIES;
+        const RUN_CONFLICT_STALE_THRESHOLD: usize = 6;
 
         let is_engine_starting = |text: &str| {
             text.contains("ENGINE_STARTING")
@@ -3653,7 +3656,7 @@ impl SidecarManager {
         // Phase 1: append message. Retry transient startup failures before surfacing error.
         let mut append_ok = false;
         let mut last_append_error = String::new();
-        for attempt in 0..=ENGINE_STARTUP_RETRIES {
+        for attempt in 0..=MAX_PROMPT_ASYNC_RETRIES {
             let mut append_builder = self.http_client.post(&append_url);
             if let Some(cid) = correlation_id {
                 append_builder = append_builder
@@ -3723,7 +3726,9 @@ impl SidecarManager {
 
         // Phase 2: start run. Retry ENGINE_STARTING responses; do not append again.
         let mut last_send_error: Option<String> = None;
-        for attempt in 0..=ENGINE_STARTUP_RETRIES {
+        let mut run_conflict_streak: usize = 0;
+        let mut run_conflict_active_run: Option<String> = None;
+        for attempt in 0..=MAX_PROMPT_ASYNC_RETRIES {
             let mut request_builder = self.http_client.post(&url);
             if let Some(cid) = correlation_id {
                 request_builder = request_builder
@@ -3772,6 +3777,93 @@ impl SidecarManager {
                             ENGINE_STARTUP_RETRY_MS
                         );
                         tokio::time::sleep(Duration::from_millis(ENGINE_STARTUP_RETRY_MS)).await;
+                        last_send_error = Some(err);
+                        continue;
+                    }
+                    if err.starts_with("run_conflict") && attempt < RUN_CONFLICT_RETRIES {
+                        let retry_after_ms = parse_run_conflict_retry_after_ms(&err)
+                            .unwrap_or(ENGINE_STARTUP_RETRY_MS);
+                        let active_run_id = parse_run_conflict_active_run_id(&err);
+                        if active_run_id.is_some() && active_run_id == run_conflict_active_run {
+                            run_conflict_streak = run_conflict_streak.saturating_add(1);
+                        } else {
+                            run_conflict_streak = 1;
+                            run_conflict_active_run = active_run_id.clone();
+                        }
+                        tracing::warn!(
+                            "prompt_async run conflict for session {} (attempt {}/{}). Waiting {}ms then retrying. streak={} {}",
+                            session_id,
+                            attempt + 1,
+                            RUN_CONFLICT_RETRIES + 1,
+                            retry_after_ms,
+                            run_conflict_streak,
+                            err
+                        );
+                        if run_conflict_streak >= RUN_CONFLICT_STALE_THRESHOLD {
+                            if let Some(active) = active_run_id.as_deref() {
+                                match self.get_active_run(session_id).await {
+                                    Ok(Some(run_status)) if run_status.run_id == active => {
+                                        tracing::warn!(
+                                            "run_conflict streak indicates stale active run session={} run_id={}; attempting cancel-by-id",
+                                            session_id,
+                                            active
+                                        );
+                                        match self.cancel_run_by_id(session_id, active).await {
+                                            Ok(true) => {
+                                                tracing::warn!(
+                                                    "cancelled stale active run session={} run_id={}, retrying prompt_async",
+                                                    session_id,
+                                                    active
+                                                );
+                                                run_conflict_streak = 0;
+                                                run_conflict_active_run = None;
+                                                tokio::time::sleep(Duration::from_millis(250))
+                                                    .await;
+                                                continue;
+                                            }
+                                            Ok(false) => {
+                                                tracing::warn!(
+                                                    "cancel stale run returned cancelled=false session={} run_id={}",
+                                                    session_id,
+                                                    active
+                                                );
+                                            }
+                                            Err(cancel_err) => {
+                                                tracing::warn!(
+                                                    "failed to cancel stale run session={} run_id={}: {}",
+                                                    session_id,
+                                                    active,
+                                                    cancel_err
+                                                );
+                                            }
+                                        }
+                                    }
+                                    Ok(Some(run_status)) => {
+                                        tracing::debug!(
+                                            "run_conflict active run changed from {} to {}, keeping retry loop",
+                                            active,
+                                            run_status.run_id
+                                        );
+                                        run_conflict_streak = 1;
+                                        run_conflict_active_run = Some(run_status.run_id);
+                                    }
+                                    Ok(None) => {
+                                        tracing::debug!(
+                                            "run_conflict probe found no active run for session {}, keeping retry loop",
+                                            session_id
+                                        );
+                                    }
+                                    Err(probe_err) => {
+                                        tracing::warn!(
+                                            "run_conflict probe failed for session {}: {}",
+                                            session_id,
+                                            probe_err
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                        tokio::time::sleep(Duration::from_millis(retry_after_ms)).await;
                         last_send_error = Some(err);
                         continue;
                     }
@@ -4701,20 +4793,16 @@ impl SidecarManager {
             .map_err(|e| TandemError::ParseError(format!("Invalid context event payload: {}", e)))
     }
 
-    pub async fn context_run_blackboard(
-        &self,
-        run_id: &str,
-    ) -> Result<ContextBlackboardState> {
+    pub async fn context_run_blackboard(&self, run_id: &str) -> Result<ContextBlackboardState> {
         self.check_circuit_breaker().await?;
-        let url = format!("{}/context/runs/{}/blackboard", self.base_url().await?, run_id);
-        let response = self
-            .http_client
-            .get(&url)
-            .send()
-            .await
-            .map_err(|e| {
-                TandemError::Sidecar(format!("Failed to load context run blackboard: {}", e))
-            })?;
+        let url = format!(
+            "{}/context/runs/{}/blackboard",
+            self.base_url().await?,
+            run_id
+        );
+        let response = self.http_client.get(&url).send().await.map_err(|e| {
+            TandemError::Sidecar(format!("Failed to load context run blackboard: {}", e))
+        })?;
         let payload: ContextBlackboardResponse = self.handle_response(response).await?;
         Ok(payload.blackboard)
     }
@@ -5450,7 +5538,8 @@ impl SidecarManager {
             .await
             .map_err(|e| TandemError::Sidecar(format!("Failed to reply to question: {}", e)))?;
 
-        let _ok: bool = self.handle_response(response).await?;
+        let ack: serde_json::Value = self.handle_response(response).await?;
+        parse_question_ack_response(&ack)?;
         Ok(())
     }
 
@@ -5472,7 +5561,8 @@ impl SidecarManager {
             .await
             .map_err(|e| TandemError::Sidecar(format!("Failed to reject question: {}", e)))?;
 
-        let _ok: bool = self.handle_response(response).await?;
+        let ack: serde_json::Value = self.handle_response(response).await?;
+        parse_question_ack_response(&ack)?;
         Ok(())
     }
 
@@ -5809,11 +5899,7 @@ fn convert_opencode_event(event: OpenCodeEvent) -> Option<StreamEvent> {
 
             let session_id = part.get("sessionID").and_then(|s| s.as_str())?.to_string();
             let message_id = part.get("messageID").and_then(|s| s.as_str())?.to_string();
-            let part_id = part
-                .get("id")
-                .and_then(|s| s.as_str())
-                .unwrap_or("")
-                .to_string();
+            let part_id = extract_tool_or_part_id(props, part);
             let part_type = part.get("type").and_then(|s| s.as_str()).unwrap_or("text");
 
             match part_type {
@@ -5874,11 +5960,11 @@ fn convert_opencode_event(event: OpenCodeEvent) -> Option<StreamEvent> {
                 // Ignore reasoning parts to avoid showing "[REDACTED]" in chat
                 //"reasoning" => None,
                 "tool-invocation" | "tool" => {
-                    let tool = part
+                    let raw_tool = part
                         .get("tool")
                         .and_then(|s| s.as_str())
-                        .unwrap_or("unknown")
-                        .to_string();
+                        .unwrap_or("unknown");
+                    let tool = normalize_stream_tool_name(raw_tool).to_string();
                     let state_value = part.get("state");
                     let explicit_state = state_value
                         .and_then(|s| s.get("status"))
@@ -5888,6 +5974,7 @@ fn convert_opencode_event(event: OpenCodeEvent) -> Option<StreamEvent> {
                         .and_then(|s| s.get("input"))
                         .cloned()
                         .or_else(|| part.get("args").cloned())
+                        .or_else(|| extract_tool_call_preview_args(props))
                         .unwrap_or(serde_json::Value::Null);
                     let args = match normalize_tool_args(&tool, &raw_args) {
                         Ok(value) => value,
@@ -6364,6 +6451,119 @@ fn parse_prompt_async_response(
     }
 
     Err(format!("status={} body={}", status, body))
+}
+
+fn extract_tool_or_part_id(props: &serde_json::Value, part: &serde_json::Value) -> String {
+    // OpenCode can emit tool lifecycle updates with different IDs across event variants
+    // (e.g. `id=part-43` and `callID=call_abcd` for the same logical call). Prefer
+    // stable tool-call IDs when available so start/end can be matched consistently.
+    if let Some(id) = props
+        .get("toolCallDelta")
+        .and_then(|delta| delta.get("id"))
+        .and_then(|v| v.as_str())
+    {
+        let trimmed = id.trim();
+        if !trimmed.is_empty() {
+            return trimmed.to_string();
+        }
+    }
+    for key in ["callID", "toolCallID", "tool_call_id", "id"] {
+        if let Some(id) = part.get(key).and_then(|v| v.as_str()) {
+            let trimmed = id.trim();
+            if !trimmed.is_empty() {
+                return trimmed.to_string();
+            }
+        }
+    }
+    String::new()
+}
+
+fn parse_run_conflict_retry_after_ms(message: &str) -> Option<u64> {
+    let key = "retryAfterMs=";
+    let start = message.find(key)? + key.len();
+    let tail = &message[start..];
+    let digits: String = tail.chars().take_while(|c| c.is_ascii_digit()).collect();
+    if digits.is_empty() {
+        None
+    } else {
+        digits.parse::<u64>().ok()
+    }
+}
+
+fn parse_run_conflict_active_run_id(message: &str) -> Option<String> {
+    let key = "activeRun=";
+    let start = message.find(key)? + key.len();
+    let tail = &message[start..];
+    let value: String = tail
+        .chars()
+        .take_while(|c| !c.is_whitespace())
+        .collect::<String>()
+        .trim()
+        .to_string();
+    if value.is_empty() || value == "-" {
+        None
+    } else {
+        Some(value)
+    }
+}
+
+fn parse_question_ack_response(value: &serde_json::Value) -> Result<()> {
+    if let Some(ok) = value.as_bool() {
+        if ok {
+            return Ok(());
+        }
+        return Err(TandemError::Sidecar(
+            "Question request was rejected by sidecar".to_string(),
+        ));
+    }
+
+    if let Some(ok) = value.get("ok").and_then(|v| v.as_bool()) {
+        if ok {
+            return Ok(());
+        }
+        return Err(TandemError::Sidecar(
+            "Question request was rejected by sidecar".to_string(),
+        ));
+    }
+
+    Err(TandemError::Sidecar(format!(
+        "Unexpected question ack payload: {}",
+        value
+    )))
+}
+
+fn normalize_stream_tool_name(raw: &str) -> String {
+    let lowered = raw
+        .trim()
+        .to_ascii_lowercase()
+        .replace("<arg_key>", " ")
+        .replace("</arg_key>", " ")
+        .replace("<arg_value>", " ")
+        .replace("</arg_value>", " ");
+
+    let first = lowered.split_whitespace().next().unwrap_or("unknown");
+    let candidate = first
+        .trim()
+        .trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '_' && c != '-');
+
+    if candidate.is_empty() {
+        "unknown".to_string()
+    } else {
+        candidate.to_string()
+    }
+}
+
+fn extract_tool_call_preview_args(props: &serde_json::Value) -> Option<serde_json::Value> {
+    let delta = props.get("toolCallDelta")?;
+    if let Some(preview) = delta.get("parsedArgsPreview") {
+        return Some(preview.clone());
+    }
+    let args_delta = delta.get("argsDelta").and_then(|v| v.as_str())?;
+    let trimmed = args_delta.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    serde_json::from_str::<serde_json::Value>(trimmed).ok()
 }
 
 fn extract_error_message(value: &serde_json::Value) -> Option<String> {
@@ -6983,6 +7183,19 @@ mod tests {
             }
             other => panic!("Unexpected end event: {:?}", other),
         }
+    }
+
+    #[test]
+    fn test_normalize_stream_tool_name_strips_arg_wrappers() {
+        let raw = "glob pattern</arg_key><arg_value>**/*.md</arg_value>";
+        assert_eq!(normalize_stream_tool_name(raw), "glob");
+    }
+
+    #[test]
+    fn test_parse_question_ack_response_accepts_object_ok() {
+        let payload = serde_json::json!({ "ok": true });
+        let parsed = parse_question_ack_response(&payload);
+        assert!(parsed.is_ok());
     }
 
     #[test]

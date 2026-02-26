@@ -34,6 +34,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Read/write sandbox diagnostics and Windows path handling**: Tool path policy now accepts Windows verbatim paths (`\\?\...`) when in-workspace, performs lexical in-workspace checks for non-existent targets, and returns actionable denied-path diagnostics (workspace root/effective cwd/suggested path).
 - **Read tool error transparency**: `read` now returns explicit failure reasons (`path_not_found`, `path_is_directory`, `read_text_failed`) instead of silent empty output, reducing retry loops and validator misclassification.
 - **Blackboard task-trace visibility**: Blackboard projection/filtering/refresh now includes `task_trace` events (for example `FIRST_TOOL_CALL: glob`) and Orchestrator surfaces paused-run error context directly in the panel.
+- **Validator evidence gating for file-output tasks**: Validation prompts now include concrete snippets from changed files and explicitly fail when completion is claimed without verifiable output content.
+- **Malformed required-arg tool-call fast timeout**: Pending tool calls that likely omitted required args (for example repeated `read {}`) now time out quickly instead of hanging for long watchdog windows.
+- **Provisional tool-start timeout guardrails**: Provisional/partial tool starts (for example `read` before finalized args arrive) no longer trigger the malformed-args fast-timeout path, reducing false `TOOL_TIMEOUT` failures during streamed tool-call assembly.
+- **Sidecar `run_conflict` recovery**: Message send/start-run now honors `retryAfterMs` and retries conflict responses instead of surfacing immediate hard failures during active-run handoff.
+- **Stale active-run conflict breaker**: Repeated `run_conflict` responses for the same active run now trigger active-run probing and targeted cancellation of stale runs, preventing long conflict retry loops and session thrash.
+- **Provider stream failure classification**: Server now maps upstream provider stream/server failures to structured `PROVIDER_SERVER_ERROR` codes for clearer diagnostics and retry behavior.
 
 ## [0.3.21]
 

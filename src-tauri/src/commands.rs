@@ -1025,6 +1025,12 @@ pub fn set_workspace_path(app: AppHandle, path: String, state: State<'_, AppStat
 
     migrate_workspace_legacy_namespace_if_needed(&path_buf)?;
     state.set_workspace(path_buf);
+    // Keep sidecar workspace scoping in sync with the selected workspace path.
+    let sidecar = state.sidecar.clone();
+    let sidecar_workspace = PathBuf::from(&path);
+    tauri::async_runtime::spawn(async move {
+        sidecar.set_workspace(sidecar_workspace).await;
+    });
     tracing::info!("Workspace set to: {}", path);
 
     // Save to store for persistence

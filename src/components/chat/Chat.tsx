@@ -428,6 +428,7 @@ export function Chat({
   const [isGitRepository, setIsGitRepository] = useState(false);
   const handledPermissionIdsRef = useRef<Set<string>>(new Set());
   const handledQuestionRequestIdsRef = useRef<Set<string>>(new Set());
+  const dismissedQuestionRequestIdsRef = useRef<Set<string>>(new Set());
   const pendingQuestionToolCallIdsRef = useRef<Set<string>>(new Set());
   const pendingQuestionToolMessageIdsRef = useRef<Set<string>>(new Set());
 
@@ -639,6 +640,7 @@ export function Chat({
   // Clear any queued prompts when switching sessions.
   useEffect(() => {
     setPendingQuestionRequests([]);
+    dismissedQuestionRequestIdsRef.current = new Set();
     pendingQuestionToolCallIdsRef.current = new Set();
     pendingQuestionToolMessageIdsRef.current = new Set();
     seenEventIdsRef.current = new Set();
@@ -689,6 +691,7 @@ export function Chat({
           for (const req of relevant) {
             if (
               handledQuestionRequestIdsRef.current.has(req.request_id) ||
+              dismissedQuestionRequestIdsRef.current.has(req.request_id) ||
               existing.has(req.request_id)
             ) {
               continue;
@@ -776,11 +779,15 @@ Start with task #1 and continue through each one. IMPORTANT: After verifying eac
     }
 
     const pendingIds = new Set(tasks.map((task) => task.id));
+    // Recompute each sync instead of monotonically adding, so transient stale/empty
+    // task snapshots cannot permanently mark all tasks as completed.
+    const completedNow = new Set<string>();
     contract.expectedTaskIds.forEach((taskId) => {
       if (!pendingIds.has(taskId)) {
-        contract.completedTaskIds.add(taskId);
+        completedNow.add(taskId);
       }
     });
+    contract.completedTaskIds = completedNow;
   }, []);
 
   const resetExecutionContract = useCallback(() => {
@@ -1090,6 +1097,7 @@ Start with task #1 and continue through each one. IMPORTANT: After verifying eac
     handledPermissionIdsRef.current = new Set();
     setPendingPermissions([]);
     setPendingQuestionRequests([]);
+    dismissedQuestionRequestIdsRef.current = new Set();
 
     if (generationTimeoutRef.current) {
       clearTimeout(generationTimeoutRef.current);
@@ -2400,6 +2408,7 @@ Start with task #1 and continue through each one. IMPORTANT: After verifying eac
           setPendingQuestionRequests((prev) => {
             if (
               handledQuestionRequestIdsRef.current.has(event.request_id) ||
+              dismissedQuestionRequestIdsRef.current.has(event.request_id) ||
               prev.some((r) => r.request_id === event.request_id)
             ) {
               return prev;
@@ -3124,16 +3133,21 @@ ${g.example}
     const request = pendingQuestionRequests[0];
     if (!request) return;
 
+    // Always let users dismiss the planning question UI immediately.
+    dismissedQuestionRequestIdsRef.current.add(request.request_id);
+    if (request.tool_call_id) pendingQuestionToolCallIdsRef.current.delete(request.tool_call_id);
+    if (request.tool_message_id)
+      pendingQuestionToolMessageIdsRef.current.delete(request.tool_message_id);
+    removeActiveQuestionRequest();
+
     try {
       await rejectQuestion(request.request_id);
       handledQuestionRequestIdsRef.current.add(request.request_id);
-      if (request.tool_call_id) pendingQuestionToolCallIdsRef.current.delete(request.tool_call_id);
-      if (request.tool_message_id)
-        pendingQuestionToolMessageIdsRef.current.delete(request.tool_message_id);
-      removeActiveQuestionRequest();
     } catch (err) {
       console.error("Failed to reject question request:", err);
-      setError(`Failed to reject question: ${err}`);
+      setError(
+        `Dismissed locally, but failed to reject question upstream: ${err}. You can continue and retry later.`
+      );
     }
   };
 

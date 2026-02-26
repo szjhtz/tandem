@@ -69,7 +69,13 @@ struct PendingToolState {
     message_id: String,
     started: Instant,
     correlation_id: String,
+    likely_missing_required_args: bool,
+    provisional: bool,
+    args_fingerprint: u64,
 }
+
+const RESUBSCRIBE_RECONCILE_STALE_MS: u64 = 15_000;
+const SESSION_TERMINAL_RECONCILE_STALE_MS: u64 = 3_000;
 
 pub struct StreamHub {
     state: Mutex<StreamHubState>,
@@ -225,7 +231,7 @@ impl StreamHub {
                             match crate::tool_history::mark_running_tools_terminal(
                                 &app,
                                 None,
-                                0,
+                                RESUBSCRIBE_RECONCILE_STALE_MS,
                                 "interrupted: stream reconnected",
                             ) {
                                 Ok(reconciled) => {
@@ -358,10 +364,19 @@ impl StreamHub {
                             if let Some(((session_id, part_id), pending)) = pending_tools
                                 .iter()
                                 .find(|(_, pending)| {
-                                    pending.started.elapsed() > tool_timeout_for(&pending.tool)
+                                    pending.started.elapsed()
+                                        > tool_timeout_for_pending(
+                                            &pending.tool,
+                                            pending.likely_missing_required_args,
+                                            pending.provisional,
+                                        )
                                 })
                             {
-                                let tool_timeout = tool_timeout_for(&pending.tool);
+                                let tool_timeout = tool_timeout_for_pending(
+                                    &pending.tool,
+                                    pending.likely_missing_required_args,
+                                    pending.provisional,
+                                );
                                 let timeout_event = StreamEvent::SessionError {
                                     session_id: session_id.clone(),
                                     error: format!(
@@ -655,8 +670,57 @@ impl StreamHub {
                                             message_id,
                                             part_id,
                                             tool,
-                                            ..
+                                            args,
                                         } => {
+                                            let provisional = is_provisional_tool_start(
+                                                tool,
+                                                part_id,
+                                                args,
+                                            );
+                                            let args_fingerprint = fingerprint_json_value(args);
+                                            let duplicate_pending = pending_tools
+                                                .iter()
+                                                .find(|((sid, existing_part_id), pending)| {
+                                                    sid == session_id
+                                                        && pending.message_id == *message_id
+                                                        && pending.tool.eq_ignore_ascii_case(tool)
+                                                        && pending.args_fingerprint == args_fingerprint
+                                                        && pending.started.elapsed()
+                                                            < Duration::from_secs(5)
+                                                        && is_mixed_tool_part_id_pair(
+                                                            existing_part_id,
+                                                            part_id,
+                                                        )
+                                                })
+                                                .map(|((sid, existing_part_id), _)| {
+                                                    (sid.clone(), existing_part_id.clone())
+                                                });
+                                            if let Some((_, existing_part_id)) = duplicate_pending {
+                                                tracing::warn!(
+                                                    "tool.lifecycle.start suppressed duplicate tool start session_id={} message_id={} tool={} existing_part_id={} incoming_part_id={}",
+                                                    session_id,
+                                                    message_id,
+                                                    tool,
+                                                    existing_part_id,
+                                                    part_id
+                                                );
+                                                continue;
+                                            }
+                                            if !provisional {
+                                                let provisional_keys = pending_tools
+                                                    .iter()
+                                                    .filter(|((sid, _), pending)| {
+                                                        sid == session_id
+                                                            && pending.message_id == *message_id
+                                                            && pending.tool.eq_ignore_ascii_case(tool)
+                                                            && pending.provisional
+                                                    })
+                                                    .map(|(key, _)| key.clone())
+                                                    .collect::<Vec<_>>();
+                                                for key in provisional_keys {
+                                                    pending_tools.remove(&key);
+                                                }
+                                            }
                                             let correlation_id =
                                                 format!("{}:{}:{}", session_id, message_id, part_id);
                                             tracing::info!(
@@ -674,6 +738,12 @@ impl StreamHub {
                                                     message_id: message_id.clone(),
                                                     started: Instant::now(),
                                                     correlation_id,
+                                                    likely_missing_required_args:
+                                                        tool_has_likely_missing_required_args(
+                                                            tool, args,
+                                                        ),
+                                                    provisional,
+                                                    args_fingerprint,
                                                 },
                                             );
                                             active_sessions.insert(session_id.clone());
@@ -701,6 +771,17 @@ impl StreamHub {
                                         StreamEvent::SessionIdle { session_id }
                                         | StreamEvent::SessionError { session_id, .. }
                                         | StreamEvent::RunFinished { session_id, .. } => {
+                                            let terminal_failed = match &event {
+                                                StreamEvent::SessionError { .. } => true,
+                                                StreamEvent::RunFinished { status, .. } => {
+                                                    !matches!(
+                                                        status.as_str(),
+                                                        "completed" | "complete" | "ok" | "success"
+                                                    )
+                                                }
+                                                StreamEvent::SessionIdle { .. } => false,
+                                                _ => false,
+                                            };
                                             active_sessions.remove(session_id);
                                             if let Some(last_message_id) =
                                                 assistant_last_message_by_session
@@ -760,14 +841,29 @@ impl StreamHub {
                                                     .map(|(key, pending)| (key.clone(), pending.clone()))
                                                     .collect();
                                             for ((pending_session, pending_part_id), pending) in &dangling {
+                                                if pending.started.elapsed()
+                                                    < Duration::from_millis(
+                                                        SESSION_TERMINAL_RECONCILE_STALE_MS,
+                                                    )
+                                                {
+                                                    continue;
+                                                }
                                                 let synthetic = StreamEvent::ToolEnd {
                                                     session_id: pending_session.clone(),
                                                     message_id: pending.message_id.clone(),
                                                     part_id: pending_part_id.clone(),
                                                     tool: pending.tool.clone(),
                                                     result: None,
-                                                    error: Some("interrupted".to_string()),
-                                                    error_code: Some("INTERRUPTED".to_string()),
+                                                    error: if terminal_failed {
+                                                        Some("interrupted".to_string())
+                                                    } else {
+                                                        None
+                                                    },
+                                                    error_code: if terminal_failed {
+                                                        Some("INTERRUPTED".to_string())
+                                                    } else {
+                                                        None
+                                                    },
                                                 };
                                                 let _ = crate::tool_history::record_stream_event(&app, &synthetic);
                                                 let synthetic_env = StreamEventEnvelopeV2 {
@@ -785,54 +881,56 @@ impl StreamHub {
                                             for ((pending_session, pending_part_id), _) in dangling {
                                                 pending_tools.remove(&(pending_session, pending_part_id));
                                             }
-                                            match crate::tool_history::mark_running_tools_terminal(
-                                                &app,
-                                                Some(session_id),
-                                                0,
-                                                "interrupted",
-                                            ) {
-                                                Ok(reconciled) => {
-                                                    if reconciled > 0 {
-                                                        emit_event(
-                                                            tracing::Level::INFO,
-                                                            ProcessKind::Desktop,
-                                                            ObservabilityEvent {
-                                                                event: "tool.reconcile.end",
-                                                                component: "stream_hub",
-                                                                correlation_id: None,
-                                                                session_id: Some(session_id),
-                                                                run_id: None,
-                                                                message_id: None,
-                                                                provider_id: None,
-                                                                model_id: None,
-                                                                status: Some("ok"),
-                                                                error_code: None,
-                                                                detail: Some(
-                                                                    "reconciled running tools on session terminal event",
-                                                                ),
-                                                            },
-                                                        );
+                                            if terminal_failed {
+                                                match crate::tool_history::mark_running_tools_terminal(
+                                                    &app,
+                                                    Some(session_id),
+                                                    SESSION_TERMINAL_RECONCILE_STALE_MS,
+                                                    "interrupted",
+                                                ) {
+                                                    Ok(reconciled) => {
+                                                        if reconciled > 0 {
+                                                            emit_event(
+                                                                tracing::Level::INFO,
+                                                                ProcessKind::Desktop,
+                                                                ObservabilityEvent {
+                                                                    event: "tool.reconcile.end",
+                                                                    component: "stream_hub",
+                                                                    correlation_id: None,
+                                                                    session_id: Some(session_id),
+                                                                    run_id: None,
+                                                                    message_id: None,
+                                                                    provider_id: None,
+                                                                    model_id: None,
+                                                                    status: Some("ok"),
+                                                                    error_code: None,
+                                                                    detail: Some(
+                                                                        "reconciled running tools on session terminal event",
+                                                                    ),
+                                                                },
+                                                            );
+                                                        }
                                                     }
+                                                    Err(_) => emit_event(
+                                                        tracing::Level::WARN,
+                                                        ProcessKind::Desktop,
+                                                        ObservabilityEvent {
+                                                            event: "tool.reconcile.end",
+                                                            component: "stream_hub",
+                                                            correlation_id: None,
+                                                            session_id: Some(session_id),
+                                                            run_id: None,
+                                                            message_id: None,
+                                                            provider_id: None,
+                                                            model_id: None,
+                                                            status: Some("failed"),
+                                                            error_code: Some("TOOL_RECONCILE_FAILED"),
+                                                            detail: Some(
+                                                                "failed to reconcile tools on session terminal event",
+                                                            ),
+                                                        },
+                                                    ),
                                                 }
-                                                Err(_) => emit_event(
-                                                    tracing::Level::WARN,
-                                                    ProcessKind::Desktop,
-                                                    ObservabilityEvent {
-                                                        event: "tool.reconcile.end",
-                                                        component: "stream_hub",
-                                                        correlation_id: None,
-                                                        session_id: Some(session_id),
-                                                        run_id: None,
-                                                        message_id: None,
-                                                        provider_id: None,
-                                                        model_id: None,
-                                                        status: Some("failed"),
-                                                        error_code: Some("TOOL_RECONCILE_FAILED"),
-                                                        detail: Some(
-                                                            "failed to reconcile tools on session terminal event",
-                                                        ),
-                                                    },
-                                                ),
                                             }
                                         }
                                         StreamEvent::PermissionAsked {
@@ -1085,6 +1183,42 @@ fn tool_timeout_for(tool: &str) -> Duration {
     }
 }
 
+fn tool_timeout_for_pending(
+    tool: &str,
+    likely_missing_required_args: bool,
+    provisional: bool,
+) -> Duration {
+    if likely_missing_required_args && !provisional {
+        // Invalid tool payloads (e.g., read with `{}`) should fail quickly instead of stalling
+        // the orchestrator for multi-minute default tool timeouts.
+        return Duration::from_secs(20);
+    }
+    tool_timeout_for(tool)
+}
+
+fn tool_has_likely_missing_required_args(tool: &str, args: &serde_json::Value) -> bool {
+    let normalized_tool = normalize_tool_name(tool);
+    let obj = match args.as_object() {
+        Some(obj) => obj,
+        None => return true,
+    };
+    let non_empty = |key: &str| {
+        obj.get(key)
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .is_some_and(|s| !s.is_empty())
+    };
+
+    match normalized_tool.as_str() {
+        "read" | "edit" => !non_empty("path"),
+        "write" => !non_empty("path") || !non_empty("content"),
+        "websearch" => !non_empty("query") && !non_empty("q"),
+        "webfetch" | "webfetch_html" => !non_empty("url"),
+        "bash" => !non_empty("command"),
+        _ => false,
+    }
+}
+
 fn normalize_tool_name(name: &str) -> String {
     let mut normalized = name.trim().to_ascii_lowercase().replace('-', "_");
     for prefix in [
@@ -1109,6 +1243,53 @@ fn normalize_tool_name(name: &str) -> String {
         "todowrite" | "update_todo_list" | "update_todos" => "todo_write".to_string(),
         "run_command" | "shell" | "powershell" | "cmd" => "bash".to_string(),
         other => other.to_string(),
+    }
+}
+
+fn is_mixed_tool_part_id_pair(lhs: &str, rhs: &str) -> bool {
+    let lhs_call = lhs.starts_with("call_");
+    let rhs_call = rhs.starts_with("call_");
+    let lhs_part = lhs.starts_with("part-");
+    let rhs_part = rhs.starts_with("part-");
+    (lhs_call && rhs_part) || (lhs_part && rhs_call)
+}
+
+fn fingerprint_json_value(value: &serde_json::Value) -> u64 {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    let mut hasher = DefaultHasher::new();
+    // Good-enough stable fingerprint for duplicate-suppression heuristics.
+    // If serialization fails, fall back to value type name.
+    match serde_json::to_string(value) {
+        Ok(serialized) => serialized.hash(&mut hasher),
+        Err(_) => std::any::type_name::<serde_json::Value>().hash(&mut hasher),
+    }
+    hasher.finish()
+}
+
+fn is_provisional_tool_start(tool: &str, part_id: &str, args: &serde_json::Value) -> bool {
+    // OpenCode frequently emits `call_*` preview starts before canonical `part-*` lifecycle
+    // events. Treat previews as provisional so they don't survive as dangling "interrupted"
+    // entries when only the canonical part emits terminal events.
+    if part_id.starts_with("call_") {
+        return true;
+    }
+
+    if !tool_has_likely_missing_required_args(tool, args) {
+        return false;
+    }
+
+    // Some SSE streams emit placeholder starts (often `call_*`) before the canonical
+    // invocation/result part pair arrives (`part-*`). Treat these as provisional so they
+    // don't trigger fast 20s malformed-args timeouts.
+    if part_id.starts_with("call_") || part_id.starts_with("part-") {
+        return true;
+    }
+
+    match args {
+        serde_json::Value::Null => true,
+        serde_json::Value::Object(map) => map.is_empty(),
+        _ => false,
     }
 }
 

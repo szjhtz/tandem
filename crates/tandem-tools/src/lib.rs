@@ -482,7 +482,8 @@ fn resolve_read_path_fallback(path: &str, args: &Value) -> Option<PathBuf> {
         return None;
     }
     let raw = Path::new(token);
-    if raw.is_absolute() || token.contains('\\') || token.contains('/') || raw.extension().is_none() {
+    if raw.is_absolute() || token.contains('\\') || token.contains('/') || raw.extension().is_none()
+    {
         return None;
     }
 
@@ -1964,9 +1965,8 @@ fn extract_websearch_query(args: &Value) -> Option<String> {
     const QUERY_KEYS: [&str; 5] = ["query", "q", "search_query", "searchQuery", "keywords"];
     for key in QUERY_KEYS {
         if let Some(query) = args.get(key).and_then(|v| v.as_str()) {
-            let trimmed = query.trim();
-            if !trimmed.is_empty() {
-                return Some(trimmed.to_string());
+            if let Some(cleaned) = sanitize_websearch_query_candidate(query) {
+                return Some(cleaned);
             }
         }
     }
@@ -1976,9 +1976,8 @@ fn extract_websearch_query(args: &Value) -> Option<String> {
         if let Some(obj) = args.get(container) {
             for key in QUERY_KEYS {
                 if let Some(query) = obj.get(key).and_then(|v| v.as_str()) {
-                    let trimmed = query.trim();
-                    if !trimmed.is_empty() {
-                        return Some(trimmed.to_string());
+                    if let Some(cleaned) = sanitize_websearch_query_candidate(query) {
+                        return Some(cleaned);
                     }
                 }
             }
@@ -1986,10 +1985,60 @@ fn extract_websearch_query(args: &Value) -> Option<String> {
     }
 
     // Last resort: plain string args.
-    args.as_str()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(ToString::to_string)
+    args.as_str().and_then(sanitize_websearch_query_candidate)
+}
+
+fn sanitize_websearch_query_candidate(raw: &str) -> Option<String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let lower = trimmed.to_ascii_lowercase();
+    if let Some(start) = lower.find("<arg_value>") {
+        let value_start = start + "<arg_value>".len();
+        let tail = &trimmed[value_start..];
+        let value = if let Some(end) = tail.to_ascii_lowercase().find("</arg_value>") {
+            &tail[..end]
+        } else {
+            tail
+        };
+        let cleaned = value.trim();
+        if !cleaned.is_empty() {
+            return Some(cleaned.to_string());
+        }
+    }
+
+    let without_wrappers = trimmed
+        .replace("<arg_key>", " ")
+        .replace("</arg_key>", " ")
+        .replace("<arg_value>", " ")
+        .replace("</arg_value>", " ");
+    let collapsed = without_wrappers
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    if collapsed.is_empty() {
+        return None;
+    }
+
+    let collapsed_lower = collapsed.to_ascii_lowercase();
+    if let Some(rest) = collapsed_lower.strip_prefix("websearch query ") {
+        let offset = collapsed.len() - rest.len();
+        let q = collapsed[offset..].trim();
+        if !q.is_empty() {
+            return Some(q.to_string());
+        }
+    }
+    if let Some(rest) = collapsed_lower.strip_prefix("query ") {
+        let offset = collapsed.len() - rest.len();
+        let q = collapsed[offset..].trim();
+        if !q.is_empty() {
+            return Some(q.to_string());
+        }
+    }
+
+    Some(collapsed)
 }
 
 fn extract_websearch_limit(args: &Value) -> Option<u64> {
@@ -4252,6 +4301,12 @@ mod tests {
             extract_websearch_query(&as_string).as_deref(),
             Some("find docs")
         );
+
+        let malformed = json!({"query":"websearch query</arg_key><arg_value>taj card what is it benefits how to apply</arg_value>"});
+        assert_eq!(
+            extract_websearch_query(&malformed).as_deref(),
+            Some("taj card what is it benefits how to apply")
+        );
     }
 
     #[test]
@@ -4414,10 +4469,8 @@ mod tests {
 
     #[test]
     fn read_fallback_resolves_unique_suffix_filename() {
-        let root = std::env::temp_dir().join(format!(
-            "tandem-read-fallback-{}",
-            uuid_like(now_ms_u64())
-        ));
+        let root =
+            std::env::temp_dir().join(format!("tandem-read-fallback-{}", uuid_like(now_ms_u64())));
         std::fs::create_dir_all(&root).expect("create root");
         let target = root.join("T1011U kitöltési útmutató.pdf");
         std::fs::write(&target, b"stub").expect("write test file");

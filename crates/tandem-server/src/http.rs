@@ -952,7 +952,10 @@ fn app_router(state: AppState) -> Router {
         .route("/event", get(events))
         .route("/run/{id}/events", get(run_events))
         .route("/api/run/{id}/events", get(run_events))
-        .route("/context/runs", post(context_run_create).get(context_run_list))
+        .route(
+            "/context/runs",
+            post(context_run_create).get(context_run_list),
+        )
         .route(
             "/context/runs/{run_id}",
             get(context_run_get).put(context_run_put),
@@ -990,7 +993,10 @@ fn app_router(state: AppState) -> Router {
             get(context_run_checkpoint_latest),
         )
         .route("/context/runs/{run_id}/replay", get(context_run_replay))
-        .route("/context/runs/{run_id}/driver/next", post(context_run_driver_next))
+        .route(
+            "/context/runs/{run_id}/driver/next",
+            post(context_run_driver_next),
+        )
         .route("/project", get(list_projects))
         .route("/session", post(create_session).get(list_sessions))
         .route("/api/session", post(create_session).get(list_sessions))
@@ -2332,8 +2338,16 @@ fn infer_event_channel(event_type: &str, props: &serde_json::Map<String, Value>)
 }
 
 fn dispatch_error_code(message: &str) -> &'static str {
+    let lower = message.to_ascii_lowercase();
     if is_os_mismatch_error(message) {
         return "OS_MISMATCH";
+    }
+    if lower.contains("provider_server_error")
+        || lower.contains("internal server error")
+        || lower.contains("provider stream chunk error")
+        || lower.contains("json error injected into sse stream")
+    {
+        return "PROVIDER_SERVER_ERROR";
     }
     if message.contains("invalid_function_parameters")
         || message.contains("array schema missing items")
@@ -6060,11 +6074,7 @@ async fn routines_events(
         .keep_alive(KeepAlive::new().interval(Duration::from_secs(10)))
 }
 
-fn load_run_events_jsonl(
-    path: &FsPath,
-    since_seq: Option<u64>,
-    tail: Option<usize>,
-) -> Vec<Value> {
+fn load_run_events_jsonl(path: &FsPath, since_seq: Option<u64>, tail: Option<usize>) -> Vec<Value> {
     let content = match std::fs::read_to_string(path) {
         Ok(value) => value,
         Err(_) => return Vec::new(),
@@ -6118,7 +6128,10 @@ fn run_events_sse_stream(
         let initial = load_run_events_jsonl(&events_path, query.since_seq, query.tail);
         let mut last_seq = query.since_seq.unwrap_or(0);
         for row in initial {
-            let seq = row.get("seq").and_then(|value| value.as_u64()).unwrap_or(last_seq);
+            let seq = row
+                .get("seq")
+                .and_then(|value| value.as_u64())
+                .unwrap_or(last_seq);
             last_seq = last_seq.max(seq);
             let payload = serde_json::to_string(&json!({
                 "type":"run.event",
@@ -6136,7 +6149,10 @@ fn run_events_sse_stream(
             interval.tick().await;
             let updates = load_run_events_jsonl(&events_path, Some(last_seq), None);
             for row in updates {
-                let seq = row.get("seq").and_then(|value| value.as_u64()).unwrap_or(last_seq);
+                let seq = row
+                    .get("seq")
+                    .and_then(|value| value.as_u64())
+                    .unwrap_or(last_seq);
                 last_seq = last_seq.max(seq);
                 let payload = serde_json::to_string(&json!({
                     "type":"run.event",
@@ -6213,10 +6229,7 @@ async fn load_context_run_state(
     serde_json::from_str::<ContextRunState>(&raw).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
-async fn save_context_run_state(
-    state: &AppState,
-    run: &ContextRunState,
-) -> Result<(), StatusCode> {
+async fn save_context_run_state(state: &AppState, run: &ContextRunState) -> Result<(), StatusCode> {
     ensure_context_run_dir(state, &run.run_id).await?;
     let path = context_run_state_path(state, &run.run_id);
     let payload =
@@ -6291,8 +6304,8 @@ fn save_context_blackboard(
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     }
-    let payload = serde_json::to_string_pretty(blackboard)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let payload =
+        serde_json::to_string_pretty(blackboard).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     std::fs::write(path, payload).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
@@ -6346,7 +6359,9 @@ async fn context_run_create(
     State(state): State<AppState>,
     Json(input): Json<ContextRunCreateInput>,
 ) -> Result<Json<Value>, StatusCode> {
-    let run_id = input.run_id.unwrap_or_else(|| format!("run-{}", Uuid::new_v4()));
+    let run_id = input
+        .run_id
+        .unwrap_or_else(|| format!("run-{}", Uuid::new_v4()));
     ensure_context_run_dir(&state, &run_id).await?;
     let run_path = context_run_state_path(&state, &run_id);
     if run_path.exists() {
@@ -6517,7 +6532,9 @@ async fn context_run_todos_sync(
         .find(|step| {
             matches!(
                 step.status,
-                ContextStepStatus::InProgress | ContextStepStatus::Runnable | ContextStepStatus::Pending
+                ContextStepStatus::InProgress
+                    | ContextStepStatus::Runnable
+                    | ContextStepStatus::Pending
             )
         })
         .map(|step| format!("continue task `{}` from synced todo list", step.step_id));
@@ -6551,7 +6568,9 @@ async fn context_run_todos_sync(
     })))
 }
 
-fn context_driver_select_next_step(run: &ContextRunState) -> (Option<usize>, String, ContextRunStatus) {
+fn context_driver_select_next_step(
+    run: &ContextRunState,
+) -> (Option<usize>, String, ContextRunStatus) {
     if context_run_is_terminal(&run.status) {
         return (
             None,
@@ -6890,7 +6909,9 @@ async fn context_run_blackboard_patch(
     let mut blackboard = load_context_blackboard(&state, &run_id);
     apply_context_blackboard_patch(&mut blackboard, &patch)?;
     save_context_blackboard(&state, &run_id, &blackboard)?;
-    Ok(Json(json!({ "ok": true, "patch": patch, "blackboard": blackboard })))
+    Ok(Json(
+        json!({ "ok": true, "patch": patch, "blackboard": blackboard }),
+    ))
 }
 
 async fn context_run_checkpoint_create(
@@ -6931,7 +6952,11 @@ async fn context_run_checkpoint_latest(
     let mut latest_name: Option<String> = None;
     let mut entries = std::fs::read_dir(&dir).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     while let Some(Ok(entry)) = entries.next() {
-        if !entry.file_type().map(|kind| kind.is_file()).unwrap_or(false) {
+        if !entry
+            .file_type()
+            .map(|kind| kind.is_file())
+            .unwrap_or(false)
+        {
             continue;
         }
         let name = entry.file_name().to_string_lossy().to_string();
@@ -6990,7 +7015,10 @@ fn replay_step_status_from_event(event: &ContextRunEventRecord) -> Option<Contex
     None
 }
 
-fn latest_context_checkpoint_record(state: &AppState, run_id: &str) -> Option<ContextCheckpointRecord> {
+fn latest_context_checkpoint_record(
+    state: &AppState,
+    run_id: &str,
+) -> Option<ContextCheckpointRecord> {
     let dir = context_run_checkpoints_dir(state, run_id);
     if !dir.exists() {
         return None;
@@ -6998,7 +7026,12 @@ fn latest_context_checkpoint_record(state: &AppState, run_id: &str) -> Option<Co
     let mut latest_name: Option<String> = None;
     let mut entries = std::fs::read_dir(&dir).ok()?;
     while let Some(Ok(entry)) = entries.next() {
-        if !entry.file_type().ok().map(|kind| kind.is_file()).unwrap_or(false) {
+        if !entry
+            .file_type()
+            .ok()
+            .map(|kind| kind.is_file())
+            .unwrap_or(false)
+        {
             continue;
         }
         let name = entry.file_name().to_string_lossy().to_string();
@@ -7136,9 +7169,10 @@ async fn context_run_replay(
     }
     let replay = context_run_replay_materialize(&run_id, &persisted, checkpoint.as_ref(), &events);
     let status_mismatch = replay.status != persisted.status;
-    let why_next_step_mismatch = persisted.why_next_step.is_some()
-        && replay.why_next_step != persisted.why_next_step;
-    let step_count_mismatch = !persisted.steps.is_empty() && replay.steps.len() != persisted.steps.len();
+    let why_next_step_mismatch =
+        persisted.why_next_step.is_some() && replay.why_next_step != persisted.why_next_step;
+    let step_count_mismatch =
+        !persisted.steps.is_empty() && replay.steps.len() != persisted.steps.len();
     let drift = ContextReplayDrift {
         mismatch: status_mismatch || why_next_step_mismatch || step_count_mismatch,
         status_mismatch,
@@ -12632,7 +12666,11 @@ mod tests {
                 .to_string(),
             ))
             .expect("create request");
-        let create_resp = app.clone().oneshot(create_req).await.expect("create response");
+        let create_resp = app
+            .clone()
+            .oneshot(create_req)
+            .await
+            .expect("create response");
         assert_eq!(create_resp.status(), StatusCode::OK);
 
         let event_req = Request::builder()
@@ -12648,7 +12686,11 @@ mod tests {
                 .to_string(),
             ))
             .expect("event request");
-        let event_resp = app.clone().oneshot(event_req).await.expect("event response");
+        let event_resp = app
+            .clone()
+            .oneshot(event_req)
+            .await
+            .expect("event response");
         assert_eq!(event_resp.status(), StatusCode::OK);
 
         let list_events_req = Request::builder()
@@ -12680,7 +12722,11 @@ mod tests {
             .uri("/context/runs/ctx-run-1")
             .body(Body::empty())
             .expect("get run request");
-        let get_run_resp = app.clone().oneshot(get_run_req).await.expect("get run response");
+        let get_run_resp = app
+            .clone()
+            .oneshot(get_run_req)
+            .await
+            .expect("get run response");
         assert_eq!(get_run_resp.status(), StatusCode::OK);
         let get_run_body = to_bytes(get_run_resp.into_body(), usize::MAX)
             .await
@@ -12717,7 +12763,11 @@ mod tests {
                 .to_string(),
             ))
             .expect("create request");
-        let create_resp = app.clone().oneshot(create_req).await.expect("create response");
+        let create_resp = app
+            .clone()
+            .oneshot(create_req)
+            .await
+            .expect("create response");
         assert_eq!(create_resp.status(), StatusCode::OK);
 
         let validate_req = Request::builder()
@@ -12742,7 +12792,8 @@ mod tests {
         let validate_body = to_bytes(validate_resp.into_body(), usize::MAX)
             .await
             .expect("validate body");
-        let validate_payload: Value = serde_json::from_slice(&validate_body).expect("validate json");
+        let validate_payload: Value =
+            serde_json::from_slice(&validate_body).expect("validate json");
         assert_eq!(
             validate_payload.get("mismatch").and_then(Value::as_bool),
             Some(true)
@@ -12753,7 +12804,11 @@ mod tests {
             .uri("/context/runs/ctx-run-lease")
             .body(Body::empty())
             .expect("get run request");
-        let get_run_resp = app.clone().oneshot(get_run_req).await.expect("get run response");
+        let get_run_resp = app
+            .clone()
+            .oneshot(get_run_req)
+            .await
+            .expect("get run response");
         let get_run_body = to_bytes(get_run_resp.into_body(), usize::MAX)
             .await
             .expect("get run body");
@@ -12784,7 +12839,11 @@ mod tests {
                 .to_string(),
             ))
             .expect("create request");
-        let create_resp = app.clone().oneshot(create_req).await.expect("create response");
+        let create_resp = app
+            .clone()
+            .oneshot(create_req)
+            .await
+            .expect("create response");
         assert_eq!(create_resp.status(), StatusCode::OK);
 
         let event_req = Request::builder()
@@ -12805,7 +12864,11 @@ mod tests {
                 .to_string(),
             ))
             .expect("event request");
-        let event_resp = app.clone().oneshot(event_req).await.expect("event response");
+        let event_resp = app
+            .clone()
+            .oneshot(event_req)
+            .await
+            .expect("event response");
         assert_eq!(event_resp.status(), StatusCode::OK);
 
         let replay_req = Request::builder()
@@ -12813,7 +12876,11 @@ mod tests {
             .uri("/context/runs/ctx-run-replay-ok/replay")
             .body(Body::empty())
             .expect("replay request");
-        let replay_resp = app.clone().oneshot(replay_req).await.expect("replay response");
+        let replay_resp = app
+            .clone()
+            .oneshot(replay_req)
+            .await
+            .expect("replay response");
         assert_eq!(replay_resp.status(), StatusCode::OK);
         let replay_body = to_bytes(replay_resp.into_body(), usize::MAX)
             .await
@@ -12852,7 +12919,11 @@ mod tests {
                 .to_string(),
             ))
             .expect("create request");
-        let create_resp = app.clone().oneshot(create_req).await.expect("create response");
+        let create_resp = app
+            .clone()
+            .oneshot(create_req)
+            .await
+            .expect("create response");
         assert_eq!(create_resp.status(), StatusCode::OK);
 
         let event_req = Request::builder()
@@ -12868,7 +12939,11 @@ mod tests {
                 .to_string(),
             ))
             .expect("event request");
-        let event_resp = app.clone().oneshot(event_req).await.expect("event response");
+        let event_resp = app
+            .clone()
+            .oneshot(event_req)
+            .await
+            .expect("event response");
         assert_eq!(event_resp.status(), StatusCode::OK);
 
         let get_req = Request::builder()
@@ -12903,7 +12978,11 @@ mod tests {
             .uri("/context/runs/ctx-run-replay-drift/replay")
             .body(Body::empty())
             .expect("replay request");
-        let replay_resp = app.clone().oneshot(replay_req).await.expect("replay response");
+        let replay_resp = app
+            .clone()
+            .oneshot(replay_req)
+            .await
+            .expect("replay response");
         assert_eq!(replay_resp.status(), StatusCode::OK);
         let replay_body = to_bytes(replay_resp.into_body(), usize::MAX)
             .await
@@ -12942,7 +13021,11 @@ mod tests {
                 .to_string(),
             ))
             .expect("create request");
-        let create_resp = app.clone().oneshot(create_req).await.expect("create response");
+        let create_resp = app
+            .clone()
+            .oneshot(create_req)
+            .await
+            .expect("create response");
         assert_eq!(create_resp.status(), StatusCode::OK);
 
         let get_req = Request::builder()
@@ -12988,9 +13071,7 @@ mod tests {
             .expect("next body");
         let next_payload: Value = serde_json::from_slice(&next_body).expect("next json");
         assert_eq!(
-            next_payload
-                .get("selected_step_id")
-                .and_then(Value::as_str),
+            next_payload.get("selected_step_id").and_then(Value::as_str),
             Some("s2")
         );
         assert!(next_payload
@@ -13045,7 +13126,11 @@ mod tests {
                 .to_string(),
             ))
             .expect("create request");
-        let create_resp = app.clone().oneshot(create_req).await.expect("create response");
+        let create_resp = app
+            .clone()
+            .oneshot(create_req)
+            .await
+            .expect("create response");
         assert_eq!(create_resp.status(), StatusCode::OK);
 
         let get_req = Request::builder()
@@ -13089,9 +13174,7 @@ mod tests {
         let next_payload: Value = serde_json::from_slice(&next_body).expect("next json");
         assert_eq!(next_payload.get("selected_step_id"), Some(&Value::Null));
         assert_eq!(
-            next_payload
-                .get("target_status")
-                .and_then(Value::as_str),
+            next_payload.get("target_status").and_then(Value::as_str),
             Some("completed")
         );
     }
@@ -13113,7 +13196,11 @@ mod tests {
                 .to_string(),
             ))
             .expect("create request");
-        let create_resp = app.clone().oneshot(create_req).await.expect("create response");
+        let create_resp = app
+            .clone()
+            .oneshot(create_req)
+            .await
+            .expect("create response");
         assert_eq!(create_resp.status(), StatusCode::OK);
 
         let get_req = Request::builder()
@@ -13235,7 +13322,11 @@ mod tests {
                 .to_string(),
             ))
             .expect("create request");
-        let create_resp = app.clone().oneshot(create_req).await.expect("create response");
+        let create_resp = app
+            .clone()
+            .oneshot(create_req)
+            .await
+            .expect("create response");
         assert_eq!(create_resp.status(), StatusCode::OK);
 
         let get_req = Request::builder()
@@ -13333,7 +13424,11 @@ mod tests {
                 .to_string(),
             ))
             .expect("create request");
-        let create_resp = app.clone().oneshot(create_req).await.expect("create response");
+        let create_resp = app
+            .clone()
+            .oneshot(create_req)
+            .await
+            .expect("create response");
         assert_eq!(create_resp.status(), StatusCode::OK);
 
         let get_req = Request::builder()
@@ -13459,7 +13554,11 @@ mod tests {
             .uri("/context/runs/ctx-run-fault-1/replay")
             .body(Body::empty())
             .expect("replay request");
-        let replay_resp = app.clone().oneshot(replay_req).await.expect("replay response");
+        let replay_resp = app
+            .clone()
+            .oneshot(replay_req)
+            .await
+            .expect("replay response");
         assert_eq!(replay_resp.status(), StatusCode::OK);
         let replay_body = to_bytes(replay_resp.into_body(), usize::MAX)
             .await
@@ -13498,7 +13597,11 @@ mod tests {
                 .to_string(),
             ))
             .expect("create request");
-        let create_resp = app.clone().oneshot(create_req).await.expect("create response");
+        let create_resp = app
+            .clone()
+            .oneshot(create_req)
+            .await
+            .expect("create response");
         assert_eq!(create_resp.status(), StatusCode::OK);
 
         let sync_req = Request::builder()

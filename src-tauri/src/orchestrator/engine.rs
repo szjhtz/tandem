@@ -91,6 +91,13 @@ struct AgentCallOutcome {
     used_write_tools: bool,
 }
 
+#[derive(Clone, Debug, Default)]
+struct SessionWriteSummary {
+    total_write_calls: usize,
+    successful_write_calls: usize,
+    paths: Vec<String>,
+}
+
 // ============================================================================
 // Orchestrator Engine
 // ============================================================================
@@ -345,6 +352,77 @@ impl OrchestratorEngine {
         Self::existing_dir_string(&path)
     }
 
+    fn normalized_workspace_string(value: &str) -> Option<String> {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            return None;
+        }
+        tandem_core::normalize_workspace_path(trimmed).or_else(|| Some(trimmed.to_string()))
+    }
+
+    fn session_workspace_string(session: &crate::sidecar::Session) -> Option<String> {
+        session
+            .workspace_root
+            .as_deref()
+            .and_then(Self::normalized_workspace_string)
+            .or_else(|| {
+                session
+                    .directory
+                    .as_deref()
+                    .and_then(Self::normalized_workspace_string)
+            })
+    }
+
+    fn session_matches_workspace(session: &crate::sidecar::Session, workspace_path: &Path) -> bool {
+        let Some(expected_raw) = Self::existing_dir_string(workspace_path) else {
+            return true;
+        };
+        let Some(expected) = Self::normalized_workspace_string(&expected_raw) else {
+            return true;
+        };
+        let Some(actual) = Self::session_workspace_string(session) else {
+            return false;
+        };
+        actual == expected
+    }
+
+    async fn resolve_base_run_session(&self) -> Result<crate::sidecar::Session> {
+        let run_session_id = {
+            let run = self.run.read().await;
+            run.session_id.clone()
+        };
+
+        let mut base_session = match self.sidecar.get_session(&run_session_id).await {
+            Ok(session) => session,
+            Err(e) if is_sidecar_session_not_found(&e) => {
+                tracing::warn!(
+                    "Base orchestrator session {} is missing (404). Recreating base session.",
+                    run_session_id
+                );
+                let new_session_id = self.recreate_base_run_session().await?;
+                self.sidecar.get_session(&new_session_id).await?
+            }
+            Err(e) => return Err(e),
+        };
+
+        if !Self::session_matches_workspace(&base_session, &self.workspace_path) {
+            let expected_workspace = Self::existing_dir_string(&self.workspace_path)
+                .unwrap_or_else(|| self.workspace_path.to_string_lossy().to_string());
+            let actual_workspace =
+                Self::session_workspace_string(&base_session).unwrap_or_else(|| "<unset>".into());
+            tracing::warn!(
+                "Base orchestrator session {} workspace drift detected (expected={}, actual={}). Recreating base session.",
+                base_session.id,
+                expected_workspace,
+                actual_workspace
+            );
+            let new_session_id = self.recreate_base_run_session().await?;
+            base_session = self.sidecar.get_session(&new_session_id).await?;
+        }
+
+        Ok(base_session)
+    }
+
     fn role_tool_allowlist(role: AgentRole) -> Vec<&'static str> {
         match role {
             AgentRole::Orchestrator | AgentRole::Planner | AgentRole::Delegator => vec![
@@ -539,6 +617,15 @@ impl OrchestratorEngine {
             || e.contains("timed out")
             || e.contains("timeout")
             || e.contains("stream_idle_timeout")
+            || e.contains("interrupted")
+            || e.contains("cancelled")
+            || e.contains("canceled")
+            || e.contains("aborted")
+            || e.contains("internal server error")
+            || e.contains("provider_server_error")
+            || e.contains("provider_request_failed")
+            || e.contains("provider stream chunk error")
+            || e.contains("json error injected into sse stream")
     }
 
     fn is_workspace_not_found_error(error: &str) -> bool {
@@ -758,10 +845,7 @@ impl OrchestratorEngine {
             run.objective.clone()
         };
 
-        let session_id = {
-            let run = self.run.read().await;
-            run.session_id.clone()
-        };
+        let session_id = self.resolve_base_run_session().await?.id;
 
         let analysis_prompt =
             AgentPrompts::build_planner_analysis_prompt(&objective, &workspace_summary);
@@ -1339,6 +1423,8 @@ impl OrchestratorEngine {
             let mut workspace_changes = self
                 .get_recent_changes_since(&workspace_before)
                 .await?;
+            let mut session_write_summary =
+                self.summarize_session_write_activity(&session_id).await;
             let hinted_changes = self
                 .summarize_target_file_changes(&hinted_before, &hinted_targets)
                 .await?;
@@ -1353,7 +1439,12 @@ impl OrchestratorEngine {
                     workspace_changes.diff_text.push_str(line);
                 }
             }
-            if self.task_requires_workspace_changes(&task) && !workspace_changes.has_changes {
+            // Sidecar/session-history reconciliation can occasionally lag or miss a terminal write
+            // while we still observed write-tool usage in the active builder stream. Treat
+            // builder-observed write usage as fallback evidence when disk changes are present.
+            let mut task_scoped_changes_detected = workspace_changes.has_changes
+                && (session_write_summary.successful_write_calls > 0 || builder_used_write_tools);
+            if self.task_requires_workspace_changes(&task) && !task_scoped_changes_detected {
                 // One targeted recovery pass: force explicit file-tool usage with concrete paths.
                 self.emit_task_trace(
                     &task.id,
@@ -1405,6 +1496,7 @@ You MUST perform concrete file edits now.\n\
                 workspace_changes = self
                     .get_recent_changes_since(&workspace_before)
                     .await?;
+                session_write_summary = self.summarize_session_write_activity(&session_id).await;
                 let hinted_changes = self
                     .summarize_target_file_changes(&hinted_before, &hinted_targets)
                     .await?;
@@ -1419,8 +1511,11 @@ You MUST perform concrete file edits now.\n\
                         workspace_changes.diff_text.push_str(line);
                     }
                 }
+                task_scoped_changes_detected = workspace_changes.has_changes
+                    && (session_write_summary.successful_write_calls > 0
+                        || builder_used_write_tools);
 
-                if !workspace_changes.has_changes {
+                if !task_scoped_changes_detected {
                     if !builder_used_tools {
                         self.emit_task_trace(
                             &task.id,
@@ -1432,12 +1527,16 @@ You MUST perform concrete file edits now.\n\
                             "Task requires file changes, but builder invoked no tools. Use read/glob to inspect inputs and write/edit/apply_patch to create or modify files before finishing.".to_string(),
                         ));
                     }
-                    if !builder_used_write_tools {
+                    if !builder_used_write_tools && session_write_summary.total_write_calls == 0 {
                         self.emit_task_trace(
                             &task.id,
                             Some(session_id.as_str()),
                             "NO_WRITE_TOOL_CALLS_DETECTED",
-                            Some("builder invoked only read-only tools after recovery prompt".to_string()),
+                            Some(format!(
+                                "builder write evidence missing (total_write_calls={}, successful_write_calls={})",
+                                session_write_summary.total_write_calls,
+                                session_write_summary.successful_write_calls
+                            )),
                         );
                         return Err(TandemError::Orchestrator(
                             "Task requires file changes, but builder only invoked read-only tools. Use write/edit/apply_patch with a concrete path to produce the required artifact.".to_string(),
@@ -1449,13 +1548,32 @@ You MUST perform concrete file edits now.\n\
                     )));
                 }
             }
-            let changes_diff = workspace_changes.diff_text;
+            let mut changes_diff = workspace_changes.diff_text.clone();
+            if !session_write_summary.paths.is_empty() {
+                if !changes_diff.is_empty() {
+                    changes_diff.push('\n');
+                }
+                changes_diff.push_str("Task-session successful write targets:");
+                for path in session_write_summary.paths.iter().take(20) {
+                    changes_diff.push('\n');
+                    changes_diff.push_str("+ ");
+                    changes_diff.push_str(path);
+                }
+            }
+            let changed_file_evidence = self
+                .collect_validation_file_evidence(&workspace_changes)
+                .await?;
 
             // Build validator prompt
             let validator_prompt = AgentPrompts::build_validator_prompt(
                 &task,
                 &changes_diff,
                 Some(builder_response.as_str()),
+                if changed_file_evidence.trim().is_empty() {
+                    None
+                } else {
+                    Some(changed_file_evidence.as_str())
+                },
             );
 
             // Call validator
@@ -1746,23 +1864,12 @@ You MUST perform concrete file edits now.\n\
             return Ok(existing);
         }
 
-        let (run_session_id, config) = {
+        let config = {
             let run = self.run.read().await;
-            (run.session_id.clone(), run.config.clone())
+            run.config.clone()
         };
 
-        let base_session = match self.sidecar.get_session(&run_session_id).await {
-            Ok(session) => session,
-            Err(e) if is_sidecar_session_not_found(&e) => {
-                tracing::warn!(
-                    "Base orchestrator session {} is missing (404). Recreating base session.",
-                    run_session_id
-                );
-                let new_session_id = self.recreate_base_run_session().await?;
-                self.sidecar.get_session(&new_session_id).await?
-            }
-            Err(e) => return Err(e),
-        };
+        let base_session = self.resolve_base_run_session().await?;
 
         let permission = Some(Self::orchestrator_permission_rules(role));
 
@@ -1787,10 +1894,9 @@ You MUST perform concrete file edits now.\n\
             permission,
             // Pin task sessions to the known engine workspace to avoid drift across projects.
             directory: Some(self.workspace_path.to_string_lossy().to_string()),
-            workspace_root: Self::existing_dir_string_from_opt(
-                base_session.workspace_root.as_deref(),
-            )
-            .or_else(|| Some(self.workspace_path.to_string_lossy().to_string())),
+            workspace_root: Self::existing_dir_string(&self.workspace_path).or_else(|| {
+                Self::existing_dir_string_from_opt(base_session.workspace_root.as_deref())
+            }),
         };
 
         let session = self.sidecar.create_session(request).await?;
@@ -2280,6 +2386,29 @@ When calling `read`/`write`/`edit`, ALWAYS include a non-empty `path` string.\n\
                             error_code,
                         } => {
                             if sid == &active_session_id {
+                                let lowered = error.to_ascii_lowercase();
+                                let interrupted_like = lowered.contains("interrupted")
+                                    || lowered.contains("cancelled")
+                                    || lowered.contains("canceled")
+                                    || lowered.contains("aborted");
+                                if interrupted_like
+                                    && (first_tool_part_id.is_some() || !content.trim().is_empty())
+                                {
+                                    tracing::warn!(
+                                        "Session {} reported interrupt-like error after tool/content activity; recovering from history instead of hard-failing: {}",
+                                        active_session_id,
+                                        error
+                                    );
+                                    if content.trim().is_empty() {
+                                        if let Some(recovered) = self
+                                            .recover_agent_response_from_history(&active_session_id)
+                                            .await
+                                        {
+                                            content = recovered;
+                                        }
+                                    }
+                                    break;
+                                }
                                 tracing::error!("Session {} error: {}", active_session_id, error);
                                 if let Some(code) = error_code {
                                     if error.starts_with('[') {
@@ -2744,6 +2873,69 @@ When calling `read`/`write`/`edit`, ALWAYS include a non-empty `path` string.\n\
         Ok(changed)
     }
 
+    async fn collect_validation_file_evidence(
+        &self,
+        changes: &WorkspaceChangeSummary,
+    ) -> Result<String> {
+        let mut candidates = Vec::new();
+        for path in &changes.created {
+            candidates.push(path.clone());
+        }
+        for path in &changes.updated {
+            candidates.push(path.clone());
+        }
+        candidates.sort();
+        candidates.dedup();
+        candidates.truncate(8);
+
+        if candidates.is_empty() {
+            return Ok(String::new());
+        }
+
+        let workspace_root = self.workspace_path.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut sections = Vec::new();
+            let mut total_chars: usize = 0;
+            const MAX_TOTAL_CHARS: usize = 12_000;
+            const MAX_FILE_CHARS: usize = 2_000;
+
+            for rel in candidates {
+                if total_chars >= MAX_TOTAL_CHARS {
+                    break;
+                }
+
+                let abs = workspace_root.join(&rel);
+                if !abs.is_file() {
+                    continue;
+                }
+
+                let bytes = match std::fs::read(&abs) {
+                    Ok(bytes) => bytes,
+                    Err(_) => continue,
+                };
+                if bytes.contains(&0) {
+                    sections.push(format!("### {}\n(binary file omitted)", rel));
+                    continue;
+                }
+
+                let text = String::from_utf8_lossy(&bytes);
+                let mut snippet = text.chars().take(MAX_FILE_CHARS).collect::<String>();
+                if text.chars().count() > MAX_FILE_CHARS {
+                    snippet.push_str("\n...[truncated]...");
+                }
+                snippet = snippet.replace("```", "'''");
+
+                let section = format!("### {}\n```text\n{}\n```", rel, snippet);
+                total_chars = total_chars.saturating_add(section.len());
+                sections.push(section);
+            }
+
+            Ok::<String, TandemError>(sections.join("\n\n"))
+        })
+        .await
+        .map_err(|e| TandemError::Orchestrator(format!("file evidence task failed: {}", e)))?
+    }
+
     fn summarize_workspace_changes(
         before: &HashMap<String, FileFingerprint>,
         after: &HashMap<String, FileFingerprint>,
@@ -2950,6 +3142,88 @@ When calling `read`/`write`/`edit`, ALWAYS include a non-empty `path` string.\n\
         out.sort();
         out.truncate(5);
         out
+    }
+
+    fn normalize_tool_name(raw: &str) -> String {
+        raw.split(':')
+            .next_back()
+            .unwrap_or(raw)
+            .trim()
+            .to_ascii_lowercase()
+    }
+
+    fn extract_write_path_from_part(part: &serde_json::Value) -> Option<String> {
+        let args = part.get("args")?;
+        let path = args.get("path")?.as_str()?.trim();
+        if path.is_empty() {
+            None
+        } else {
+            Some(path.to_string())
+        }
+    }
+
+    fn is_successful_tool_terminal_state(state: &str, has_error: bool) -> bool {
+        let normalized = state.to_ascii_lowercase();
+        if has_error {
+            return false;
+        }
+        matches!(
+            normalized.as_str(),
+            "completed" | "complete" | "done" | "success"
+        ) || normalized.is_empty()
+    }
+
+    async fn summarize_session_write_activity(&self, session_id: &str) -> SessionWriteSummary {
+        let messages = match self.sidecar.get_session_messages(session_id).await {
+            Ok(messages) => messages,
+            Err(_) => return SessionWriteSummary::default(),
+        };
+
+        let mut summary = SessionWriteSummary::default();
+        let mut unique_paths = HashSet::new();
+
+        for message in messages.iter().filter(|m| {
+            m.info.role == "assistant"
+                && !m.info.deleted.unwrap_or(false)
+                && !m.info.reverted.unwrap_or(false)
+        }) {
+            for part in &message.parts {
+                let Some(part_type) = part.get("type").and_then(|v| v.as_str()) else {
+                    continue;
+                };
+                if part_type != "tool" {
+                    continue;
+                }
+                let tool_name = part
+                    .get("tool")
+                    .and_then(|v| v.as_str())
+                    .map(Self::normalize_tool_name)
+                    .unwrap_or_default();
+                if !matches!(tool_name.as_str(), "write" | "edit" | "apply_patch") {
+                    continue;
+                }
+
+                summary.total_write_calls = summary.total_write_calls.saturating_add(1);
+                let state = part
+                    .get("state")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default();
+                let has_error = part.get("error").is_some()
+                    || part.get("state").and_then(|v| v.get("error")).is_some();
+                if Self::is_successful_tool_terminal_state(state, has_error) {
+                    summary.successful_write_calls =
+                        summary.successful_write_calls.saturating_add(1);
+                    if let Some(path) = Self::extract_write_path_from_part(part) {
+                        unique_paths.insert(path);
+                    }
+                }
+            }
+        }
+
+        let mut paths: Vec<String> = unique_paths.into_iter().collect();
+        paths.sort();
+        summary.paths = paths;
+        summary
     }
 
     // ========================================================================
