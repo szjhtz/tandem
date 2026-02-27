@@ -170,10 +170,17 @@ log "Engine: $ENGINE_PATH  ($(run_as_user "$ENGINE_PATH" --version 2>/dev/null |
 
 # ─── Generate API token ───────────────────────────────────────────────────────
 # Reuse existing .env token if one exists (idempotent installs)
+ENGINE_ENV_PATH="/etc/tandem/engine.env"
 TOKEN="${TANDEM_API_TOKEN:-}"
 if [[ -z "$TOKEN" && -f "$PROJECT_DIR/.env" ]]; then
   TOKEN="$(sed -n 's/^PORTAL_KEY=//p' "$PROJECT_DIR/.env" | tail -n1 || true)"
   [[ -n "$TOKEN" ]] && log "Reusing existing PORTAL_KEY from .env"
+fi
+if [[ -z "$TOKEN" ]]; then
+  if "${SUDO_CMD[@]}" test -f "$ENGINE_ENV_PATH"; then
+    TOKEN="$("${SUDO_CMD[@]}" sed -n 's/^TANDEM_API_TOKEN=//p' "$ENGINE_ENV_PATH" | tail -n1 || true)"
+    [[ -n "$TOKEN" ]] && log "Reusing existing TANDEM_API_TOKEN from $ENGINE_ENV_PATH"
+  fi
 fi
 if [[ -z "$TOKEN" ]]; then
   TOKEN="$(run_as_user "$ENGINE_PATH" token generate 2>/dev/null || true)"
@@ -183,7 +190,6 @@ fi
 
 # ─── Write engine environment file ───────────────────────────────────────────
 STATE_DIR="${TANDEM_STATE_DIR:-/srv/tandem}"
-ENGINE_ENV_PATH="/etc/tandem/engine.env"
 ENGINE_CONFIG_PATH="$STATE_DIR/config.json"
 
 "${SUDO_CMD[@]}" mkdir -p /etc/tandem "$STATE_DIR"
@@ -355,13 +361,22 @@ HAS_PROVIDER_KEY=0
 "${SUDO_CMD[@]}" grep -Eq "$PROVIDER_KEY_REGEX" "$ENGINE_ENV_PATH" && HAS_PROVIDER_KEY=1 || true
 
 PUBLIC_IP="$(curl -sf https://api.ipify.org 2>/dev/null || echo '<your-server-ip>')"
+PORT_VALUE="$(sed -n 's/^PORT=//p' "$PROJECT_DIR/.env" | tail -n1 | tr -d '[:space:]' || true)"
+[[ -n "$PORT_VALUE" ]] || PORT_VALUE="80"
+
+PORTAL_URL="http://$PUBLIC_IP"
+if [[ "$PORT_VALUE" == "443" ]]; then
+  PORTAL_URL="https://$PUBLIC_IP"
+elif [[ "$PORT_VALUE" != "80" ]]; then
+  PORTAL_URL="http://$PUBLIC_IP:$PORT_VALUE"
+fi
 
 echo ""
 echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo -e "${GREEN}  ✓ Tandem Agent Quickstart is running!${NC}"
 echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo ""
-echo -e "  Portal URL:   ${GREEN}http://$PUBLIC_IP${NC}"
+echo -e "  Portal URL:   ${GREEN}$PORTAL_URL${NC}"
 echo -e "  Sign-in key:  ${YELLOW}$TOKEN${NC}"
 echo ""
 echo "  Services:"
