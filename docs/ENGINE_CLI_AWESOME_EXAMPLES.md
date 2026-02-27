@@ -238,6 +238,12 @@ curl -s -X POST "$API/mcp/local-mcp/connect"
 curl -s "$API/mcp/resources"
 ```
 
+If a connected MCP tool requires OAuth/account authorization, the run stream may emit
+`mcp.auth.required` with an authorization URL. Complete auth, then retry the tool call.
+
+Tip: MCP argument-key drift is normalized engine-side before `tools/call`, so common
+camelCase/snake_case alias mismatches are recovered automatically.
+
 ## Event Streams: Live SSE
 
 This uses the async run flow and attaches to the engine SSE stream.
@@ -553,4 +559,3 @@ tandem-engine run "Draft a migration plan for moving from single-session tooling
 ```bash
 tandem-engine tool --json '{"tool":"batch","args":{"tool_calls":[{"tool":"glob","args":{"pattern":"tandem/docs/*.md"}},{"tool":"read","args":{"path":"tandem/docs/ENGINE_CLI.md"}},{"tool":"grep","args":{"pattern":"token","path":"tandem/docs"}}]}}'
 ```
-

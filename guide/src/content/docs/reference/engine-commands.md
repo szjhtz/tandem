@@ -114,6 +114,29 @@ tandem-engine tool --json '<JSON_PAYLOAD>'
 }
 ```
 
+### MCP auth-required and retry behavior
+
+For MCP-backed tools, Tandem can emit an explicit authorization event when upstream requires OAuth/account consent:
+
+- Event: `mcp.auth.required`
+- MCP runtime state fields:
+  - `last_auth_challenge`
+  - `mcp_session_id`
+
+If auth is required, complete authorization and retry the tool call. A full engine restart is not required.
+
+### MCP argument normalization (engine-wide)
+
+Before forwarding MCP `tools/call`, Tandem normalizes common argument-key drift against tool schema.
+
+Examples:
+
+- `taskTitle` -> `task_title`
+- `listId` -> `list_id`
+- common alias recovery such as `name` -> `task_title` when required by schema
+
+This behavior runs in engine runtime and applies to web, TUI, channels, and direct CLI usage.
+
 ## `chat`
 
 Planned interactive REPL mode. This command is currently a placeholder.

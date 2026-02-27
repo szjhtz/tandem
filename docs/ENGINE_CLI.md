@@ -128,6 +128,33 @@ Payload shape:
 }
 ```
 
+### MCP auth-required behavior
+
+For MCP-backed tools, Tandem can emit an explicit auth-required flow when upstream requires OAuth or account authorization.
+
+- Event contract: `mcp.auth.required`
+- Runtime MCP server state includes:
+  - `last_auth_challenge`
+  - `mcp_session_id`
+- MCP reconnect/refresh failures now clear stale tool cache/session state before reporting errors.
+
+Practical implication:
+
+- You can retry MCP tools after completing authorization without restarting the engine.
+- If you see repeated authorization loops, verify stable MCP headers (especially provider-specific user identity headers) and reconnect/refresh the MCP server.
+
+### MCP tool argument normalization (engine-wide)
+
+Tandem normalizes MCP tool-call argument keys before `tools/call` using tool schema hints.
+
+Examples of recovered mismatch classes:
+
+- `taskTitle` -> `task_title`
+- `listId` -> `list_id`
+- common alias fallback such as `name` -> `task_title` when required by schema
+
+This behavior runs in the engine runtime, so it applies to all clients (web, TUI, channels), not only CLI calls.
+
 ### `providers`
 
 Lists supported provider IDs.
@@ -324,4 +351,3 @@ When `--state-dir` is omitted:
 - `invalid hostname or port`: verify `--hostname` / `--port`
 
 For Windows users, run these commands in WSL for the same behavior.
-

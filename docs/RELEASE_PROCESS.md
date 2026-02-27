@@ -25,6 +25,21 @@ Use the separate workflow `.github/workflows/publish-registries.yml` to publish 
 - Manual: **Actions -> Publish Registries -> Run workflow**
 - Tag-based: push a dedicated tag `publish-v<version>` (for example `publish-v0.3.3`)
 
+### Manual workflow inputs
+
+When running `publish-registries.yml` manually, set:
+
+- `version`
+- `publish_crates` (boolean)
+- `publish_npm` (boolean)
+- `publish_pypi` (boolean, independent toggle for Python package release)
+- `dry_run` (boolean)
+
+Notes:
+
+- `publish_pypi` is intentionally decoupled from npm so Python release can be skipped/enabled independently.
+- Tag-triggered `publish-v<version>` runs still enable crates/npm/PyPI together by default.
+
 ### Guardrails
 
 - Uses protected environment `registry-publish` for approval-gated publish jobs.

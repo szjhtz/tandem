@@ -91,6 +91,22 @@ cargo test -p tandem sidecar::tests::test_parse_prompt_async_response_409_includ
 cargo test -p tandem sidecar::tests::cancel_run_by_id_posts_expected_endpoint -- --nocapture
 ```
 
+**MCP runtime regression tests**:
+
+```bash
+cargo test -p tandem-runtime mcp::tests::extract_auth_challenge_from_result_payload -- --nocapture
+cargo test -p tandem-runtime mcp::tests::normalize_mcp_tool_args_maps_clickup_aliases -- --nocapture
+cargo test -p tandem-runtime mcp::tests -- --nocapture
+```
+
+Manual MCP smoke checklist:
+
+1. Connect an MCP server and verify tools appear in `/tool`.
+2. Trigger an auth-gated tool and verify `mcp.auth.required` appears in stream/events.
+3. Complete authorization and retry the same tool (without restarting engine).
+4. Force refresh/disconnect failure and verify stale MCP tools are not left active.
+5. In web quickstart, verify run failures render in chat (no blank-response failure state).
+
 ## Engine smoke tests
 
 **Windows**:

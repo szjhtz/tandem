@@ -220,6 +220,25 @@ cargo test -p tandem sidecar::tests::mission_apply_event_posts_event_payload -- 
 cargo test -p tandem-tui cancel_run_by_id_posts_expected_endpoint -- --nocapture
 ```
 
+MCP-focused regression checks:
+
+```bash
+# Runtime MCP auth challenge extraction + schema normalization coverage
+cargo test -p tandem-runtime mcp::tests::extract_auth_challenge_from_result_payload -- --nocapture
+cargo test -p tandem-runtime mcp::tests::normalize_mcp_tool_args_maps_clickup_aliases -- --nocapture
+
+# Full runtime MCP test module
+cargo test -p tandem-runtime mcp::tests -- --nocapture
+```
+
+Manual MCP smoke checks:
+
+1. Connect MCP server and verify tools are present in `/tool`.
+2. Trigger an auth-gated tool and verify `mcp.auth.required` is emitted.
+3. Complete auth and retry tool call (no engine restart required).
+4. Force refresh/disconnect failure and verify stale MCP tools are not left active.
+5. In web quickstart, verify run failures are rendered (no blank chat state on failure).
+
 TUI mission quick-action commands (manual runtime validation):
 
 ```text
@@ -483,4 +502,3 @@ Select-String -Path "$env:APPDATA\tandem\logs\tandem.desktop.*.jsonl" -Pattern "
 Select-String -Path "$env:APPDATA\tandem\logs\tandem.engine.*.jsonl" -Pattern "provider.call.start"
 Select-String -Path "$env:APPDATA\tandem\logs\tandem.desktop.*.jsonl" -Pattern "stream.subscribe.error|stream.disconnected|stream.watchdog.no_events"
 ```
-

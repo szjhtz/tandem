@@ -87,6 +87,19 @@ curl -s http://127.0.0.1:39731/global/health \
   -H "X-Tandem-Token: tk_your_token"
 ```
 
+Common troubleshooting:
+
+```bash
+# service and listener
+sudo systemctl status --no-pager tandem || sudo systemctl status --no-pager tandem-engine
+ss -ltnp | rg 39731
+
+# direct engine health
+curl -sS http://127.0.0.1:39731/global/health | jq .
+```
+
+If clients show `502 Engine unreachable`, verify their configured engine URL/port matches this service and that token headers are scoped correctly.
+
 Web admin:
 
 - `http://127.0.0.1:39731/admin`
@@ -152,3 +165,4 @@ cloudflared tunnel run tandem
 - Keep token auth enabled (`TANDEM_API_TOKEN`).
 - Terminate TLS at a reverse proxy if exposed beyond localhost.
 - For channel features, set channel env vars or config values in state config.
+- For MCP providers using header-based auth (for example Arcade), keep identity headers stable (for example `Arcade-User-ID`) to avoid repeated OAuth challenges.

@@ -63,6 +63,7 @@ Recommended flow:
 2. Select only the tools needed for that mission (avoid sending dozens of tools to one agent).
 3. Use the gateway URL in Tandem as the MCP `transport`.
 4. If using Arcade headers auth mode, pass required headers in Tandem (`Authorization`, and user ID header if your setup requires it).
+5. Keep `Arcade-User-ID` stable across requests/sessions; changing it often triggers repeated authorization challenges.
 
 Then in Tandem:
 
@@ -79,6 +80,12 @@ curl -sS -X POST http://127.0.0.1:39731/mcp \
   }'
 curl -sS -X POST http://127.0.0.1:39731/mcp/arcade/connect
 ```
+
+### MCP auth + refresh behavior
+
+- Auth-gated MCP tools emit `mcp.auth.required` with an authorization URL.
+- Complete authorization, then retry the tool call (engine restart not required).
+- On connect/refresh failures, Tandem now clears stale MCP cache/session state before reporting errors to avoid phantom tool availability.
 
 ### Provider Notes: Composio
 
@@ -500,4 +507,3 @@ Use this checklist before shipping:
 - [WebMCP for Agents](./webmcp-for-agents/)
 - [Engine Commands](./reference/engine-commands/)
 - [Tools Reference](./reference/tools/)
-
