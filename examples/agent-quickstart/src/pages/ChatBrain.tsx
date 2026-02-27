@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { client } from "../api";
-import { EngineEvent, EngineMessage } from "@frumu/tandem-client/models";
+import type { EngineMessage, PermissionRequestRecord } from "@frumu/tandem-client";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeSanitize from "rehype-sanitize";
@@ -241,9 +241,14 @@ export default function ChatBrain() {
 
   const refreshApprovals = useCallback(async (sid: string) => {
     try {
-      const reqs = await client.sessions.permissions.requests(sid);
-      const pending = (reqs || [])
-        .filter((r) => r.status === "pending" || r.status === "asked" || r.status === "waiting")
+      const snapshot = await client.permissions.list();
+      const reqs = (snapshot.requests || []) as PermissionRequestRecord[];
+      const pending = reqs
+        .filter(
+          (r) =>
+            (!r.sessionId || r.sessionId === sid) &&
+            (r.status === "pending" || r.status === "asked" || r.status === "waiting")
+        )
         .map((r) => ({ id: r.id, tool: r.tool || r.permission || "tool" }));
       setPendingApprovals(pending);
       return pending;
@@ -270,7 +275,7 @@ export default function ChatBrain() {
     const key = `${PRIMED_PREFIX}${sid}`;
     if (localStorage.getItem(key)) return;
     try {
-      const msgs = await client.sessions.history(sid);
+      const msgs = await client.sessions.messages(sid);
       const already = msgs.some((m) =>
         (m.parts || []).some((p) => typeof p.text === "string" && p.text.includes(PRIME_MARKER))
       );
@@ -320,15 +325,15 @@ export default function ChatBrain() {
           addLog(`Run finished`);
           if (sessionId) {
             try {
-              const history = await client.sessions.history(sessionId);
-              const rebuilt = buildChatFromHistory(history as any);
+              const history = await client.sessions.messages(sessionId);
+              const rebuilt = buildChatFromHistory(history);
               if (rebuilt.length > 0) setMessages(rebuilt);
             } catch {
               /* ignore */
             }
           }
           setIsThinking(false);
-        } else if (type === "tool_call.started") {
+        } else if (type === "tool.called" || type === "tool_call.started") {
           const tool = (data.properties?.tool as string) || "tool";
           addLog(`▶ ${tool}`);
           setMessages((p) => [
@@ -341,7 +346,11 @@ export default function ChatBrain() {
               toolName: tool,
             },
           ]);
-        } else if (type === "tool_call.completed" || type === "tool_call.failed") {
+        } else if (
+          type === "tool.result" ||
+          type === "tool_call.completed" ||
+          type === "tool_call.failed"
+        ) {
           const tool = (data.properties?.tool as string) || "tool";
           const result = String(data.properties?.result || data.properties?.error || "");
           addLog(`✓ ${tool}`);
@@ -372,8 +381,8 @@ export default function ChatBrain() {
     void refreshApprovals(sid);
     await ensurePrimed(sid);
     try {
-      const history = await client.sessions.history(sid);
-      const msgs = buildChatFromHistory(history as any);
+      const history = await client.sessions.messages(sid);
+      const msgs = buildChatFromHistory(history);
       setMessages(
         msgs.length > 0
           ? msgs
@@ -389,7 +398,7 @@ export default function ChatBrain() {
       );
       // Resume active run if any
       const run = await client.sessions.activeRun(sid);
-      const rid = String(run?.runId || "").trim();
+      const rid = String(run.active?.runId || "").trim();
       if (rid) {
         setIsThinking(true);
         void attachStream(sid, rid);
@@ -408,8 +417,8 @@ export default function ChatBrain() {
 
   const init = async () => {
     try {
-      client.tools
-        .listActiveIds()
+      client
+        .listToolIds()
         .then((ids) => setAvailableTools(ids))
         .catch(() => {
           /* ignore */
@@ -488,7 +497,7 @@ export default function ChatBrain() {
     setApproving(true);
     for (const req of pendingApprovals) {
       try {
-        await client.sessions.permissions.reply(sessionId, req.id, "always");
+        await client.permissions.reply(req.id, "always");
         addLog(`Approved ${req.tool}`);
       } catch {
         /* ignore */

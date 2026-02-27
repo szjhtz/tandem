@@ -10,12 +10,12 @@ import {
   Loader2,
   ArrowRight,
 } from "lucide-react";
+import type { ProviderEntry, ProviderCatalog, ProvidersConfigResponse } from "@frumu/tandem-client";
 
 interface Props {
   onDone?: () => void;
 }
 
-/* Well-known providers with user-friendly labels */
 const PROVIDER_HINTS: Record<string, { label: string; keyUrl: string; placeholder: string }> = {
   openai: {
     label: "OpenAI",
@@ -39,40 +39,41 @@ const PROVIDER_HINTS: Record<string, { label: string; keyUrl: string; placeholde
 
 export default function ProviderSetup({ onDone }: Props) {
   const { providerConfigured } = useAuth();
-  const [catalog, setCatalog] = useState<
-    { id: string; name: string; models: Record<string, unknown> }[]
-  >([]);
+  const [catalog, setCatalog] = useState<ProviderEntry[]>([]);
   const [connected, setConnected] = useState<Set<string>>(new Set());
+  const [settings, setSettings] = useState<ProvidersConfigResponse | null>(null);
   const [selectedProvider, setSelectedProvider] = useState("");
   const [selectedModel, setSelectedModel] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [showKey, setShowKey] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
 
   useEffect(() => {
     const load = async () => {
+      setLoading(true);
       try {
-        const c = await client.config.providers.catalog();
-        const s = await client.config.getProviderSettings();
-        const conn = new Set(
-          Object.keys(s?.providers || {}).filter((k) => s.providers[k].api_key_set)
-        );
+        const c: ProviderCatalog = await client.providers.catalog();
+        const s = await client.providers.config();
 
-        setCatalog(c.providers as any);
-        setConnected(conn);
+        setCatalog(c.all || []);
+        setConnected(new Set(c.connected || []));
+        setSettings(s);
 
-        // Auto-select first connected provider
-        const first = c.default_provider || Array.from(conn)[0] || c.providers[0]?.id || "";
+        const first = c.default || s.default || c.all[0]?.id || "";
         setSelectedProvider(first);
+
         if (first) {
-          const entry = c.providers.find((e) => e.id === first);
+          const entry = c.all.find((e) => e.id === first);
           const models = Object.keys(entry?.models || {});
-          setSelectedModel(s.providers?.[first]?.default_model || models[0] || "");
+          setSelectedModel(s.providers?.[first]?.defaultModel || models[0] || "");
         }
       } catch {
-        /* ignore */
+        setError("Failed to load provider settings.");
+      } finally {
+        setLoading(false);
       }
     };
     void load();
@@ -94,19 +95,16 @@ export default function ProviderSetup({ onDone }: Props) {
     setError(null);
     setSuccess(false);
     try {
-      if (apiKey.trim())
-        await client.config.providers.auth.upsert(selectedProvider, { apiKey: apiKey.trim() });
-      const settings = await client.config.getProviderSettings();
-      await client.config.upsertProviderSettings({
-        ...settings,
-        default_provider: selectedProvider,
-        providers: {
-          ...settings.providers,
-          [selectedProvider]: {
-            ...settings.providers?.[selectedProvider],
-            default_model: selectedModel,
-          },
-        },
+      if (apiKey.trim()) {
+        await client.providers.setApiKey(selectedProvider, apiKey.trim());
+      }
+      await client.providers.setDefaults(selectedProvider, selectedModel);
+      const fresh = await client.providers.config();
+      setSettings(fresh);
+      setConnected((prev) => {
+        const next = new Set(prev);
+        if (apiKey.trim()) next.add(selectedProvider);
+        return next;
       });
       setSuccess(true);
       onDone?.();
@@ -141,13 +139,12 @@ export default function ProviderSetup({ onDone }: Props) {
           </div>
         )}
 
-        {!catalog ? (
+        {loading ? (
           <div className="flex justify-center py-12">
             <Loader2 size={22} className="animate-spin text-gray-600" />
           </div>
         ) : (
           <div className="space-y-4">
-            {/* Provider selector */}
             <div>
               <label className="block text-sm text-gray-400 mb-2">Provider</label>
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
@@ -169,7 +166,6 @@ export default function ProviderSetup({ onDone }: Props) {
               </div>
             </div>
 
-            {/* Model selector */}
             {models.length > 0 && (
               <div>
                 <label className="block text-sm text-gray-400 mb-2">Model</label>
@@ -187,7 +183,6 @@ export default function ProviderSetup({ onDone }: Props) {
               </div>
             )}
 
-            {/* API key */}
             {hint && hint.keyUrl !== "" && (
               <div>
                 <label className="block text-sm text-gray-400 mb-1">
@@ -243,6 +238,13 @@ export default function ProviderSetup({ onDone }: Props) {
               {saving ? <Loader2 size={16} className="animate-spin" /> : <ArrowRight size={16} />}
               {saving ? "Saving…" : "Save Provider"}
             </button>
+
+            {settings?.default && (
+              <p className="text-xs text-gray-500">
+                Current default provider:{" "}
+                <span className="font-mono text-gray-400">{settings.default}</span>
+              </p>
+            )}
           </div>
         )}
       </div>

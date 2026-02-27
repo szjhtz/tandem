@@ -34,13 +34,34 @@ export const DEFAULT_PERMISSION_RULES: JsonObject[] = [
 ];
 
 /**
- * Singleton instance of the official TandemClient SDK.
+ * Live SDK instance (ES module live-binding).
  * It is configured to route calls through the Vite/Express proxy at `/engine`.
  */
-export const client = new TandemClient({
-  baseUrl: "/engine",
-  token: null, // Will be injected by the AuthContext later
-});
+const createClient = (token: string) =>
+  new TandemClient({
+    baseUrl: "/engine",
+    token,
+  });
+
+export let client = createClient("");
+
+export const setClientToken = (token: string) => {
+  client = createClient(token);
+};
+
+export const clearClientToken = () => {
+  client = createClient("");
+};
+
+export const verifyToken = async (token: string): Promise<boolean> => {
+  const probe = createClient(token);
+  try {
+    await probe.health();
+    return true;
+  } catch {
+    return false;
+  }
+};
 
 export const asEpochMs = (v: unknown): number => {
   if (typeof v !== "number" || !Number.isFinite(v)) return Date.now();

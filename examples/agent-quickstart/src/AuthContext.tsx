@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useState } from "react";
-import { client, PORTAL_AUTH_EXPIRED_EVENT } from "./api";
+import { clearClientToken, client, PORTAL_AUTH_EXPIRED_EVENT, setClientToken } from "./api";
 
 const TOKEN_KEY = "tandem_aq_token";
 
@@ -23,7 +23,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     const stored = localStorage.getItem(TOKEN_KEY);
     if (stored) {
-      client.params.token = stored;
+      setClientToken(stored);
       setToken(stored);
     }
     setIsLoading(false);
@@ -32,9 +32,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!token) return;
     setProviderLoading(true);
-    client.config
-      .getProviderSettings()
-      .then((spec) => setProviderConfigured(!!spec.default_provider))
+    client.providers
+      .config()
+      .then((spec) => setProviderConfigured(!!spec.default))
       .catch(() => setProviderConfigured(false))
       .finally(() => setProviderLoading(false));
   }, [token]);
@@ -43,7 +43,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const handler = () => {
       setToken(null);
       localStorage.removeItem(TOKEN_KEY);
-      client.params.token = null;
+      clearClientToken();
     };
     window.addEventListener(PORTAL_AUTH_EXPIRED_EVENT, handler);
     return () => window.removeEventListener(PORTAL_AUTH_EXPIRED_EVENT, handler);
@@ -51,13 +51,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const login = (t: string) => {
     localStorage.setItem(TOKEN_KEY, t);
-    client.params.token = t;
+    setClientToken(t);
     setToken(t);
   };
 
   const logout = () => {
     localStorage.removeItem(TOKEN_KEY);
-    client.params.token = null;
+    clearClientToken();
     setToken(null);
   };
 

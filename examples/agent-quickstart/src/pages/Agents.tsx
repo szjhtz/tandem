@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { client } from "../api";
-import { RoutineRecord, RoutineSchedule } from "@frumu/tandem-client";
+import type { RoutineRecord, RoutineSchedule } from "@frumu/tandem-client";
 import {
   Clock,
   Plus,
@@ -164,7 +164,8 @@ function RoutineCard({
   const run = async () => {
     setRunning(true);
     try {
-      await client.routines.run(r.id);
+      if (r.source === "automations") await client.automations.runNow(r.id);
+      else await client.routines.runNow(r.id);
       onRefresh();
     } catch {
       /* ignore */
@@ -200,9 +201,7 @@ function RoutineCard({
           <ChevronRight size={14} className="text-gray-500 shrink-0" />
         )}
         <div className="flex-1 min-w-0">
-          <p className="text-sm font-medium text-gray-100 truncate">
-            {r.name || (r.title as string) || r.id}
-          </p>
+          <p className="text-sm font-medium text-gray-100 truncate">{r.name || r.id}</p>
           <p className="text-xs text-gray-500 flex items-center gap-1 mt-0.5">
             <Calendar size={10} />
             {getScheduleLabel(r)}
@@ -223,12 +222,9 @@ function RoutineCard({
               {r.prompt}
             </p>
           )}
-          {(r.lastRun || r.lastRunAt || r.last_run || r.last_run_at) && (
+          {(r.lastRun || r.lastRunAt) && (
             <p className="text-xs text-gray-500">
-              Last run:{" "}
-              <span className="text-gray-400">
-                {String(r.lastRun || r.lastRunAt || r.last_run || r.last_run_at)}
-              </span>
+              Last run: <span className="text-gray-400">{String(r.lastRun || r.lastRunAt)}</span>
             </p>
           )}
           <div className="flex items-center gap-2 pt-1">
@@ -269,11 +265,11 @@ export default function Agents() {
     setError(null);
     try {
       const [r, a] = await Promise.all([client.routines.list(), client.automations.list()]);
-      const rItems = ((r.items || r.definitions || []) as RoutineRecord[]).map((x) => ({
+      const rItems = ((r.routines || []) as RoutineRecord[]).map((x) => ({
         ...x,
         source: "routines" as const,
       }));
-      const aItems = ((a.items || a.definitions || []) as RoutineRecord[]).map((x) => ({
+      const aItems = ((a.automations || []) as RoutineRecord[]).map((x) => ({
         ...x,
         source: "automations" as const,
       }));

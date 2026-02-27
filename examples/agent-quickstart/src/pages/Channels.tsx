@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { client } from "../api";
+import type { JsonObject } from "@frumu/tandem-client";
 import {
   MessageCircle,
   RefreshCw,
@@ -15,9 +16,10 @@ import {
 type Channel = "telegram" | "discord" | "slack";
 
 interface ChannelStatus {
+  enabled?: boolean;
   connected?: boolean;
-  sessions?: number;
-  error?: string;
+  activeSessions?: number;
+  lastError?: string | null;
 }
 
 const CHANNEL_META: Record<
@@ -123,7 +125,10 @@ function ChannelCard({
     setError(null);
     setSuccess(null);
     try {
-      await client.config.channels.upsert(channel, fields as Record<string, unknown>);
+      const payload: JsonObject = Object.fromEntries(
+        Object.entries(fields).filter(([, value]) => value.trim().length > 0)
+      );
+      await client.channels.put(channel, payload);
       setSuccess("Saved! Restart the channel listener to apply changes.");
       setExpanded(false);
       onRefresh();
@@ -138,7 +143,7 @@ function ChannelCard({
     setRemoving(true);
     setError(null);
     try {
-      await client.config.channels.remove(channel);
+      await client.channels.delete(channel);
       onRefresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -158,8 +163,8 @@ function ChannelCard({
           <p className="text-sm font-semibold text-gray-100">{meta.label}</p>
           {status?.connected ? (
             <p className="text-xs text-gray-400 mt-0.5">
-              {status.sessions !== undefined
-                ? `${status.sessions} active session${status.sessions !== 1 ? "s" : ""}`
+              {status.activeSessions !== undefined
+                ? `${status.activeSessions} active session${status.activeSessions !== 1 ? "s" : ""}`
                 : "Connected"}
             </p>
           ) : (
@@ -174,7 +179,7 @@ function ChannelCard({
               <CheckCircle size={12} />
               Connected
             </>
-          ) : status?.error ? (
+          ) : status?.lastError ? (
             <>
               <XCircle size={12} />
               Error
@@ -188,9 +193,9 @@ function ChannelCard({
         </div>
       </button>
 
-      {status?.error && (
+      {status?.lastError && (
         <div className="px-4 pb-3 text-xs text-rose-400 bg-rose-900/10 border-t border-rose-800/30 py-2">
-          Error: {status.error}
+          Error: {status.lastError}
         </div>
       )}
 
@@ -246,7 +251,7 @@ function ChannelCard({
 }
 
 export default function Channels() {
-  const [status, setStatus] = useState<Record<string, ChannelStatus> | null>(null);
+  const [status, setStatus] = useState<Record<Channel, ChannelStatus> | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -254,8 +259,12 @@ export default function Channels() {
     setLoading(true);
     setError(null);
     try {
-      const s = await client.config.channels.status();
-      setStatus(s as Record<string, ChannelStatus>);
+      const s = await client.channels.status();
+      setStatus({
+        telegram: s.telegram,
+        discord: s.discord,
+        slack: s.slack,
+      });
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {

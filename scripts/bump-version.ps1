@@ -25,6 +25,7 @@ const jsonFiles = [
   "package.json",
   "src-tauri/tauri.conf.json",
   "packages/tandem-ai/package.json",
+  "packages/tandem-client-ts/package.json",
   "packages/tandem-engine/package.json",
   "packages/tandem-tui/package.json",
 ];
@@ -47,6 +48,10 @@ const cargoFiles = [
   "crates/tandem-types/Cargo.toml",
   "crates/tandem-wire/Cargo.toml",
   "crates/tandem-agent-teams/Cargo.toml",
+];
+
+const pyprojectFiles = [
+  "packages/tandem-client-py/pyproject.toml",
 ];
 
 const updatedFiles = [];
@@ -87,8 +92,30 @@ const updateCargo = (relativePath) => {
   updatedFiles.push(relativePath);
 };
 
+const updatePyproject = (relativePath) => {
+  const filePath = path.join(rootDir, relativePath);
+  const content = fs.readFileSync(filePath, "utf8");
+  const lines = content.split(/\r?\n/);
+  let inProject = false;
+  const next = lines.map((line) => {
+    if (/^\s*\[/.test(line)) {
+      inProject = /^\s*\[project\]\s*$/.test(line);
+    }
+    if (inProject) {
+      const match = line.match(/^(\s*)version\s*=\s*"[^"]*"\s*$/);
+      if (match) {
+        return `${match[1]}version = "${version}"`;
+      }
+    }
+    return line;
+  });
+  fs.writeFileSync(filePath, `${next.join("\n")}\n`);
+  updatedFiles.push(relativePath);
+};
+
 jsonFiles.forEach(updateJson);
 cargoFiles.forEach(updateCargo);
+pyprojectFiles.forEach(updatePyproject);
 
 process.stdout.write(`Updated ${updatedFiles.length} files to ${version}\n`);
 '@

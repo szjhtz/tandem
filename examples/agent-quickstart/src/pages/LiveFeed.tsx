@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { client } from "../api";
-import { EngineEvent } from "@frumu/tandem-client";
+import type { EngineEvent } from "@frumu/tandem-client";
 import { Radio, RefreshCw, Trash2, Filter } from "lucide-react";
 
 interface LiveEvent {
@@ -13,13 +13,11 @@ interface LiveEvent {
 }
 
 const TYPE_COLOR: Record<string, string> = {
-  "message.part.updated": "text-violet-400",
-  "session.run.started": "text-emerald-400",
-  "session.run.finished": "text-emerald-300",
-  "permission.asked": "text-amber-400",
-  "permission.replied": "text-amber-300",
-  "tool.loop_guard.triggered": "text-rose-400",
-  "server.connected": "text-gray-500",
+  "session.response": "text-violet-400",
+  "run.started": "text-emerald-400",
+  "run.completed": "text-emerald-300",
+  "approval.requested": "text-amber-400",
+  "approval.resolved": "text-amber-300",
 };
 
 function typeColor(t: string): string {
@@ -32,16 +30,17 @@ function typeColor(t: string): string {
 function EventRow({ ev }: { ev: LiveEvent }) {
   const [open, setOpen] = useState(false);
   const pay = ev.payload;
-  const sid = pay.sessionId || pay.sessionID || pay.session_id || ev.sessionId;
+  const sid = pay.sessionId || ev.sessionId;
   const props = pay.properties as Record<string, unknown> | undefined;
   const delta = props?.delta;
   const summary = (() => {
-    if (pay.type === "session.response" && typeof delta === "string")
+    if (pay.type === "session.response" && typeof delta === "string") {
       return delta.slice(0, 80).replace(/\n/g, " ");
-    if (pay.type === "run.started")
-      return `run ${String(pay.runId || props?.runID || "").slice(0, 8)}`;
-    if (pay.type === "run.completed" || pay.type === "run.failed")
-      return `run ${String(pay.runId || props?.runID || "").slice(0, 8)} → ${pay.type}`;
+    }
+    if (pay.type === "run.started") return `run ${String(pay.runId || "").slice(0, 8)}`;
+    if (pay.type === "run.completed" || pay.type === "run.failed") {
+      return `run ${String(pay.runId || "").slice(0, 8)} → ${pay.type}`;
+    }
     if (pay.type === "approval.requested")
       return `${String(props?.tool || props?.permission || "?")}`;
     if (pay.type === "approval.resolved")
@@ -59,7 +58,7 @@ function EventRow({ ev }: { ev: LiveEvent }) {
           {new Date(ev.ts).toLocaleTimeString([], { hour12: false })}
         </span>
         <span className={`text-[11px] font-mono shrink-0 ${typeColor(ev.type)}`}>{ev.rawType}</span>
-        {sid && typeof sid === "string" && (
+        {sid && (
           <span className="text-[10px] text-gray-600 font-mono shrink-0">[{sid.slice(0, 8)}]</span>
         )}
         {summary && <span className="text-[11px] text-gray-400 truncate">{summary}</span>}
@@ -79,7 +78,7 @@ export default function LiveFeed() {
   const [events, setEvents] = useState<LiveEvent[]>([]);
   const [filter, setFilter] = useState("");
   const [paused, setPaused] = useState(false);
-  const esRef = useRef<EventSource | null>(null);
+  const ctrlRef = useRef<AbortController | null>(null);
   const pausedRef = useRef(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const [autoscroll, setAutoscroll] = useState(true);
@@ -92,7 +91,9 @@ export default function LiveFeed() {
   }, [events, autoscroll, paused]);
 
   const connect = useCallback(() => {
-    const stream = client.globalStream();
+    const ctrl = new AbortController();
+    ctrlRef.current = ctrl;
+    const stream = client.globalStream({ signal: ctrl.signal });
 
     async function run() {
       try {
@@ -100,7 +101,7 @@ export default function LiveFeed() {
           if (pausedRef.current) continue;
           const type = data.type;
           if (type === "server.connected" || type === "engine.lifecycle.ready") continue;
-          const sid = data.sessionId || data.sessionID || data.session_id || "";
+          const sid = typeof data.sessionId === "string" ? data.sessionId : undefined;
           setEvents((prev) => {
             const next = [
               ...prev,
@@ -116,24 +117,21 @@ export default function LiveFeed() {
             return next;
           });
         }
-      } catch (e) {
-        // Reconnect after 2s
+      } catch {
         setTimeout(() => {
-          if (!pausedRef.current) connect();
+          if (!pausedRef.current && !ctrl.signal.aborted) connect();
         }, 2000);
       }
     }
-    run();
 
-    // Cleanup
-    esRef.current = { close: () => stream.controller.abort() } as unknown as EventSource;
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    void run();
+  }, []);
 
   useEffect(() => {
     connect();
     return () => {
-      esRef.current?.close();
-      esRef.current = null;
+      ctrlRef.current?.abort();
+      ctrlRef.current = null;
     };
   }, [connect]);
 
@@ -143,13 +141,12 @@ export default function LiveFeed() {
 
   return (
     <div className="flex flex-col h-full bg-gray-950">
-      {/* Header */}
       <div className="shrink-0 border-b border-gray-800 px-4 py-3 bg-gray-900/80 backdrop-blur">
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-2">
             <Radio
               size={18}
-              className={`${esRef.current ? "text-emerald-400 animate-pulse" : "text-gray-600"}`}
+              className={`${ctrlRef.current ? "text-emerald-400 animate-pulse" : "text-gray-600"}`}
             />
             <h1 className="text-sm font-semibold text-gray-100">Live Feed</h1>
             <span className="text-[11px] text-gray-500 bg-gray-800 rounded-full px-2 py-0.5">
@@ -195,7 +192,6 @@ export default function LiveFeed() {
         </div>
       </div>
 
-      {/* Events */}
       <div className="flex-1 overflow-y-auto">
         {events.length === 0 && (
           <div className="flex flex-col items-center justify-center h-full gap-3 text-gray-600">
@@ -210,7 +206,6 @@ export default function LiveFeed() {
         {!paused && <div ref={bottomRef} />}
       </div>
 
-      {/* Footer hint */}
       <div className="shrink-0 border-t border-gray-800 px-4 py-2 flex items-center justify-between">
         <p className="text-[11px] text-gray-600">
           Global SSE stream · <span className="font-mono">/global/event</span>
