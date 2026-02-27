@@ -32,6 +32,11 @@
     "autonomous"
   ],
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/frumu-ai/tandem",
+    "directory": "packages/tandem-client-ts"
+  },
   "engines": {
     "node": ">=18"
   },
