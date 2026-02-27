@@ -176,6 +176,10 @@ if [[ -z "$TOKEN" && -f "$PROJECT_DIR/.env" ]]; then
   TOKEN="$(sed -n 's/^PORTAL_KEY=//p' "$PROJECT_DIR/.env" | tail -n1 || true)"
   [[ -n "$TOKEN" ]] && log "Reusing existing PORTAL_KEY from .env"
 fi
+if [[ -z "$TOKEN" && -f "$PROJECT_DIR/.env" ]]; then
+  TOKEN="$(sed -n 's/^VITE_PORTAL_KEY=//p' "$PROJECT_DIR/.env" | tail -n1 || true)"
+  [[ -n "$TOKEN" ]] && log "Reusing existing VITE_PORTAL_KEY from .env"
+fi
 if [[ -z "$TOKEN" ]]; then
   if "${SUDO_CMD[@]}" test -f "$ENGINE_ENV_PATH"; then
     TOKEN="$("${SUDO_CMD[@]}" sed -n 's/^TANDEM_API_TOKEN=//p' "$ENGINE_ENV_PATH" | tail -n1 || true)"
@@ -303,6 +307,11 @@ if grep -q '^PORTAL_KEY=' "$PROJECT_DIR/.env"; then
   sed -i "s/^PORTAL_KEY=.*/PORTAL_KEY=$TOKEN/" "$PROJECT_DIR/.env"
 else
   echo "PORTAL_KEY=$TOKEN" >>"$PROJECT_DIR/.env"
+fi
+if grep -q '^VITE_PORTAL_KEY=' "$PROJECT_DIR/.env"; then
+  sed -i "s/^VITE_PORTAL_KEY=.*/VITE_PORTAL_KEY=$TOKEN/" "$PROJECT_DIR/.env"
+else
+  echo "VITE_PORTAL_KEY=$TOKEN" >>"$PROJECT_DIR/.env"
 fi
 [[ $(grep -c '^PORT=' "$PROJECT_DIR/.env") -eq 0 ]]               && echo "PORT=80" >>"$PROJECT_DIR/.env"
 [[ $(grep -c '^TANDEM_ENGINE_URL=' "$PROJECT_DIR/.env") -eq 0 ]]  && echo "TANDEM_ENGINE_URL=http://127.0.0.1:39731" >>"$PROJECT_DIR/.env"
