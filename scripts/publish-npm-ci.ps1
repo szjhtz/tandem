@@ -89,11 +89,18 @@ Then retry:
     # TS SDK publish path: build explicitly, then publish without lifecycle scripts.
     # This avoids npm workspace dependency resolution failures in CI.
     if ($dir -eq "packages/tandem-client-ts") {
-        "Building $name@$version with npx (tsup + typescript + zod)" | Tee-Object -FilePath $logFile -Append
-        $build = Invoke-NpmText -WorkingDirectory $dir -Command "npx --yes -p typescript -p tsup -p zod tsup src/index.ts --format esm,cjs --dts --clean"
-        $build.Output | Tee-Object -FilePath $logFile -Append | Out-Null
-        if ($build.ExitCode -ne 0) {
-            throw "Failed building $name@$version"
+        "Building JS bundles for $name@$version with npx tsup" | Tee-Object -FilePath $logFile -Append
+        $buildJs = Invoke-NpmText -WorkingDirectory $dir -Command "npx --yes -p tsup -p zod tsup src/index.ts --format esm,cjs --clean"
+        $buildJs.Output | Tee-Object -FilePath $logFile -Append | Out-Null
+        if ($buildJs.ExitCode -ne 0) {
+            throw "Failed JS bundle build for $name@$version"
+        }
+
+        "Building type declarations for $name@$version with npx tsc" | Tee-Object -FilePath $logFile -Append
+        $buildDts = Invoke-NpmText -WorkingDirectory $dir -Command "npx --yes -p typescript tsc --project tsconfig.json --emitDeclarationOnly"
+        $buildDts.Output | Tee-Object -FilePath $logFile -Append | Out-Null
+        if ($buildDts.ExitCode -ne 0) {
+            throw "Failed declaration build for $name@$version"
         }
         $publishCommand += " --ignore-scripts"
     }
