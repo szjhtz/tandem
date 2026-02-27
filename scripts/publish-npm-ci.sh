@@ -66,8 +66,11 @@ for dir in "${PACKAGES[@]}"; do
   # TS SDK publish path: build explicitly, then publish without lifecycle scripts.
   # This avoids npm workspace dependency resolution failures in CI.
   if [[ "$dir" == "packages/tandem-client-ts" ]]; then
-    echo "Building $name@$version with npx tsup" | tee -a "$LOG_FILE"
-    (cd "$dir" && npx --yes tsup src/index.ts --format esm,cjs --dts --clean) 2>&1 | tee -a "$LOG_FILE"
+    echo "Building $name@$version with npx (tsup + typescript + zod)" | tee -a "$LOG_FILE"
+    (
+      cd "$dir" &&
+        npx --yes -p typescript -p tsup -p zod tsup src/index.ts --format esm,cjs --dts --clean
+    ) 2>&1 | tee -a "$LOG_FILE"
     publish_cmd+=(--ignore-scripts)
   fi
 

@@ -89,8 +89,8 @@ Then retry:
     # TS SDK publish path: build explicitly, then publish without lifecycle scripts.
     # This avoids npm workspace dependency resolution failures in CI.
     if ($dir -eq "packages/tandem-client-ts") {
-        "Building $name@$version with npx tsup" | Tee-Object -FilePath $logFile -Append
-        $build = Invoke-NpmText -WorkingDirectory $dir -Command "npx --yes tsup src/index.ts --format esm,cjs --dts --clean"
+        "Building $name@$version with npx (tsup + typescript + zod)" | Tee-Object -FilePath $logFile -Append
+        $build = Invoke-NpmText -WorkingDirectory $dir -Command "npx --yes -p typescript -p tsup -p zod tsup src/index.ts --format esm,cjs --dts --clean"
         $build.Output | Tee-Object -FilePath $logFile -Append | Out-Null
         if ($build.ExitCode -ne 0) {
             throw "Failed building $name@$version"
