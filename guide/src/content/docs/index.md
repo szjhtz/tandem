@@ -1,47 +1,47 @@
 ---
 title: Tandem Engine Guide
+description: Welcome to the Tandem documentation hub. Choose your path based on how you intend to use Tandem.
+template: doc
 ---
 
-Welcome to the Tandem documentation focused on the TUI and engine runtime.
+Welcome to the **Tandem Engine Documentation**. Tandem is a local-first autonomous agent runtime that can be operated in multiple configurations.
 
-## Getting Started
+To help you find what you need quickly, please select the path that best describes how you plan to use Tandem:
 
-- [Start Here](./start-here/)
-- [Install CLI Binaries](./install-cli-binaries/)
-- [First Run Checklist](./first-run/)
-- [Build from Source (Contributors)](./build-from-source/)
-- [Installation (Legacy Entry)](./installation/)
-- [Running Tandem](./usage/)
-- [Headless Service](./headless-service/)
-- [MCP Automated Agents](./mcp-automated-agents/)
-- [WebMCP for Agents](./webmcp-for-agents/)
+---
 
-## User Guide
+## 🖥️ I am a Desktop User
 
-- [TUI Guide](./tui-guide/)
-- [Configuration](./configuration/)
-- [Agents & Sessions](./agents-and-sessions/)
-- [Headless Deployment](./desktop/headless-deployment/)
-- [Agent Teams](./agent-teams/)
-- [Agent Command Center](./agent-command-center/)
-- [MCP Automated Agents](./mcp-automated-agents/)
-- [WebMCP for Agents](./webmcp-for-agents/)
-- [Agent Teams Rollout Plan](./agent-teams-rollout/)
-- [Design System](./design-system/)
+_You want to run the native Tandem desktop app or terminal UI to assist you with local file tasks, writing, coding, or managing agents._
 
-## Reference
+- **[TUI Guide](./tui-guide/)** — Learn how to navigate the Terminal UI.
+- **[Agents & Sessions](./agents-and-sessions/)** — Understand how sessions and context work.
+- **[Agent Teams](./agent-teams/)** — Learn how Tandem orchestrates specialized sub-agents.
+- **[Configuration](./configuration/)** — Setup providers, API keys, and system instructions.
 
-- [Engine Commands](./reference/engine-commands/)
-- [TUI Commands](./reference/tui-commands/)
-- [Tools Reference](./reference/tools/)
-- [Spawn Policy Reference](./reference/spawn-policy/)
-- [Agent Team API](./reference/agent-team-api/)
-- [Agent Team Events](./reference/agent-team-events/)
-- [Protocol Matrix](./protocol-matrix/)
+---
 
-## Developer Documentation
+## ☁️ I am a Server Admin
 
-- [Architecture](./architecture/)
-- [Engine Testing](./engine-testing/)
-- [CLI Vision](./cli-vision/)
-- [SDK Vision](./sdk-vision/)
+_You want to deploy Tandem to a VPS or headless server so that you, or your external applications, can access autonomous agents remotely._
+
+- **[Headless Service](./headless-service/)** — Run the Tandem Engine in headless API mode.
+- **[Deployment Guide](./desktop/headless-deployment/)** — Learn best practices for securely exposing Tandem.
+- **[Protocol Matrix](./protocol-matrix/)** — Understand the ports and network boundaries.
+
+---
+
+## 💻 I am a Developer
+
+_You want to build custom clients, connect external tools via MCP, or programmatically trigger agent workflows._
+
+- **[Building Automated Agents](./mcp-automated-agents/)** — Trigger agent pipelines automatically.
+- **[WebMCP for Agents](./webmcp-for-agents/)** — Expose local HTTP APIs to your agents.
+- **SDKs:** Integrate Tandem into your own codebases using our official libraries.
+  - 📘 **[TypeScript SDK](./sdk/typescript/)**
+  - 🐍 **[Python SDK](./sdk/python/)**
+- **[Tandem Architecture](./architecture/)** — Understand the internal design of the Engine.
+
+---
+
+> **First time here?** Start with the **[Start Here](./start-here/)** guide!

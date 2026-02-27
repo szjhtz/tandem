@@ -45,46 +45,35 @@ export default defineConfig({
       },
       sidebar: [
         {
-          label: "Getting Started",
-          items: [
-            "start-here",
-            "install-cli-binaries",
-            "first-run",
-            "build-from-source",
-            "installation",
-            "usage",
-            "headless-service",
-            "webmcp-for-agents",
-          ],
+          label: "Introduction",
+          items: ["start-here", "install-cli-binaries"],
         },
         {
-          label: "User Guide",
-          items: [
-            "tui-guide",
-            "configuration",
-            "agents-and-sessions",
-            "desktop/headless-deployment",
-            "agent-teams",
-            "mcp-automated-agents",
-            "webmcp-for-agents",
-            "design-system",
-          ],
+          label: "Desktop & TUI Guide",
+          items: ["tui-guide", "first-run", "agents-and-sessions", "agent-teams", "configuration", "design-system"],
         },
         {
-          label: "Reference",
+          label: "Server & Deployment",
+          items: ["headless-service", "desktop/headless-deployment", "installation"],
+        },
+        {
+          label: "Developer Guide & SDKs",
+          items: ["sdk/typescript", "sdk/python", "mcp-automated-agents", "webmcp-for-agents"],
+        },
+        {
+          label: "Reference Architecture",
           items: [
+            "protocol-matrix",
             "reference/engine-commands",
             "reference/tui-commands",
             "reference/tools",
             "reference/spawn-policy",
             "reference/agent-team-api",
             "reference/agent-team-events",
-            "protocol-matrix",
+            "architecture",
+            "engine-testing",
+            "build-from-source",
           ],
-        },
-        {
-          label: "Developer Documentation",
-          items: ["architecture", "engine-testing", "cli-vision", "sdk-vision"],
         },
       ],
       social: {
