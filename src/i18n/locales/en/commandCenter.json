@@ -1,0 +1,55 @@
+{
+  "title": "Command Center (beta)",
+  "description": "Launch orchestrator missions from one objective, then use operator controls for manual swarm intervention.",
+  "workspace": "Workspace:",
+  "noActiveProject": "No active project selected",
+  "tabs": {
+    "taskToSwarm": "Task to Swarm",
+    "advanced": "Advanced Controls"
+  },
+  "runs": {
+    "title": "Runs",
+    "refresh": "Refresh",
+    "newRun": "New run",
+    "noRuns": "No runs yet for this project.",
+    "delete": "Delete"
+  },
+  "objective": {
+    "title": "Objective",
+    "placeholder": "Describe the task. The orchestrator will plan, delegate workers/reviewers/testers, then execute after your single approval."
+  },
+  "quality": {
+    "speed": "speed",
+    "balanced": "balanced",
+    "quality": "quality"
+  },
+  "actions": {
+    "launchSwarm": "Launch Swarm",
+    "approveExecute": "Approve & Execute"
+  },
+  "status": {
+    "title": "Live Status",
+    "stage": "Stage:",
+    "run": "Run:",
+    "tasks": "Tasks:",
+    "pending": "Pending:",
+    "none": "none",
+    "safetyNote": "Default safety: plan preview first, then one-click approval to execute."
+  },
+  "stages": {
+    "idle": "idle",
+    "planning": "planning",
+    "awaiting_review": "awaiting review",
+    "executing": "executing",
+    "completed": "completed",
+    "failed": "failed"
+  },
+  "activity": {
+    "title": "Activity Strip",
+    "waiting": "Waiting for orchestrator/agent-team events..."
+  },
+  "advanced": {
+    "routingNote": "Agent model routing is applied to newly launched swarm runs from this page.",
+    "controlsNote": "Advanced Controls are for operator workflows: manual spawn, approval triage, mission/instance cancellation, and forensic exports."
+  }
+}

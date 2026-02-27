@@ -1,0 +1,55 @@
+{
+  "title": "指挥中心（测试版）",
+  "description": "从单一目标启动编排任务，然后使用操作员控制进行手动群体干预。",
+  "workspace": "工作区：",
+  "noActiveProject": "未选择活动项目",
+  "tabs": {
+    "taskToSwarm": "任务转群组",
+    "advanced": "高级控制"
+  },
+  "runs": {
+    "title": "运行记录",
+    "refresh": "刷新",
+    "newRun": "新建运行",
+    "noRuns": "此项目还没有运行记录。",
+    "delete": "删除"
+  },
+  "objective": {
+    "title": "目标",
+    "placeholder": "描述任务。编排器将规划、委派工作者/审查者/测试者，然后在您单次批准后执行。"
+  },
+  "quality": {
+    "speed": "速度优先",
+    "balanced": "平衡",
+    "quality": "质量优先"
+  },
+  "actions": {
+    "launchSwarm": "启动群组",
+    "approveExecute": "批准并执行"
+  },
+  "status": {
+    "title": "实时状态",
+    "stage": "阶段：",
+    "run": "运行：",
+    "tasks": "任务：",
+    "pending": "待处理：",
+    "none": "无",
+    "safetyNote": "默认安全机制：先预览计划，然后一键批准执行。"
+  },
+  "stages": {
+    "idle": "空闲",
+    "planning": "规划中",
+    "awaiting_review": "等待审查",
+    "executing": "执行中",
+    "completed": "已完成",
+    "failed": "失败"
+  },
+  "activity": {
+    "title": "活动记录",
+    "waiting": "等待编排器/智能体团队事件..."
+  },
+  "advanced": {
+    "routingNote": "智能体模型路由将应用于从此页面新启动的群组运行。",
+    "controlsNote": "高级控制用于操作员工作流：手动生成、批准分类、任务/实例取消和取证导出。"
+  }
+}

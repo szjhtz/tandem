@@ -225,7 +225,11 @@ impl OrchestratorStore {
     }
 
     /// Append blackboard patch to append-only patch log and update materialized view.
-    pub fn append_blackboard_patch(&self, run_id: &str, patch: &BlackboardPatchRecord) -> Result<()> {
+    pub fn append_blackboard_patch(
+        &self,
+        run_id: &str,
+        patch: &BlackboardPatchRecord,
+    ) -> Result<()> {
         let run_dir = self.run_dir(run_id);
         fs::create_dir_all(&run_dir)
             .map_err(|e| TandemError::IoError(format!("Failed to create run dir: {}", e)))?;
@@ -251,7 +255,10 @@ impl OrchestratorStore {
 
         let materialized_path = run_dir.join("blackboard.json");
         let content = serde_json::to_string_pretty(&materialized).map_err(|e| {
-            TandemError::SerializationError(format!("Failed to serialize materialized blackboard: {}", e))
+            TandemError::SerializationError(format!(
+                "Failed to serialize materialized blackboard: {}",
+                e
+            ))
         })?;
         atomic_write(&materialized_path, &content)?;
         Ok(())
@@ -303,7 +310,10 @@ impl OrchestratorStore {
             return Ok(Blackboard::default());
         }
         let content = fs::read_to_string(&path).map_err(|e| {
-            TandemError::IoError(format!("Failed to read blackboard materialized view: {}", e))
+            TandemError::IoError(format!(
+                "Failed to read blackboard materialized view: {}",
+                e
+            ))
         })?;
         serde_json::from_str(&content).map_err(|e| {
             TandemError::ParseError(format!(
@@ -360,9 +370,8 @@ impl OrchestratorStore {
             return Ok(None);
         };
         let path = checkpoint_dir.join(file_name);
-        let content = fs::read_to_string(&path).map_err(|e| {
-            TandemError::IoError(format!("Failed to read checkpoint file: {}", e))
-        })?;
+        let content = fs::read_to_string(&path)
+            .map_err(|e| TandemError::IoError(format!("Failed to read checkpoint file: {}", e)))?;
         let snapshot = serde_json::from_str(&content).map_err(|e| {
             TandemError::ParseError(format!("Failed to parse checkpoint file: {}", e))
         })?;
@@ -482,31 +491,37 @@ impl OrchestratorStore {
     }
 }
 
-fn apply_blackboard_patch(blackboard: &mut Blackboard, patch: &BlackboardPatchRecord) -> Result<()> {
+fn apply_blackboard_patch(
+    blackboard: &mut Blackboard,
+    patch: &BlackboardPatchRecord,
+) -> Result<()> {
     match patch.op {
         BlackboardPatchOp::AddFact => {
-            let value: BlackboardItem = serde_json::from_value(patch.payload.clone()).map_err(|e| {
-                TandemError::ParseError(format!("Invalid AddFact patch payload: {}", e))
-            })?;
+            let value: BlackboardItem =
+                serde_json::from_value(patch.payload.clone()).map_err(|e| {
+                    TandemError::ParseError(format!("Invalid AddFact patch payload: {}", e))
+                })?;
             blackboard.facts.push(value);
         }
         BlackboardPatchOp::AddDecision => {
-            let value: BlackboardItem = serde_json::from_value(patch.payload.clone()).map_err(|e| {
-                TandemError::ParseError(format!("Invalid AddDecision patch payload: {}", e))
-            })?;
+            let value: BlackboardItem =
+                serde_json::from_value(patch.payload.clone()).map_err(|e| {
+                    TandemError::ParseError(format!("Invalid AddDecision patch payload: {}", e))
+                })?;
             blackboard.decisions.push(value);
         }
         BlackboardPatchOp::AddOpenQuestion => {
-            let value: BlackboardItem = serde_json::from_value(patch.payload.clone()).map_err(|e| {
-                TandemError::ParseError(format!("Invalid AddOpenQuestion patch payload: {}", e))
-            })?;
+            let value: BlackboardItem =
+                serde_json::from_value(patch.payload.clone()).map_err(|e| {
+                    TandemError::ParseError(format!("Invalid AddOpenQuestion patch payload: {}", e))
+                })?;
             blackboard.open_questions.push(value);
         }
         BlackboardPatchOp::AddArtifact => {
-            let value: BlackboardArtifactRef =
-                serde_json::from_value(patch.payload.clone()).map_err(|e| {
-                TandemError::ParseError(format!("Invalid AddArtifact patch payload: {}", e))
-            })?;
+            let value: BlackboardArtifactRef = serde_json::from_value(patch.payload.clone())
+                .map_err(|e| {
+                    TandemError::ParseError(format!("Invalid AddArtifact patch payload: {}", e))
+                })?;
             blackboard.artifacts.push(value);
         }
         BlackboardPatchOp::SetRollingSummary => {

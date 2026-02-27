@@ -229,7 +229,7 @@ export function TaskBoard({
     }
 
     return { runnable, waiting };
-  }, [groupedTasks.done, groupedTasks.pending]);
+  }, [groupedTasks.done, groupedTasks.pending, groupedTasks.runnable]);
 
   const columns: Array<{ state: TaskState; tasks: Task[]; label?: string }> = [
     { state: "pending" as TaskState, tasks: pendingSplit.runnable, label: "Runnable" },

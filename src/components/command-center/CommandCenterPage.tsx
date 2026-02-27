@@ -51,6 +51,7 @@ import {
   Sparkles,
   Trash2,
 } from "lucide-react";
+import { useTranslation } from "react-i18next";
 
 type QualityPreset = "speed" | "balanced" | "quality";
 type SwarmStage =
@@ -173,6 +174,7 @@ export function CommandCenterPage({
   projectSwitcherLoading = false,
   initialRunId = null,
 }: CommandCenterPageProps) {
+  const { t } = useTranslation("commandCenter");
   const pageScrollRef = useRef<HTMLDivElement | null>(null);
   const taskBoardRef = useRef<HTMLDivElement | null>(null);
   const [tab, setTab] = useState<TabId>("task-to-swarm");
@@ -918,10 +920,9 @@ export function CommandCenterPage({
         <div className="rounded-lg border border-border bg-surface p-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="space-y-2">
-              <h2 className="text-lg font-semibold text-text">Command Center (beta)</h2>
+              <h2 className="text-lg font-semibold text-text">{t("title")}</h2>
               <p className="text-sm text-text-muted">
-                Launch orchestrator missions from one objective, then use operator controls for
-                manual swarm intervention.
+                {t("description")}
               </p>
               <div className="w-full max-w-xl">
                 <ProjectSwitcher
@@ -934,8 +935,8 @@ export function CommandCenterPage({
                 />
               </div>
               <p className="text-xs text-text-subtle">
-                Workspace:{" "}
-                <span className="font-mono">{workspacePath ?? "No active project selected"}</span>
+                {t("workspace")}{" "}
+                <span className="font-mono">{workspacePath ?? t("noActiveProject")}</span>
               </p>
             </div>
             <div className="flex items-center gap-2">
@@ -978,14 +979,14 @@ export function CommandCenterPage({
                 size="sm"
                 onClick={() => setTab("task-to-swarm")}
               >
-                Task to Swarm
+                {t("tabs.taskToSwarm")}
               </Button>
               <Button
                 variant={tab === "advanced" ? "primary" : "secondary"}
                 size="sm"
                 onClick={() => setTab("advanced")}
               >
-                Advanced Controls
+                {t("tabs.advanced")}
               </Button>
             </div>
           </div>

@@ -45,8 +45,8 @@ impl TaskScheduler {
             .filter(|task| {
                 (task.state == TaskState::Pending || task.state == TaskState::Runnable)
                     && task
-                    .dependencies
-                    .iter()
+                        .dependencies
+                        .iter()
                         .all(|dep| completed.contains(dep.as_str()))
             })
             .collect()

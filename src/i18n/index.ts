@@ -8,12 +8,14 @@ import enChat from "./locales/en/chat.json";
 import enSettings from "./locales/en/settings.json";
 import enSkills from "./locales/en/skills.json";
 import enErrors from "./locales/en/errors.json";
+import enCommandCenter from "./locales/en/commandCenter.json";
 
 import zhCommon from "./locales/zh-CN/common.json";
 import zhChat from "./locales/zh-CN/chat.json";
 import zhSettings from "./locales/zh-CN/settings.json";
 import zhSkills from "./locales/zh-CN/skills.json";
 import zhErrors from "./locales/zh-CN/errors.json";
+import zhCommandCenter from "./locales/zh-CN/commandCenter.json";
 
 const resources = {
   en: {
@@ -22,6 +24,7 @@ const resources = {
     settings: enSettings,
     skills: enSkills,
     errors: enErrors,
+    commandCenter: enCommandCenter,
   },
   "zh-CN": {
     common: zhCommon,
@@ -29,6 +32,7 @@ const resources = {
     settings: zhSettings,
     skills: zhSkills,
     errors: zhErrors,
+    commandCenter: zhCommandCenter,
   },
 };
 
@@ -39,7 +43,7 @@ i18n
     resources,
     fallbackLng: "en",
     defaultNS: "common",
-    ns: ["common", "chat", "settings", "skills", "errors"],
+    ns: ["common", "chat", "settings", "skills", "errors", "commandCenter"],
     interpolation: {
       escapeValue: false, // React already escapes
     },

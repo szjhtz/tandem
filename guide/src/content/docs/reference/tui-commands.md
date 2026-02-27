@@ -117,6 +117,112 @@ Show or switch the active workspace directory used by the current TUI process.
 /workspace use ~/projects/tandem
 ```
 
+## Engine Context Runs
+
+### `/context_runs`
+
+List context runs from the engine.
+
+```text
+/context_runs
+```
+
+### `/context_run_create <json>`
+
+Create a new context run.
+
+```text
+/context_run_create {"objective":"Summarize the run plan","workspace":"/home/evan/game"}
+```
+
+### `/context_run_get <run_id>`
+
+Show the current state of a context run.
+
+```text
+/context_run_get run_123
+```
+
+### `/context_run_events <run_id>`
+
+Stream recent events for a context run.
+
+```text
+/context_run_events run_123
+```
+
+### `/context_run_pause <run_id>`
+
+Pause a running context run.
+
+```text
+/context_run_pause run_123
+```
+
+### `/context_run_resume <run_id>`
+
+Resume a paused context run.
+
+```text
+/context_run_resume run_123
+```
+
+### `/context_run_cancel <run_id>`
+
+Cancel a context run.
+
+```text
+/context_run_cancel run_123
+```
+
+### `/context_run_blackboard <run_id>`
+
+Show the blackboard summary for a context run.
+
+```text
+/context_run_blackboard run_123
+```
+
+### `/context_run_next <run_id>`
+
+Ask the engine to choose the next step.
+
+```text
+/context_run_next run_123
+```
+
+### `/context_run_replay <run_id>`
+
+Replay a context run from events/checkpoints.
+
+```text
+/context_run_replay run_123
+```
+
+### `/context_run_lineage <run_id>`
+
+Show decision lineage for a context run.
+
+```text
+/context_run_lineage run_123
+```
+
+### `/context_run_bind <run_id>`
+
+Bind active agent todo updates to a context run.
+
+```text
+/context_run_bind run_123
+```
+
+### `/context_run_sync_tasks <run_id>`
+
+Sync current TUI tasks into context run steps.
+
+```text
+/context_run_sync_tasks run_123
+```
+
 ## Sessions and Chat
 
 ### `/sessions`
