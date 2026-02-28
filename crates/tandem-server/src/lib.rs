@@ -1721,6 +1721,7 @@ impl PromptContextHook for ServerPromptContextHook {
             messages.push(ChatMessage {
                 role: "system".to_string(),
                 content: memory_block.clone(),
+                attachments: Vec::new(),
             });
             this.state.event_bus.publish(EngineEvent::new(
                 "memory.context.injected",

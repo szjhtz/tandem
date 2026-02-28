@@ -2,6 +2,22 @@
 
 Canonical release notes live in `docs/RELEASE_NOTES.md`.
 
+## v0.3.26 (Unreleased)
+
+- Channel attachment ingestion + engine dispatch parity
+  - Channel dispatcher now sends uploads as explicit `file` parts to `prompt_async` (instead of text-only attachment summaries).
+  - Telegram/Discord/Slack flows preserve attachment metadata (`path`, `url`, `mime`, `filename`) for run prompts, resource references, and memory records.
+  - Discord and Slack adapters now download inbound attachments to local `channel_uploads` storage, matching Telegram’s local-persistence behavior.
+- Multimodal image dispatch for OpenAI-compatible providers
+  - Provider message model is now attachment-aware and can encode image attachments in OpenAI-compatible `messages[].content` array payloads.
+  - Engine loop now maps inbound image file parts into runtime provider attachments on first-iteration user context.
+  - Local file attachment paths are converted to bounded data URLs before provider dispatch when needed.
+  - Added model capability guardrails that fail fast when image input is attempted on a likely non-vision model.
+- Engine storage visibility API
+  - Added `GET /global/storage/files` to list files under the engine storage root with optional `path` and `limit` query controls.
+  - Response includes root/base metadata and per-file size/mtime fields.
+  - Added traversal protection: rejects absolute/parent-directory path traversal in requested subpath.
+
 ## v0.3.25 (Unreleased)
 
 - Agent Swarm headless example (`examples/agent-swarm`)

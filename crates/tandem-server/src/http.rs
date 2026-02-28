@@ -6,6 +6,7 @@ use std::path::Path as FsPath;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use std::{path::Component, time::UNIX_EPOCH};
 
 use async_trait::async_trait;
 use axum::extract::ws::{Message as WsMessage, WebSocket, WebSocketUpgrade};
@@ -337,6 +338,12 @@ struct EngineLeaseReleaseInput {
 #[derive(Debug, Deserialize, Default)]
 struct StorageRepairInput {
     force: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct StorageFilesQuery {
+    path: Option<String>,
+    limit: Option<usize>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -1017,6 +1024,7 @@ fn app_router(state: AppState) -> Router {
         .route("/global/lease/acquire", post(global_lease_acquire))
         .route("/global/lease/renew", post(global_lease_renew))
         .route("/global/lease/release", post(global_lease_release))
+        .route("/global/storage/files", get(global_storage_files))
         .route("/global/storage/repair", post(global_storage_repair))
         .route(
             "/global/config",
@@ -1544,6 +1552,113 @@ async fn global_storage_repair(
         "parts_recovered": report.parts_recovered,
         "legacy_counts": report.legacy_counts,
         "imported_counts": report.imported_counts,
+    })))
+}
+
+fn resolve_storage_list_root() -> PathBuf {
+    if let Ok(root) = std::env::var("TANDEM_HOME") {
+        let trimmed = root.trim();
+        if !trimmed.is_empty() {
+            return PathBuf::from(trimmed);
+        }
+    }
+    if let Ok(root) = std::env::var("TANDEM_STATE_DIR") {
+        let trimmed = root.trim();
+        if !trimmed.is_empty() {
+            return PathBuf::from(trimmed);
+        }
+    }
+    if let Ok(paths) = tandem_core::resolve_shared_paths() {
+        return paths.canonical_root;
+    }
+    dirs::home_dir()
+        .map(|home| home.join(".tandem"))
+        .unwrap_or_else(|| PathBuf::from(".tandem"))
+}
+
+fn sanitize_relative_subpath(raw: Option<&str>) -> Result<PathBuf, StatusCode> {
+    let Some(raw) = raw else {
+        return Ok(PathBuf::new());
+    };
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Ok(PathBuf::new());
+    }
+    let candidate = PathBuf::from(trimmed);
+    if candidate.is_absolute() {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    if candidate.components().any(|component| {
+        matches!(
+            component,
+            Component::ParentDir | Component::RootDir | Component::Prefix(_)
+        )
+    }) {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    Ok(candidate)
+}
+
+async fn global_storage_files(
+    Query(query): Query<StorageFilesQuery>,
+) -> Result<Json<Value>, StatusCode> {
+    let root = resolve_storage_list_root();
+    let rel = sanitize_relative_subpath(query.path.as_deref())?;
+    let base = if rel.as_os_str().is_empty() {
+        root.clone()
+    } else {
+        root.join(&rel)
+    };
+
+    if !base.exists() {
+        return Err(StatusCode::NOT_FOUND);
+    }
+    if !base.is_dir() {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+
+    let limit = query.limit.unwrap_or(500).clamp(1, 5_000);
+    let mut files = Vec::new();
+
+    for entry in WalkBuilder::new(&base).build().flatten() {
+        if !entry.file_type().map(|f| f.is_file()).unwrap_or(false) {
+            continue;
+        }
+        let abs = entry.path().to_path_buf();
+        let rel_to_root = abs
+            .strip_prefix(&root)
+            .unwrap_or(&abs)
+            .to_string_lossy()
+            .replace('\\', "/");
+        let rel_to_base = abs
+            .strip_prefix(&base)
+            .unwrap_or(&abs)
+            .to_string_lossy()
+            .replace('\\', "/");
+        let meta = std::fs::metadata(&abs).ok();
+        let size_bytes = meta.as_ref().map(|m| m.len()).unwrap_or(0);
+        let modified_at_ms = meta
+            .as_ref()
+            .and_then(|m| m.modified().ok())
+            .and_then(|m| m.duration_since(UNIX_EPOCH).ok())
+            .map(|d| d.as_millis() as u64);
+        files.push(json!({
+            "path": rel_to_root,
+            "relative_to_base": rel_to_base,
+            "size_bytes": size_bytes,
+            "modified_at_ms": modified_at_ms,
+        }));
+        if files.len() >= limit {
+            break;
+        }
+    }
+
+    Ok(Json(json!({
+        "root": root.to_string_lossy(),
+        "base": base.to_string_lossy(),
+        "count": files.len(),
+        "limit": limit,
+        "files": files,
     })))
 }
 
@@ -8943,6 +9058,7 @@ async fn openapi_doc() -> Json<Value> {
         "info":{"title":"tandem-engine","version":"0.1.0"},
         "paths":{
             "/global/health":{"get":{"summary":"Health check"}},
+            "/global/storage/files":{"get":{"summary":"List files under the engine storage directory"}},
             "/global/storage/repair":{"post":{"summary":"Force legacy storage repair scan"}},
             "/session":{"get":{"summary":"List sessions"},"post":{"summary":"Create session"}},
             "/session/{id}/message":{"post":{"summary":"Append message"}},
@@ -13414,6 +13530,22 @@ mod tests {
             .get("slack")
             .and_then(Value::as_object)
             .is_some_and(|obj| !obj.contains_key("bot_token")));
+    }
+
+    #[test]
+    fn sanitize_relative_subpath_accepts_safe_relative_paths() {
+        let parsed = sanitize_relative_subpath(Some("channel_uploads/telegram"))
+            .expect("safe relative path");
+        assert_eq!(
+            parsed.to_string_lossy().replace('\\', "/"),
+            "channel_uploads/telegram"
+        );
+    }
+
+    #[test]
+    fn sanitize_relative_subpath_rejects_parent_segments() {
+        let err = sanitize_relative_subpath(Some("../secrets")).expect_err("must reject parent");
+        assert_eq!(err, StatusCode::BAD_REQUEST);
     }
 
     #[tokio::test]

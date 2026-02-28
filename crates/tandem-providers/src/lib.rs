@@ -118,6 +118,12 @@ pub struct MemoryConsolidationConfig {
 pub struct ChatMessage {
     pub role: String,
     pub content: String,
+    pub attachments: Vec<ChatAttachment>,
+}
+
+#[derive(Debug, Clone)]
+pub enum ChatAttachment {
+    ImageUrl { url: String },
 }
 
 #[derive(Debug, Clone)]
@@ -788,9 +794,17 @@ impl Provider for OpenAICompatibleProvider {
             .filter(|m| !m.is_empty())
             .unwrap_or(self.default_model.as_str());
         let url = format!("{}/chat/completions", self.base_url);
+        let has_image_inputs = messages.iter().any(|m| !m.attachments.is_empty());
+        if has_image_inputs && !model_supports_vision_input(model) {
+            anyhow::bail!(
+                "selected model `{}` does not appear to support image input. choose a vision-capable model.",
+                model
+            );
+        }
+
         let wire_messages = messages
             .into_iter()
-            .map(|m| json!({"role": m.role, "content": m.content}))
+            .map(chat_message_to_openai_wire)
             .collect::<Vec<_>>();
 
         let tools = tools.unwrap_or_default();
@@ -1218,6 +1232,51 @@ impl Provider for CohereProvider {
             .to_string();
         Ok(text)
     }
+}
+
+fn chat_message_to_openai_wire(message: ChatMessage) -> serde_json::Value {
+    if message.attachments.is_empty() {
+        return json!({
+            "role": message.role,
+            "content": message.content
+        });
+    }
+
+    let mut content = Vec::new();
+    if !message.content.trim().is_empty() {
+        content.push(json!({
+            "type": "text",
+            "text": message.content
+        }));
+    }
+
+    for attachment in message.attachments {
+        match attachment {
+            ChatAttachment::ImageUrl { url } => content.push(json!({
+                "type": "image_url",
+                "image_url": { "url": url }
+            })),
+        }
+    }
+
+    if content.is_empty() {
+        content.push(json!({"type": "text", "text": ""}));
+    }
+
+    json!({
+        "role": message.role,
+        "content": content
+    })
+}
+
+fn model_supports_vision_input(model: &str) -> bool {
+    let lower = model.to_ascii_lowercase();
+    [
+        "vision", "gpt-4o", "gpt-4.1", "gpt-5", "omni", "gemini", "claude-3", "llava", "qwen-vl",
+        "pixtral",
+    ]
+    .iter()
+    .any(|hint| lower.contains(hint))
 }
 
 fn normalize_base(input: &str) -> String {

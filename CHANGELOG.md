@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.26] - 2026-02-28
+
+### Added
+
+- **Engine storage file listing API**: Added `GET /global/storage/files` to enumerate files under the engine storage directory (`TANDEM_HOME`/`TANDEM_STATE_DIR`/resolved shared paths fallback), with `path` and `limit` query support.
+- **Channel attachment local-ingest parity**: Discord and Slack adapters now download inbound attachments to local `channel_uploads` storage and populate attachment path metadata consistently with Telegram.
+- **Provider multimodal message shape**: Added attachment-aware provider chat message model with image attachment support for OpenAI-compatible request payload construction.
+
+### Changed
+
+- **Channel -> engine prompt submission for attachments**: Channel dispatcher now sends uploaded attachments as explicit `file` message parts to `/session/{id}/prompt_async` instead of only text synthesis.
+- **Attachment prompt guidance policy**: Channel synthesized prompts now direct models/tools to analyze supported attachment MIME types directly and report unsupported-format capability requirements explicitly.
+- **OpenAI-compatible request building**: Provider stream path now emits multimodal `messages[].content` arrays when image attachments are present, while preserving text-only behavior when no attachments exist.
+- **Engine runtime attachment routing**: Engine loop now maps inbound `MessagePartInput::File` image parts into provider attachments for first-iteration user context, including local-file-to-data-URL conversion with size caps.
+
+### Fixed
+
+- **“Image-capable model but image not analyzed” channel gap**: Attachments are now propagated end-to-end from channels through engine/provider dispatch instead of being reduced to metadata-only text markers.
+- **Slack private attachment accessibility**: Slack file downloads now authenticate with bot bearer token for `url_private(_download)` resources before local persistence.
+- **Directory traversal hardening on storage listing**: `/global/storage/files` rejects absolute and parent-directory path traversal segments in query path input.
+
 ## [0.3.25] - 2026-02-28
 
 ### Added

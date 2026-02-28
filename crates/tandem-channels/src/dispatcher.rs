@@ -354,6 +354,7 @@ async fn process_channel_message(
                 .send(&SendMessage {
                     content: response,
                     recipient: msg.reply_target.clone(),
+                    image_urls: Vec::new(),
                 })
                 .await
             {
@@ -384,7 +385,39 @@ async fn process_channel_message(
             channel.name()
         );
     }
-    let response = run_in_session(&session_id, &msg.content, base_url, api_token).await;
+    let mut prompt_content = msg.content.clone();
+    if let Some(attachment) = msg.attachment.as_deref() {
+        let persisted = persist_channel_attachment_reference(
+            base_url,
+            api_token,
+            &session_id,
+            &msg,
+            attachment,
+        )
+        .await;
+        prompt_content = synthesize_attachment_prompt(
+            &msg.channel,
+            attachment,
+            &msg.content,
+            persisted.as_deref(),
+            msg.attachment_path.as_deref(),
+            msg.attachment_url.as_deref(),
+            msg.attachment_filename.as_deref(),
+            msg.attachment_mime.as_deref(),
+        );
+    }
+
+    let response = run_in_session(
+        &session_id,
+        &prompt_content,
+        base_url,
+        api_token,
+        msg.attachment_path.as_deref(),
+        msg.attachment_url.as_deref(),
+        msg.attachment_mime.as_deref(),
+        msg.attachment_filename.as_deref(),
+    )
+    .await;
     if let Err(e) = channel.stop_typing(&msg.reply_target).await {
         warn!(
             "failed to stop typing indicator for channel '{}': {e}",
@@ -393,15 +426,281 @@ async fn process_channel_message(
     }
 
     let reply = response.unwrap_or_else(|e| format!("⚠️ Error: {e}"));
+    let (reply_text, image_urls) = extract_image_urls_and_clean_text(&reply);
     if let Err(e) = channel
         .send(&SendMessage {
-            content: reply,
+            content: reply_text,
             recipient: msg.reply_target,
+            image_urls,
         })
         .await
     {
         error!("failed to send channel reply via '{}': {e}", channel.name());
     }
+}
+
+fn synthesize_attachment_prompt(
+    channel: &str,
+    attachment: &str,
+    user_text: &str,
+    resource_key: Option<&str>,
+    attachment_path: Option<&str>,
+    attachment_url: Option<&str>,
+    attachment_filename: Option<&str>,
+    attachment_mime: Option<&str>,
+) -> String {
+    let mut lines = vec![format!(
+        "Channel upload received from `{channel}`: `{attachment}`."
+    )];
+    if let Some(name) = attachment_filename {
+        lines.push(format!("Attachment filename: `{name}`."));
+    }
+    if let Some(mime) = attachment_mime {
+        lines.push(format!("Attachment MIME type: `{mime}`."));
+    }
+    if let Some(path) = attachment_path {
+        lines.push(format!("Stored local attachment path: `{path}`."));
+        lines.push(
+            "Use the `read` tool on the local path when the file is text-like or parseable."
+                .to_string(),
+        );
+    }
+    if let Some(url) = attachment_url {
+        lines.push(format!("Attachment source URL: `{url}`."));
+    }
+    if let Some(key) = resource_key {
+        lines.push(format!("Stored upload reference: `{key}`."));
+    }
+    if !user_text.trim().is_empty() {
+        lines.push(format!("User caption/message: {}", user_text.trim()));
+    }
+    lines.push(
+        "Analyze the attachment directly when your model and tools support this MIME type."
+            .to_string(),
+    );
+    lines.push(
+        "If this file type is unsupported, explain what format/model capability is required."
+            .to_string(),
+    );
+    lines.join("\n")
+}
+
+fn sanitize_resource_segment(raw: &str) -> String {
+    let sanitized = raw
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || matches!(ch, '.' | '-' | '_') {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+    if sanitized.is_empty() {
+        "unknown".to_string()
+    } else {
+        sanitized
+    }
+}
+
+async fn persist_channel_attachment_reference(
+    base_url: &str,
+    api_token: &str,
+    session_id: &str,
+    msg: &ChannelMessage,
+    attachment: &str,
+) -> Option<String> {
+    let client = reqwest::Client::new();
+    let resource_key = format!(
+        "run/{}/channel_uploads/{}",
+        sanitize_resource_segment(session_id),
+        sanitize_resource_segment(&msg.id)
+    );
+    let stored_at_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+
+    let resource_value = serde_json::json!({
+        "session_id": session_id,
+        "channel": msg.channel,
+        "sender": msg.sender,
+        "reply_target": msg.reply_target,
+        "message_id": msg.id,
+        "attachment": attachment,
+        "attachment_url": msg.attachment_url,
+        "attachment_path": msg.attachment_path,
+        "attachment_mime": msg.attachment_mime,
+        "attachment_filename": msg.attachment_filename,
+        "user_text": msg.content,
+        "received_at": msg.timestamp.to_rfc3339(),
+        "stored_at_ms": stored_at_ms
+    });
+
+    let resource_resp = add_auth(
+        client.put(format!("{base_url}/resource/{resource_key}")),
+        api_token,
+    )
+    .json(&serde_json::json!({
+        "value": resource_value,
+        "updated_by": format!("channels:{}", msg.channel)
+    }))
+    .send()
+    .await;
+
+    match resource_resp {
+        Ok(resp) if resp.status().is_success() => {}
+        Ok(resp) => {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            warn!(
+                "failed to persist upload resource '{}' ({}): {}",
+                resource_key, status, body
+            );
+            return None;
+        }
+        Err(e) => {
+            warn!(
+                "failed to persist upload resource '{}': {}",
+                resource_key, e
+            );
+            return None;
+        }
+    }
+
+    let memory_content = format!(
+        "Channel upload recorded: channel={}, attachment={}, session={}, sender={}, resource_key={}, file_path={}, file_url={}",
+        msg.channel,
+        attachment,
+        session_id,
+        msg.sender,
+        resource_key,
+        msg.attachment_path.as_deref().unwrap_or("n/a"),
+        msg.attachment_url.as_deref().unwrap_or("n/a")
+    );
+    let memory_resp = add_auth(client.post(format!("{base_url}/memory/put")), api_token)
+        .json(&serde_json::json!({
+            "run_id": format!("channel-upload-{}", session_id),
+            "partition": {
+                "org_id": "local",
+                "workspace_id": "channels",
+                "project_id": session_id,
+                "tier": "session"
+            },
+            "kind": "note",
+            "content": memory_content,
+            "artifact_refs": [format!("resource:{}", resource_key)],
+            "classification": "internal",
+            "metadata": {
+                "channel": msg.channel,
+                "sender": msg.sender,
+                "message_id": msg.id
+            }
+        }))
+        .send()
+        .await;
+
+    match memory_resp {
+        Ok(resp) if resp.status().is_success() => {}
+        Ok(resp) => {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            warn!(
+                "upload resource saved but memory.put failed for '{}' ({}): {}",
+                resource_key, status, body
+            );
+        }
+        Err(e) => {
+            warn!(
+                "upload resource saved but memory.put request failed for '{}': {}",
+                resource_key, e
+            );
+        }
+    }
+
+    Some(resource_key)
+}
+
+fn extract_image_urls_and_clean_text(input: &str) -> (String, Vec<String>) {
+    let (without_markdown_images, markdown_urls) = strip_markdown_image_links(input);
+    let mut urls = markdown_urls;
+    for token in without_markdown_images.split_whitespace() {
+        let candidate = trim_wrapping_punctuation(token);
+        if is_image_url(candidate) && !urls.iter().any(|u| u == candidate) {
+            urls.push(candidate.to_string());
+        }
+    }
+
+    let cleaned = without_markdown_images
+        .lines()
+        .map(str::trim_end)
+        .collect::<Vec<_>>()
+        .join("\n")
+        .trim()
+        .to_string();
+
+    (cleaned, urls)
+}
+
+fn strip_markdown_image_links(input: &str) -> (String, Vec<String>) {
+    let mut out = String::with_capacity(input.len());
+    let mut urls = Vec::new();
+    let mut i = 0usize;
+
+    while i < input.len() {
+        let Some(rel) = input[i..].find("![") else {
+            out.push_str(&input[i..]);
+            break;
+        };
+        let start = i + rel;
+        out.push_str(&input[i..start]);
+
+        let Some(alt_end_rel) = input[start + 2..].find("](") else {
+            out.push_str("![");
+            i = start + 2;
+            continue;
+        };
+        let alt_end = start + 2 + alt_end_rel;
+
+        let Some(url_end_rel) = input[alt_end + 2..].find(')') else {
+            out.push_str("![");
+            i = start + 2;
+            continue;
+        };
+        let url_end = alt_end + 2 + url_end_rel;
+        let url = input[alt_end + 2..url_end].trim();
+
+        if is_image_url(url) && !urls.iter().any(|u| u == url) {
+            urls.push(url.to_string());
+        } else {
+            out.push_str(&input[start..=url_end]);
+        }
+
+        i = url_end + 1;
+    }
+
+    (out, urls)
+}
+
+fn trim_wrapping_punctuation(token: &str) -> &str {
+    token.trim_matches(|c: char| {
+        matches!(
+            c,
+            '"' | '\'' | '<' | '>' | '(' | ')' | '[' | ']' | '{' | '}' | ',' | ';'
+        )
+    })
+}
+
+fn is_image_url(url: &str) -> bool {
+    if !(url.starts_with("http://") || url.starts_with("https://")) {
+        return false;
+    }
+    let base = url.split(['?', '#']).next().unwrap_or(url);
+    let lower = base.to_ascii_lowercase();
+    [".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg"]
+        .iter()
+        .any(|ext| lower.ends_with(ext))
 }
 
 // ---------------------------------------------------------------------------
@@ -510,6 +809,10 @@ async fn run_in_session(
     content: &str,
     base_url: &str,
     api_token: &str,
+    attachment_path: Option<&str>,
+    attachment_url: Option<&str>,
+    attachment_mime: Option<&str>,
+    attachment_filename: Option<&str>,
 ) -> anyhow::Result<String> {
     let timeout_secs: u64 = std::env::var("TANDEM_CHANNEL_MAX_WAIT_SECONDS")
         .ok()
@@ -520,9 +823,18 @@ async fn run_in_session(
         .timeout(Duration::from_secs(timeout_secs + 30))
         .build()?;
 
-    let mut body = serde_json::json!({
-        "parts": [{ "type": "text", "text": content }]
-    });
+    let mut parts = Vec::new();
+    let attachment_source = attachment_path.or(attachment_url);
+    if let (Some(source), Some(mime)) = (attachment_source, attachment_mime) {
+        parts.push(serde_json::json!({
+            "type": "file",
+            "mime": mime,
+            "filename": attachment_filename,
+            "url": source
+        }));
+    }
+    parts.push(serde_json::json!({ "type": "text", "text": content }));
+    let mut body = serde_json::json!({ "parts": parts });
     if let Ok(Some(model)) = fetch_default_model_spec(&client, base_url, api_token).await {
         body["model"] = model;
     }
@@ -1864,5 +2176,49 @@ mod tests {
         assert_eq!(deserialized.last_seen_at_ms, 2000);
         assert_eq!(deserialized.channel, "telegram");
         assert_eq!(deserialized.sender, "user1");
+    }
+
+    #[test]
+    fn extracts_markdown_image_and_cleans_text() {
+        let input = "Here is the render:\n![chart](https://cdn.example.com/chart.png)\nLooks good.";
+        let (text, urls) = extract_image_urls_and_clean_text(input);
+        assert_eq!(urls, vec!["https://cdn.example.com/chart.png"]);
+        assert!(text.contains("Here is the render:"));
+        assert!(text.contains("Looks good."));
+        assert!(!text.contains("![chart]"));
+    }
+
+    #[test]
+    fn extracts_direct_image_url_token() {
+        let input = "Generated image: https://example.com/out/final.webp";
+        let (text, urls) = extract_image_urls_and_clean_text(input);
+        assert_eq!(urls, vec!["https://example.com/out/final.webp"]);
+        assert!(text.contains("Generated image:"));
+    }
+
+    #[test]
+    fn synthesize_attachment_prompt_includes_reference_when_present() {
+        let out = synthesize_attachment_prompt(
+            "telegram",
+            "photo",
+            "please analyze",
+            Some("run/s1/channel_uploads/u1"),
+            Some("/tmp/photo.jpg"),
+            Some("https://example.com/photo.jpg"),
+            Some("photo.jpg"),
+            Some("image/jpeg"),
+        );
+        assert!(out.contains("Channel upload received"));
+        assert!(out.contains("Stored upload reference"));
+        assert!(out.contains("Stored local attachment path"));
+        assert!(out.contains("please analyze"));
+    }
+
+    #[test]
+    fn sanitize_resource_segment_replaces_invalid_chars() {
+        assert_eq!(
+            sanitize_resource_segment("abc/def:ghi"),
+            "abc_def_ghi".to_string()
+        );
     }
 }

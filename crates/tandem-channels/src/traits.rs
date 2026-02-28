@@ -21,6 +21,14 @@ pub struct ChannelMessage {
     pub timestamp: DateTime<Utc>,
     /// Optional raw attachment description (file name, URL, etc.)
     pub attachment: Option<String>,
+    /// Optional attachment URL when the platform provides one.
+    pub attachment_url: Option<String>,
+    /// Optional local filesystem path where the adapter stored the attachment.
+    pub attachment_path: Option<String>,
+    /// Optional MIME type for the attachment.
+    pub attachment_mime: Option<String>,
+    /// Optional attachment filename.
+    pub attachment_filename: Option<String>,
 }
 
 /// A message to send back to the external channel.
@@ -30,6 +38,8 @@ pub struct SendMessage {
     pub content: String,
     /// Destination (chat_id, channel_id, user_id, etc. — platform-specific).
     pub recipient: String,
+    /// Optional image URLs to send alongside text.
+    pub image_urls: Vec<String>,
 }
 
 /// All external channel adapters implement this trait.

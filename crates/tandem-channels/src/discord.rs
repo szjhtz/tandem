@@ -10,7 +10,9 @@ use futures_util::{SinkExt, StreamExt};
 use parking_lot::Mutex;
 use reqwest::Client;
 use serde_json::json;
+use std::path::PathBuf;
 use std::time::Duration;
+use std::time::SystemTime;
 use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite::Message;
 use tracing::{info, warn};
@@ -105,6 +107,86 @@ fn normalize_incoming_content(
     }
 }
 
+fn discord_attachment_description(message: &serde_json::Value) -> Option<String> {
+    let attachments = message
+        .get("attachments")
+        .and_then(serde_json::Value::as_array)?;
+    if attachments.is_empty() {
+        return None;
+    }
+
+    let first = &attachments[0];
+    let filename = first
+        .get("filename")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("unknown");
+    let count = attachments.len();
+    if count == 1 {
+        Some(format!("attachment:{filename}"))
+    } else {
+        Some(format!("attachments:{count} (first: {filename})"))
+    }
+}
+
+fn discord_attachment_url(message: &serde_json::Value) -> Option<String> {
+    message
+        .get("attachments")
+        .and_then(serde_json::Value::as_array)
+        .and_then(|arr| arr.first())
+        .and_then(|a| a.get("url").and_then(serde_json::Value::as_str))
+        .map(ToString::to_string)
+}
+
+fn discord_attachment_filename(message: &serde_json::Value) -> Option<String> {
+    message
+        .get("attachments")
+        .and_then(serde_json::Value::as_array)
+        .and_then(|arr| arr.first())
+        .and_then(|a| a.get("filename").and_then(serde_json::Value::as_str))
+        .map(ToString::to_string)
+}
+
+fn discord_attachment_mime(message: &serde_json::Value) -> Option<String> {
+    message
+        .get("attachments")
+        .and_then(serde_json::Value::as_array)
+        .and_then(|arr| arr.first())
+        .and_then(|a| a.get("content_type").and_then(serde_json::Value::as_str))
+        .map(ToString::to_string)
+}
+
+fn channel_uploads_root() -> PathBuf {
+    let base = std::env::var("TANDEM_STATE_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| {
+            if let Some(data_dir) = dirs::data_dir() {
+                return data_dir.join("tandem").join("data");
+            }
+            dirs::home_dir()
+                .map(|home| home.join(".tandem").join("data"))
+                .unwrap_or_else(|| PathBuf::from(".tandem"))
+        });
+    base.join("channel_uploads")
+}
+
+fn sanitize_filename(name: &str) -> String {
+    let out = name
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-') {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+    if out.is_empty() {
+        "attachment.bin".to_string()
+    } else {
+        out
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Token → bot user ID (minimal base64 decode — no extra dep)
 // ---------------------------------------------------------------------------
@@ -185,6 +267,54 @@ impl DiscordChannel {
     fn auth_header(&self) -> String {
         format!("Bot {}", self.bot_token)
     }
+
+    async fn download_discord_attachment(
+        &self,
+        url: &str,
+        filename: Option<&str>,
+        channel_id: &str,
+    ) -> Option<String> {
+        let max_bytes = std::env::var("TANDEM_CHANNEL_MAX_ATTACHMENT_BYTES")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(20 * 1024 * 1024);
+
+        let response = self
+            .http_client()
+            .get(url)
+            .header("Authorization", self.auth_header())
+            .send()
+            .await
+            .ok()?;
+        if !response.status().is_success() {
+            return None;
+        }
+        let bytes = response.bytes().await.ok()?;
+        if bytes.len() as u64 > max_bytes {
+            warn!(
+                "discord attachment download exceeded max bytes ({} > {})",
+                bytes.len(),
+                max_bytes
+            );
+            return None;
+        }
+
+        let file_name = filename.unwrap_or("attachment.bin");
+        let safe_name = sanitize_filename(file_name);
+        let dir = channel_uploads_root()
+            .join("discord")
+            .join(sanitize_filename(channel_id));
+        tokio::fs::create_dir_all(&dir).await.ok()?;
+
+        let ts = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .ok()
+            .map(|d| d.as_millis())
+            .unwrap_or(0);
+        let path = dir.join(format!("{ts}_{safe_name}"));
+        tokio::fs::write(&path, &bytes).await.ok()?;
+        Some(path.to_string_lossy().to_string())
+    }
 }
 
 #[async_trait]
@@ -195,7 +325,16 @@ impl Channel for DiscordChannel {
 
     async fn send(&self, message: &SendMessage) -> anyhow::Result<()> {
         let client = self.http_client();
-        let chunks = split_message(&message.content);
+        let mut outgoing = message.content.clone();
+        for image_url in &message.image_urls {
+            if !outgoing.contains(image_url) {
+                if !outgoing.is_empty() {
+                    outgoing.push('\n');
+                }
+                outgoing.push_str(image_url);
+            }
+        }
+        let chunks = split_message(&outgoing);
 
         for (i, chunk) in chunks.iter().enumerate() {
             let url = format!("{DISCORD_API}/channels/{}/messages", message.recipient);
@@ -369,14 +508,30 @@ impl Channel for DiscordChannel {
                     }
 
                     let content = d["content"].as_str().unwrap_or("");
-                    let Some(clean_content) =
-                        normalize_incoming_content(content, self.mention_only, &bot_user_id)
-                    else {
-                        continue;
+                    let attachment = discord_attachment_description(d);
+                    let attachment_url = discord_attachment_url(d);
+                    let attachment_filename = discord_attachment_filename(d);
+                    let attachment_mime = discord_attachment_mime(d);
+                    let clean_content =
+                        normalize_incoming_content(content, self.mention_only, &bot_user_id);
+                    let clean_content = match (clean_content, attachment.is_some()) {
+                        (Some(c), _) => c,
+                        (None, true) => String::new(),
+                        (None, false) => continue,
                     };
 
                     let message_id = d["id"].as_str().unwrap_or("");
                     let channel_id = d["channel_id"].as_str().unwrap_or("").to_string();
+                    let attachment_path = if let Some(url) = attachment_url.as_deref() {
+                        self.download_discord_attachment(
+                            url,
+                            attachment_filename.as_deref(),
+                            &channel_id,
+                        )
+                        .await
+                    } else {
+                        None
+                    };
 
                     let channel_msg = ChannelMessage {
                         id: if message_id.is_empty() {
@@ -393,7 +548,11 @@ impl Channel for DiscordChannel {
                         content: clean_content,
                         channel: "discord".to_string(),
                         timestamp: chrono::Utc::now(),
-                        attachment: None,
+                        attachment,
+                        attachment_url,
+                        attachment_path,
+                        attachment_mime,
+                        attachment_filename,
                     };
 
                     if tx.send(channel_msg).await.is_err() {
@@ -612,5 +771,32 @@ mod tests {
         let ch = make_channel();
         assert!(ch.stop_typing("123456").await.is_ok());
         assert!(ch.stop_typing("123456").await.is_ok());
+    }
+
+    #[test]
+    fn detects_single_discord_attachment() {
+        let d = json!({
+            "attachments": [
+                { "filename": "image.png" }
+            ]
+        });
+        assert_eq!(
+            discord_attachment_description(&d),
+            Some("attachment:image.png".to_string())
+        );
+    }
+
+    #[test]
+    fn detects_multiple_discord_attachments() {
+        let d = json!({
+            "attachments": [
+                { "filename": "a.png" },
+                { "filename": "b.pdf" }
+            ]
+        });
+        assert_eq!(
+            discord_attachment_description(&d),
+            Some("attachments:2 (first: a.png)".to_string())
+        );
     }
 }

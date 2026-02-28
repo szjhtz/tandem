@@ -6,7 +6,9 @@
 
 use async_trait::async_trait;
 use reqwest::Client;
+use std::path::PathBuf;
 use std::time::Duration;
+use std::time::SystemTime;
 use tokio::sync::mpsc;
 use tracing::{info, warn};
 
@@ -15,6 +17,88 @@ use crate::traits::{Channel, ChannelMessage, SendMessage};
 
 const SLACK_API: &str = "https://slack.com/api";
 const POLL_INTERVAL_SECS: u64 = 3;
+
+fn slack_attachment_description(message: &serde_json::Value) -> Option<String> {
+    let files = message.get("files").and_then(serde_json::Value::as_array)?;
+    if files.is_empty() {
+        return None;
+    }
+
+    let first = &files[0];
+    let name = first
+        .get("name")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("unknown");
+    let count = files.len();
+    if count == 1 {
+        Some(format!("file:{name}"))
+    } else {
+        Some(format!("files:{count} (first: {name})"))
+    }
+}
+
+fn slack_attachment_url(message: &serde_json::Value) -> Option<String> {
+    message
+        .get("files")
+        .and_then(serde_json::Value::as_array)
+        .and_then(|arr| arr.first())
+        .and_then(|f| {
+            f.get("url_private_download")
+                .and_then(serde_json::Value::as_str)
+                .or_else(|| f.get("url_private").and_then(serde_json::Value::as_str))
+        })
+        .map(ToString::to_string)
+}
+
+fn slack_attachment_filename(message: &serde_json::Value) -> Option<String> {
+    message
+        .get("files")
+        .and_then(serde_json::Value::as_array)
+        .and_then(|arr| arr.first())
+        .and_then(|f| f.get("name").and_then(serde_json::Value::as_str))
+        .map(ToString::to_string)
+}
+
+fn slack_attachment_mime(message: &serde_json::Value) -> Option<String> {
+    message
+        .get("files")
+        .and_then(serde_json::Value::as_array)
+        .and_then(|arr| arr.first())
+        .and_then(|f| f.get("mimetype").and_then(serde_json::Value::as_str))
+        .map(ToString::to_string)
+}
+
+fn channel_uploads_root() -> PathBuf {
+    let base = std::env::var("TANDEM_STATE_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| {
+            if let Some(data_dir) = dirs::data_dir() {
+                return data_dir.join("tandem").join("data");
+            }
+            dirs::home_dir()
+                .map(|home| home.join(".tandem").join("data"))
+                .unwrap_or_else(|| PathBuf::from(".tandem"))
+        });
+    base.join("channel_uploads")
+}
+
+fn sanitize_filename(name: &str) -> String {
+    let out = name
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-') {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+    if out.is_empty() {
+        "attachment.bin".to_string()
+    } else {
+        out
+    }
+}
 
 pub struct SlackChannel {
     bot_token: String,
@@ -55,6 +139,49 @@ impl SlackChannel {
             .and_then(|u| u.as_str())
             .map(String::from)
     }
+
+    async fn download_slack_attachment(&self, url: &str, filename: Option<&str>) -> Option<String> {
+        let max_bytes = std::env::var("TANDEM_CHANNEL_MAX_ATTACHMENT_BYTES")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(20 * 1024 * 1024);
+
+        let response = self
+            .http_client()
+            .get(url)
+            .bearer_auth(&self.bot_token)
+            .send()
+            .await
+            .ok()?;
+        if !response.status().is_success() {
+            return None;
+        }
+        let bytes = response.bytes().await.ok()?;
+        if bytes.len() as u64 > max_bytes {
+            warn!(
+                "slack attachment download exceeded max bytes ({} > {})",
+                bytes.len(),
+                max_bytes
+            );
+            return None;
+        }
+
+        let file_name = filename.unwrap_or("attachment.bin");
+        let safe_name = sanitize_filename(file_name);
+        let dir = channel_uploads_root()
+            .join("slack")
+            .join(sanitize_filename(&self.channel_id));
+        tokio::fs::create_dir_all(&dir).await.ok()?;
+
+        let ts = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .ok()
+            .map(|d| d.as_millis())
+            .unwrap_or(0);
+        let path = dir.join(format!("{ts}_{safe_name}"));
+        tokio::fs::write(&path, &bytes).await.ok()?;
+        Some(path.to_string_lossy().to_string())
+    }
 }
 
 #[async_trait]
@@ -64,9 +191,19 @@ impl Channel for SlackChannel {
     }
 
     async fn send(&self, message: &SendMessage) -> anyhow::Result<()> {
+        let mut outgoing = message.content.clone();
+        for image_url in &message.image_urls {
+            if !outgoing.contains(image_url) {
+                if !outgoing.is_empty() {
+                    outgoing.push('\n');
+                }
+                outgoing.push_str(image_url);
+            }
+        }
+
         let body = serde_json::json!({
             "channel": message.recipient,
-            "text": message.content,
+            "text": outgoing,
         });
 
         let resp = self
@@ -172,8 +309,19 @@ impl Channel for SlackChannel {
                     continue;
                 }
 
+                let attachment = slack_attachment_description(msg);
+                let attachment_url = slack_attachment_url(msg);
+                let attachment_filename = slack_attachment_filename(msg);
+                let attachment_mime = slack_attachment_mime(msg);
+                let attachment_path = if let Some(url) = attachment_url.as_deref() {
+                    self.download_slack_attachment(url, attachment_filename.as_deref())
+                        .await
+                } else {
+                    None
+                };
+
                 // Skip empty or already-seen messages
-                if text.is_empty() || ts <= last_ts.as_str() {
+                if (text.is_empty() && attachment.is_none()) || ts <= last_ts.as_str() {
                     continue;
                 }
 
@@ -186,7 +334,11 @@ impl Channel for SlackChannel {
                     content: text.to_string(),
                     channel: "slack".to_string(),
                     timestamp: chrono::Utc::now(),
-                    attachment: None,
+                    attachment,
+                    attachment_url,
+                    attachment_path,
+                    attachment_mime,
+                    attachment_filename,
                 };
 
                 if tx.send(channel_msg).await.is_err() {
@@ -290,5 +442,32 @@ mod tests {
         let id1 = format!("slack_C12345_1000.000001");
         let id2 = format!("slack_C12345_1000.000002");
         assert_ne!(id1, id2);
+    }
+
+    #[test]
+    fn detects_single_slack_file_attachment() {
+        let msg = serde_json::json!({
+            "files": [
+                { "name": "notes.txt" }
+            ]
+        });
+        assert_eq!(
+            slack_attachment_description(&msg),
+            Some("file:notes.txt".to_string())
+        );
+    }
+
+    #[test]
+    fn detects_multiple_slack_file_attachments() {
+        let msg = serde_json::json!({
+            "files": [
+                { "name": "a.txt" },
+                { "name": "b.png" }
+            ]
+        });
+        assert_eq!(
+            slack_attachment_description(&msg),
+            Some("files:2 (first: a.txt)".to_string())
+        );
     }
 }

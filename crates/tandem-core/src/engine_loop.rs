@@ -6,7 +6,7 @@ use std::collections::{hash_map::DefaultHasher, HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use tandem_observability::{emit_event, ObservabilityEvent, ProcessKind};
-use tandem_providers::{ChatMessage, ProviderRegistry, StreamChunk, TokenUsage};
+use tandem_providers::{ChatAttachment, ChatMessage, ProviderRegistry, StreamChunk, TokenUsage};
 use tandem_tools::{validate_tool_schemas, ToolRegistry};
 use tandem_types::{
     EngineEvent, HostOs, HostRuntimeContext, Message, MessagePart, MessagePartInput, MessageRole,
@@ -231,6 +231,7 @@ impl EngineLoop {
             "session.status",
             json!({"sessionID": session_id, "status":"running"}),
         ));
+        let request_parts = req.parts.clone();
         let text = req
             .parts
             .iter()
@@ -249,6 +250,7 @@ impl EngineLoop {
             })
             .collect::<Vec<_>>()
             .join("\n");
+        let runtime_attachments = build_runtime_attachments(&provider_id, &request_parts).await;
         self.auto_rename_session_from_user_text(&session_id, &text)
             .await;
         let active_agent = self.agents.get(req.agent.as_deref()).await;
@@ -328,6 +330,9 @@ impl EngineLoop {
                 let iteration = 26usize.saturating_sub(max_iterations);
                 max_iterations -= 1;
                 let mut messages = load_chat_history(self.storage.clone(), &session_id).await;
+                if iteration == 1 && !runtime_attachments.is_empty() {
+                    attach_to_last_user_message(&mut messages, &runtime_attachments);
+                }
                 let mut system_parts =
                     vec![tandem_runtime_system_prompt(&self.host_runtime_context)];
                 if let Some(system) = active_agent.system_prompt.as_ref() {
@@ -338,12 +343,14 @@ impl EngineLoop {
                     ChatMessage {
                         role: "system".to_string(),
                         content: system_parts.join("\n\n"),
+                        attachments: Vec::new(),
                     },
                 );
                 if let Some(extra) = followup_context.take() {
                     messages.push(ChatMessage {
                         role: "user".to_string(),
                         content: extra,
+                        attachments: Vec::new(),
                     });
                 }
                 if let Some(hook) = self.prompt_context_hook.read().await.clone() {
@@ -1459,6 +1466,7 @@ impl EngineLoop {
             ChatMessage {
                 role: "system".to_string(),
                 content: system_parts.join("\n\n"),
+                attachments: Vec::new(),
             },
         );
         messages.push(ChatMessage {
@@ -1467,6 +1475,7 @@ impl EngineLoop {
                 "Tool observations:\n{}\n\nProvide a direct final answer now. Do not call tools.",
                 summarize_tool_outputs(tool_outputs)
             ),
+            attachments: Vec::new(),
         });
         let stream = self
             .providers
@@ -3758,10 +3767,114 @@ async fn load_chat_history(storage: std::sync::Arc<Storage>, session_id: &str) -
                 })
                 .collect::<Vec<_>>()
                 .join("\n");
-            ChatMessage { role, content }
+            ChatMessage {
+                role,
+                content,
+                attachments: Vec::new(),
+            }
         })
         .collect::<Vec<_>>();
     compact_chat_history(messages)
+}
+
+fn attach_to_last_user_message(messages: &mut [ChatMessage], attachments: &[ChatAttachment]) {
+    if attachments.is_empty() {
+        return;
+    }
+    if let Some(message) = messages.iter_mut().rev().find(|m| m.role == "user") {
+        message.attachments = attachments.to_vec();
+    }
+}
+
+async fn build_runtime_attachments(
+    provider_id: &str,
+    parts: &[MessagePartInput],
+) -> Vec<ChatAttachment> {
+    if !supports_image_attachments(provider_id) {
+        return Vec::new();
+    }
+
+    let mut attachments = Vec::new();
+    for part in parts {
+        let MessagePartInput::File { mime, url, .. } = part else {
+            continue;
+        };
+        if !mime.to_ascii_lowercase().starts_with("image/") {
+            continue;
+        }
+        if let Some(source_url) = normalize_attachment_source_url(url, mime).await {
+            attachments.push(ChatAttachment::ImageUrl { url: source_url });
+        }
+    }
+
+    attachments
+}
+
+fn supports_image_attachments(provider_id: &str) -> bool {
+    matches!(
+        provider_id,
+        "openai"
+            | "openrouter"
+            | "ollama"
+            | "groq"
+            | "mistral"
+            | "together"
+            | "azure"
+            | "bedrock"
+            | "vertex"
+            | "copilot"
+    )
+}
+
+async fn normalize_attachment_source_url(url: &str, mime: &str) -> Option<String> {
+    let trimmed = url.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if trimmed.starts_with("http://")
+        || trimmed.starts_with("https://")
+        || trimmed.starts_with("data:")
+    {
+        return Some(trimmed.to_string());
+    }
+
+    let file_path = trimmed
+        .strip_prefix("file://")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(trimmed));
+    if !file_path.exists() {
+        return None;
+    }
+
+    let max_bytes = std::env::var("TANDEM_CHANNEL_MAX_ATTACHMENT_BYTES")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(20 * 1024 * 1024);
+
+    let bytes = match tokio::fs::read(&file_path).await {
+        Ok(bytes) => bytes,
+        Err(err) => {
+            tracing::warn!(
+                "failed reading local attachment '{}': {}",
+                file_path.to_string_lossy(),
+                err
+            );
+            return None;
+        }
+    };
+    if bytes.len() > max_bytes {
+        tracing::warn!(
+            "local attachment '{}' exceeds max bytes ({} > {})",
+            file_path.to_string_lossy(),
+            bytes.len(),
+            max_bytes
+        );
+        return None;
+    }
+
+    use base64::Engine as _;
+    let b64 = base64::engine::general_purpose::STANDARD.encode(bytes);
+    Some(format!("data:{mime};base64,{b64}"))
 }
 
 struct ToolSideEventContext<'a> {
@@ -4021,6 +4134,7 @@ fn compact_chat_history(messages: Vec<ChatMessage>) -> Vec<ChatMessage> {
                     "[history compacted: omitted {} older messages to fit context window]",
                     dropped_count
                 ),
+                attachments: Vec::new(),
             },
         );
     }
@@ -4129,6 +4243,7 @@ mod tests {
             messages.push(ChatMessage {
                 role: "user".to_string(),
                 content: format!("message-{i}"),
+                attachments: Vec::new(),
             });
         }
         let compacted = compact_chat_history(messages);
