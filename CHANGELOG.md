@@ -12,12 +12,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **MCP auth challenge extraction hardening**: Runtime now prefers structured auth fields from MCP payloads (for example `structuredContent.message` / `structuredContent.authorization_url`) before generic text blobs, improving challenge fidelity across providers like Arcade.
 - **Quickstart UI preference persistence**: Added persistent storage for chat `Auto-allow all` approval mode so the toggle survives portal reloads/restarts.
 - **Guard-budget diagnostics tests**: Added engine/runtime test coverage for per-run guard-budget classification and MCP auth message normalization/priority parsing.
+- **Global memory persistence substrate (SQLite + FTS5)**: Added persistent global memory record storage in `memory.sqlite` (`memory_records` + `memory_records_fts`) with dedup indexes, FTS-backed search, and promote/demote/delete/list APIs over durable records.
+- **Always-on memory ingestion events and pipeline**: Added server memory ingestor subscriber that captures memory candidates from run/tool/decision/auth event streams and emits canonical write lifecycle events:
+  - `memory.write.attempted`
+  - `memory.write.succeeded`
+  - `memory.write.skipped`
+- **Run-time memory observability events**: Added structured retrieval/injection telemetry emitted during provider planning:
+  - `memory.search.performed` (scores, sources, latency)
+  - `memory.context.injected` (count, token-size estimate)
+- **Memory demotion API surface**: Added `POST /memory/demote` to move memories back to private/demoted state without hard delete.
 
 ### Changed
 
 - **MCP auth messaging output quality**: Sanitized/truncated auth-required messages emitted from runtime so user-facing chat responses avoid large escaped JSON or provider-internal instruction blobs.
 - **Quickstart run lifecycle handling**: Before sending a new prompt, quickstart now best-effort cancels an existing active run (`cancelRun` / `cancel`) to avoid stale-run carryover behavior in active sessions.
 - **Provider/tool compatibility normalization**: Hardened OpenAI-compatible tool publishing path with function-name sanitization, alias round-tripping, and function-parameter schema normalization for stricter provider validators.
+- **Memory API backend behavior**: Server `/memory/*` routes now use durable global-memory DB records instead of in-process map state, preserving data across process restarts.
+- **Memory retrieval timing model**: Retrieval/injection now runs in the engine planning loop (via server-installed prompt-context hook), so each provider iteration can pull fresh relevant memory rather than run-start-only context.
+- **Prompt context assembly for planning loops**: Memory context is appended as bounded `<memory_context>` system material during provider planning iterations, with per-iteration scoring thresholds and observability.
+- **Secret/PII safety on memory write path**: Added stronger write-path scrubbing/blocking before persistence (pattern-based redaction + hard-block markers), and redaction status/count metadata tracking on persisted records.
 
 ### Fixed
 

@@ -4,6 +4,29 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
 
 ## v0.3.25 (Unreleased)
 
+- Global Memory first-class runtime path (engine/server)
+  - Added durable global memory storage in `memory.sqlite` with FTS5-backed retrieval (`memory_records` + `memory_records_fts`), replacing transient in-process memory API state.
+  - Added automatic ingestion capture from run outputs and event streams:
+    - user messages
+    - assistant finals
+    - tool inputs/outputs
+    - permission requests/replies
+    - MCP auth-required/pending challenges
+    - todo/question planning events
+  - Added secret-safety write gate with scrub/block behavior before persistence and redaction metadata on stored records.
+- Memory retrieval now runs during planning loops, not only run start
+  - Introduced engine-loop prompt-context augmentation hook and server implementation that performs per-iteration memory search/injection.
+  - Added memory context injection observability and scoring telemetry:
+    - `memory.search.performed`
+    - `memory.context.injected`
+  - Added write lifecycle observability:
+    - `memory.write.attempted`
+    - `memory.write.succeeded`
+    - `memory.write.skipped`
+- Memory API surface expansion
+  - Added `POST /memory/demote` for private/demoted tier fallback without deleting memory.
+  - Existing `/memory/put`, `/memory/search`, `/memory/list`, `/memory/promote`, `/memory/{id}` now operate on durable global records.
+
 - MCP auth/retry behavior and loop hardening
   - Improved MCP auth challenge extraction to prefer structured payload fields (`structuredContent.message`, `structuredContent.authorization_url`) over noisy nested text blobs.
   - Sanitized/truncated auth-required messaging so web/TUI/channel users see clean authorization prompts instead of escaped JSON/instruction payload dumps.

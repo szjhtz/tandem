@@ -1,3 +1,34 @@
+# Tandem v0.3.25 Release Notes (Unreleased)
+
+### Highlights
+
+- **Global Memory promoted to always-on runtime primitive**:
+  - Added durable global memory record storage in `memory.sqlite` (`memory_records` + `memory_records_fts`) with FTS5 retrieval as baseline.
+  - Memory API operations now persist to DB-backed global records rather than in-process server maps.
+  - Added memory demotion path via `POST /memory/demote`.
+- **Automatic memory ingestion across run/event lifecycle**:
+  - Added server ingestion subscriber capturing memory candidates from:
+    - user messages
+    - assistant final messages
+    - tool inputs/results
+    - permission asks/replies
+    - MCP auth challenge events (`mcp.auth.required` / `mcp.auth.pending`)
+    - plan/todo/question events (`todo.updated`, `question.asked`)
+  - Added write-path secret/PII safety gate with scrub/block behavior and redaction metadata tracking.
+- **Automatic memory retrieval in planning loops**:
+  - Added engine-loop prompt-context hook so memory retrieval/injection runs per provider planning iteration, not just at run start.
+  - Injected memory context is bounded and scored, with retrieval telemetry emitted for each iteration.
+- **Memory observability event family**:
+  - Added memory write lifecycle events:
+    - `memory.write.attempted`
+    - `memory.write.succeeded`
+    - `memory.write.skipped`
+  - Added retrieval/injection events:
+    - `memory.search.performed` (score distribution, sources, latency)
+    - `memory.context.injected` (count + token-size estimate)
+
+---
+
 # Tandem v0.3.22 Release Notes (Unreleased)
 
 ### Highlights
