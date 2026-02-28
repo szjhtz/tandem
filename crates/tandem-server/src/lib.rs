@@ -2319,6 +2319,25 @@ fn default_model_spec_from_args(args: &Value) -> Option<ModelSpec> {
         .and_then(parse_model_spec)
 }
 
+fn default_model_spec_from_effective_config(config: &Value) -> Option<ModelSpec> {
+    let provider_id = config
+        .get("default_provider")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|v| !v.is_empty())?;
+    let model_id = config
+        .get("providers")
+        .and_then(|v| v.get(provider_id))
+        .and_then(|v| v.get("default_model"))
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|v| !v.is_empty())?;
+    Some(ModelSpec {
+        provider_id: provider_id.to_string(),
+        model_id: model_id.to_string(),
+    })
+}
+
 fn provider_catalog_has_model(providers: &[tandem_types::ProviderInfo], spec: &ModelSpec) -> bool {
     providers.iter().any(|provider| {
         provider.id == spec.provider_id
@@ -2344,6 +2363,10 @@ async fn resolve_routine_model_spec_for_run(
     }
     if let Some(default_model) = default_model_spec_from_args(&run.args) {
         requested.push((default_model, "args.model_policy.default_model"));
+    }
+    let effective_config = state.config.get_effective_value().await;
+    if let Some(config_default) = default_model_spec_from_effective_config(&effective_config) {
+        requested.push((config_default, "config.default_provider"));
     }
 
     for (candidate, source) in requested {
@@ -2391,6 +2414,41 @@ mod tests {
             "tandem-server-routines-{name}-{}.json",
             uuid::Uuid::new_v4()
         ))
+    }
+
+    #[test]
+    fn default_model_spec_from_effective_config_reads_default_route() {
+        let cfg = serde_json::json!({
+            "default_provider": "openrouter",
+            "providers": {
+                "openrouter": {
+                    "default_model": "google/gemini-3-flash-preview"
+                }
+            }
+        });
+        let spec = default_model_spec_from_effective_config(&cfg).expect("default model spec");
+        assert_eq!(spec.provider_id, "openrouter");
+        assert_eq!(spec.model_id, "google/gemini-3-flash-preview");
+    }
+
+    #[test]
+    fn default_model_spec_from_effective_config_returns_none_when_incomplete() {
+        let missing_provider = serde_json::json!({
+            "providers": {
+                "openrouter": {
+                    "default_model": "google/gemini-3-flash-preview"
+                }
+            }
+        });
+        assert!(default_model_spec_from_effective_config(&missing_provider).is_none());
+
+        let missing_model = serde_json::json!({
+            "default_provider": "openrouter",
+            "providers": {
+                "openrouter": {}
+            }
+        });
+        assert!(default_model_spec_from_effective_config(&missing_model).is_none());
     }
 
     #[tokio::test]

@@ -1,15 +1,26 @@
 export async function renderAgents(ctx) {
   const { state, byId, toast, escapeHtml, api, renderIcons } = ctx;
-  const [routinesRaw, automationsRaw, routineRunsRaw, automationRunsRaw] = await Promise.all([
+  const [
+    routinesRaw,
+    automationsRaw,
+    routineRunsRaw,
+    automationRunsRaw,
+    providersCatalogRaw,
+    providersConfigRaw,
+  ] = await Promise.all([
     state.client.routines.list().catch(() => ({ routines: [] })),
     state.client.automations.list().catch(() => ({ automations: [] })),
     state.client.routines.listRuns({ limit: 100 }).catch(() => ({ runs: [] })),
     state.client.automations.listRuns({ limit: 100 }).catch(() => ({ runs: [] })),
+    state.client.providers.catalog().catch(() => ({ all: [], connected: [], default: null })),
+    state.client.providers.config().catch(() => ({ default: null, providers: {} })),
   ]);
   const routines = routinesRaw.routines || [];
   const automations = automationsRaw.automations || [];
   const routineRuns = Array.isArray(routineRunsRaw?.runs) ? routineRunsRaw.runs : [];
   const automationRuns = Array.isArray(automationRunsRaw?.runs) ? automationRunsRaw.runs : [];
+  const providerCatalog = Array.isArray(providersCatalogRaw?.all) ? providersCatalogRaw.all : [];
+  const providerConfigMap = providersConfigRaw?.providers || {};
 
   const slugify = (value = "") =>
     String(value)
@@ -68,6 +79,13 @@ export async function renderAgents(ctx) {
     const entrypoint = String(routine?.entrypoint || routine?.prompt || "");
     const match = entrypoint.match(/(control-panel\/routines\/[A-Za-z0-9._\-\/]+\.md)/);
     return match?.[1] || "";
+  };
+  const detectRoutineModel = (routine) => {
+    const spec = routine?.args?.model_policy?.default_model;
+    const providerId = String(spec?.provider_id || "").trim();
+    const modelId = String(spec?.model_id || "").trim();
+    if (!providerId || !modelId) return "";
+    return `${providerId}/${modelId}`;
   };
 
   const routineKey = (routine) =>
@@ -150,6 +168,41 @@ export async function renderAgents(ctx) {
   const recentRuns = [...routineRuns.map((run) => ({ family: "routine", run })), ...automationRuns.map((run) => ({ family: "automation", run }))]
     .sort((a, b) => firstTimestamp(b.run) - firstTimestamp(a.run))
     .slice(0, 30);
+  const providerDefaults = Object.fromEntries(
+    Object.entries(providerConfigMap).map(([providerId, cfg]) => [
+      providerId,
+      String(cfg?.default_model || cfg?.defaultModel || "").trim(),
+    ])
+  );
+  const providerIds = providerCatalog.map((p) => p.id).filter(Boolean);
+  const modelIdsForProvider = (providerId) => {
+    const entry = providerCatalog.find((p) => p.id === providerId);
+    return Object.keys(entry?.models || {});
+  };
+  const configuredDefaultProvider = String(
+    providersConfigRaw?.default || providersCatalogRaw?.default || state.providerDefault || ""
+  ).trim();
+  const initialProviderId = providerIds.includes(configuredDefaultProvider)
+    ? configuredDefaultProvider
+    : providerIds[0] || "";
+  const configuredDefaultModel = String(
+    providerDefaults[initialProviderId] || state.providerDefaultModel || ""
+  ).trim();
+  const initialModelCandidates = modelIdsForProvider(initialProviderId);
+  const initialModelId = initialModelCandidates.includes(configuredDefaultModel)
+    ? configuredDefaultModel
+    : initialModelCandidates[0] || "";
+  const providerOptionsMarkup =
+    providerCatalog
+      .map((p) => {
+        const label = String(p.name || p.id || "").trim() || p.id;
+        return `<option value="${escapeHtml(p.id)}" ${p.id === initialProviderId ? "selected" : ""}>${escapeHtml(label)}</option>`;
+      })
+      .join("") || '<option value="">No providers found</option>';
+  const modelOptionsMarkup =
+    initialModelCandidates
+      .map((modelId) => `<option value="${escapeHtml(modelId)}" ${modelId === initialModelId ? "selected" : ""}>${escapeHtml(modelId)}</option>`)
+      .join("") || '<option value="">No models found</option>';
   const automationsMarkup =
     automations
       .map((a) => {
@@ -250,6 +303,23 @@ export async function renderAgents(ctx) {
       <div class="mt-2 text-xs text-slate-400">
         <span id="routine-schedule-preview" class="font-mono">Schedule: every 30m</span>
       </div>
+      <div class="mt-3 grid gap-3 md:grid-cols-2">
+        <div>
+          <label class="mb-1 block text-sm text-slate-300">Routine Provider</label>
+          <select id="routine-model-provider" class="tcp-select" ${providerCatalog.length ? "" : "disabled"}>
+            ${providerOptionsMarkup}
+          </select>
+        </div>
+        <div>
+          <label class="mb-1 block text-sm text-slate-300">Routine Model</label>
+          <select id="routine-model-id" class="tcp-select" ${initialModelCandidates.length ? "" : "disabled"}>
+            ${modelOptionsMarkup}
+          </select>
+        </div>
+      </div>
+      <div class="mt-1 text-xs text-slate-400">
+        Model route for this routine: <span id="routine-model-preview" class="font-mono">${escapeHtml(initialProviderId && initialModelId ? `${initialProviderId}/${initialModelId}` : "default engine route")}</span>
+      </div>
       <div class="mt-4 rounded-xl border border-slate-700/70 bg-slate-900/35 p-3">
         <div class="mb-2 flex items-center justify-between gap-2">
           <label class="inline-flex items-center gap-2 text-sm text-slate-200">
@@ -295,11 +365,13 @@ export async function renderAgents(ctx) {
         const latestStatus = runStatusOf(latest);
         const latestRunId = runIdOf(latest);
         const latestDetail = truncate(runDetailOf(latest));
+        const routineModel = detectRoutineModel(r);
         return `
       <div class="tcp-list-item flex items-center justify-between gap-3">
         <div>
           <div class="font-medium">${escapeHtml(r.name || rid || "Unnamed routine")}</div>
           <div class="tcp-subtle font-mono">${escapeHtml(formatSchedule(r.schedule))}</div>
+          <div class="mt-1 text-xs text-slate-400 font-mono">${escapeHtml(routineModel || "default engine route")}</div>
           ${
             latest
               ? `<div class="mt-1 flex flex-wrap items-center gap-2 text-xs">
@@ -460,6 +532,9 @@ export async function renderAgents(ctx) {
   const useFileEl = byId("routine-use-file");
   const promptEl = byId("routine-prompt");
   const pathEl = byId("routine-file-path");
+  const modelProviderEl = byId("routine-model-provider");
+  const modelIdEl = byId("routine-model-id");
+  const modelPreviewEl = byId("routine-model-preview");
 
   const normalizeFilePath = () => {
     const fallback = `control-panel/routines/${slugify(nameEl.value || "new-routine")}.md`;
@@ -468,6 +543,33 @@ export async function renderAgents(ctx) {
     const prefixed =
       next === "control-panel" || next.startsWith("control-panel/") ? next : `control-panel/${next}`;
     pathEl.value = prefixed.endsWith(".md") ? prefixed : `${prefixed}.md`;
+  };
+
+  const preferredModelForProvider = (providerId) => {
+    const models = modelIdsForProvider(providerId);
+    if (!models.length) return "";
+    const configured = String(providerDefaults[providerId] || "").trim();
+    if (configured && models.includes(configured)) return configured;
+    return models[0];
+  };
+
+  const renderModelPicker = () => {
+    const providerId = String(modelProviderEl?.value || "").trim();
+    const models = modelIdsForProvider(providerId);
+    if (!modelIdEl) return;
+    modelIdEl.innerHTML =
+      models.map((modelId) => `<option value="${escapeHtml(modelId)}">${escapeHtml(modelId)}</option>`).join("") ||
+      '<option value="">No models found</option>';
+    if (!models.length) {
+      modelIdEl.disabled = true;
+      if (modelPreviewEl) modelPreviewEl.textContent = "default engine route";
+      return;
+    }
+    modelIdEl.disabled = false;
+    const preferred = preferredModelForProvider(providerId);
+    if (preferred) modelIdEl.value = preferred;
+    const modelId = String(modelIdEl.value || "").trim();
+    if (modelPreviewEl) modelPreviewEl.textContent = providerId && modelId ? `${providerId}/${modelId}` : "default engine route";
   };
 
   const buildSchedule = () => {
@@ -589,8 +691,17 @@ export async function renderAgents(ctx) {
   weekdayEl.addEventListener("change", renderScheduleInputs);
   weeklyTimeEl.addEventListener("input", renderScheduleInputs);
   cronEl.addEventListener("input", renderScheduleInputs);
+  modelProviderEl?.addEventListener("change", () => {
+    renderModelPicker();
+  });
+  modelIdEl?.addEventListener("change", () => {
+    const providerId = String(modelProviderEl?.value || "").trim();
+    const modelId = String(modelIdEl?.value || "").trim();
+    if (modelPreviewEl) modelPreviewEl.textContent = providerId && modelId ? `${providerId}/${modelId}` : "default engine route";
+  });
   renderScheduleInputs();
   normalizeFilePath();
+  renderModelPicker();
 
   byId("create-routine").addEventListener("click", async () => {
     try {
@@ -608,11 +719,23 @@ export async function renderAgents(ctx) {
           "Read the file first, then execute its instructions exactly.",
         ].join("\n");
       }
+      const args = {};
+      if (promptFilePath) args.promptFilePath = promptFilePath;
+      const selectedProviderId = String(modelProviderEl?.value || "").trim();
+      const selectedModelId = String(modelIdEl?.value || "").trim();
+      if (selectedProviderId && selectedModelId) {
+        args.model_policy = {
+          default_model: {
+            provider_id: selectedProviderId,
+            model_id: selectedModelId,
+          },
+        };
+      }
       const created = await state.client.routines.create({
         name,
         entrypoint,
         schedule,
-        args: promptFilePath ? { promptFilePath } : {},
+        args,
       });
       if (manualOnly) {
         const routineId = routineKey(created?.routine || created || {});
