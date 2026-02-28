@@ -28,6 +28,9 @@
     - `memory.context.injected` (count + token-size estimate)
 - **SDK parity for memory APIs**:
   - TypeScript and Python client memory surfaces now tolerate durable-memory response variants and support explicit demotion calls.
+- **Contract/OpenAPI parity for global memory**:
+  - Synced `contracts/http.md` and `contracts/events.json` with the new global-memory API/event shapes.
+  - Updated server OpenAPI route summaries for `/memory/demote`, `/memory`, and `/memory/{id}`.
 
 ---
 
