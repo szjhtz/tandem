@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Memory demotion API surface**: Added `POST /memory/demote` to move memories back to private/demoted state without hard delete.
 - **SDK memory API parity updates (TS + Python)**: Updated both client SDKs for new memory payload shapes (`content`/`source_type`/`run_id`, promote/put response variants) and added explicit memory demote client methods.
 - **Protocol contract alignment for global memory**: Updated HTTP/event contracts and OpenAPI summaries to include `/memory/demote`, global-memory route semantics, and memory lifecycle/search/injection SSE events.
+- **Guide and SDK documentation refresh for global memory**: Updated root README (EN/zh-CN), SDK READMEs, and guide pages (`sdk/*`, headless endpoints, tools reference, engine command examples) to reflect always-on global memory semantics and demote support.
 
 ### Changed
 

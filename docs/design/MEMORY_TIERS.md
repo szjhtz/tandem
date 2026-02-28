@@ -1,62 +1,58 @@
-# Memory Tiers and Governance
+# Global Memory Model and Governance
 
 ## Summary
 
-Cross-session learning is enabled by scoped tiers and explicit promotion, not global unrestricted recall.
+Memory is an always-on global runtime primitive. Records are primarily partitioned by `user_id` and can be tagged with optional metadata (`project_tag`, `channel_tag`, `host_tag`) for relevance filtering.
 
-## Tiers
+## Visibility Model
 
-- `session`: default write scope, ephemeral, no leakage by default.
-- `project`: persistent per repo/workspace, default read companion to session.
-- `team`: shared LAN/team memory, opt-in and capability-gated.
-- `curated`: reviewed golden patterns safe for controlled auto-use.
+- `private`: default visibility for newly captured memory.
+- `shared`: promoted memory intended for broader reuse.
+- `demoted`: represented by `visibility=private` with `demoted=true`; excluded from normal recall until re-promoted.
 
-## Hard Partitioning
+## Partitioning and Isolation
 
-All operations are partitioned by:
-`{org_id}/{workspace_id}/{project_id}/{tier}`
+Global memory is isolated by user identity first, then narrowed by optional tags:
 
-This prevents cross-project/team leakage unless capability claims explicitly permit it.
+- Required partition key: `user_id`
+- Optional tags: `project_tag`, `channel_tag`, `host_tag`
+- Run provenance: `run_id`, `session_id`, `source_type`, `tool_name`
 
-## Capability Model
+This keeps cross-project learning possible for the same user while preventing cross-user leakage.
 
-Per run token fields:
+## Always-On Pipeline
 
-- readable tiers
-- writable tiers
-- promotable target tiers
-- review requirement for promotion
-- auto-use allowed tiers
+Write path (automatic by default):
 
-Fail-safe defaults:
+1. Capture candidates from run/event stream (`user`, `assistant`, `tool`, `approval`, `auth`, `todo/question`).
+2. Scrub/redact secrets and sensitive payloads.
+3. Deduplicate and persist to `memory.sqlite` (`memory_records` + FTS index).
+4. Emit observability events:
+   - `memory.write.attempted`
+   - `memory.write.succeeded`
+   - `memory.write.skipped`
 
-- read: `session`, `project`
-- write: `session`
-- promote: none
-- auto-use: `curated` only
+Read path (automatic by default):
 
-## Promotion Pipeline
-
-1. Write raw context to `session`.
-2. On done/review/test gate, build sanitized solution capsule.
-3. Run scrubber (secrets/PII/sensitive markers).
-4. Require reviewer/policy approval for promotion.
-5. Promote to `project`, `team`, or `curated` with audit receipt.
+1. Before provider iterations, query global memory using active prompt context.
+2. Score + filter by relevance/recency/visibility and tag fit.
+3. Inject bounded memory context into prompt assembly.
+4. Emit observability events:
+   - `memory.search.performed`
+   - `memory.context.injected`
 
 ## API Contracts
 
 - `POST /memory/put`
-- `POST /memory/promote`
 - `POST /memory/search`
+- `GET /memory` (supports `user_id`, `q`, `limit`, `offset`)
+- `POST /memory/promote`
+- `POST /memory/demote`
+- `DELETE /memory/{id}`
 - `GET /memory/audit`
 
-Reference Rust contract types:
-`tandem/crates/tandem-memory/src/governance.rs`
+## Safety Controls
 
-## Trust Center UI Cues
-
-- Active memory scopes.
-- Capability badges (read/write/promote).
-- Risk badge when team recall is enabled.
-- Promotion panel with scrub report and reviewer identity.
-- Audit link for every promoted capsule.
+- Secrets/tokens/credentials are redacted or blocked before persistence.
+- Memory promotion is auditable and can be reverted with demotion.
+- Retrieval uses score thresholds and budget limits to reduce prompt poisoning by irrelevant memory.

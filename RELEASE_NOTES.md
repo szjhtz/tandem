@@ -28,6 +28,7 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
   - Existing `/memory/put`, `/memory/search`, `/memory/list`, `/memory/promote`, `/memory/{id}` now operate on durable global records.
   - Updated TypeScript/Python SDK memory clients for response-shape compatibility and added memory demote client helpers.
   - Synced API/Event contracts (`contracts/http.md`, `contracts/events.json`) and OpenAPI route summaries with the global-memory endpoint/event surface.
+  - Refreshed user-facing docs and guides (README EN/zh-CN, SDK READMEs, guide SDK/headless/tools/engine command pages) for global-memory defaults and demotion workflow.
 
 - MCP auth/retry behavior and loop hardening
   - Improved MCP auth challenge extraction to prefer structured payload fields (`structuredContent.message`, `structuredContent.authorization_url`) over noisy nested text blobs.

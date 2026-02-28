@@ -31,6 +31,8 @@
 - **Contract/OpenAPI parity for global memory**:
   - Synced `contracts/http.md` and `contracts/events.json` with the new global-memory API/event shapes.
   - Updated server OpenAPI route summaries for `/memory/demote`, `/memory`, and `/memory/{id}`.
+- **Docs parity for global memory UX/API**:
+  - Updated root README (EN/zh-CN), SDK READMEs, and guide pages for SDK memory usage, headless endpoints, and tools/CLI examples to match global always-on memory behavior.
 
 ---
 

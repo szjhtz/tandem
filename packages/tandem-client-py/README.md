@@ -61,39 +61,40 @@ client.close()
 
 Use as an async context manager or call `await client.aclose()` manually.
 
-| Method | Description |
-|--------|-------------|
-| `await client.health()` | Check engine readiness |
+| Method                               | Description                      |
+| ------------------------------------ | -------------------------------- |
+| `await client.health()`              | Check engine readiness           |
 | `client.stream(session_id, run_id?)` | Async generator of `EngineEvent` |
-| `client.global_stream()` | Stream all engine events |
-| `await client.list_tool_ids()` | List all registered tool IDs |
+| `client.global_stream()`             | Stream all engine events         |
+| `await client.list_tool_ids()`       | List all registered tool IDs     |
 
 ---
 
 ### `client.sessions`
 
-| Method | Description |
-|--------|-------------|
-| `create(title?, directory?, provider?, model?)` | Create session, returns `session_id` |
-| `list(q?, page?, page_size?, archived?, scope?, workspace?)` | List sessions |
-| `get(session_id)` | Get session details |
-| `delete(session_id)` | Delete a session |
-| `messages(session_id)` | Get message history |
-| `active_run(session_id)` | Get active run state |
-| `prompt_async(session_id, prompt)` | Start async run, returns `PromptAsyncResult(run_id)` |
+| Method                                                       | Description                                          |
+| ------------------------------------------------------------ | ---------------------------------------------------- |
+| `create(title?, directory?, provider?, model?)`              | Create session, returns `session_id`                 |
+| `list(q?, page?, page_size?, archived?, scope?, workspace?)` | List sessions                                        |
+| `get(session_id)`                                            | Get session details                                  |
+| `delete(session_id)`                                         | Delete a session                                     |
+| `messages(session_id)`                                       | Get message history                                  |
+| `active_run(session_id)`                                     | Get active run state                                 |
+| `prompt_async(session_id, prompt)`                           | Start async run, returns `PromptAsyncResult(run_id)` |
 
 ### `client.routines`
 
-| Method | Description |
-|--------|-------------|
-| `list(family?)` | List routines or automations |
-| `create(options, family?)` | Create a scheduled routine |
-| `delete(routine_id, family?)` | Delete a routine |
-| `run_now(routine_id, family?)` | Trigger a routine immediately |
-| `list_runs(family?, limit?)` | List recent run records |
-| `list_artifacts(run_id, family?)` | List run artifacts |
+| Method                            | Description                   |
+| --------------------------------- | ----------------------------- |
+| `list(family?)`                   | List routines or automations  |
+| `create(options, family?)`        | Create a scheduled routine    |
+| `delete(routine_id, family?)`     | Delete a routine              |
+| `run_now(routine_id, family?)`    | Trigger a routine immediately |
+| `list_runs(family?, limit?)`      | List recent run records       |
+| `list_artifacts(run_id, family?)` | List run artifacts            |
 
 **Create a cron routine:**
+
 ```python
 await client.routines.create({
     "name": "Daily digest",
@@ -111,15 +112,15 @@ await client.mcp.connect("arcade")
 tools = await client.mcp.list_tools()
 ```
 
-| Method | Description |
-|--------|-------------|
-| `list()` | List registered MCP servers |
-| `list_tools()` | List discovered tools |
-| `add(name, transport, *, headers?, enabled?)` | Register an MCP server |
-| `connect(name)` | Connect and discover tools |
-| `disconnect(name)` | Disconnect |
-| `refresh(name)` | Re-discover tools |
-| `set_enabled(name, enabled)` | Enable/disable |
+| Method                                        | Description                 |
+| --------------------------------------------- | --------------------------- |
+| `list()`                                      | List registered MCP servers |
+| `list_tools()`                                | List discovered tools       |
+| `add(name, transport, *, headers?, enabled?)` | Register an MCP server      |
+| `connect(name)`                               | Connect and discover tools  |
+| `disconnect(name)`                            | Disconnect                  |
+| `refresh(name)`                               | Re-discover tools           |
+| `set_enabled(name, enabled)`                  | Enable/disable              |
 
 ### `client.channels`
 
@@ -137,6 +138,27 @@ for req in snapshot.requests:
     await client.permissions.reply(req.id, "allow")
 ```
 
+### `client.memory`
+
+```python
+# Put (SDK accepts `text`; server persists global `content`)
+await client.memory.put(
+    "Use WAL mode for sqlite in long-lived services.",
+    run_id="run-123",
+)
+
+# Search
+result = await client.memory.search("sqlite wal", limit=5)
+
+# List by user scope
+listing = await client.memory.list(user_id="user-123", q="sqlite")
+
+# Promote / demote / delete
+await client.memory.promote(listing.items[0].id)
+await client.memory.demote(listing.items[0].id, run_id="run-123")
+await client.memory.delete(listing.items[0].id)
+```
+
 ### `client.providers`
 
 ```python
@@ -149,14 +171,17 @@ await client.providers.set_api_key("openrouter", "sk-or-...")
 
 ## Common event types
 
-| `event.type` | Description |
-|-------------|-------------|
-| `session.response` | Text delta in `event.properties["delta"]` |
-| `session.tool_call` | Tool invocation |
-| `session.tool_result` | Tool result |
-| `run.complete` | Run finished successfully |
-| `run.failed` | Run failed |
-| `permission.request` | Approval needed |
+| `event.type`              | Description                               |
+| ------------------------- | ----------------------------------------- |
+| `session.response`        | Text delta in `event.properties["delta"]` |
+| `session.tool_call`       | Tool invocation                           |
+| `session.tool_result`     | Tool result                               |
+| `run.complete`            | Run finished successfully                 |
+| `run.failed`              | Run failed                                |
+| `permission.request`      | Approval needed                           |
+| `memory.write.succeeded`  | Memory write persisted                    |
+| `memory.search.performed` | Memory retrieval telemetry                |
+| `memory.context.injected` | Prompt context injection telemetry        |
 
 ## License
 

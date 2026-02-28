@@ -137,6 +137,27 @@ const tools = await client.mcp.listTools();
 | `list()`                  | List pending requests and rules   |
 | `reply(requestId, reply)` | Approve/deny a permission request |
 
+### `client.memory`
+
+```typescript
+// Put (global record; SDK accepts `text`, server persists `content`)
+await client.memory.put({
+  text: "Use WAL mode for sqlite in long-lived services.",
+  run_id: "run-123",
+});
+
+// Search
+const found = await client.memory.search({ query: "sqlite wal", limit: 5 });
+
+// List by user scope
+const listing = await client.memory.list({ userId: "user-123", q: "sqlite" });
+
+// Promote / demote / delete
+await client.memory.promote({ id: listing.items[0].id! });
+await client.memory.demote({ id: listing.items[0].id!, runId: "run-123" });
+await client.memory.delete(listing.items[0].id!);
+```
+
 ### `client.providers`
 
 | Method                             | Description                        |
@@ -152,14 +173,17 @@ const tools = await client.mcp.listTools();
 
 Common `event.type` values:
 
-| Type                  | Description                                        |
-| --------------------- | -------------------------------------------------- |
-| `session.response`    | Streaming text delta in `event.properties.delta`   |
-| `session.tool_call`   | Tool invocation in `event.properties`              |
-| `session.tool_result` | Tool result                                        |
-| `run.complete`        | Run finished successfully                          |
-| `run.failed`          | Run failed                                         |
-| `permission.request`  | Approval needed — use `client.permissions.reply()` |
+| Type                      | Description                                        |
+| ------------------------- | -------------------------------------------------- |
+| `session.response`        | Streaming text delta in `event.properties.delta`   |
+| `session.tool_call`       | Tool invocation in `event.properties`              |
+| `session.tool_result`     | Tool result                                        |
+| `run.complete`            | Run finished successfully                          |
+| `run.failed`              | Run failed                                         |
+| `permission.request`      | Approval needed — use `client.permissions.reply()` |
+| `memory.write.succeeded`  | Memory write persisted                             |
+| `memory.search.performed` | Memory retrieval telemetry                         |
+| `memory.context.injected` | Prompt context injection telemetry                 |
 
 ## License
 

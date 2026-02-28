@@ -22,12 +22,12 @@ The Tandem Engine tool registry currently exposes the following tools.
 - **`websearch`**: Search the web (powered by Exa.ai).
   - Input: `query` (string), `limit` (integer)
 - **`codesearch`**: Semantic code search (if configured).
-- **`memory_list`**: List persisted memory entries for a scope/tier.
-  - Input: optional scope + filter arguments (e.g., `session_id`, `project_id`, `tier`, `limit`)
-- **`memory_search`**: Search persisted memory by query and scope.
-  - Input: `query` plus one or more scopes (e.g., session/workspace).
-- **`memory_store`**: Persist memory content for session/project/global retrieval.
-  - Input: `content` plus scope/tier arguments (e.g., `session_id`, `project_id`, `tier`)
+- **`memory_list`**: List persisted global memory entries.
+  - Input: optional filters (e.g., `user_id`, `q`, `limit`, `offset`)
+- **`memory_search`**: Search persisted global memory by query.
+  - Input: `query` with optional filters (e.g., `user_id`, tags, limit).
+- **`memory_store`**: Persist memory content into global memory.
+  - Input: `content` (or `text`) plus optional metadata (e.g., `run_id`, `source_type`, tags).
 
 ## Web
 

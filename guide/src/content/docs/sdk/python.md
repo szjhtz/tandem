@@ -166,20 +166,21 @@ await client.mcp.set_enabled("arcade", False)
 ### `client.memory`
 
 ```python
-# Store
+# Store (global record; SDK `text` maps to server `content`)
 await client.memory.put(
     "The team uses Rust for all backend services.",
-    tags=["team", "architecture"],
+    run_id="run-abc",
 )
 
 # Search
 result = await client.memory.search("backend technology choices", limit=5)
 for item in result.results:
-    print(item.text, item.score)
+    print(getattr(item, "content", None) or item.text, item.score)
 
-# List, promote, delete
-listing = await client.memory.list(q="architecture")
+# List, promote, demote, delete
+listing = await client.memory.list(q="architecture", user_id="user-123")
 await client.memory.promote(listing.items[0].id)
+await client.memory.demote(listing.items[0].id, run_id="run-abc")
 await client.memory.delete(listing.items[0].id)
 
 # Audit

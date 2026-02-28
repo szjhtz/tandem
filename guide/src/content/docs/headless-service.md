@@ -50,7 +50,11 @@ tandem-engine serve --hostname 127.0.0.1 --port 39731
 - `PUT /channels/{name}`
 - `DELETE /channels/{name}`
 - `POST /admin/reload-config`
+- `POST /memory/put`
+- `POST /memory/search`
 - `GET /memory`
+- `POST /memory/promote`
+- `POST /memory/demote`
 - `DELETE /memory/{id}`
 
 ## Example: Check Health

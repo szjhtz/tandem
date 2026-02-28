@@ -151,10 +151,10 @@ await client.mcp.setEnabled("arcade", false);
 ### `client.memory`
 
 ```typescript
-// Store
+// Store (global record; SDK `text` maps to server `content`)
 await client.memory.put({
   text: "The team uses Rust for all backend services.",
-  tags: ["team", "architecture"],
+  run_id: "run-abc",
 });
 
 // Search
@@ -163,9 +163,10 @@ const { results } = await client.memory.search({
   limit: 5,
 });
 
-// List, promote, delete
-const { items } = await client.memory.list({ q: "architecture" });
+// List, promote, demote, delete
+const { items } = await client.memory.list({ q: "architecture", userId: "user-123" });
 await client.memory.promote({ id: items[0].id! });
+await client.memory.demote({ id: items[0].id!, runId: "run-abc" });
 await client.memory.delete(items[0].id!);
 
 // Audit

@@ -1,5 +1,14 @@
 # Memory Context Implementation Plan for Tandem
 
+> **Historical Design Note (superseded):** This document is a legacy implementation plan.
+> Current behavior for `v0.3.25+` is global always-on memory with durable SQLite + FTS5 persistence, automatic ingestion/retrieval, and new memory observability events.
+> For current contracts and release behavior, use:
+>
+> - `contracts/http.md`
+> - `contracts/events.json`
+> - `docs/design/MEMORY_TIERS.md`
+> - `docs/RELEASE_NOTES.md`
+
 ## Executive Summary
 
 This document outlines a comprehensive plan for adding **Semantic Memory** to Tandem.
@@ -11,14 +20,14 @@ The solution involves extracting memory logic into a shared crate (`crates/tande
 
 ### Already Implemented (`src-tauri/src/memory/`)
 
-| Component | File | Status |
-|-----------|------|--------|
-| Database Layer | `db.rs` | ✅ Complete - SQLite + sqlite-vec |
+| Component         | File            | Status                                           |
+| ----------------- | --------------- | ------------------------------------------------ |
+| Database Layer    | `db.rs`         | ✅ Complete - SQLite + sqlite-vec                |
 | Embedding Service | `embeddings.rs` | ⚠️ Placeholder (deterministic pseudo-embeddings) |
-| Memory Manager | `manager.rs` | ✅ Complete - store, retrieve, cleanup |
-| Text Chunking | `chunking.rs` | ✅ Complete - semantic chunking with overlap |
-| File Indexer | `indexer.rs` | ✅ Complete - workspace file indexing |
-| Type Definitions | `types.rs` | ✅ Complete - MemoryTier, MemoryChunk, etc. |
+| Memory Manager    | `manager.rs`    | ✅ Complete - store, retrieve, cleanup           |
+| Text Chunking     | `chunking.rs`   | ✅ Complete - semantic chunking with overlap     |
+| File Indexer      | `indexer.rs`    | ✅ Complete - workspace file indexing            |
+| Type Definitions  | `types.rs`      | ✅ Complete - MemoryTier, MemoryChunk, etc.      |
 
 ### Current Schema (Already in Production)
 
@@ -94,6 +103,7 @@ CREATE TABLE project_index_status (...);
 We will move the memory logic out of `src-tauri` into a dedicated workspace crate.
 
 **Rationale:**
+
 - TUI (`tandem-tui`) currently has no access to memory features
 - `tandem-core` cannot use memory for context injection
 - Code duplication risk between GUI and CLI interfaces
@@ -167,18 +177,18 @@ impl EmbeddingService {
             model_name: EmbeddingModel::AllMiniLML6V2,
             ..Default::default()
         })?;
-        
+
         Ok(Self {
             model,
             dimension: 384,
         })
     }
-    
+
     pub async fn embed(&self, text: &str) -> MemoryResult<Vec<f32>> {
         let embeddings = self.model.embed(vec![text.to_string()], None)?;
         Ok(embeddings.into_iter().next().unwrap_or_default())
     }
-    
+
     pub async fn embed_batch(&self, texts: &[String]) -> MemoryResult<Vec<Vec<f32>>> {
         let embeddings = self.model.embed(texts.to_vec(), None)?;
         Ok(embeddings)
@@ -194,10 +204,10 @@ impl EmbeddingService {
 
 #### Download Mechanism Breakdown
 
-| Component | When | Where | Size |
-|-----------|------|-------|------|
-| **ONNX Runtime binaries** | Compile time (via `ort-download-binaries` feature) | Embedded in binary | ~15-30MB |
-| **Embedding model weights** | Runtime (first `TextEmbedding::try_new()` call) | HuggingFace Hub cache | ~30MB |
+| Component                   | When                                               | Where                 | Size     |
+| --------------------------- | -------------------------------------------------- | --------------------- | -------- |
+| **ONNX Runtime binaries**   | Compile time (via `ort-download-binaries` feature) | Embedded in binary    | ~15-30MB |
+| **Embedding model weights** | Runtime (first `TextEmbedding::try_new()` call)    | HuggingFace Hub cache | ~30MB    |
 
 #### How fastembed Works
 
@@ -219,11 +229,11 @@ impl EmbeddingService {
 
 #### Model Download UX Options
 
-| Option | Pros | Cons | Recommendation |
-|--------|------|------|----------------|
-| **Download on first use** | Smaller binary, always latest model | Requires internet on first run, ~30s delay | Default |
-| **Bundle model in binary** | Works offline, instant startup | +30MB binary size, model can become stale | Optional for air-gapped envs |
-| **Download on install** | No delay on first use | Complex install script | Not recommended |
+| Option                     | Pros                                | Cons                                       | Recommendation               |
+| -------------------------- | ----------------------------------- | ------------------------------------------ | ---------------------------- |
+| **Download on first use**  | Smaller binary, always latest model | Requires internet on first run, ~30s delay | Default                      |
+| **Bundle model in binary** | Works offline, instant startup      | +30MB binary size, model can become stale  | Optional for air-gapped envs |
+| **Download on install**    | No delay on first use               | Complex install script                     | Not recommended              |
 
 #### Recommended Implementation
 
@@ -242,7 +252,7 @@ pub fn new() -> MemoryResult<Self> {
             return Ok(Self::fallback_deterministic());
         }
     };
-    
+
     Ok(Self {
         model,
         dimension: 384,
@@ -257,7 +267,7 @@ pub fn new_with_progress<F: Fn(f32)>(on_progress: F) -> MemoryResult<Self> {
         on_progress(1.0);
         return Self::new();
     }
-    
+
     // Otherwise, spawn a background task and poll
     // (Implementation depends on fastembed API support)
 }
@@ -268,6 +278,7 @@ pub fn new_with_progress<F: Fn(f32)>(on_progress: F) -> MemoryResult<Self> {
 For users without internet access or who want to bundle the model:
 
 1. **Pre-download the model:**
+
    ```bash
    # Run once on a machine with internet
    cargo run -p tandem-memory --example download-model
@@ -282,6 +293,7 @@ For users without internet access or who want to bundle the model:
    ```
 
 **Considerations:**
+
 - Model download: ~30MB on first use (requires internet)
 - CPU inference: ~10-50ms per chunk
 - Memory overhead: ~100MB for model
@@ -298,6 +310,7 @@ Inspired by Agent Zero's `_50_recall_memories.py`, we need a **Proactive Recall*
 **Current State:** Memory retrieval exists but is not automatically injected into prompts.
 
 **Target Workflow:**
+
 1. **User sends message:** "Fix the bug in that file we talked about."
 2. **Engine Intercept:**
    - Generate a search query (via cheap LLM call or heuristics).
@@ -329,16 +342,17 @@ pub async fn run_prompt_async_with_context(
         let context = memory.retrieve_context(&query, &session_id).await?;
         req = inject_memory_context(req, context);
     }
-    
+
     // ... existing prompt logic
 }
 ```
 
 ### Feature 2: Explicit Memory Tool
 
-The agent should also have the ability to *intentionally* search memory if the automatic injection wasn't enough.
+The agent should also have the ability to _intentionally_ search memory if the automatic injection wasn't enough.
 
 **Tool Definition (`tandem-tools`):**
+
 ```rust
 // Add to ToolRegistry in tandem-tools/src/lib.rs
 map.insert("memory_search".to_string(), Arc::new(MemorySearchTool));
@@ -369,7 +383,7 @@ impl Tool for MemorySearchTool {
             }),
         }
     }
-    
+
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
         // Requires memory store to be accessible
         // This is a gap - tools don't currently have access to memory
@@ -378,6 +392,7 @@ impl Tool for MemorySearchTool {
 ```
 
 **Gap Identified:** Tools in `tandem-tools` don't have access to the memory store. Need to either:
+
 1. Pass memory store reference to tools
 2. Create a separate memory tool in `tandem-core`
 3. Use a trait-based dependency injection
@@ -389,12 +404,14 @@ To prevent context window overflow, we periodically compress the session history
 **Current State:** Not implemented.
 
 **Target Logic:**
+
 - Every 10 turns, the engine takes the oldest messages.
 - Calls an LLM to "Summarize the key decisions and facts from this conversation segment."
 - Stores the summary in `session_summaries` and embeds it into `chunks`.
 - Drops the raw messages from the prompt tokens.
 
 **New Table Required:**
+
 ```sql
 CREATE TABLE session_summaries (
     session_id TEXT NOT NULL,
@@ -467,39 +484,39 @@ CREATE TABLE session_summaries (
 
 ### Critical Gaps
 
-| Gap | Description | Priority |
-|-----|-------------|----------|
-| **Pseudo-embeddings** | Current implementation uses hash-based embeddings with no semantic meaning | P0 |
-| **No TUI memory access** | TUI cannot use memory features at all | P0 |
-| **No context injection** | Memory is stored but not automatically retrieved for prompts | P1 |
-| **No memory tool** | Agent cannot explicitly search memory | P1 |
-| **No session summarization** | Context window can overflow on long sessions | P2 |
+| Gap                          | Description                                                                | Priority |
+| ---------------------------- | -------------------------------------------------------------------------- | -------- |
+| **Pseudo-embeddings**        | Current implementation uses hash-based embeddings with no semantic meaning | P0       |
+| **No TUI memory access**     | TUI cannot use memory features at all                                      | P0       |
+| **No context injection**     | Memory is stored but not automatically retrieved for prompts               | P1       |
+| **No memory tool**           | Agent cannot explicitly search memory                                      | P1       |
+| **No session summarization** | Context window can overflow on long sessions                               | P2       |
 
 ### Schema Improvements
 
-| Improvement | Description |
-|-------------|-------------|
-| Add `role` column | Track message role (user/assistant/system/tool) for better context |
-| Add `session_summaries` table | Store compressed conversation segments |
-| Add `embedding_model` column | Track which model generated embeddings (for migration) |
+| Improvement                   | Description                                                        |
+| ----------------------------- | ------------------------------------------------------------------ |
+| Add `role` column             | Track message role (user/assistant/system/tool) for better context |
+| Add `session_summaries` table | Store compressed conversation segments                             |
+| Add `embedding_model` column  | Track which model generated embeddings (for migration)             |
 
 ### API Improvements
 
-| Improvement | Description |
-|-------------|-------------|
-| `MemoryStore` trait | Abstract interface for different memory backends |
-| Async-first API | All operations should be async for TUI compatibility |
-| Batch operations | Optimize for bulk insert/retrieve |
-| Streaming retrieval | Return results as they're found |
+| Improvement         | Description                                          |
+| ------------------- | ---------------------------------------------------- |
+| `MemoryStore` trait | Abstract interface for different memory backends     |
+| Async-first API     | All operations should be async for TUI compatibility |
+| Batch operations    | Optimize for bulk insert/retrieve                    |
+| Streaming retrieval | Return results as they're found                      |
 
 ### Configuration Improvements
 
-| Setting | Description | Default |
-|---------|-------------|---------|
-| `embedding_model` | Which model to use for embeddings | `all-MiniLM-L6-v2` |
-| `auto_inject` | Whether to automatically inject context | `true` |
-| `injection_token_budget` | Max tokens for injected context | `2000` |
-| `summarization_threshold` | Turns before summarization | `10` |
+| Setting                   | Description                             | Default            |
+| ------------------------- | --------------------------------------- | ------------------ |
+| `embedding_model`         | Which model to use for embeddings       | `all-MiniLM-L6-v2` |
+| `auto_inject`             | Whether to automatically inject context | `true`             |
+| `injection_token_budget`  | Max tokens for injected context         | `2000`             |
+| `summarization_threshold` | Turns before summarization              | `10`               |
 
 ---
 
@@ -531,21 +548,21 @@ CREATE TABLE session_summaries (
 
 ### New Dependencies
 
-| Crate | Version | Purpose |
-|-------|---------|---------|
-| `fastembed` | 4.x | ONNX-based embedding inference |
-| `tokenizers` | 0.19.x | HuggingFace tokenizers for chunking |
+| Crate        | Version | Purpose                             |
+| ------------ | ------- | ----------------------------------- |
+| `fastembed`  | 4.x     | ONNX-based embedding inference      |
+| `tokenizers` | 0.19.x  | HuggingFace tokenizers for chunking |
 
 ### Existing Dependencies (to preserve)
 
-| Crate | Purpose |
-|-------|---------|
-| `rusqlite` | SQLite database |
+| Crate        | Purpose                  |
+| ------------ | ------------------------ |
+| `rusqlite`   | SQLite database          |
 | `sqlite-vec` | Vector similarity search |
-| `tokio` | Async runtime |
-| `serde` | Serialization |
-| `chrono` | Timestamps |
-| `uuid` | ID generation |
+| `tokio`      | Async runtime            |
+| `serde`      | Serialization            |
+| `chrono`     | Timestamps               |
+| `uuid`       | ID generation            |
 
 ---
 
@@ -566,6 +583,7 @@ pub async fn embed(&self, text: &str) -> MemoryResult<Vec<f32>> {
 ```
 
 **Key points:**
+
 - No model is downloaded or loaded
 - Uses hash-based deterministic vectors (same text = same vector)
 - Provides NO semantic search capability
@@ -578,11 +596,13 @@ When we implement real embeddings via `fastembed`, the model download happens as
 #### 1. ONNX Runtime Binaries (Compile-time)
 
 The `Cargo.toml` includes:
+
 ```toml
 fastembed = { version = "4", default-features = false, features = ["ort-download-binaries"] }
 ```
 
 The `ort-download-binaries` feature downloads **ONNX Runtime native libraries** at **compile time**:
+
 - These are platform-specific shared libraries (.dll/.so/.dylib)
 - Downloaded during `cargo build` via build.rs
 - Bundled into the final binary/app
@@ -600,6 +620,7 @@ let model = TextEmbedding::try_new(InitOptions {
 ```
 
 **Download behavior:**
+
 - **When:** First call to `EmbeddingService::new()` or first embedding generation
 - **Where:** Model is cached in user's local cache directory:
   - Windows: `C:\Users\<user>\.cache\huggingface\hub\models--BAAI--bge-small-en-v1.5\`
@@ -611,14 +632,15 @@ let model = TextEmbedding::try_new(InitOptions {
 
 #### 3. UX Considerations
 
-| Scenario | Behavior |
-|----------|----------|
+| Scenario                   | Behavior                                                |
+| -------------------------- | ------------------------------------------------------- |
 | First launch with internet | Model downloads automatically (30-50MB, ~10-30 seconds) |
-| First launch offline | Error: model not found, fallback to pseudo-embeddings |
-| Subsequent launches | Instant startup (uses cached model) |
-| App update | No re-download (model cached separately) |
+| First launch offline       | Error: model not found, fallback to pseudo-embeddings   |
+| Subsequent launches        | Instant startup (uses cached model)                     |
+| App update                 | No re-download (model cached separately)                |
 
 **Recommended UX:**
+
 1. Show a "Downloading embedding model..." progress indicator on first use
 2. Allow offline fallback to pseudo-embeddings with a warning
 3. Add a "Pre-download embedding model" option in Settings for offline prep
@@ -636,10 +658,12 @@ fastembed = { version = "4", default-features = false, features = ["ort-download
 ```
 
 **Pros:**
+
 - Works offline from first launch
 - No network dependency
 
 **Cons:**
+
 - Increases app size by ~30-50MB
 - Model updates require app updates
 
@@ -653,22 +677,23 @@ To support non-English languages and different performance profiles, the embeddi
 
 #### Supported Models (via fastembed)
 
-| Model | Language | Size | Dimensions | Notes |
-|-------|----------|------|------------|-------|
-| `BGE-Small-EN-v1.5` | **English** | 34MB | 384 | **Recommended Default.** Good balance of speed/accuracy. |
-| `BGE-Small-ZH-v1.5` | Chinese | 34MB | 512 | Optimized for Chinese. |
-| `Multilingual-E5-Small` | **90+ Langs** | 120MB | 384 | Heavier, but supports Spanish, French, German, etc. |
-| `All-MiniLM-L6-v2` | English | 23MB | 384 | Fastest, slightly less accurate. |
+| Model                   | Language      | Size  | Dimensions | Notes                                                    |
+| ----------------------- | ------------- | ----- | ---------- | -------------------------------------------------------- |
+| `BGE-Small-EN-v1.5`     | **English**   | 34MB  | 384        | **Recommended Default.** Good balance of speed/accuracy. |
+| `BGE-Small-ZH-v1.5`     | Chinese       | 34MB  | 512        | Optimized for Chinese.                                   |
+| `Multilingual-E5-Small` | **90+ Langs** | 120MB | 384        | Heavier, but supports Spanish, French, German, etc.      |
+| `All-MiniLM-L6-v2`      | English       | 23MB  | 384        | Fastest, slightly less accurate.                         |
 
 #### Configuration Design
 
 We will add an `embedding_model` field to the global/project config.
 
 **Config (`config.json`):**
+
 ```json
 {
   "memory": {
-    "embedding_model": "bge-small-en-v1.5" 
+    "embedding_model": "bge-small-en-v1.5"
   }
 }
 ```
@@ -699,11 +724,13 @@ This allows developers to swap the "brain" of the memory system just by changing
 #### BYO Model (Bring Your Own Model)
 
 For true modularity, we will also support loading a custom ONNX model from a local file path. This enables:
+
 - **Air-gapped usage:** Point to a model file on a USB drive.
 - **Custom models:** Use fine-tuned models critical for enterprise domains (medical, legal).
 - **Zero-download:** Skip the fastembed download entirely.
 
 **Config (`config.json`):**
+
 ```json
 {
   "memory": {
@@ -716,7 +743,6 @@ For true modularity, we will also support loading a custom ONNX model from a loc
 
 **Implementation:**
 If `embedding_model` is "custom", the `EmbeddingService` will initialize `fastembed` (or `ort` directly) using the `local_model_path`.
-
 
 5. **Summarization model:** Use the same model as chat or a cheaper/faster model?
 

@@ -222,7 +222,7 @@ tandem-engine parallel --json @tasks.json --concurrency 3
 ```bash
 tandem-engine tool --json '{"tool":"workspace_list_files","args":{"path":"."}}'
 tandem-engine tool --json '{"tool":"websearch","args":{"query":"tandem engine protocol matrix","limit":5}}'
-tandem-engine tool --json '{"tool":"memory_search","args":{"query":"mission runtime","project_id":"tandem","tier":"project","limit":5}}'
+tandem-engine tool --json '{"tool":"memory_search","args":{"query":"mission runtime","user_id":"user-123","limit":5}}'
 ```
 
 `spawn_agent` is runtime-gated and should be called from a session prompt (not `tandem-engine tool` direct mode):

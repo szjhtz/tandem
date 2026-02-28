@@ -11,20 +11,21 @@ Track third-party builder contracts and compatibility obligations for mission/re
 
 ## HTTP Contracts
 
-| Contract                                                                                                                       | Stability | Owner                            | Verification                                                    |
-| ------------------------------------------------------------------------------------------------------------------------------ | --------- | -------------------------------- | --------------------------------------------------------------- |
-| Mission API (`POST /mission`, `GET /mission`, `GET /mission/{id}`, `POST /mission/{id}/event`)                                 | stable    | `tandem-server`                  | Mission API tests in server + desktop/tui client contract tests |
-| Resource API (`GET/PUT/PATCH/DELETE /resource/{*key}`, `GET /resource?prefix=...`)                                             | stable    | `tandem-server`                  | Resource HTTP + event shape tests                               |
-| Memory API (`POST /memory/put`, `POST /memory/promote`, `POST /memory/search`, `GET /memory/audit`)                            | stable    | `tandem-server`, `tandem-memory` | Governance and promotion scrub/audit tests                      |
-| Routine API (`POST/GET /routines`, `PATCH/DELETE /routines/{id}`, `POST /routines/{id}/run_now`, `GET /routines/{id}/history`) | stable    | `tandem-server`                  | Routine scheduler + policy + history tests                      |
+| Contract                                                                                                                                                         | Stability | Owner                            | Verification                                                    |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- | -------------------------------- | --------------------------------------------------------------- |
+| Mission API (`POST /mission`, `GET /mission`, `GET /mission/{id}`, `POST /mission/{id}/event`)                                                                   | stable    | `tandem-server`                  | Mission API tests in server + desktop/tui client contract tests |
+| Resource API (`GET/PUT/PATCH/DELETE /resource/{*key}`, `GET /resource?prefix=...`)                                                                               | stable    | `tandem-server`                  | Resource HTTP + event shape tests                               |
+| Memory API (`POST /memory/put`, `POST /memory/search`, `GET /memory`, `POST /memory/promote`, `POST /memory/demote`, `DELETE /memory/{id}`, `GET /memory/audit`) | stable    | `tandem-server`, `tandem-memory` | Global memory persistence, promote/demote, scrub/audit tests    |
+| Routine API (`POST/GET /routines`, `PATCH/DELETE /routines/{id}`, `POST /routines/{id}/run_now`, `GET /routines/{id}/history`)                                   | stable    | `tandem-server`                  | Routine scheduler + policy + history tests                      |
 
 ## Event Contracts
 
-| Event Family                                                                        | Stability | Owner                                  | Verification                                                                        |
-| ----------------------------------------------------------------------------------- | --------- | -------------------------------------- | ----------------------------------------------------------------------------------- |
-| `resource.updated`, `resource.deleted`                                              | stable    | `tandem-server`                        | Event payload snapshot tests                                                        |
-| Mission lifecycle (`mission.created`, `mission.updated`) emitted via `EngineEvent`  | stable    | `tandem-orchestrator`, `tandem-server` | Mission event contract snapshot tests + Desktop/TUI event payload consumption tests |
-| Routine lifecycle (`routine.fired`, `routine.approval_required`, `routine.blocked`) | stable    | `tandem-server`                        | Routine event contract snapshot tests + Desktop/TUI event payload consumption tests |
+| Event Family                                                                                                                                        | Stability | Owner                                  | Verification                                                                        |
+| --------------------------------------------------------------------------------------------------------------------------------------------------- | --------- | -------------------------------------- | ----------------------------------------------------------------------------------- |
+| `resource.updated`, `resource.deleted`                                                                                                              | stable    | `tandem-server`                        | Event payload snapshot tests                                                        |
+| Mission lifecycle (`mission.created`, `mission.updated`) emitted via `EngineEvent`                                                                  | stable    | `tandem-orchestrator`, `tandem-server` | Mission event contract snapshot tests + Desktop/TUI event payload consumption tests |
+| Routine lifecycle (`routine.fired`, `routine.approval_required`, `routine.blocked`)                                                                 | stable    | `tandem-server`                        | Routine event contract snapshot tests + Desktop/TUI event payload consumption tests |
+| Memory lifecycle (`memory.write.attempted`, `memory.write.succeeded`, `memory.write.skipped`, `memory.search.performed`, `memory.context.injected`) | stable    | `tandem-server`, `tandem-core`         | Memory ingestion/injection telemetry tests and payload snapshots                    |
 
 ## Client Parity Requirement
 

@@ -7,7 +7,7 @@
     <a href="https://github.com/frumu-ai/tandem/actions/workflows/publish-registries.yml"><img src="https://img.shields.io/github/actions/workflow/status/frumu-ai/tandem/publish-registries.yml?branch=main&label=Publish%20Registries&style=for-the-badge" alt="Registry Publish"></a>
     <a href="https://github.com/frumu-ai/tandem/releases"><img src="https://img.shields.io/github/v/release/frumu-ai/tandem?label=release&style=for-the-badge" alt="Latest Release"></a>
     <a href="https://www.npmjs.com/package/@frumu/tandem-client"><img src="https://img.shields.io/npm/v/%40frumu%2Ftandem-client?label=npm%20client&style=for-the-badge" alt="npm client"></a>
-=============oooooo===================================================-    <!-- <a href="https://pypi.org/project/tandem-client/"><img src="https://img.shields.io/pypi/v/tandem-client?label=PyPI%20client&style=for-the-badge" alt="PyPI client"></a> -->
+    <!-- <a href="https://pypi.org/project/tandem-client/"><img src="https://img.shields.io/pypi/v/tandem-client?label=PyPI%20client&style=for-the-badge" alt="PyPI client"></a> -->
     <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow.svg?style=for-the-badge" alt="License: MIT"></a>
     <a href="https://github.com/sponsors/frumu-ai"><img src="https://img.shields.io/badge/sponsor-30363D?logo=GitHub-Sponsors&logoColor=%23EA4AAA&style=for-the-badge" alt="Sponsor"></a>
   </p>
@@ -90,7 +90,7 @@ Tandem 将自治 AI 工具带给所有需要处理文件的人，而不只是开
 - **🌐 跨平台**：Windows、macOS（Intel 与 Apple Silicon）和 Linux 原生安装包
 - **👁️ 可视化权限控制**：对每次文件访问与操作进行细粒度审批
 - **⏪ 完整撤销**：通过完整操作日志回滚任意 AI 操作
-- **🧠 长期记忆**：向量数据库保存代码库上下文与历史，给出更聪明的回答
+- **🧠 全局记忆（默认开启）**：基于持久化 `memory.sqlite` 的全局记忆，自动写入与检索，跨会话/跨项目学习（按用户与标签隔离）
 - **🧩 Skills 系统**：导入并管理自定义 AI 能力与指令
 - **🏷️ Skill 运行时提示**：入门 skill 卡片显示可选运行时要求（Python/Node/Bash）
 - **📎 文档文本提取**：支持从 PDF/DOCX/PPTX/XLSX/RTF 提取文本用于 skills 与对话上下文

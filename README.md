@@ -86,7 +86,7 @@ Tandem brings autonomous AI tools to anyone working with files — not just deve
 - **🌐 Cross-platform** - Native installers for Windows, macOS (Intel & Apple Silicon), and Linux
 - **👁️ Visual permissions** - Approve every file access and action with granular control
 - **⏪ Full undo** - Rollback any AI operation with comprehensive operation journaling
-- **🧠 Long-Term Memory** - Vector database stores codebase context and history for smarter answers
+- **🧠 Global Memory (always-on)** - Durable `memory.sqlite` memory with automatic ingestion/retrieval across sessions and projects (scoped by user + tags)
 - **🧩 Skills System** - Import and manage custom AI capabilities and instructions
 - **🏷️ Skill runtime hints** - Starter skill cards show optional runtime requirements (Python/Node/Bash)
 - **📎 Document text extraction** - Extract text from PDF/DOCX/PPTX/XLSX/RTF for skills and chat context
