@@ -1,19 +1,47 @@
 {
-  "name": "@frumu/tandem-setup",
+  "name": "@frumu/tandem-control-panel",
   "version": "0.3.26",
-  "description": "Standalone command-and-control setup interface for Tandem Engine",
+  "description": "Full web control center for Tandem Engine (chat, routines, swarm, memory, channels, and ops)",
   "type": "module",
   "bin": {
-    "tandem-setup": "bin/setup.js"
+    "tandem-control-panel": "bin/setup.js",
+    "tandem-setup": "bin/setup.js",
+    "tandem-control-panel-init": "bin/init-env.js"
   },
   "scripts": {
+    "build": "vite build",
+    "dev": "vite",
+    "preview": "vite preview",
+    "test:smoke": "node --test tests/smoke.test.mjs",
+    "init:env": "node bin/init-env.js",
+    "prepublishOnly": "npm run build",
     "start": "node bin/setup.js"
   },
+  "files": [
+    "bin",
+    "dist",
+    ".env.example",
+    "README.md"
+  ],
   "dependencies": {
-    "@frumu/tandem-client": "latest",
-    "@frumu/tandem": "latest"
+    "@frumu/tandem": "^0.3.25",
+    "@frumu/tandem-client": "^0.3.25"
+  },
+  "devDependencies": {
+    "vite": "^7.0.4"
   },
   "engines": {
     "node": ">=18"
+  },
+  "keywords": [
+    "tandem",
+    "agent",
+    "engine",
+    "control-panel",
+    "setup"
+  ],
+  "license": "MIT OR Apache-2.0",
+  "publishConfig": {
+    "access": "public"
   }
 }

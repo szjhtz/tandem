@@ -80,6 +80,16 @@ for dir in "${PACKAGES[@]}"; do
     publish_cmd+=(--ignore-scripts)
   fi
 
+  # Control panel publish path: build Vite bundle explicitly, then publish without lifecycle scripts.
+  if [[ "$dir" == "packages/tandem-control-panel" ]]; then
+    echo "Building static bundle for $name@$version with npx vite build" | tee -a "$LOG_FILE"
+    (
+      cd "$dir" &&
+        npx --yes -p vite -p @frumu/tandem-client vite build
+    ) 2>&1 | tee -a "$LOG_FILE"
+    publish_cmd+=(--ignore-scripts)
+  fi
+
   if [[ "$DRY_RUN" == "true" ]]; then
     (cd "$dir" && "${publish_cmd[@]}" --dry-run) 2>&1 | tee -a "$LOG_FILE"
   else

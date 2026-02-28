@@ -12,16 +12,11 @@ if [ -z "$1" ]; then
 fi
 
 TASK_ID=$1
-WORKTREE_DIR=".swarm/worktrees/$TASK_ID"
+BASE_TASK_ID=$TASK_ID
 
 # Validate task ID format to prevent path traversal
 if ! [[ "$TASK_ID" =~ ^[a-zA-Z0-9_-]+$ ]]; then
     echo "Error: Invalid task_id format. Only alphanumeric, dashes, and underscores are allowed."
-    exit 1
-fi
-
-if [ -d "$WORKTREE_DIR" ]; then
-    echo "Error: Worktree directory $WORKTREE_DIR already exists."
     exit 1
 fi
 
@@ -31,8 +26,26 @@ mkdir -p .swarm/worktrees
 # Extract the repository root relative to this script
 REPO_ROOT=$(git rev-parse --show-toplevel)
 
-# Create a new branch originating from the current HEAD
-BRANCH_NAME="swarm/$TASK_ID"
+# Create a unique worktree/branch if prior runs already used this task id.
+UNIQ="$BASE_TASK_ID"
+SUFFIX=1
+while true; do
+    WORKTREE_DIR=".swarm/worktrees/$UNIQ"
+    BRANCH_NAME="swarm/$UNIQ"
+    HAS_BRANCH=0
+    HAS_WORKTREE=0
+    if git show-ref --verify --quiet "refs/heads/$BRANCH_NAME"; then
+        HAS_BRANCH=1
+    fi
+    if [ -d "$WORKTREE_DIR" ]; then
+        HAS_WORKTREE=1
+    fi
+    if [ "$HAS_BRANCH" -eq 0 ] && [ "$HAS_WORKTREE" -eq 0 ]; then
+        break
+    fi
+    UNIQ="${BASE_TASK_ID}-${SUFFIX}"
+    SUFFIX=$((SUFFIX + 1))
+done
 
 echo "Creating new git worktree for $BRANCH_NAME at $WORKTREE_DIR"
 

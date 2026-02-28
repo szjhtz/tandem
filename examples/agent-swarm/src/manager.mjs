@@ -58,9 +58,9 @@ function extractAssistantTextFromSession(sessionWire) {
   return "";
 }
 
-function runCreateWorktree(repoRoot, taskId) {
+function runCreateWorktree(taskId) {
   const script = path.join(root, "scripts", "create_worktree.sh");
-  const out = execFileSync(script, [repoRoot, taskId], { encoding: "utf8" });
+  const out = execFileSync(script, [taskId], { encoding: "utf8" });
   const rows = Object.fromEntries(
     out
       .trim()
@@ -149,7 +149,7 @@ async function main() {
   await seedTasks({
     registry,
     taskDefs,
-    createWorktree: async (taskId) => runCreateWorktree(process.cwd(), taskId),
+    createWorktree: async (taskId) => runCreateWorktree(taskId),
     createSession: async (taskId, worktreePath) =>
       createTaskSession(`Swarm Worker ${taskId}`, worktreePath),
     startRun: async (task, sessionId, worktreePath, branch) =>

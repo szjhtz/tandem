@@ -44,6 +44,7 @@ Thumbs.db
 # Logs
 *.log
 npm-debug.log*
+*.tgz
 
 # Internal docs (not for repo)
 docs/internal/
