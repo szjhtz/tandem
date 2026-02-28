@@ -41,97 +41,119 @@ export async function renderSwarm(ctx) {
 
   byId("view").innerHTML = `
     <div class="card">
-      <h3>Node Swarm Orchestrator</h3>
-      <div class="grid cols-4 gap-sm">
-        <input id="swarm-root" value="${escapeHtml(status.workspaceRoot || "")}" placeholder="workspace root" />
-        <input id="swarm-objective" value="${escapeHtml(status.objective || "Ship a small feature end-to-end")}" placeholder="objective" />
-        <input id="swarm-max" type="number" min="1" value="${escapeHtml(String(status.maxTasks || 3))}" />
-        <div class="row">
-          <button id="swarm-start" class="primary" ${status.localEngine ? "" : "disabled"}>Start</button>
-          <button id="swarm-stop" class="danger">Stop</button>
+      <div class="row-between mb">
+        <h3 style="display:flex;align-items:center;gap:0.5rem;"><i data-feather="cpu" style="color:var(--accent-light);"></i> Node Swarm Orchestrator</h3>
+        <span class="status-dot ${pickStatusClass(status.status)}">${escapeHtml(status.status || "idle")}</span>
+      </div>
+      <p class="muted mb">Dispatch multiple connected Tandem instance routines to solve a problem cooperatively.</p>
+      <div class="grid cols-chat gap-sm">
+        <input id="swarm-root" value="${escapeHtml(status.workspaceRoot || "")}" placeholder="Workspace Absolute Path" />
+        <div class="row w-full" style="width: 100%;">
+          <input id="swarm-objective" value="${escapeHtml(status.objective || "Ship a small feature end-to-end")}" placeholder="Objective Prompt" style="flex:1;" />
+          <input id="swarm-max" type="number" min="1" value="${escapeHtml(String(status.maxTasks || 3))}" style="width: 80px;" title="Max Tasks" />
+          <button id="swarm-start" class="primary" ${status.localEngine ? "" : "disabled"}><i data-feather="play"></i> Start</button>
+          <button id="swarm-stop" class="danger"><i data-feather="square"></i> Stop</button>
         </div>
       </div>
-      ${status.localEngine ? "" : '<p class="warn">Swarm orchestration is disabled on remote engine URLs. Monitoring remains available.</p>'}
+      ${status.localEngine ? "" : '<p class="warn mt" style="padding:0.75rem;background:rgba(245,158,11,0.1);border-radius:8px;border:1px solid rgba(245,158,11,0.3);"><i data-feather="alert-triangle"></i> Swarm orchestration is disabled on remote engine URLs. Monitoring remains available.</p>'}
     </div>
 
-    <div class="card mt">
-      <div class="row-between"><h3>Live Agent Flow</h3><span class="status-dot ${pickStatusClass(status.status)}">${escapeHtml(status.status || "idle")}</span></div>
-      <div class="wire-wrap">
-        <svg viewBox="0 0 680 240" class="wire-svg">
-          <defs>
-            <linearGradient id="wire-grad" x1="0" y1="0" x2="1" y2="0">
-              <stop offset="0%" stop-color="#22d3ee" stop-opacity="0.12"></stop>
-              <stop offset="50%" stop-color="#60a5fa" stop-opacity="0.95"></stop>
-              <stop offset="100%" stop-color="#34d399" stop-opacity="0.12"></stop>
-            </linearGradient>
-          </defs>
-          <line x1="140" y1="120" x2="320" y2="60" class="wire-line wire-line-active"></line>
-          <line x1="140" y1="120" x2="320" y2="120" class="wire-line wire-line-active"></line>
-          <line x1="140" y1="120" x2="320" y2="180" class="wire-line wire-line-active"></line>
-          <line x1="360" y1="60" x2="540" y2="50" class="wire-line wire-line-active"></line>
-          <line x1="360" y1="120" x2="540" y2="120" class="wire-line wire-line-active"></line>
-          <line x1="360" y1="180" x2="540" y2="190" class="wire-line wire-line-active"></line>
+    <div class="grid gap mt">
+      <div class="card">
+        <h3 style="display:flex;align-items:center;gap:0.5rem;margin-bottom:1rem;"><i data-feather="git-merge" style="color:var(--info-color);"></i> Live Agent Flow</h3>
+        <div class="wire-wrap" style="background: rgba(3,7,18,0.5); border-color: rgba(255,255,255,0.05);">
+          <svg viewBox="0 0 680 240" class="wire-svg">
+            <defs>
+              <linearGradient id="wire-grad" x1="0" y1="0" x2="1" y2="0">
+                <stop offset="0%" stop-color="#8b5cf6" stop-opacity="0.12"></stop>
+                <stop offset="50%" stop-color="#a78bfa" stop-opacity="0.95"></stop>
+                <stop offset="100%" stop-color="#38bdf8" stop-opacity="0.12"></stop>
+              </linearGradient>
+            </defs>
+            <line x1="140" y1="120" x2="320" y2="60" class="wire-line wire-line-active" style="stroke-width:1.5;"></line>
+            <line x1="140" y1="120" x2="320" y2="120" class="wire-line wire-line-active" style="stroke-width:1.5;"></line>
+            <line x1="140" y1="120" x2="320" y2="180" class="wire-line wire-line-active" style="stroke-width:1.5;"></line>
+            <line x1="360" y1="60" x2="540" y2="50" class="wire-line wire-line-active" style="stroke-width:1.5;"></line>
+            <line x1="360" y1="120" x2="540" y2="120" class="wire-line wire-line-active" style="stroke-width:1.5;"></line>
+            <line x1="360" y1="180" x2="540" y2="190" class="wire-line wire-line-active" style="stroke-width:1.5;"></line>
 
-          <circle cx="120" cy="120" r="20" class="node node-active"></circle>
-          <text x="120" y="152" class="node-label" text-anchor="middle">Manager</text>
-          <circle cx="340" cy="60" r="18" class="node node-active"></circle>
-          <text x="340" y="92" class="node-label" text-anchor="middle">Worker</text>
-          <circle cx="340" cy="120" r="18" class="node node-active"></circle>
-          <text x="340" y="152" class="node-label" text-anchor="middle">Tester</text>
-          <circle cx="340" cy="180" r="18" class="node node-active"></circle>
-          <text x="340" y="212" class="node-label" text-anchor="middle">Reviewer</text>
-          <circle cx="560" cy="50" r="16" class="node"></circle>
-          <text x="560" y="80" class="node-label" text-anchor="middle">Code</text>
-          <circle cx="560" cy="120" r="16" class="node"></circle>
-          <text x="560" y="150" class="node-label" text-anchor="middle">Tests</text>
-          <circle cx="560" cy="190" r="16" class="node"></circle>
-          <text x="560" y="220" class="node-label" text-anchor="middle">PR</text>
-        </svg>
-      </div>
-      <div class="grid cols-3 gap-sm mt-sm">
-        ${roleSummary
-          .map(
-            ([role, rec]) =>
-              `<div class="metric-card"><div><strong>${escapeHtml(role)}</strong></div><div class="muted">${rec.total} tasks</div><div class="muted">${rec.running} active / ${rec.done} done / ${rec.failed} failed</div></div>`
-          )
-          .join("") || '<p class="muted">No active roles yet.</p>'}
-      </div>
-    </div>
-
-    <div class="card mt">
-      <div class="row-between">
-        <h3>Swarm Why Timeline</h3>
-        <div class="row">
-          <select id="swarm-reason-kind">
-            <option value="">All kinds</option>
-            <option value="task_transition">task_transition</option>
-            <option value="task_reason">task_reason</option>
-          </select>
-          <input id="swarm-reason-task" placeholder="Filter by task id" />
+            <circle cx="120" cy="120" r="20" class="node node-active" style="fill:rgba(139,92,246,0.2);stroke:rgba(167,139,250,0.8);"></circle>
+            <text x="120" y="152" class="node-label" text-anchor="middle" style="fill:#e2e8f0;font-weight:500;">Manager</text>
+            <circle cx="340" cy="60" r="18" class="node node-active" style="fill:rgba(56,189,248,0.1);stroke:rgba(56,189,248,0.6);"></circle>
+            <text x="340" y="92" class="node-label" text-anchor="middle" style="fill:#cbd5e1;">Worker</text>
+            <circle cx="340" cy="120" r="18" class="node node-active" style="fill:rgba(56,189,248,0.1);stroke:rgba(56,189,248,0.6);"></circle>
+            <text x="340" y="152" class="node-label" text-anchor="middle" style="fill:#cbd5e1;">Tester</text>
+            <circle cx="340" cy="180" r="18" class="node node-active" style="fill:rgba(56,189,248,0.1);stroke:rgba(56,189,248,0.6);"></circle>
+            <text x="340" y="212" class="node-label" text-anchor="middle" style="fill:#cbd5e1;">Reviewer</text>
+            
+            <circle cx="560" cy="50" r="16" class="node" style="fill:rgba(15,23,42,0.8);stroke:rgba(255,255,255,0.1);"></circle>
+            <text x="560" y="80" class="node-label" text-anchor="middle" style="fill:#94a3b8;">Code</text>
+            <circle cx="560" cy="120" r="16" class="node" style="fill:rgba(15,23,42,0.8);stroke:rgba(255,255,255,0.1);"></circle>
+            <text x="560" y="150" class="node-label" text-anchor="middle" style="fill:#94a3b8;">Tests</text>
+            <circle cx="560" cy="190" r="16" class="node" style="fill:rgba(15,23,42,0.8);stroke:rgba(255,255,255,0.1);"></circle>
+            <text x="560" y="220" class="node-label" text-anchor="middle" style="fill:#94a3b8;">PR</text>
+          </svg>
+        </div>
+        <div class="grid cols-3 gap-sm mt">
+          ${roleSummary
+      .map(
+        ([role, rec]) =>
+          `<div class="metric-card" style="background:rgba(0,0,0,0.2);"><div><strong style="color:var(--accent-light);"><i data-feather="user"></i> ${escapeHtml(role)}</strong></div><div class="muted mt-sm">${rec.total} Tasks Processed</div><div class="muted" style="font-size:0.8rem;">${rec.running} Active &middot; ${rec.done} Done &middot; <span class="${rec.failed > 0 ? 'err' : ''}">${rec.failed} Failed</span></div></div>`
+      )
+      .join("") || '<p class="muted" style="text-align:center;width:100%;grid-column:1/-1;">No active roles orchestrated yet.</p>'}
         </div>
       </div>
-      <div id="swarm-reasons" class="timeline mt-sm"></div>
+    </div>
+
+    <div class="grid cols-2 gap mt">
+      <div class="card">
+        <div class="row-between mb">
+          <h3 style="display:flex;align-items:center;gap:0.5rem;"><i data-feather="git-commit"></i> Timeline</h3>
+          <div class="row">
+            <select id="swarm-reason-kind" style="width:auto;padding:0.4rem;">
+              <option value="">All kinds</option>
+              <option value="task_transition">task_transition</option>
+              <option value="task_reason">task_reason</option>
+            </select>
+            <input id="swarm-reason-task" placeholder="Filter task id..." style="width:120px;padding:0.4rem;" />
+          </div>
+        </div>
+        <div id="swarm-reasons" class="timeline mt-sm" style="max-height: 480px;"></div>
+      </div>
+
+      <div class="card">
+        <div class="row-between mb">
+          <h3 style="display:flex;align-items:center;gap:0.5rem;"><i data-feather="layers"></i> Tasks</h3>
+          <span class="status-pill info">${tasks.length}</span>
+        </div>
+        <div id="swarm-tasks" class="list" style="max-height: 480px; overflow: auto; padding-right: 0.5rem;"></div>
+      </div>
     </div>
 
     <div class="card mt">
-      <h3>Tasks (${tasks.length})</h3>
-      <div id="swarm-tasks" class="list"></div>
-    </div>
-
-    <div class="card mt">
-      <h3>Swarm Logs</h3>
-      <pre id="swarm-logs" class="code"></pre>
+      <h3 style="display:flex;align-items:center;gap:0.5rem;margin-bottom:1rem;"><i data-feather="terminal"></i> Technical Logs</h3>
+      <pre id="swarm-logs" class="code" style="background:rgba(0,0,0,0.4); border-radius:8px; padding:1rem; border:1px solid rgba(255,255,255,0.05); max-height:400px; overflow:auto;"></pre>
     </div>
   `;
+
+  if (window.feather) window.feather.replace();
 
   const taskList = byId("swarm-tasks");
   taskList.innerHTML =
     tasks
       .sort((a, b) => (b.lastUpdateMs || 0) - (a.lastUpdateMs || 0))
       .map(
-        (t) => `<div class="list-item static row-between"><div><strong>${escapeHtml(t.taskId)}</strong><div class="muted">${escapeHtml(t.ownerRole || "")}</div><div class="muted">${escapeHtml(t.statusReason || "")}</div></div><div class="status-dot ${pickStatusClass(t.status)}">${escapeHtml(t.status || "unknown")}</div></div>`
+        (t) => `<div class="list-item static" style="margin-bottom:0.5rem;">
+          <div class="row-between">
+            <strong style="color:var(--info-color);font-family:var(--font-mono);font-size:0.85rem;">${escapeHtml(t.taskId)}</strong>
+            <span class="status-dot ${pickStatusClass(t.status)}">${escapeHtml(t.status || "unknown")}</span>
+          </div>
+          <div class="muted mt-sm" style="font-size:0.8rem;text-transform:uppercase;letter-spacing:0.05em;"><i data-feather="user" style="width:12px;height:12px;"></i> ${escapeHtml(t.ownerRole || "No Owner")}</div>
+          <div class="muted mt-sm" style="font-size:0.85rem;line-height:1.4;">${escapeHtml(t.statusReason || "Processing")}</div>
+        </div>`
       )
-      .join("") || '<p class="muted">No swarm tasks yet.</p>';
+      .join("") || '<p class="muted" style="text-align:center;padding:2rem;">No swarm tasks logged in this session.</p>';
+  if (window.feather) window.feather.replace(taskList);
 
   function renderReasons() {
     const kind = byId("swarm-reason-kind").value.trim();

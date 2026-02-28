@@ -2,18 +2,24 @@ export async function renderSettings(ctx) {
   const { byId, state, escapeHtml } = ctx;
   byId("view").innerHTML = `
     <div class="card">
-      <h3>Provider Setup Wizard</h3>
-      <p class="muted">Step 1: pick a provider and model. Step 2: add key (if required). Step 3: run model test.</p>
-      <div class="row-wrap mt-sm">
-        <span class="status-dot ${state.providerReady ? "ok" : "warn"}">ready: ${state.providerReady ? "yes" : "no"}</span>
-        <span class="status-dot ${state.providerDefault ? "ok" : "warn"}">default: ${escapeHtml(state.providerDefault || "none")}</span>
-        <span class="status-dot ${state.providerConnected.length > 0 ? "ok" : "warn"}">connected: ${state.providerConnected.length}</span>
+      <div class="row-between">
+        <h3 style="display:flex;align-items:center;gap:0.5rem;"><i data-feather="settings" style="color:var(--accent-light);"></i> Provider Setup Wizard</h3>
+        <span class="status-pill ${state.providerReady ? "ok" : "warn"}">${state.providerReady ? "Ready" : "Not Configured"}</span>
       </div>
-      ${state.providerError ? `<p class="warn">Provider check error: ${escapeHtml(state.providerError)}</p>` : ""}
-      <div id="provider-settings" class="mt-sm"></div>
+      <p class="muted mb">Step 1: Pick a provider and model. Step 2: Add key (if required). Step 3: Run model test.</p>
+      <div class="row-wrap mt-sm mb">
+        <span class="status-dot ${state.providerDefault ? "ok" : "warn"}">Default: <strong style="color:white;margin-left:4px;">${escapeHtml(state.providerDefault || "none")}</strong></span>
+        <span class="status-dot ${state.providerConnected.length > 0 ? "info" : "warn"}">Connected: <strong style="color:white;margin-left:4px;">${state.providerConnected.length}</strong></span>
+      </div>
+      ${state.providerError ? `<p class="warn" style="padding:0.75rem;background:rgba(245,158,11,0.1);border-radius:8px;border:1px solid rgba(245,158,11,0.3);"><i data-feather="alert-triangle"></i> Provider check error: ${escapeHtml(state.providerError)}</p>` : ""}
+      <div id="provider-settings" class="mt"></div>
     </div>
-    <div class="card mt"><h3>Session</h3><p>Use Logout to clear your current portal session token binding.</p></div>
+    <div class="card mt">
+      <h3 style="display:flex;align-items:center;gap:0.5rem;"><i data-feather="shield" style="color:var(--warn-color);"></i> Session Authorization</h3>
+      <p class="muted">Your session token binding is active. Use Logout in the sidebar to clear your current portal session.</p>
+    </div>
   `;
+  if (window.feather) window.feather.replace();
   await renderProvidersBlock(ctx, byId("provider-settings"));
 }
 
@@ -41,20 +47,19 @@ async function renderProvidersBlock(ctx, container) {
     container.innerHTML = `
       <div class="grid cols-2 gap-sm">
         ${(catalog.all || [])
-          .map((p) => `<button class="provider-pill ${p.id === selectedProvider ? "active" : ""}" data-provider="${p.id}">${escapeHtml(providerHints[p.id]?.label || p.name || p.id)}</button>`)
-          .join("")}
+        .map((p) => `<button class="primary" style="${p.id === selectedProvider ? "" : "background:rgba(255,255,255,0.05);border-color:rgba(255,255,255,0.1);color:var(--text-muted);box-shadow:none;"}" data-provider="${p.id}">${escapeHtml(providerHints[p.id]?.label || p.name || p.id)}</button>`)
+        .join("")}
       </div>
-      <div class="grid cols-2 gap-sm mt-sm">
-        <select id="provider-model">${models.map((m) => `<option ${m === selectedModel ? "selected" : ""}>${escapeHtml(m)}</option>`).join("")}</select>
+      <div class="grid cols-2 gap-sm mt">
+        <select id="provider-model" style="height:100%;">${models.map((m) => `<option ${m === selectedModel ? "selected" : ""}>${escapeHtml(m)}</option>`).join("")}</select>
         <input id="provider-key" type="password" placeholder="${escapeHtml(providerHints[selectedProvider]?.placeholder || "API key (optional)")}" />
       </div>
-      <div class="row-wrap mt-sm">
-        <button id="provider-test" class="ghost">Test Model Run</button>
-      </div>
-      <div class="row-end mt-sm">
-        <button id="provider-save" class="primary">Save Provider</button>
+      <div class="row-between mt">
+        <button id="provider-test" class="ghost"><i data-feather="zap"></i> Test Model</button>
+        <button id="provider-save" class="primary"><i data-feather="save"></i> Save Provider Configuration</button>
       </div>
     `;
+    if (window.feather) window.feather.replace(container);
 
     container.querySelectorAll("[data-provider]").forEach((btn) => {
       btn.addEventListener("click", () => {

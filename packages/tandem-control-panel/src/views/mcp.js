@@ -6,23 +6,38 @@ export async function renderMcp(ctx) {
   ]);
 
   byId("view").innerHTML = `
-    <div class="card">
-      <h3>Add MCP Server</h3>
-      <div class="grid cols-3 gap-sm">
-        <input id="mcp-name" placeholder="name" value="arcade" />
-        <input id="mcp-transport" placeholder="https://.../mcp or stdio:..." />
-        <button id="mcp-add" class="primary">Add + Connect</button>
+    <div class="grid cols-chat gap">
+      <div class="card" style="align-self: start;">
+        <h3 style="display:flex;align-items:center;gap:0.5rem;"><i data-feather="box" style="color:var(--accent-light);"></i> Add MCP Server</h3>
+        <p class="muted mb">Connect to external Model Context Protocol resources.</p>
+        <div class="form-stack">
+          <label>Server Name</label>
+          <input id="mcp-name" placeholder="e.g. file-system" value="arcade" />
+          <label>Transport Coordinates</label>
+          <input id="mcp-transport" placeholder="stdio: npx -y ... or https://..." />
+          <button id="mcp-add" class="primary mt-sm"><i data-feather="link"></i> Add & Connect</button>
+        </div>
+      </div>
+      <div class="grid gap" style="align-content: start;">
+        <div class="card">
+          <div class="row-between mb">
+            <h3>Connected Servers</h3>
+            <span class="status-pill ok">${Object.keys(servers || {}).length}</span>
+          </div>
+          <div id="mcp-servers" class="list"></div>
+        </div>
+        <div class="card">
+          <div class="row-between">
+            <h3>Available Tools</h3>
+            <span class="status-pill info">${tools.length}</span>
+          </div>
+          <pre class="code mt" style="max-height: 250px; overflow: auto; background: rgba(0,0,0,0.3); padding: 1rem; border-radius: 8px;">${escapeHtml(tools.slice(0, 200).map((t) => t.id || JSON.stringify(t)).join("\n") || "No tools exported by connected servers yet.")}</pre>
+        </div>
       </div>
     </div>
-    <div class="card mt">
-      <h3>Servers</h3>
-      <div id="mcp-servers" class="list"></div>
-    </div>
-    <div class="card mt">
-      <h3>MCP Tools (${tools.length})</h3>
-      <pre class="code">${escapeHtml(tools.slice(0, 200).map((t) => t.id || JSON.stringify(t)).join("\n"))}</pre>
-    </div>
   `;
+
+  if (window.feather) window.feather.replace();
 
   byId("mcp-add").addEventListener("click", async () => {
     const name = byId("mcp-name").value.trim();

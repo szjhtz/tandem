@@ -14,15 +14,17 @@ export async function renderFeed(ctx) {
   byId("view").innerHTML = `
     <div class="card">
       <div class="row-between">
-        <h3>Global Live Feed</h3>
+        <h3 style="display:flex;align-items:center;gap:0.5rem;"><i data-feather="activity" style="color:var(--info-color);"></i> Global Live Feed</h3>
         <div class="row">
-          <input id="feed-filter" placeholder="Filter by event type or payload" />
+          <input id="feed-filter" placeholder="Filter events..." style="min-width: 250px;" />
           <button id="feed-clear" class="ghost small">Clear</button>
         </div>
       </div>
-      <div id="feed-events" class="events feed-cards mt-sm"></div>
+      <div id="feed-events" class="events feed-cards mt"></div>
     </div>
   `;
+
+  if (window.feather) window.feather.replace();
 
   const host = byId("feed-events");
   const events = [];
@@ -40,20 +42,20 @@ export async function renderFeed(ctx) {
         .map((x) => {
           const type = eventTypeOf(x.data);
           return `
-          <article class="event-card">
+          <div class="list-item static" style="margin-bottom:0.5rem;">
             <div class="row-between">
-              <div><strong>${escapeHtml(type)}</strong></div>
+              <strong style="font-size: 0.95rem; color: white;">${escapeHtml(type)}</strong>
               <span class="status-dot ${statusClassForEvent(type)}">${new Date(x.at).toLocaleTimeString()}</span>
             </div>
-            <div class="muted">session: ${escapeHtml(x.data?.sessionID || x.data?.sessionId || "n/a")} run: ${escapeHtml(x.data?.runID || x.data?.runId || "n/a")}</div>
+            <div class="muted mt-sm" style="font-size: 0.8rem;">Session: <span style="color:var(--accent-light);font-family:var(--font-mono);">${escapeHtml(x.data?.sessionID || x.data?.sessionId || "N/A")}</span> &nbsp;|&nbsp; Run: <span style="color:var(--accent-light);font-family:var(--font-mono);">${escapeHtml(x.data?.runID || x.data?.runId || "N/A")}</span></div>
             <details class="mt-sm">
-              <summary>Payload</summary>
-              <pre class="code">${escapeHtml(JSON.stringify(x.data, null, 2))}</pre>
+              <summary style="cursor:pointer;color:var(--text-muted);font-size:0.8rem;outline:none;">Payload</summary>
+              <pre class="code mt-sm" style="background:rgba(0,0,0,0.3);padding:0.5rem;border-radius:8px;border:1px solid rgba(255,255,255,0.05);">${escapeHtml(JSON.stringify(x.data, null, 2))}</pre>
             </details>
-          </article>
+          </div>
         `;
         })
-        .join("") || '<p class="muted">No events yet.</p>';
+        .join("") || '<p class="muted" style="text-align:center;padding:2rem;">Waiting for events...</p>';
 
     host.scrollTop = host.scrollHeight;
   }

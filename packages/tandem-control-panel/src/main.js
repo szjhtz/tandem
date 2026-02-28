@@ -104,41 +104,43 @@ function renderLogin() {
           <svg viewBox="0 0 520 160" class="hero-svg">
             <defs>
               <linearGradient id="hero-grad" x1="0" y1="0" x2="1" y2="0">
-                <stop offset="0%" stop-color="#22d3ee"></stop>
-                <stop offset="100%" stop-color="#34d399"></stop>
+                <stop offset="0%" stop-color="#8b5cf6"></stop>
+                <stop offset="100%" stop-color="#38bdf8"></stop>
               </linearGradient>
             </defs>
             <g class="bot bot-left">
-              <rect x="70" y="40" width="90" height="72" rx="16" class="bot-body"></rect>
-              <circle cx="102" cy="76" r="6" class="bot-eye"></circle>
-              <circle cx="128" cy="76" r="6" class="bot-eye"></circle>
-              <line x1="88" y1="96" x2="142" y2="96" class="bot-mouth"></line>
-              <path d="M160 82 C188 86, 208 94, 222 96" class="bot-arm"></path>
+              <rect x="70" y="40" width="90" height="72" rx="16" class="bot-body" style="fill:rgba(15,23,42,0.92);stroke:url(#hero-grad);stroke-width:2;"></rect>
+              <circle cx="102" cy="76" r="6" class="bot-eye" style="fill:#e2e8f0;"></circle>
+              <circle cx="128" cy="76" r="6" class="bot-eye" style="fill:#e2e8f0;"></circle>
+              <line x1="88" y1="96" x2="142" y2="96" class="bot-mouth" style="stroke:#a78bfa;stroke-width:2;stroke-linecap:round;"></line>
+              <path d="M160 82 C188 86, 208 94, 222 96" class="bot-arm" style="fill:none;stroke:url(#hero-grad);stroke-width:3.5;stroke-linecap:round;"></path>
             </g>
             <g class="bot bot-right">
-              <rect x="360" y="40" width="90" height="72" rx="16" class="bot-body"></rect>
-              <circle cx="392" cy="76" r="6" class="bot-eye"></circle>
-              <circle cx="418" cy="76" r="6" class="bot-eye"></circle>
-              <line x1="378" y1="96" x2="432" y2="96" class="bot-mouth"></line>
-              <path d="M360 82 C332 86, 312 94, 298 96" class="bot-arm"></path>
+              <rect x="360" y="40" width="90" height="72" rx="16" class="bot-body" style="fill:rgba(15,23,42,0.92);stroke:url(#hero-grad);stroke-width:2;"></rect>
+              <circle cx="392" cy="76" r="6" class="bot-eye" style="fill:#e2e8f0;"></circle>
+              <circle cx="418" cy="76" r="6" class="bot-eye" style="fill:#e2e8f0;"></circle>
+              <line x1="378" y1="96" x2="432" y2="96" class="bot-mouth" style="stroke:#a78bfa;stroke-width:2;stroke-linecap:round;"></line>
+              <path d="M360 82 C332 86, 312 94, 298 96" class="bot-arm" style="fill:none;stroke:url(#hero-grad);stroke-width:3.5;stroke-linecap:round;"></path>
             </g>
             <g class="handshake">
-              <rect x="223" y="88" width="75" height="18" rx="9" class="shake"></rect>
+              <rect x="223" y="88" width="75" height="18" rx="9" class="shake" style="fill:rgba(139,92,246,0.2);stroke:rgba(139,92,246,0.8);stroke-width:1.2;"></rect>
             </g>
           </svg>
         </div>
-        <h1>Tandem Control Panel</h1>
-        <p>Use your engine API token to unlock the full web control center.</p>
-        <form id="login-form" class="form-stack">
-          <label>Engine Token</label>
+        <h1>Tandem Engine</h1>
+        <p>Enter your configuration token to unlock the control center.</p>
+        <form id="login-form" class="form-stack mt">
+          <label>Engine Authorization Token</label>
           <input id="token" type="password" placeholder="tk_..." autocomplete="off" />
-          <button id="login-btn" type="submit" class="primary">Sign In</button>
-          <button id="check-engine-btn" type="button" class="ghost">Check Engine Connectivity</button>
-          <div id="login-err" class="error"></div>
+          <button id="login-btn" type="submit" class="primary"><i data-feather="key"></i> Authenticate</button>
+          <button id="check-engine-btn" type="button" class="ghost mt-sm"><i data-feather="activity"></i> Verify Backend Connectivity</button>
+          <div id="login-err" class="error mt-sm"></div>
         </form>
       </section>
     </main>
   `;
+
+  if (window.feather) setTimeout(() => window.feather.replace(), 0);
 
   byId("login-form").addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -228,10 +230,12 @@ function renderShell() {
     <div class="shell">
       <aside class="sidebar">
         <div class="brand">
-          <div class="brand-icon"><i data-feather="cpu"></i></div>
-          <div>
-            <div class="brand-title">Tandem</div>
-            <div class="brand-sub">Control Center</div>
+          <div class="brand-inner">
+            <div class="brand-icon"><i data-feather="cpu"></i></div>
+            <div>
+              <div class="brand-title">Tandem</div>
+              <div class="brand-sub">Control Center</div>
+            </div>
           </div>
         </div>
         <nav id="nav" class="nav"></nav>
@@ -255,7 +259,8 @@ function renderShell() {
   const nav = byId("nav");
   nav.innerHTML = ROUTES.map(([id, label, icon]) => `
       <button data-route="${id}" class="nav-item ${id === state.route ? "active" : ""}">
-        <i data-feather="${icon}"></i><span>${label}</span>
+        <i data-feather="${icon}" class="nav-icon hidden-transition" style="width: 18px; height: 18px;"></i>
+        <span>${label}</span>
       </button>
     `).join("");
 
@@ -264,7 +269,7 @@ function renderShell() {
   });
 
   byId("logout-btn").addEventListener("click", async () => {
-    await api("/api/auth/logout", { method: "POST" }).catch(() => {});
+    await api("/api/auth/logout", { method: "POST" }).catch(() => { });
     state.authed = false;
     state.me = null;
     state.client = null;

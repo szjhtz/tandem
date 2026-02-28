@@ -3,7 +3,7 @@ export async function renderChannels(ctx) {
   const status = await state.client.channels.status().catch(() => ({}));
   const channels = ["telegram", "discord", "slack"];
 
-  byId("view").innerHTML = '<div class="card"><h3>Channels</h3><div id="channels-list" class="list"></div></div>';
+  byId("view").innerHTML = '<div class="card"><div class="row-between"><h3>Connected Channels</h3><i data-feather="message-circle" class="nav-icon" style="color: var(--accent-light);"></i></div><p class="muted">Link your agent to external messaging platforms below.</p><div id="channels-list" class="list mt"></div></div>';
 
   const list = byId("channels-list");
   list.innerHTML = channels
@@ -11,22 +11,26 @@ export async function renderChannels(ctx) {
       const s = status[c] || {};
       return `
         <div class="list-item static">
-          <div class="row-between">
-            <strong>${c}</strong>
-            <span class="status-dot ${s.connected ? "ok" : "warn"}">${s.connected ? "connected" : "not connected"}</span>
+          <div class="row-between" style="margin-bottom: 1rem;">
+            <strong style="text-transform: capitalize; font-size: 1.1rem; display: flex; align-items: center; gap: 0.5rem;"><i data-feather="${c === 'telegram' ? 'send' : c === 'discord' ? 'hash' : 'slack'}"></i> ${c}</strong>
+            <span class="status-dot ${s.connected ? "ok" : "warn"}">${s.connected ? "Connected Active" : "Disconnected"}</span>
           </div>
-          <div class="grid cols-3 gap-sm mt-sm">
-            <input id="${c}-token" placeholder="bot token" />
-            <input id="${c}-users" placeholder="allowed users (comma)" />
-            <div class="row">
-              <button class="primary small" data-save="${c}">Save</button>
-              <button class="danger small" data-del="${c}">Delete</button>
+          <div class="grid cols-chat gap-sm">
+            <input id="${c}-token" placeholder="${c} Bot Token" type="password" />
+            <div class="row-between w-full">
+              <input id="${c}-users" placeholder="Allowed user handles (comma separated)" style="width: 100%;" />
+              <div class="row">
+                <button class="primary small" data-save="${c}"><i data-feather="save"></i> Save</button>
+                <button class="danger small" data-del="${c}"><i data-feather="trash-2"></i></button>
+              </div>
             </div>
           </div>
         </div>
       `;
     })
     .join("");
+
+  if (window.feather) window.feather.replace();
 
   list.querySelectorAll("[data-save]").forEach((btn) =>
     btn.addEventListener("click", async () => {
