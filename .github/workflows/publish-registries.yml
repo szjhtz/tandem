@@ -65,11 +65,12 @@ jobs:
         with:
           version: 9
 
-      - name: Install tandem-client-ts publish deps
+      - name: Install npm publish deps
         shell: bash
         run: |
           set -euo pipefail
           pnpm -C packages/tandem-client-ts install --frozen-lockfile
+          pnpm -C packages/tandem-control-panel install --frozen-lockfile
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -312,11 +313,12 @@ jobs:
         with:
           version: 9
 
-      - name: Install tandem-client-ts publish deps
+      - name: Install npm publish deps
         shell: bash
         run: |
           set -euo pipefail
           pnpm -C packages/tandem-client-ts install --frozen-lockfile
+          pnpm -C packages/tandem-control-panel install --frozen-lockfile
 
       - name: Configure npm for tokenless Trusted Publishing
         shell: bash
