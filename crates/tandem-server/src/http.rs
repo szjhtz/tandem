@@ -13236,6 +13236,100 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn memory_demote_hides_item_from_search_results() {
+        let state = test_state().await;
+        let app = app_router(state.clone());
+
+        let put_req = Request::builder()
+            .method("POST")
+            .uri("/memory/put")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({
+                    "run_id": "run-5",
+                    "partition": {
+                        "org_id": "org-1",
+                        "workspace_id": "ws-1",
+                        "project_id": "proj-1",
+                        "tier": "session"
+                    },
+                    "kind": "fact",
+                    "content": "demote me from search",
+                    "classification": "internal"
+                })
+                .to_string(),
+            ))
+            .expect("put request");
+        let put_resp = app.clone().oneshot(put_req).await.expect("put response");
+        assert_eq!(put_resp.status(), StatusCode::OK);
+        let put_body = to_bytes(put_resp.into_body(), usize::MAX)
+            .await
+            .expect("put body");
+        let put_payload: Value = serde_json::from_slice(&put_body).expect("put json");
+        let memory_id = put_payload
+            .get("id")
+            .and_then(|v| v.as_str())
+            .expect("memory id")
+            .to_string();
+
+        let demote_req = Request::builder()
+            .method("POST")
+            .uri("/memory/demote")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({
+                    "id": memory_id,
+                    "run_id": "run-5"
+                })
+                .to_string(),
+            ))
+            .expect("demote request");
+        let demote_resp = app
+            .clone()
+            .oneshot(demote_req)
+            .await
+            .expect("demote response");
+        assert_eq!(demote_resp.status(), StatusCode::OK);
+
+        let search_req = Request::builder()
+            .method("POST")
+            .uri("/memory/search")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({
+                    "run_id": "run-5",
+                    "query": "demote me from search",
+                    "partition": {
+                        "org_id": "org-1",
+                        "workspace_id": "ws-1",
+                        "project_id": "proj-1",
+                        "tier": "session"
+                    },
+                    "read_scopes": ["session"],
+                    "limit": 10
+                })
+                .to_string(),
+            ))
+            .expect("search request");
+        let search_resp = app
+            .clone()
+            .oneshot(search_req)
+            .await
+            .expect("search response");
+        assert_eq!(search_resp.status(), StatusCode::OK);
+        let search_body = to_bytes(search_resp.into_body(), usize::MAX)
+            .await
+            .expect("search body");
+        let search_payload: Value = serde_json::from_slice(&search_body).expect("search json");
+        let count = search_payload
+            .get("results")
+            .and_then(|v| v.as_array())
+            .map(|rows| rows.len())
+            .unwrap_or_default();
+        assert_eq!(count, 0);
+    }
+
+    #[tokio::test]
     async fn admin_and_channel_routes_require_auth_when_api_token_enabled() {
         let state = test_state().await;
         state.set_api_token(Some("tk_test".to_string())).await;
