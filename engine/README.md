@@ -45,6 +45,23 @@ The engine now auto-configures `TANDEM_MEMORY_DB_PATH` to the shared Tandem
 `memory.sqlite` path when unset, so connected apps/tools use the same local
 knowledge base.
 
+On startup, the engine bootstraps default documentation knowledge from an
+embedded bundle compiled into the binary (`engine/resources/default_knowledge_*`).
+It re-ingests only when the embedded corpus hash changes.
+Use `TANDEM_DISABLE_DEFAULT_KNOWLEDGE=1` to disable this behavior.
+
+Canonical docs URLs attached to seeded chunks use:
+`https://tandem.docs.frumu.ai/`
+
+Regenerate the embedded bundle after docs changes:
+
+```bash
+pnpm engine:knowledge:bundle
+```
+
+CI and release workflows enforce that the committed bundle stays in sync with
+`guide/src/content/docs`.
+
 Run a one-off prompt:
 
 ```bash

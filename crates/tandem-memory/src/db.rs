@@ -972,6 +972,34 @@ impl MemoryDatabase {
         Ok(count as u64)
     }
 
+    /// Clear global memory chunks by source prefix (and matching vectors).
+    pub async fn clear_global_memory_by_source_prefix(
+        &self,
+        source_prefix: &str,
+    ) -> MemoryResult<u64> {
+        let conn = self.conn.lock().await;
+        let like = format!("{}%", source_prefix);
+
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM global_memory_chunks WHERE source LIKE ?1",
+            params![like],
+            |row| row.get(0),
+        )?;
+
+        conn.execute(
+            "DELETE FROM global_memory_vectors WHERE chunk_id IN
+             (SELECT id FROM global_memory_chunks WHERE source LIKE ?1)",
+            params![like],
+        )?;
+
+        conn.execute(
+            "DELETE FROM global_memory_chunks WHERE source LIKE ?1",
+            params![like],
+        )?;
+
+        Ok(count as u64)
+    }
+
     /// Clear old session memory based on retention policy
     pub async fn cleanup_old_sessions(&self, retention_days: i64) -> MemoryResult<u64> {
         let conn = self.conn.lock().await;
