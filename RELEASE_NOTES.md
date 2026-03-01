@@ -10,6 +10,10 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
   - Added dashboard charts/summary cards for run and automation activity to improve at-a-glance operational visibility.
   - Added first-class **Automations + Cost** dashboard section with token and estimated USD KPIs (`24h`/`7d`) and top automation/routine cost breakdown.
   - Updated control panel automation copy to present advanced automation features without exposing internal V2 labels.
+  - Refactored the `Automations` workspace (`#/agents`) into tabs: `Overview`, `Routines`, `Automations`, `Templates`, and `Runs & Approvals`.
+  - Added guided walkthrough wizard (first-run + manual launch) for both routine and advanced automation setup flows.
+  - Added URL-deep-linkable Automations UI state (`tab`, `wizard`, `flow`, `step`) for support and team handoff links.
+  - Added lightweight Motion animation runtime for smoother tab/wizard panel transitions.
 - Chat reliability and approvals-state fixes
   - Fixed delayed user-message rendering: user messages now appear immediately on send (optimistic render).
   - Fixed missing right-rail tool activity by normalizing additional tool event families (`session.tool_call`, `session.tool_result`, and tool message-part updates).

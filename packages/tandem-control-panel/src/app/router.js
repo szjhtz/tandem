@@ -1,5 +1,7 @@
 export function routeFromHash(defaultRoute = "dashboard") {
-  return (window.location.hash || `#/${defaultRoute}`).replace(/^#\//, "");
+  const raw = (window.location.hash || `#/${defaultRoute}`).replace(/^#\//, "");
+  const route = raw.split("?")[0].split("/")[0].trim();
+  return route || defaultRoute;
 }
 
 export function ensureRoute(route, routes, defaultRoute = "dashboard") {

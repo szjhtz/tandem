@@ -1,7 +1,7 @@
 export const ROUTES = [
   ["dashboard", "Dashboard", "home"],
   ["chat", "Chat", "message-square"],
-  ["agents", "Agents", "clock"],
+  ["agents", "Automations", "clock"],
   ["channels", "Channels", "message-circle"],
   ["mcp", "MCP", "link"],
   ["swarm", "Swarm", "share-2"],

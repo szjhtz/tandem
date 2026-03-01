@@ -1,5 +1,50 @@
+import { animate } from "motion";
+
 export async function renderAgents(ctx) {
   const { state, byId, toast, escapeHtml, api, renderIcons } = ctx;
+  const AGENTS_TABS = ["overview", "routines", "automations", "templates", "runs"];
+  const AGENTS_WIZARD_SEEN_KEY = "tcp_agents_wizard_seen_v1";
+  const parseAgentsUiState = () => {
+    const hash = String(window.location.hash || "");
+    const [, rawQuery = ""] = hash.split("?");
+    const params = new URLSearchParams(rawQuery);
+    const rawTab = String(params.get("tab") || "").trim().toLowerCase();
+    const tab = AGENTS_TABS.includes(rawTab) ? rawTab : "overview";
+    const rawFlow = String(params.get("flow") || "").trim().toLowerCase();
+    const flow = rawFlow === "routine" ? "routine" : "advanced";
+    const rawStep = Number.parseInt(String(params.get("step") || "0"), 10);
+    const step = Number.isFinite(rawStep) ? Math.min(2, Math.max(0, rawStep)) : 0;
+    const wizardProvided = params.has("wizard");
+    const wizard = String(params.get("wizard") || "0").trim() === "1";
+    return { tab, flow, step, wizard, wizardProvided };
+  };
+  const writeAgentsUiState = (patch = {}) => {
+    const current = parseAgentsUiState();
+    const next = {
+      tab: AGENTS_TABS.includes(String(patch.tab || "").toLowerCase())
+        ? String(patch.tab).toLowerCase()
+        : current.tab,
+      flow: String(patch.flow || current.flow).toLowerCase() === "routine" ? "routine" : "advanced",
+      step: Number.isFinite(Number(patch.step))
+        ? Math.min(2, Math.max(0, Number.parseInt(String(patch.step), 10) || 0))
+        : current.step,
+      wizard:
+        typeof patch.wizard === "boolean"
+          ? patch.wizard
+          : String(patch.wizard || "").trim() === "1"
+            ? true
+            : patch.wizard === 0
+              ? false
+              : current.wizard,
+    };
+    const params = new URLSearchParams();
+    params.set("tab", next.tab);
+    params.set("flow", next.flow);
+    params.set("step", String(next.step));
+    params.set("wizard", next.wizard ? "1" : "0");
+    const nextHash = `#/agents?${params.toString()}`;
+    if (window.location.hash !== nextHash) window.location.hash = nextHash;
+  };
   const [
     routinesRaw,
     automationsRaw,
@@ -401,9 +446,151 @@ export async function renderAgents(ctx) {
         </div>`;
       })
       .join("") || '<p class="tcp-subtle">No runs yet.</p>';
+  const runTotalTokens = (run) => {
+    const n = Number(run?.total_tokens ?? run?.totalTokens ?? 0);
+    return Number.isFinite(n) && n >= 0 ? n : 0;
+  };
+  const runEstimatedCost = (run) => {
+    const n = Number(run?.estimated_cost_usd ?? run?.estimatedCostUsd ?? 0);
+    return Number.isFinite(n) && n >= 0 ? n : 0;
+  };
+  const now = Date.now();
+  const last24hCutoff = now - 24 * 3600000;
+  let tokens24h = 0;
+  let cost24h = 0;
+  const costByOwner = new Map();
+  for (const run of [...routineRuns, ...automationRuns]) {
+    const ts = firstTimestamp(run);
+    const tokens = runTotalTokens(run);
+    const cost = runEstimatedCost(run);
+    if (ts >= last24hCutoff) {
+      tokens24h += tokens;
+      cost24h += cost;
+    }
+    const owner = runRoutineIdOf(run) || runAutomationIdOf(run) || "unknown";
+    const row = costByOwner.get(owner) || { cost: 0 };
+    row.cost += cost;
+    costByOwner.set(owner, row);
+  }
+  const topCostRows = [...costByOwner.entries()]
+    .map(([id, row]) => ({ id, cost: row.cost }))
+    .sort((a, b) => b.cost - a.cost)
+    .slice(0, 3);
+  const uiState = parseAgentsUiState();
+  if (
+    !uiState.wizard &&
+    !uiState.wizardProvided &&
+    !routines.length &&
+    !automations.length &&
+    !automationsV2.length
+  ) {
+    let seen = false;
+    try {
+      seen = localStorage.getItem(AGENTS_WIZARD_SEEN_KEY) === "1";
+    } catch {
+      seen = false;
+    }
+    if (!seen) {
+      setTimeout(() => {
+        writeAgentsUiState({ tab: "overview", wizard: true, flow: "advanced", step: 0 });
+      }, 0);
+    }
+  }
+  const panelClass = (...tabs) => (tabs.includes(uiState.tab) ? "" : " hidden");
+  const wizardStepLabels =
+    uiState.flow === "routine"
+      ? ["Choose flow", "Configure routine", "Run + monitor"]
+      : ["Choose flow", "Configure agents", "Run + monitor"];
 
   byId("view").innerHTML = `
-    <div class="tcp-card">
+    <div class="tcp-card" data-agents-panel="header">
+      <div class="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h3 class="tcp-title">Automations</h3>
+          <p class="tcp-subtle text-xs">Build, schedule, and operate routines and multi-agent automations.</p>
+        </div>
+        <button id="agents-launch-wizard" class="tcp-btn-primary"><i data-lucide="sparkles"></i> Launch Walkthrough</button>
+      </div>
+      <div class="agents-tabs mt-3">
+        <button class="agents-tab-btn ${uiState.tab === "overview" ? "active" : ""}" data-agents-tab="overview">Overview</button>
+        <button class="agents-tab-btn ${uiState.tab === "routines" ? "active" : ""}" data-agents-tab="routines">Routines</button>
+        <button class="agents-tab-btn ${uiState.tab === "automations" ? "active" : ""}" data-agents-tab="automations">Automations</button>
+        <button class="agents-tab-btn ${uiState.tab === "templates" ? "active" : ""}" data-agents-tab="templates">Templates</button>
+        <button class="agents-tab-btn ${uiState.tab === "runs" ? "active" : ""}" data-agents-tab="runs">Runs & Approvals</button>
+      </div>
+    </div>
+    <div class="tcp-card${panelClass("overview")}" data-agents-panel="overview">
+      <h3 class="tcp-title mb-2">Overview</h3>
+      <div class="dashboard-kpis mb-3">
+        <div><span class="dashboard-kpi-label">Routines</span><strong>${routines.length}</strong></div>
+        <div><span class="dashboard-kpi-label">Automations</span><strong>${automationsV2.length}</strong></div>
+        <div><span class="dashboard-kpi-label">Pending approvals</span><strong>${dedupedRecentRuns.filter((x) => isPendingApprovalStatus(runStatusOf(x.run))).length}</strong></div>
+        <div><span class="dashboard-kpi-label">Recent runs</span><strong>${dedupedRecentRuns.length}</strong></div>
+      </div>
+      <div class="rounded-xl border border-slate-700/60 bg-slate-900/30 p-3">
+        <div class="mb-2 flex items-center justify-between gap-2">
+          <span class="font-medium">Automations + Cost (24h)</span>
+          <span class="tcp-subtle text-xs">dashboard has full analytics</span>
+        </div>
+        <div class="grid gap-2 md:grid-cols-3">
+          <div class="tcp-subtle">Tokens: <span class="font-mono text-slate-200">${tokens24h.toLocaleString()}</span></div>
+          <div class="tcp-subtle">Estimated cost: <span class="font-mono text-slate-200">$${cost24h.toFixed(4)}</span></div>
+          <div class="tcp-subtle">Top owners: <span class="font-mono text-slate-200">${escapeHtml(topCostRows.map((x) => x.id).join(", ") || "none")}</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="tcp-card${uiState.wizard ? "" : " hidden"}" data-agents-panel="wizard">
+      <div class="flex items-center justify-between gap-2">
+        <h3 class="tcp-title">Walkthrough Wizard</h3>
+        <button id="agents-wizard-close" class="tcp-btn">Close</button>
+      </div>
+      <div class="agents-steps mt-3">
+        ${wizardStepLabels
+          .map(
+            (label, index) =>
+              `<span class="agents-step-chip ${uiState.step === index ? "active" : ""}">${index + 1}. ${escapeHtml(label)}</span>`
+          )
+          .join("")}
+      </div>
+      <div class="mt-3 rounded-xl border border-slate-700/60 bg-slate-900/35 p-3">
+        ${
+          uiState.step === 0
+            ? `<p class="tcp-subtle mb-3">Pick what you want to build first.</p>
+               <div class="flex flex-wrap gap-2">
+                 <button data-wizard-flow="advanced" class="tcp-btn ${uiState.flow === "advanced" ? "border-slate-300/80" : ""}">Advanced automation</button>
+                 <button data-wizard-flow="routine" class="tcp-btn ${uiState.flow === "routine" ? "border-slate-300/80" : ""}">Routine</button>
+               </div>`
+            : uiState.step === 1
+              ? `<p class="tcp-subtle mb-3">${
+                  uiState.flow === "routine"
+                    ? "Configure schedule, model, and policy for your routine."
+                    : "Configure schedule, per-agent models/skills, and DAG nodes."
+                }</p>
+                 <button id="agents-wizard-open-builder" class="tcp-btn-primary">${
+                   uiState.flow === "routine" ? "Open Routine Builder" : "Open Automation Builder"
+                 }</button>`
+              : `<p class="tcp-subtle mb-3">Launch runs and monitor approvals, pause/resume, and outcomes.</p>
+                 <button id="agents-wizard-open-runs" class="tcp-btn-primary">Open Runs & Approvals</button>`
+        }
+      </div>
+      <div class="mt-3 flex items-center justify-between">
+        <button id="agents-wizard-prev" class="tcp-btn" ${uiState.step <= 0 ? "disabled" : ""}>Back</button>
+        <button id="agents-wizard-next" class="tcp-btn-primary">${uiState.step >= 2 ? "Finish" : "Next"}</button>
+      </div>
+    </div>
+    <div class="tcp-card${panelClass("templates")}" data-agents-panel="templates">
+      <h3 class="tcp-title mb-3">Automation Templates</h3>
+      <div class="grid gap-2 md:grid-cols-2">
+        <button class="tcp-btn justify-start" data-template-id="github_bug_hunter">GitHub bug hunter</button>
+        <button class="tcp-btn justify-start" data-template-id="code_generation_pipeline">Code generation pipeline</button>
+        <button class="tcp-btn justify-start" data-template-id="release_notes_changelog">Release notes + changelog</button>
+        <button class="tcp-btn justify-start" data-template-id="marketing_content_engine">Marketing content engine</button>
+        <button class="tcp-btn justify-start" data-template-id="sales_lead_outreach">Sales lead outreach</button>
+        <button class="tcp-btn justify-start" data-template-id="productivity_inbox_to_tasks">Productivity: inbox to tasks</button>
+      </div>
+      <p class="tcp-subtle mt-3 text-xs">Selecting a template pre-fills the advanced automation builder and opens the walkthrough.</p>
+    </div>
+    <div class="tcp-card${panelClass("routines")}" data-agents-panel="routines">
       <h3 class="tcp-title mb-3">Create Routine</h3>
       <p id="routine-form-mode" class="mb-2 text-xs text-slate-400">Creating new routine</p>
       <div class="grid gap-3 md:grid-cols-2">
@@ -509,11 +696,11 @@ export async function renderAgents(ctx) {
         </div>
       </div>
     </div>
-    <div class="tcp-card">
+    <div class="tcp-card${panelClass("routines")}" data-agents-panel="routines">
       <h3 class="tcp-title mb-3">Routines (${routines.length})</h3>
       <div id="routine-list" class="tcp-list"></div>
     </div>
-    <div class="tcp-card">
+    <div class="tcp-card${panelClass("automations")}" data-agents-panel="automations">
       <h3 class="tcp-title mb-3">Automations (${automations.length})</h3>
       ${
         automationsMirrorRoutines
@@ -522,7 +709,7 @@ export async function renderAgents(ctx) {
       }
       <div class="tcp-list">${automationsMarkup}</div>
     </div>
-    <div class="tcp-card">
+    <div class="tcp-card${panelClass("automations")}" data-agents-panel="automations">
       <h3 class="tcp-title mb-3">Automation Builder</h3>
       <div class="grid gap-3 md:grid-cols-2">
         <input id="automation-v2-name" class="tcp-input" placeholder="Automation name" />
@@ -574,30 +761,90 @@ export async function renderAgents(ctx) {
         <button id="automation-v2-create" class="tcp-btn-primary"><i data-lucide="save"></i> Create Automation</button>
       </div>
     </div>
-    <div class="tcp-card">
+    <div class="tcp-card${panelClass("automations")}" data-agents-panel="automations">
       <h3 class="tcp-title mb-3">Advanced Automations (${automationsV2.length})</h3>
       <div class="tcp-list">${automationsV2Markup}</div>
     </div>
-    <div class="tcp-card">
+    <div class="tcp-card${panelClass("automations")}" data-agents-panel="automations">
       <h3 class="tcp-title mb-2">Automation Run Inspector</h3>
       <div id="automation-v2-run-inspector" class="tcp-list">
         <p class="tcp-subtle">Click an automation "Runs" button to inspect and control run state.</p>
       </div>
     </div>
-    <div class="tcp-card">
+    <div class="tcp-card${panelClass("runs")}" data-agents-panel="runs">
       <div class="mb-3 flex items-center justify-between gap-2">
         <h3 class="tcp-title">Recent Runs (${dedupedRecentRuns.length})</h3>
         <button id="refresh-runs" class="tcp-btn"><i data-lucide="refresh-cw"></i> Refresh</button>
       </div>
       <div class="tcp-list">${recentRunsMarkup}</div>
     </div>
-    <div class="tcp-card">
+    <div class="tcp-card${panelClass("runs")}" data-agents-panel="runs">
       <h3 class="tcp-title mb-2">Run Inspector</h3>
       <div id="run-inspector" class="tcp-list">
         <p class="tcp-subtle">Pick any recent run and click Details to inspect status, full detail, and artifacts.</p>
       </div>
     </div>
   `;
+
+  byId("view")
+    .querySelectorAll("[data-agents-tab]")
+    .forEach((btn) =>
+      btn.addEventListener("click", () => {
+        const tab = String(btn.getAttribute("data-agents-tab") || "").trim().toLowerCase();
+        if (!AGENTS_TABS.includes(tab)) return;
+        writeAgentsUiState({ tab });
+      })
+    );
+  byId("agents-launch-wizard")?.addEventListener("click", () => {
+    writeAgentsUiState({ wizard: true, step: 0 });
+  });
+  byId("agents-wizard-close")?.addEventListener("click", () => {
+    try {
+      localStorage.setItem(AGENTS_WIZARD_SEEN_KEY, "1");
+    } catch {
+      // ignore storage failures
+    }
+    writeAgentsUiState({ wizard: false });
+  });
+  byId("agents-wizard-prev")?.addEventListener("click", () => {
+    writeAgentsUiState({ step: Math.max(0, uiState.step - 1) });
+  });
+  byId("agents-wizard-next")?.addEventListener("click", () => {
+    if (uiState.step >= 2) {
+      try {
+        localStorage.setItem(AGENTS_WIZARD_SEEN_KEY, "1");
+      } catch {
+        // ignore storage failures
+      }
+      writeAgentsUiState({ wizard: false, tab: "runs" });
+      return;
+    }
+    writeAgentsUiState({ step: Math.min(2, uiState.step + 1) });
+  });
+  byId("view")
+    .querySelectorAll("[data-wizard-flow]")
+    .forEach((btn) =>
+      btn.addEventListener("click", () => {
+        const flow = String(btn.getAttribute("data-wizard-flow") || "").trim().toLowerCase();
+        writeAgentsUiState({ flow: flow === "routine" ? "routine" : "advanced" });
+      })
+    );
+  byId("agents-wizard-open-builder")?.addEventListener("click", () => {
+    writeAgentsUiState({ tab: uiState.flow === "routine" ? "routines" : "automations", step: 2 });
+  });
+  byId("agents-wizard-open-runs")?.addEventListener("click", () => {
+    writeAgentsUiState({ tab: "runs", step: 2 });
+  });
+  byId("view")
+    .querySelectorAll("[data-agents-panel]")
+    .forEach((panel) => {
+      if (panel.classList.contains("hidden")) return;
+      animate(
+        panel,
+        { opacity: [0.0, 1.0], transform: ["translateY(8px)", "translateY(0px)"] },
+        { duration: 0.22, easing: "ease-out" }
+      );
+    });
 
   const routineList = byId("routine-list");
   routineList.innerHTML =
@@ -856,6 +1103,30 @@ export async function renderAgents(ctx) {
   };
   rebuildV2AgentRows();
   appendV2NodeRow();
+  byId("view")
+    .querySelectorAll("[data-template-id]")
+    .forEach((btn) =>
+      btn.addEventListener("click", () => {
+        const presetId = String(btn.getAttribute("data-template-id") || "").trim();
+        const preset = v2PresetCatalog[presetId];
+        if (!preset) {
+          toast("err", "Preset not found.");
+          return;
+        }
+        byId("automation-v2-preset").value = presetId;
+        byId("automation-v2-name").value = String(preset.name || "");
+        byId("automation-v2-description").value = String(preset.description || "");
+        const schedule = preset.schedule || {};
+        byId("automation-v2-schedule-type").value = String(schedule.type || "manual");
+        byId("automation-v2-cron").value = String(schedule.cron_expression || "");
+        byId("automation-v2-interval-seconds").value = String(schedule.interval_seconds || 3600);
+        byId("automation-v2-timezone").value = String(schedule.timezone || "UTC");
+        byId("automation-v2-misfire").value = String(schedule.misfire_policy || "run_once");
+        setV2AgentsAndNodes(preset.agents || [], preset.nodes || []);
+        writeAgentsUiState({ tab: "automations", wizard: true, flow: "advanced", step: 1 });
+        toast("ok", `Template loaded: ${preset.name}`);
+      })
+    );
   byId("automation-v2-generate-agents")?.addEventListener("click", () => {
     rebuildV2AgentRows();
     toast("ok", "Agent rows regenerated.");

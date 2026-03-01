@@ -66,6 +66,25 @@ Cost estimation uses the engine rate:
 
 - `TANDEM_TOKEN_COST_PER_1K_USD` (USD per 1,000 tokens, default `0`).
 
+## Automations Workspace (Tabbed + Wizard)
+
+The left nav `Automations` page (`#/agents`) now uses task-focused tabs:
+
+- `Overview`
+- `Routines`
+- `Automations`
+- `Templates`
+- `Runs & Approvals`
+
+A built-in walkthrough wizard can be launched from the page header and also auto-opens for first-time empty workspaces.
+
+Deep-link query state is supported on `#/agents`:
+
+- `tab`
+- `wizard`
+- `flow` (`routine` or `advanced`)
+- `step`
+
 ## Verify Engine + Panel
 
 ```bash
