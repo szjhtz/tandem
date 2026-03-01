@@ -51,6 +51,7 @@ import {
   isGitRepo,
   getToolGuidance,
   getProvidersConfig,
+  getIdentityConfig,
   setProvidersConfig,
   type StreamEvent,
   type StreamEventEnvelopeV2,
@@ -409,6 +410,28 @@ export function Chat({
       if (unlisten) unlisten();
     };
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadIdentity = async () => {
+      try {
+        const payload = await getIdentityConfig();
+        if (cancelled) return;
+        const identity = payload?.identity || {};
+        const bot = identity.bot || {};
+        const aliases = bot.aliases || {};
+        const name = String(aliases.desktop || bot.canonical_name || "").trim();
+        setAssistantName(name || "Assistant");
+      } catch {
+        if (!cancelled) setAssistantName("Assistant");
+      }
+    };
+    void loadIdentity();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const [sidecarStatus, setSidecarStatus] = useState<SidecarState>("stopped");
   const [error, setError] = useState<string | null>(null);
   const [isConnecting, setIsConnecting] = useState(false);
@@ -421,6 +444,8 @@ export function Chat({
     "healthy"
   );
   const [startupHealth, setStartupHealth] = useState<SidecarStartupHealth | null>(null);
+  const [assistantName, setAssistantName] = useState("Assistant");
+  const [assistantAvatarUrl] = useState("/tandem-logo.png");
   const [engineReady, setEngineReady] = useState(false);
   const [queuedMessages, setQueuedMessages] = useState<QueuedMessage[]>([]);
   // const [activities, setActivities] = useState<ActivityItem[]>([]);
@@ -3293,7 +3318,7 @@ ${g.example}
       <header className="flex items-center justify-between border-b border-border px-6 py-4">
         <div className="flex items-center gap-3">
           <div>
-            <h1 className="font-semibold text-text">Assistant</h1>
+            <h1 className="font-semibold text-text">{assistantName}</h1>
             {workspacePath && (
               <p className="flex items-center gap-1 text-sm text-text-muted">
                 <FolderOpen className="h-3 w-3" />
@@ -3513,6 +3538,8 @@ ${g.example}
                         <Message
                           key={message.id}
                           {...message}
+                          assistantName={assistantName}
+                          assistantAvatarUrl={assistantAvatarUrl}
                           isStreaming={isActivelyStreaming}
                           renderMode={isActivelyStreaming ? "streaming-lite" : "full"}
                           disableMountAnimation

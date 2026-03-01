@@ -493,10 +493,19 @@ export async function renderChat(ctx) {
     }
 
     const messages = await state.client.sessions.messages(state.currentSessionId).catch(() => []);
+    const assistantLabel = String(state.botName || "Assistant").trim() || "Assistant";
     messagesEl.innerHTML = messages
       .map((m) => {
         const roleRaw = String(m?.info?.role || "unknown");
-        const role = escapeHtml(roleRaw);
+        const displayRole =
+          roleRaw === "assistant"
+            ? assistantLabel
+            : roleRaw === "user"
+              ? "User"
+              : roleRaw === "system"
+                ? "System"
+                : roleRaw;
+        const role = escapeHtml(displayRole);
         const textRaw = (m.parts || []).map((p) => p.text || "").join("\n");
         const isAssistantLike = roleRaw === "assistant" || roleRaw === "system";
         const content = isAssistantLike
@@ -533,10 +542,15 @@ export async function renderChat(ctx) {
       if (!state.currentSessionId) await createSession();
       const modelRoute = await resolveModelRoute();
       if (!modelRoute) {
-        throw new Error("No default provider/model configured. Set it in Settings before sending chat.");
+        throw new Error(
+          "No default provider/model configured. Set it in Settings before sending chat."
+        );
       }
       if (attached.length > 0) {
-        toast("info", `Sending with ${attached.length} attached file${attached.length === 1 ? "" : "s"}.`);
+        toast(
+          "info",
+          `Sending with ${attached.length} attached file${attached.length === 1 ? "" : "s"}.`
+        );
       }
       const parts = attached.map((f) => ({
         type: "file",
@@ -547,18 +561,16 @@ export async function renderChat(ctx) {
       parts.push({ type: "text", text: prompt });
 
       const getActiveRunId = async () => {
-        const res = await fetch(`/api/engine/session/${encodeURIComponent(state.currentSessionId)}/run`, {
-          method: "GET",
-          credentials: "include",
-        });
+        const res = await fetch(
+          `/api/engine/session/${encodeURIComponent(state.currentSessionId)}/run`,
+          {
+            method: "GET",
+            credentials: "include",
+          }
+        );
         if (!res.ok) return "";
         const payload = await res.json().catch(() => ({}));
-        return (
-          payload?.active?.runID ||
-          payload?.active?.runId ||
-          payload?.active?.run_id ||
-          ""
-        );
+        return payload?.active?.runID || payload?.active?.runId || payload?.active?.run_id || "";
       };
 
       const cancelAndWaitForIdle = async () => {
@@ -589,25 +601,30 @@ export async function renderChat(ctx) {
       };
 
       const startRun = async () =>
-        fetch(`/api/engine/session/${encodeURIComponent(state.currentSessionId)}/prompt_async?return=run`, {
-          method: "POST",
-          credentials: "include",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            parts,
-            model: {
-              providerID: modelRoute.providerID,
-              modelID: modelRoute.modelID,
-            },
-          }),
-        });
+        fetch(
+          `/api/engine/session/${encodeURIComponent(state.currentSessionId)}/prompt_async?return=run`,
+          {
+            method: "POST",
+            credentials: "include",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              parts,
+              model: {
+                providerID: modelRoute.providerID,
+                modelID: modelRoute.modelID,
+              },
+            }),
+          }
+        );
 
       let runResp = await startRun();
       let runId = "";
       if (runResp.status === 409) {
         const becameIdle = await cancelAndWaitForIdle();
         if (!becameIdle) {
-          throw new Error("Session has a stuck active run. Cancel it from engine/session and retry.");
+          throw new Error(
+            "Session has a stuck active run. Cancel it from engine/session and retry."
+          );
         }
         runResp = await startRun();
         if (runResp.ok) {
@@ -633,10 +650,11 @@ export async function renderChat(ctx) {
       }
       let responseText = "";
       let gotDelta = false;
+      const assistantLabel = escapeHtml(String(state.botName || "Assistant").trim() || "Assistant");
       const placeholder = document.createElement("div");
       placeholder.className = "chat-msg assistant";
       placeholder.innerHTML = `
-        <div class="chat-msg-role">assistant</div>
+        <div class="chat-msg-role">${assistantLabel}</div>
         <div class="tcp-thinking" aria-live="polite">
           <span>Thinking</span>
           <i></i><i></i><i></i>
@@ -688,11 +706,15 @@ export async function renderChat(ctx) {
       }, 90000);
 
       try {
-        for await (const event of state.client.stream(state.currentSessionId, runId, { signal: streamAbort.signal })) {
+        for await (const event of state.client.stream(state.currentSessionId, runId, {
+          signal: streamAbort.signal,
+        })) {
           if (isRunSignalEvent(event.type)) {
             resetNoEventTimer();
           }
-          const evRunId = String(event.runId || event.runID || event.run_id || event.properties?.runID || "").trim();
+          const evRunId = String(
+            event.runId || event.runID || event.run_id || event.properties?.runID || ""
+          ).trim();
           if (evRunId && evRunId !== runId) continue;
           if (event.type === "session.response") {
             const delta = String(event.properties?.delta || "");
@@ -727,7 +749,11 @@ export async function renderChat(ctx) {
             const tool = String(part.tool || part.toolName || "").trim();
             if (tool && partType === "tool_invocation") {
               const partId = String(part.id || "").trim();
-              recordToolActivity(tool, "started", `${event.type}:${partId || evRunId || runId}:${tool}:start`);
+              recordToolActivity(
+                tool,
+                "started",
+                `${event.type}:${partId || evRunId || runId}:${tool}:start`
+              );
             }
             if (tool && partType === "tool_result") {
               const partId = String(part.id || "").trim();
@@ -775,7 +801,9 @@ export async function renderChat(ctx) {
         }
         await renderMessages();
         if (active === runId) {
-          throw new Error("Run appears stuck before provider call (no stream events and still active).");
+          throw new Error(
+            "Run appears stuck before provider call (no stream events and still active)."
+          );
         }
       }
 

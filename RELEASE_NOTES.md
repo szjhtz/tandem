@@ -41,6 +41,7 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
   - Control Panel now reads configured identity aliases and renders control-panel/bot labels dynamically.
   - Control Panel Settings now includes an Identity & Personality editor (canonical name, control-panel alias, preset, custom instructions).
   - Desktop (Tauri) Settings now includes a Bot Identity section (canonical name, desktop alias, preset, custom instructions).
+  - Control Panel chat and Desktop chat now show configured bot identity names in assistant message/header labels.
   - Core UI/TUI assistant-facing copy reduces hardcoded Tandem naming in primary runtime labels/placeholders.
 - Setup flow updates
   - Desktop onboarding wizard now includes an identity setup step with direct navigation to the Settings identity section.

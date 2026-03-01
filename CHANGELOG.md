@@ -31,6 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Guide docs identity/auth refresh**: Updated `guide/src` docs for identity/personality configuration and SDK usage, and switched curl examples to canonical `X-Agent-Token` while documenting `X-Tandem-Token` compatibility.
 - **Identity settings UI across frontends**: Added bot-name/personality settings editors in Desktop (Tauri) Settings and Control Panel Settings, including personality preset selection and custom instructions save flow through `/config/identity`.
 - **Onboarding wizard identity step (desktop)**: Added a first-run setup shortcut to the new Identity section so bot name/personality can be configured during initial setup.
+- **Identity-aware chat labels**: Control Panel chat and Desktop chat message/header labels now use configured bot identity names instead of fixed “Assistant” labels.
 - **Engine tool-loop guard tuning**: Engine loop now supports `TANDEM_MAX_TOOL_ITERATIONS` and `TANDEM_TOOL_LOOP_DUPLICATE_SIGNATURE_LIMIT` to reduce high-cost retry spirals on repeated tool signatures.
 - **Default tool exposure behavior**: Engine `tool_mode=auto` now starts with a no-tools pass and escalates to a capped intent-matched subset only when needed, instead of publishing the full tool catalog on every call.
 - **Context sizing behavior for trivial prompts**: Added compact context profile selection for short/simple prompts and server-side memory-injection skip heuristics for low-signal greetings/chitchat to reduce token overhead.
