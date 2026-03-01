@@ -270,6 +270,8 @@ async function installServices() {
     TANDEM_STATE_DIR: stateDir,
     TANDEM_MEMORY_DB_PATH: existingEngineEnv.TANDEM_MEMORY_DB_PATH || `${stateDir}/memory.sqlite`,
     TANDEM_ENABLE_GLOBAL_MEMORY: existingEngineEnv.TANDEM_ENABLE_GLOBAL_MEMORY || "1",
+    TANDEM_DISABLE_TOOL_GUARD_BUDGETS:
+      existingEngineEnv.TANDEM_DISABLE_TOOL_GUARD_BUDGETS || "1",
   };
   const engineEnvBody = Object.entries(engineEnv)
     .map(([k, v]) => `${k}=${v}`)
@@ -604,6 +606,8 @@ async function ensureEngineRunning() {
       env: {
         ...process.env,
         TANDEM_API_TOKEN: managedEngineToken,
+        TANDEM_DISABLE_TOOL_GUARD_BUDGETS:
+          process.env.TANDEM_DISABLE_TOOL_GUARD_BUDGETS || "1",
       },
       stdio: "inherit",
     }

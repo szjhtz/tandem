@@ -74,6 +74,9 @@ Variables:
 - `TANDEM_CONTROL_PANEL_ENGINE_TOKEN` (token injected when panel auto-starts engine)
 - `TANDEM_API_TOKEN` (backward-compatible alias for engine token)
 - `TANDEM_CONTROL_PANEL_SESSION_TTL_MINUTES` (default `1440`)
+- `TANDEM_DISABLE_TOOL_GUARD_BUDGETS` (`1` disables per-run guard budgets; default in installer/service env is `1`)
+- `TANDEM_TOOL_BUDGET_DEFAULT`, `TANDEM_TOOL_BUDGET_BATCH`, `TANDEM_TOOL_BUDGET_WEBSEARCH`,
+  `TANDEM_TOOL_BUDGET_READ`, `TANDEM_TOOL_BUDGET_SEARCH`, `TANDEM_TOOL_BUDGET_GLOB` (used when guards are enabled)
 
 ## Token Behavior
 
@@ -82,6 +85,31 @@ Variables:
   - `TANDEM_CONTROL_PANEL_ENGINE_TOKEN` (preferred), or
   - `TANDEM_API_TOKEN` (alias), or
   - auto-generated at startup (printed in panel logs).
+
+## Tool Guard Budgets
+
+Default installs now set:
+
+```bash
+TANDEM_DISABLE_TOOL_GUARD_BUDGETS=1
+```
+
+To enforce caps instead, set:
+
+```bash
+TANDEM_DISABLE_TOOL_GUARD_BUDGETS=0
+TANDEM_TOOL_BUDGET_DEFAULT=10
+TANDEM_TOOL_BUDGET_BATCH=10
+TANDEM_TOOL_BUDGET_WEBSEARCH=8
+TANDEM_TOOL_BUDGET_READ=8
+TANDEM_TOOL_BUDGET_SEARCH=6
+TANDEM_TOOL_BUDGET_GLOB=4
+```
+
+Notes:
+
+- Unknown tools use `TANDEM_TOOL_BUDGET_DEFAULT`.
+- `0|none|unlimited|infinite|inf` for a budget key means no cap for that key.
 
 ## Setup Flow
 
