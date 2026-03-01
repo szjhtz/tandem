@@ -25,6 +25,15 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
 - SDK parity updates for routing controls
   - TypeScript client: `promptAsync` / `promptAsyncParts` now accept routing options (`toolMode`, `toolAllowlist`, `contextMode`).
   - Python client: `prompt_async` / `prompt_async_parts` now accept `tool_mode`, `tool_allowlist`, `context_mode`.
+- Engine/channel stability hardening for stuck runs
+  - Fixed startup race in server prompt-context hook that could panic with `runtime accessed before startup completion` during boot.
+  - Added provider stream timeout fail-safes in engine loop so stuck upstream calls fail and release active runs:
+    - `TANDEM_PROVIDER_STREAM_CONNECT_TIMEOUT_MS` (default `45000`)
+    - `TANDEM_PROVIDER_STREAM_IDLE_TIMEOUT_MS` (default `120000`)
+  - This prevents long-lived stuck active runs that caused downstream `SESSION_RUN_CONFLICT` symptoms across web chat and channel adapters.
+- Control panel chat stream watchdog hardening
+  - Increased stream no-event and max-window thresholds.
+  - Added run-settlement polling before declaring a stuck run, reducing false stuck/error toasts during slow provider/tool phases.
 
 - Bot identity + personality configuration
   - Added canonical identity API: `GET /config/identity` and `PATCH /config/identity`.

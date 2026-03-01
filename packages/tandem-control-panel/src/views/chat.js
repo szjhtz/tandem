@@ -686,6 +686,18 @@ export async function renderChat(ctx) {
       let noEventTimer = null;
       let maxStreamTimer = null;
       let streamAbortReason = "";
+      const NO_EVENT_TIMEOUT_MS = 30000;
+      const MAX_STREAM_WINDOW_MS = 180000;
+      const waitForRunToSettle = async (targetRunId, timeoutMs) => {
+        const startedAt = Date.now();
+        while (Date.now() - startedAt < timeoutMs) {
+          const active = await getActiveRunId().catch(() => targetRunId);
+          await renderMessages();
+          if (!active || active !== targetRunId) return true;
+          await new Promise((resolve) => setTimeout(resolve, 350));
+        }
+        return false;
+      };
       const isRunSignalEvent = (eventType) => {
         const t = String(eventType || "").trim();
         return t !== "server.connected" && t !== "engine.lifecycle.ready";
@@ -696,14 +708,14 @@ export async function renderChat(ctx) {
           streamTimedOut = true;
           streamAbortReason = "no-events-timeout";
           streamAbort.abort("no-events-timeout");
-        }, 12000);
+        }, NO_EVENT_TIMEOUT_MS);
       };
       resetNoEventTimer();
       maxStreamTimer = setTimeout(() => {
         streamTimedOut = true;
         streamAbortReason = "max-stream-window";
         streamAbort.abort("max-stream-window");
-      }, 90000);
+      }, MAX_STREAM_WINDOW_MS);
 
       try {
         for await (const event of state.client.stream(state.currentSessionId, runId, {
@@ -792,17 +804,12 @@ export async function renderChat(ctx) {
       if (maxStreamTimer) clearTimeout(maxStreamTimer);
 
       if (streamTimedOut) {
-        // Fallback: if run already settled, refresh messages; otherwise fail explicitly.
-        let active = runId;
-        for (let i = 0; i < 15; i += 1) {
-          active = await getActiveRunId().catch(() => runId);
-          if (!active || active !== runId) break;
-          await new Promise((resolve) => setTimeout(resolve, 200));
-        }
+        // Fallback: give the run time to settle before declaring failure.
+        const settled = await waitForRunToSettle(runId, 45000);
         await renderMessages();
-        if (active === runId) {
+        if (!settled) {
           throw new Error(
-            "Run appears stuck before provider call (no stream events and still active)."
+            "Run stream timed out and the run is still active. Check engine/provider logs and retry."
           );
         }
       }
@@ -820,6 +827,11 @@ export async function renderChat(ctx) {
       if (!gotDelta) {
         const activeAfter = await getActiveRunId().catch(() => "");
         if (activeAfter === runId) {
+          const settled = await waitForRunToSettle(runId, 30000);
+          if (settled) {
+            await renderMessages();
+            return;
+          }
           const reason = streamAbortReason || "stream-ended-without-final-delta";
           throw new Error(`Run ${runId} is still active without a final response (${reason}).`);
         }

@@ -5,6 +5,7 @@ use serde_json::{json, Map, Number, Value};
 use std::collections::{hash_map::DefaultHasher, HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 use tandem_observability::{emit_event, ObservabilityEvent, ProcessKind};
 use tandem_providers::{ChatAttachment, ChatMessage, ProviderRegistry, StreamChunk, TokenUsage};
 use tandem_tools::{validate_tool_schemas, ToolRegistry};
@@ -517,43 +518,66 @@ impl EngineLoop {
                         "mcpIncluded": routing_decision.mcp_included
                     }),
                 ));
-                let stream = self
-                    .providers
-                    .stream_for_provider(
+                let provider_connect_timeout =
+                    Duration::from_millis(provider_stream_connect_timeout_ms() as u64);
+                let stream = tokio::time::timeout(
+                    provider_connect_timeout,
+                    self.providers.stream_for_provider(
                         Some(provider_id.as_str()),
                         Some(model_id_value.as_str()),
                         messages,
                         Some(tool_schemas),
                         cancel.clone(),
+                    ),
+                )
+                .await
+                .map_err(|_| {
+                    anyhow::anyhow!(
+                        "provider stream connect timeout after {} ms",
+                        provider_connect_timeout.as_millis()
                     )
-                    .await
-                    .inspect_err(|err| {
-                        let error_text = err.to_string();
-                        let error_code = provider_error_code(&error_text);
-                        let detail = truncate_text(&error_text, 500);
-                        emit_event(
-                            Level::ERROR,
-                            ProcessKind::Engine,
-                            ObservabilityEvent {
-                                event: "provider.call.error",
-                                component: "engine.loop",
-                                correlation_id: correlation_ref,
-                                session_id: Some(&session_id),
-                                run_id: None,
-                                message_id: Some(&user_message_id),
-                                provider_id: Some(provider_id.as_str()),
-                                model_id,
-                                status: Some("failed"),
-                                error_code: Some(error_code),
-                                detail: Some(&detail),
-                            },
-                        );
-                    })?;
+                })
+                .and_then(|result| result)
+                .inspect_err(|err| {
+                    let error_text = err.to_string();
+                    let error_code = provider_error_code(&error_text);
+                    let detail = truncate_text(&error_text, 500);
+                    emit_event(
+                        Level::ERROR,
+                        ProcessKind::Engine,
+                        ObservabilityEvent {
+                            event: "provider.call.error",
+                            component: "engine.loop",
+                            correlation_id: correlation_ref,
+                            session_id: Some(&session_id),
+                            run_id: None,
+                            message_id: Some(&user_message_id),
+                            provider_id: Some(provider_id.as_str()),
+                            model_id,
+                            status: Some("failed"),
+                            error_code: Some(error_code),
+                            detail: Some(&detail),
+                        },
+                    );
+                })?;
                 tokio::pin!(stream);
                 completion.clear();
                 let mut streamed_tool_calls: HashMap<String, StreamedToolCall> = HashMap::new();
                 let mut provider_usage: Option<TokenUsage> = None;
-                while let Some(chunk) = stream.next().await {
+                let provider_idle_timeout =
+                    Duration::from_millis(provider_stream_idle_timeout_ms() as u64);
+                loop {
+                    let next_chunk = tokio::time::timeout(provider_idle_timeout, stream.next())
+                        .await
+                        .map_err(|_| {
+                            anyhow::anyhow!(
+                                "provider stream idle timeout after {} ms",
+                                provider_idle_timeout.as_millis()
+                            )
+                        })?;
+                    let Some(chunk) = next_chunk else {
+                        break;
+                    };
                     let chunk = match chunk {
                         Ok(chunk) => chunk,
                         Err(err) => {
@@ -2208,6 +2232,22 @@ fn max_tool_iterations() -> usize {
         .and_then(|raw| raw.trim().parse::<usize>().ok())
         .filter(|value| *value > 0)
         .unwrap_or(default_iterations)
+}
+
+fn provider_stream_connect_timeout_ms() -> usize {
+    std::env::var("TANDEM_PROVIDER_STREAM_CONNECT_TIMEOUT_MS")
+        .ok()
+        .and_then(|raw| raw.trim().parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(45_000)
+}
+
+fn provider_stream_idle_timeout_ms() -> usize {
+    std::env::var("TANDEM_PROVIDER_STREAM_IDLE_TIMEOUT_MS")
+        .ok()
+        .and_then(|raw| raw.trim().parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(120_000)
 }
 
 fn duplicate_signature_limit_for(tool_name: &str) -> usize {

@@ -36,6 +36,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Default tool exposure behavior**: Engine `tool_mode=auto` now starts with a no-tools pass and escalates to a capped intent-matched subset only when needed, instead of publishing the full tool catalog on every call.
 - **Context sizing behavior for trivial prompts**: Added compact context profile selection for short/simple prompts and server-side memory-injection skip heuristics for low-signal greetings/chitchat to reduce token overhead.
 - **SDK prompt parity for routing controls**: TypeScript and Python session prompt clients now support passing routing options (`toolMode`/`toolAllowlist`/`contextMode`) to `prompt_async`.
+- **Provider stream fail-safe behavior**: Engine provider streaming now enforces configurable connect/idle timeouts to fail stuck upstream calls deterministically and release active runs instead of hanging sessions.
+- **Control panel chat stream resiliency**: Chat stream watchdog now uses longer no-event/max-window thresholds and a run-settlement wait path before surfacing a stuck-run failure.
 
 ### Fixed
 
@@ -46,6 +48,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Telegram MarkdownV2 chunk boundary robustness**: Message chunking now prefers safe markdown-entity boundaries to reduce formatting breakage and parse-mode failures when splitting long responses.
 - **Runaway repeated tool-call retries**: Engine now guards duplicate non-read-only tool signatures (including repeated `bash` calls), emits deterministic loop-guard terminal messaging, and stops wasteful repeated provider/tool cycles.
 - **Tool-context bloat on lightweight prompts**: Short/simple prompts no longer incur full tool list + memory context injection by default, reducing unnecessary token burn and repeated tool-call churn.
+- **Startup-time runtime panic in prompt context hook**: Server prompt augmentation now fail-opens when runtime state is not yet installed, preventing `runtime accessed before startup completion` panics during startup races.
+- **Cross-channel stuck-active runs**: Engine now times out stalled provider streams and returns terminal failure instead of leaving runs indefinitely active (which previously cascaded into session/run conflicts across web/Discord/Telegram).
 
 ## [0.3.26] - 2026-02-28
 

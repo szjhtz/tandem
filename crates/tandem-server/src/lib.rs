@@ -1810,6 +1810,11 @@ impl PromptContextHook for ServerPromptContextHook {
     ) -> BoxFuture<'static, anyhow::Result<Vec<ChatMessage>>> {
         let this = self.clone();
         Box::pin(async move {
+            // Startup can invoke prompt plumbing before RuntimeState is installed.
+            // Never panic from context hooks; fail-open and continue without augmentation.
+            if !this.state.is_ready() {
+                return Ok(messages);
+            }
             let run = this.state.run_registry.get(&ctx.session_id).await;
             let Some(run) = run else {
                 return Ok(messages);
