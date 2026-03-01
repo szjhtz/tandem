@@ -11,8 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Control panel MCP auth-mode UX**: Added MCP connection auth modes in web control panel (`auto`, `x-api-key`, `bearer`, `custom`, `none`) with Composio-aware auto-header behavior and inline auth-preview guidance.
 - **Dashboard activity visuals**: Added control panel dashboard charts/summary cards for recent runs, status distribution, and automation/schedule activity to improve operator visibility.
+- **Automations + Cost dashboard section**: Added a first-class dashboard block with token and estimated USD cost KPIs (`24h`/`7d`) plus top automation/routine cost breakdown rows.
 - **Persistent Automations V2 backend foundation**: Added additive `automations/v2` API surface with new persisted state files (`automations_v2.json`, `automation_v2_runs.json`), DAG run checkpoints, run-level controls, and SSE stream endpoint.
 - **Per-agent model policy in V2 runs**: Added per-agent `model_policy` and runtime node-level model resolution so each agent can run different model tiers for cost/perf tuning.
+- **Run-level token/cost accounting for automations**: Added token usage and estimated cost fields on routine/automation run records with provider-usage event aggregation and configurable rate via `TANDEM_TOKEN_COST_PER_1K_USD`.
 - **Agent template write APIs**: Added `POST/PATCH/DELETE /agent-team/templates` so template selection and editing can be managed via API (not file-only).
 - **SDK surface for V2 + template management**: TypeScript client now exposes `automationsV2` namespace and agent-team template create/update/delete methods.
 - **Python SDK parity for V2 + template management**: Added `client.automations_v2` namespace and agent-team template create/update/delete methods in `tandem-client-py`.
@@ -28,6 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Scheduler cron behavior**: Routine/automation scheduling now evaluates true cron expressions with timezone-aware next-fire computation and misfire planning.
 - **Tool policy matching model**: Runtime allow/deny checks now support exact, wildcard, and prefix policies (`*`, `mcp.github.*`, `mcp.composio.*`) across session and capability gates.
 - **Control panel V2 operations**: Added Automations V2 list/controls in `agents` view, including run-now, automation pause/resume, per-automation runs inspection, and run pause/resume/cancel actions.
+- **Automation UX naming simplification**: Control panel copy now presents advanced automation flow tooling without exposing internal V2 labels to operators.
 
 ### Fixed
 

@@ -58,6 +58,12 @@ Use the identity API for structured settings (bot aliases, personality presets, 
 - `AGENT_PROTOCOL_TITLE`: Canonical protocol/application title override used in provider metadata (for example OpenRouter `X-Title`).
 - `TANDEM_PROTOCOL_TITLE`: Backward-compatible alias for protocol title.
 
+### Automation cost estimation
+
+- `TANDEM_TOKEN_COST_PER_1K_USD`: Estimated USD cost per 1,000 tokens used by automation/routine runs.
+  - Used by dashboard **Automations + Cost** metrics.
+  - Default: `0` (cost tracking disabled unless explicitly configured).
+
 ## Config File Format
 
 The configuration file is a simple JSON object.

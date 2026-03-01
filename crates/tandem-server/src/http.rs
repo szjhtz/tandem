@@ -854,6 +854,7 @@ pub async fn serve(addr: SocketAddr, state: AppState) -> anyhow::Result<()> {
     let status_indexer_state = state.clone();
     let routine_scheduler_state = state.clone();
     let routine_executor_state = state.clone();
+    let usage_aggregator_state = state.clone();
     let automation_v2_scheduler_state = state.clone();
     let automation_v2_executor_state = state.clone();
     let agent_team_supervisor_state = state.clone();
@@ -887,6 +888,7 @@ pub async fn serve(addr: SocketAddr, state: AppState) -> anyhow::Result<()> {
     let status_indexer = tokio::spawn(crate::run_status_indexer(status_indexer_state));
     let routine_scheduler = tokio::spawn(crate::run_routine_scheduler(routine_scheduler_state));
     let routine_executor = tokio::spawn(crate::run_routine_executor(routine_executor_state));
+    let usage_aggregator = tokio::spawn(crate::run_usage_aggregator(usage_aggregator_state));
     let automation_v2_scheduler = tokio::spawn(crate::run_automation_v2_scheduler(
         automation_v2_scheduler_state,
     ));
@@ -956,6 +958,7 @@ pub async fn serve(addr: SocketAddr, state: AppState) -> anyhow::Result<()> {
     status_indexer.abort();
     routine_scheduler.abort();
     routine_executor.abort();
+    usage_aggregator.abort();
     automation_v2_scheduler.abort();
     automation_v2_executor.abort();
     agent_team_supervisor.abort();

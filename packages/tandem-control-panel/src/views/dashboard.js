@@ -54,6 +54,24 @@ function runTimestamp(run) {
   return 0;
 }
 
+function runTotalTokens(run) {
+  const candidates = [run?.total_tokens, run?.totalTokens];
+  for (const value of candidates) {
+    const n = Number(value);
+    if (Number.isFinite(n) && n >= 0) return n;
+  }
+  return 0;
+}
+
+function runEstimatedCost(run) {
+  const candidates = [run?.estimated_cost_usd, run?.estimatedCostUsd];
+  for (const value of candidates) {
+    const n = Number(value);
+    if (Number.isFinite(n) && n >= 0) return n;
+  }
+  return 0;
+}
+
 function hasSchedule(record) {
   if (!record) return false;
   const schedule = record.schedule || record.cron || record.interval || record.trigger;
@@ -79,8 +97,10 @@ export async function renderDashboard(ctx) {
     channels,
     routinesRaw,
     automationsRaw,
+    automationsV2Raw,
     routineRunsRaw,
     automationRunsRaw,
+    automationV2RunsRaw,
     sessionsRaw,
     swarmStatus,
     swarmSnapshot,
@@ -92,8 +112,31 @@ export async function renderDashboard(ctx) {
     safeCall(() => state.client.channels.status(), {}),
     safeCall(() => state.client.routines.list(), { routines: [] }),
     safeCall(() => state.client.automations.list(), { automations: [] }),
+    safeCall(
+      () => (state.client?.automationsV2?.list ? state.client.automationsV2.list() : { automations: [] }),
+      { automations: [] }
+    ),
     safeCall(() => state.client.routines.listRuns({ limit: 120 }), { runs: [] }),
     safeCall(() => state.client.automations.listRuns({ limit: 120 }), { runs: [] }),
+    safeCall(async () => {
+      if (!state.client?.automationsV2?.list || !state.client?.automationsV2?.listRuns) return { runs: [] };
+      const list = await state.client.automationsV2.list();
+      const automations = toArray(list, "automations").slice(0, 30);
+      const payloads = await Promise.all(
+        automations.map((a) =>
+          safeCall(
+            () =>
+              state.client.automationsV2.listRuns(
+                String(a?.automation_id || a?.automationId || a?.id || ""),
+                20
+              ),
+            { runs: [] }
+          )
+        )
+      );
+      const runs = payloads.flatMap((p) => toArray(p, "runs"));
+      return { runs };
+    }, { runs: [] }),
     safeCall(() => state.client.sessions.list({ pageSize: 50 }), []),
     safeCall(() => api("/api/swarm/status"), { status: "unknown" }),
     safeCall(() => api("/api/swarm/snapshot"), { registry: { value: { tasks: {} } } }),
@@ -109,9 +152,11 @@ export async function renderDashboard(ctx) {
 
   const routines = toArray(routinesRaw, "routines");
   const automations = toArray(automationsRaw, "automations");
+  const automationsV2 = toArray(automationsV2Raw, "automations");
   const routineRuns = toArray(routineRunsRaw, "runs");
   const automationRuns = toArray(automationRunsRaw, "runs");
-  const runs = [...routineRuns, ...automationRuns];
+  const automationV2Runs = toArray(automationV2RunsRaw, "runs");
+  const runs = [...routineRuns, ...automationRuns, ...automationV2Runs];
   const sessions = toArray(sessionsRaw, "sessions");
   const teamInstances = toArray(instancesRaw, "instances");
   const teamApprovals = toArray(approvalsRaw, "spawnApprovals");
@@ -134,7 +179,7 @@ export async function renderDashboard(ctx) {
     { key: "failed", label: "Failed", value: runStatusCounts.failed },
   ]);
 
-  const allSchedulers = [...routines, ...automations];
+  const allSchedulers = [...routines, ...automations, ...automationsV2];
   const scheduledCount = allSchedulers.filter((x) => hasSchedule(x)).length;
   const manualCount = Math.max(allSchedulers.length - scheduledCount, 0);
   const pausedCount = allSchedulers.filter((rec) => {
@@ -179,6 +224,41 @@ export async function renderDashboard(ctx) {
   }
   const maxHourlyRuns = Math.max(1, ...hourlyBins.map((bin) => bin.value));
 
+  const last24hCutoff = now - 24 * 3600000;
+  const last7dCutoff = now - 7 * 24 * 3600000;
+  let tokens24h = 0;
+  let tokens7d = 0;
+  let cost24h = 0;
+  let cost7d = 0;
+  const automationCostById = new Map();
+  for (const run of runs) {
+    const ts = runTimestamp(run);
+    const totalTokens = runTotalTokens(run);
+    const estimatedCost = runEstimatedCost(run);
+    const automationId = String(
+      run?.automation_id || run?.automationId || run?.automationID || run?.routine_id || run?.routineId || "unknown"
+    ).trim();
+    if (ts >= last7dCutoff) {
+      tokens7d += totalTokens;
+      cost7d += estimatedCost;
+    }
+    if (ts >= last24hCutoff) {
+      tokens24h += totalTokens;
+      cost24h += estimatedCost;
+    }
+    if (automationId) {
+      const prev = automationCostById.get(automationId) || { cost: 0, tokens: 0, runs: 0 };
+      prev.cost += estimatedCost;
+      prev.tokens += totalTokens;
+      prev.runs += 1;
+      automationCostById.set(automationId, prev);
+    }
+  }
+  const topAutomationCostRows = [...automationCostById.entries()]
+    .map(([id, row]) => ({ id, ...row }))
+    .sort((a, b) => b.cost - a.cost)
+    .slice(0, 6);
+
   byId("view").innerHTML = `
     <div class="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
       <div class="tcp-card">
@@ -204,6 +284,40 @@ export async function renderDashboard(ctx) {
         <p class="mt-1 text-sm text-slate-400">Routines + automations with a trigger</p>
       </div>
     </div>
+
+    <section class="tcp-card">
+      <div class="mb-3 flex items-center justify-between gap-2">
+        <h3 class="tcp-title">Automations + Cost</h3>
+        <span class="tcp-subtle text-xs">all automation run paths</span>
+      </div>
+      <div class="dashboard-kpis mb-4">
+        <div><span class="dashboard-kpi-label">Tokens (24h)</span><strong>${tokens24h.toLocaleString()}</strong></div>
+        <div><span class="dashboard-kpi-label">Tokens (7d)</span><strong>${tokens7d.toLocaleString()}</strong></div>
+        <div><span class="dashboard-kpi-label">Estimated Cost (24h)</span><strong>$${cost24h.toFixed(4)}</strong></div>
+        <div><span class="dashboard-kpi-label">Estimated Cost (7d)</span><strong>$${cost7d.toFixed(4)}</strong></div>
+      </div>
+      <div class="mb-2 text-xs text-slate-500">
+        Cost estimate uses server rate TANDEM_TOKEN_COST_PER_1K_USD and run token totals from provider usage telemetry.
+      </div>
+      ${
+        topAutomationCostRows.length
+          ? `<div class="dashboard-bars">${topAutomationCostRows
+              .map((row) => {
+                const width = cost7d > 0 ? Math.max(4, Math.round((row.cost / Math.max(cost7d, 0.0001)) * 100)) : 4;
+                return `
+                <div class="dashboard-bar-row">
+                  <div class="dashboard-bar-meta">
+                    <span class="font-mono">${escapeHtml(row.id)}</span>
+                    <span class="dashboard-bar-count">$${row.cost.toFixed(4)} · ${row.tokens.toLocaleString()} tok · ${row.runs} runs</span>
+                  </div>
+                  <div class="dashboard-bar-track"><span class="dashboard-bar-fill running" style="width:${width}%"></span></div>
+                </div>
+              `;
+              })
+              .join("")}</div>`
+          : '<p class="tcp-subtle">No token/cost telemetry recorded yet for sampled runs.</p>'
+      }
+    </section>
 
     <div class="grid gap-4 xl:grid-cols-3">
       <section class="tcp-card">
@@ -310,7 +424,7 @@ export async function renderDashboard(ctx) {
       <h3 class="tcp-title mb-3">Quick Actions</h3>
       <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <button class="tcp-btn w-full justify-start" data-goto="chat"><i data-lucide="message-square"></i> Open Chat</button>
-        <button class="tcp-btn w-full justify-start" data-goto="agents"><i data-lucide="clipboard-list"></i> Manage Routines</button>
+        <button class="tcp-btn w-full justify-start" data-goto="agents"><i data-lucide="clipboard-list"></i> Automations + Cost</button>
         <button class="tcp-btn w-full justify-start" data-goto="swarm"><i data-lucide="workflow"></i> Launch Swarm</button>
         <button class="tcp-btn w-full justify-start" data-goto="mcp"><i data-lucide="plug-zap"></i> Connect MCP</button>
       </div>

@@ -8,6 +8,8 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
   - Replaced login hero animation with a uniform silicon-chip/data-flow visual.
   - Clicking `New` in chat now auto-collapses the history sidebar.
   - Added dashboard charts/summary cards for run and automation activity to improve at-a-glance operational visibility.
+  - Added first-class **Automations + Cost** dashboard section with token and estimated USD KPIs (`24h`/`7d`) and top automation/routine cost breakdown.
+  - Updated control panel automation copy to present advanced automation features without exposing internal V2 labels.
 - Chat reliability and approvals-state fixes
   - Fixed delayed user-message rendering: user messages now appear immediately on send (optimistic render).
   - Fixed missing right-rail tool activity by normalizing additional tool event families (`session.tool_call`, `session.tool_result`, and tool message-part updates).
@@ -22,6 +24,10 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
   - Added V2 scheduler/executor loops with DAG node dispatch and run checkpoint updates.
 - Per-agent model selection in V2 flows
   - Added per-agent `model_policy` support and node-level model resolution, enabling mixed-cost agent fleets (cheap models for easy tasks, stronger models for hard tasks).
+- Automation cost telemetry and accounting
+  - Added run-level `prompt_tokens`, `completion_tokens`, `total_tokens`, and `estimated_cost_usd` fields for routine/automation records.
+  - Added provider-usage aggregation to attribute token usage to active automation/routine runs.
+  - Added configurable estimation rate via `TANDEM_TOKEN_COST_PER_1K_USD` for dashboard cost metrics.
 - Scheduler + policy enforcement hardening
   - Replaced cron no-op behavior with real cron evaluation (timezone-aware next-fire + misfire handling).
   - Tool allowlist/denylist enforcement now supports wildcard/prefix matching (`*`, `mcp.github.*`, `mcp.composio.*`) in runtime/session/capability checks.

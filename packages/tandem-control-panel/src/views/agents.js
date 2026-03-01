@@ -329,7 +329,7 @@ export async function renderAgents(ctx) {
         const agentCount = Array.isArray(a?.agents) ? a.agents.length : 0;
         return `<div class="tcp-list-item">
           <div class="flex items-center justify-between gap-2">
-            <span>${escapeHtml(String(a?.name || aid || "Automation V2"))}</span>
+            <span>${escapeHtml(String(a?.name || aid || "Automation"))}</span>
             <div class="flex items-center gap-2">
               <span class="${runStatusClass(status)}">${escapeHtml(status)}</span>
               ${
@@ -361,7 +361,7 @@ export async function renderAgents(ctx) {
           </div>
         </div>`;
       })
-      .join("") || '<p class="tcp-subtle">No V2 automations.</p>';
+      .join("") || '<p class="tcp-subtle">No advanced automations.</p>';
   const recentRunsMarkup =
     dedupedRecentRuns
       .map(({ family, run }) => {
@@ -523,9 +523,9 @@ export async function renderAgents(ctx) {
       <div class="tcp-list">${automationsMarkup}</div>
     </div>
     <div class="tcp-card">
-      <h3 class="tcp-title mb-3">Automation Builder V2</h3>
+      <h3 class="tcp-title mb-3">Automation Builder</h3>
       <div class="grid gap-3 md:grid-cols-2">
-        <input id="automation-v2-name" class="tcp-input" placeholder="Automation V2 name" />
+        <input id="automation-v2-name" class="tcp-input" placeholder="Automation name" />
         <input id="automation-v2-description" class="tcp-input" placeholder="Description (optional)" />
       </div>
       <div class="mt-3 grid gap-3 md:grid-cols-3">
@@ -571,17 +571,17 @@ export async function renderAgents(ctx) {
         <div id="automation-v2-nodes-editor" class="grid gap-2"></div>
       </div>
       <div class="mt-4 flex items-center justify-end gap-2">
-        <button id="automation-v2-create" class="tcp-btn-primary"><i data-lucide="save"></i> Create Automation V2</button>
+        <button id="automation-v2-create" class="tcp-btn-primary"><i data-lucide="save"></i> Create Automation</button>
       </div>
     </div>
     <div class="tcp-card">
-      <h3 class="tcp-title mb-3">Automations V2 (${automationsV2.length})</h3>
+      <h3 class="tcp-title mb-3">Advanced Automations (${automationsV2.length})</h3>
       <div class="tcp-list">${automationsV2Markup}</div>
     </div>
     <div class="tcp-card">
-      <h3 class="tcp-title mb-2">Automation V2 Run Inspector</h3>
+      <h3 class="tcp-title mb-2">Automation Run Inspector</h3>
       <div id="automation-v2-run-inspector" class="tcp-list">
-        <p class="tcp-subtle">Click a V2 automation "Runs" button to inspect and control run state.</p>
+        <p class="tcp-subtle">Click an automation "Runs" button to inspect and control run state.</p>
       </div>
     </div>
     <div class="tcp-card">
@@ -684,10 +684,10 @@ export async function renderAgents(ctx) {
   const v2Enabled = !!automationV2Api;
   if (!v2Enabled) {
     v2RunInspectorEl.innerHTML =
-      '<p class="tcp-subtle">Automations V2 client API is unavailable in this build.</p>';
+      '<p class="tcp-subtle">Advanced automation client API is unavailable in this build.</p>';
   }
   const v2Request = async (fn) => {
-    if (!v2Enabled) throw new Error("Automations V2 API unavailable.");
+    if (!v2Enabled) throw new Error("Advanced automation API unavailable.");
     return fn(automationV2Api);
   };
   const v2AgentRowMarkup = (index, seed = {}) => `
@@ -888,7 +888,7 @@ export async function renderAgents(ctx) {
   byId("automation-v2-create")?.addEventListener("click", async () => {
     try {
       const name = String(byId("automation-v2-name")?.value || "").trim();
-      if (!name) throw new Error("Automation V2 name is required.");
+      if (!name) throw new Error("Automation name is required.");
       const description = String(byId("automation-v2-description")?.value || "").trim();
       const scheduleType = String(byId("automation-v2-schedule-type")?.value || "manual").trim();
       const timezone = String(byId("automation-v2-timezone")?.value || "UTC").trim() || "UTC";
@@ -977,7 +977,7 @@ export async function renderAgents(ctx) {
         execution: { max_parallel_agents: Math.min(agents.length, 4) },
       };
       await v2Request((client) => client.create(payload));
-      toast("ok", "Automation V2 created.");
+      toast("ok", "Automation created.");
       renderAgents(ctx);
     } catch (e) {
       toast("err", e instanceof Error ? e.message : String(e));
@@ -1187,7 +1187,7 @@ export async function renderAgents(ctx) {
       try {
         const response = await v2Request((client) => client.runNow(automationId));
         const runId = String(response?.run?.run_id || response?.run?.runId || "").trim();
-        toast("ok", runId ? `Automation V2 triggered (run ${runId}).` : "Automation V2 triggered.");
+        toast("ok", runId ? `Automation triggered (run ${runId}).` : "Automation triggered.");
         setTimeout(() => renderAgents(ctx), 450);
       } catch (e) {
         toast("err", e instanceof Error ? e.message : String(e));
@@ -1212,10 +1212,10 @@ export async function renderAgents(ctx) {
       try {
         if (next === "pause") {
           await v2Request((client) => client.pause(automationId, "paused from control panel"));
-          toast("ok", "Automation V2 paused.");
+          toast("ok", "Automation paused.");
         } else {
           await v2Request((client) => client.resume(automationId));
-          toast("ok", "Automation V2 resumed.");
+          toast("ok", "Automation resumed.");
         }
         setTimeout(() => renderAgents(ctx), 300);
       } catch (e) {
@@ -1267,10 +1267,10 @@ export async function renderAgents(ctx) {
                 </details>
               </div>`;
             })
-            .join("") || '<p class="tcp-subtle">No V2 runs found for this automation.</p>';
+            .join("") || '<p class="tcp-subtle">No runs found for this automation.</p>';
         v2RunInspectorEl.innerHTML = `<div class="tcp-list-item">
           <div class="mb-2 flex items-center justify-between gap-2">
-            <span class="font-medium">Automation V2: ${escapeHtml(automationId)}</span>
+            <span class="font-medium">Automation: ${escapeHtml(automationId)}</span>
             <span class="tcp-subtle">${runs.length} runs</span>
           </div>
           <div class="grid gap-2">${runRows}</div>

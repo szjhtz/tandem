@@ -233,6 +233,20 @@ Observe runs:
 curl -sS "http://127.0.0.1:39731/automations/v2/daily-mcp-research-v2/runs?limit=10"
 ```
 
+### Cost tracking in Control Panel
+
+Set this env var on the engine to estimate token spend for automation runs:
+
+```bash
+export TANDEM_TOKEN_COST_PER_1K_USD=0.30
+```
+
+Then open Control Panel Dashboard and use **Automations + Cost** to monitor:
+
+- Tokens (24h / 7d)
+- Estimated cost (24h / 7d)
+- Highest-cost automations/routines
+
 ## 2.5) Which Tools Should You Start With?
 
 For autonomous bots, start narrow and expand only when runs are stable.

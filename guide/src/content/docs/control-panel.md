@@ -3,7 +3,7 @@ title: Control Panel (Web Admin)
 description: Install and run the Tandem web control panel from npm.
 ---
 
-Use the control panel when you want a browser UI for chat, routines, channels, memory, and ops.
+Use the control panel when you want a browser UI for chat, routines, automations, channels, memory, and ops.
 
 ## Install
 
@@ -51,6 +51,20 @@ Useful options:
 - `TANDEM_ENGINE_URL` (default `http://127.0.0.1:39731`)
 - `TANDEM_CONTROL_PANEL_AUTO_START_ENGINE` (`1` or `0`)
 - `TANDEM_CONTROL_PANEL_ENGINE_TOKEN` (engine API token)
+
+## Automations + Cost (Dashboard)
+
+The main dashboard includes a first-class **Automations + Cost** section that aggregates:
+
+- Token usage (`24h`, `7d`) from run telemetry.
+- Estimated USD cost (`24h`, `7d`).
+- Top automation/routine IDs by estimated cost, token volume, and run count.
+
+This includes legacy automations/routines and advanced multi-agent automation runs.
+
+Cost estimation uses the engine rate:
+
+- `TANDEM_TOKEN_COST_PER_1K_USD` (USD per 1,000 tokens, default `0`).
 
 ## Verify Engine + Panel
 

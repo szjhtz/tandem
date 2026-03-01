@@ -469,6 +469,14 @@ pub struct RoutineRunRecord {
     pub artifacts: Vec<RoutineRunArtifact>,
     #[serde(default)]
     pub active_session_ids: Vec<String>,
+    #[serde(default)]
+    pub prompt_tokens: u64,
+    #[serde(default)]
+    pub completion_tokens: u64,
+    #[serde(default)]
+    pub total_tokens: u64,
+    #[serde(default)]
+    pub estimated_cost_usd: f64,
 }
 
 #[derive(Debug, Clone)]
@@ -646,6 +654,14 @@ pub struct AutomationV2RunRecord {
     pub resume_reason: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
+    #[serde(default)]
+    pub prompt_tokens: u64,
+    #[serde(default)]
+    pub completion_tokens: u64,
+    #[serde(default)]
+    pub total_tokens: u64,
+    #[serde(default)]
+    pub estimated_cost_usd: f64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -718,6 +734,8 @@ pub struct AppState {
     pub automation_v2_runs: Arc<RwLock<std::collections::HashMap<String, AutomationV2RunRecord>>>,
     pub routine_session_policies:
         Arc<RwLock<std::collections::HashMap<String, RoutineSessionPolicy>>>,
+    pub automation_v2_session_runs: Arc<RwLock<std::collections::HashMap<String, String>>>,
+    pub token_cost_per_1k_usd: f64,
     pub routines_path: PathBuf,
     pub routine_history_path: PathBuf,
     pub routine_runs_path: PathBuf,
@@ -764,6 +782,7 @@ impl AppState {
             automations_v2: Arc::new(RwLock::new(std::collections::HashMap::new())),
             automation_v2_runs: Arc::new(RwLock::new(std::collections::HashMap::new())),
             routine_session_policies: Arc::new(RwLock::new(std::collections::HashMap::new())),
+            automation_v2_session_runs: Arc::new(RwLock::new(std::collections::HashMap::new())),
             routines_path: resolve_routines_path(),
             routine_history_path: resolve_routine_history_path(),
             routine_runs_path: resolve_routine_runs_path(),
@@ -775,6 +794,7 @@ impl AppState {
             server_base_url: Arc::new(std::sync::RwLock::new("http://127.0.0.1:39731".to_string())),
             channels_runtime: Arc::new(tokio::sync::Mutex::new(ChannelRuntime::default())),
             host_runtime_context: detect_host_runtime_context(),
+            token_cost_per_1k_usd: resolve_token_cost_per_1k_usd(),
         }
     }
 
@@ -1396,6 +1416,10 @@ impl AppState {
             output_targets: routine.output_targets.clone(),
             artifacts: Vec::new(),
             active_session_ids: Vec::new(),
+            prompt_tokens: 0,
+            completion_tokens: 0,
+            total_tokens: 0,
+            estimated_cost_usd: 0.0,
         };
         self.routine_runs
             .write()
@@ -1720,6 +1744,10 @@ impl AppState {
             pause_reason: None,
             resume_reason: None,
             detail: None,
+            prompt_tokens: 0,
+            completion_tokens: 0,
+            total_tokens: 0,
+            estimated_cost_usd: 0.0,
         };
         self.automation_v2_runs
             .write()
@@ -1796,6 +1824,84 @@ impl AppState {
         drop(guard);
         let _ = self.persist_automation_v2_runs().await;
         Some(out)
+    }
+
+    pub async fn add_automation_v2_session(
+        &self,
+        run_id: &str,
+        session_id: &str,
+    ) -> Option<AutomationV2RunRecord> {
+        let updated = self
+            .update_automation_v2_run(run_id, |row| {
+                if !row.active_session_ids.iter().any(|id| id == session_id) {
+                    row.active_session_ids.push(session_id.to_string());
+                }
+            })
+            .await;
+        self.automation_v2_session_runs
+            .write()
+            .await
+            .insert(session_id.to_string(), run_id.to_string());
+        updated
+    }
+
+    pub async fn clear_automation_v2_session(
+        &self,
+        run_id: &str,
+        session_id: &str,
+    ) -> Option<AutomationV2RunRecord> {
+        self.automation_v2_session_runs
+            .write()
+            .await
+            .remove(session_id);
+        self.update_automation_v2_run(run_id, |row| {
+            row.active_session_ids.retain(|id| id != session_id);
+        })
+        .await
+    }
+
+    pub async fn apply_provider_usage_to_runs(
+        &self,
+        session_id: &str,
+        prompt_tokens: u64,
+        completion_tokens: u64,
+        total_tokens: u64,
+    ) {
+        if let Some(policy) = self.routine_session_policy(session_id).await {
+            let rate = self.token_cost_per_1k_usd.max(0.0);
+            let delta_cost = (total_tokens as f64 / 1000.0) * rate;
+            let mut guard = self.routine_runs.write().await;
+            if let Some(run) = guard.get_mut(&policy.run_id) {
+                run.prompt_tokens = run.prompt_tokens.saturating_add(prompt_tokens);
+                run.completion_tokens = run.completion_tokens.saturating_add(completion_tokens);
+                run.total_tokens = run.total_tokens.saturating_add(total_tokens);
+                run.estimated_cost_usd += delta_cost;
+                run.updated_at_ms = now_ms();
+            }
+            drop(guard);
+            let _ = self.persist_routine_runs().await;
+        }
+
+        let maybe_v2_run_id = self
+            .automation_v2_session_runs
+            .read()
+            .await
+            .get(session_id)
+            .cloned();
+        if let Some(run_id) = maybe_v2_run_id {
+            let rate = self.token_cost_per_1k_usd.max(0.0);
+            let delta_cost = (total_tokens as f64 / 1000.0) * rate;
+            let mut guard = self.automation_v2_runs.write().await;
+            if let Some(run) = guard.get_mut(&run_id) {
+                run.prompt_tokens = run.prompt_tokens.saturating_add(prompt_tokens);
+                run.completion_tokens = run.completion_tokens.saturating_add(completion_tokens);
+                run.total_tokens = run.total_tokens.saturating_add(total_tokens);
+                run.estimated_cost_usd += delta_cost;
+                run.updated_at_ms = now_ms();
+            }
+            drop(guard);
+            let _ = self.persist_automation_v2_runs().await;
+        }
     }
 
     pub async fn evaluate_automation_v2_misfires(&self, now_ms: u64) -> Vec<String> {
@@ -1909,6 +2015,14 @@ fn resolve_run_stale_ms() -> u64 {
         .and_then(|v| v.trim().parse::<u64>().ok())
         .unwrap_or(120_000)
         .clamp(30_000, 600_000)
+}
+
+fn resolve_token_cost_per_1k_usd() -> f64 {
+    std::env::var("TANDEM_TOKEN_COST_PER_1K_USD")
+        .ok()
+        .and_then(|v| v.trim().parse::<f64>().ok())
+        .unwrap_or(0.0)
+        .max(0.0)
 }
 
 fn resolve_shared_resources_path() -> PathBuf {
@@ -2724,6 +2838,52 @@ pub async fn run_agent_team_supervisor(state: AppState) {
     }
 }
 
+pub async fn run_usage_aggregator(state: AppState) {
+    let mut rx = state.event_bus.subscribe();
+    loop {
+        match rx.recv().await {
+            Ok(event) => {
+                if event.event_type != "provider.usage" {
+                    continue;
+                }
+                let session_id = event
+                    .properties
+                    .get("sessionID")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                if session_id.is_empty() {
+                    continue;
+                }
+                let prompt_tokens = event
+                    .properties
+                    .get("promptTokens")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0);
+                let completion_tokens = event
+                    .properties
+                    .get("completionTokens")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0);
+                let total_tokens = event
+                    .properties
+                    .get("totalTokens")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(prompt_tokens.saturating_add(completion_tokens));
+                state
+                    .apply_provider_usage_to_runs(
+                        session_id,
+                        prompt_tokens,
+                        completion_tokens,
+                        total_tokens,
+                    )
+                    .await;
+            }
+            Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+        }
+    }
+}
+
 pub async fn run_routine_scheduler(state: AppState) {
     loop {
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
@@ -3058,13 +3218,7 @@ async fn execute_automation_v2_node(
     session.workspace_root = Some(workspace_root);
     state.storage.save_session(session).await?;
 
-    state
-        .update_automation_v2_run(run_id, |run| {
-            if !run.active_session_ids.iter().any(|id| id == &session_id) {
-                run.active_session_ids.push(session_id.clone());
-            }
-        })
-        .await;
+    state.add_automation_v2_session(run_id, &session_id).await;
 
     let mut allowlist = agent.tool_policy.allowlist.clone();
     if let Some(mcp_tools) = agent.mcp_policy.allowed_tools.as_ref() {
@@ -3105,11 +3259,7 @@ async fn execute_automation_v2_node(
         .engine_loop
         .clear_session_allowed_tools(&session_id)
         .await;
-    state
-        .update_automation_v2_run(run_id, |run| {
-            run.active_session_ids.retain(|id| id != &session_id);
-        })
-        .await;
+    state.clear_automation_v2_session(run_id, &session_id).await;
 
     result.map(|_| {
         serde_json::json!({
@@ -3968,6 +4118,10 @@ mod tests {
             output_targets: vec![],
             artifacts: vec![],
             active_session_ids: vec![],
+            prompt_tokens: 0,
+            completion_tokens: 0,
+            total_tokens: 0,
+            estimated_cost_usd: 0.0,
         };
 
         {
@@ -4042,6 +4196,10 @@ mod tests {
             output_targets: vec!["file://reports/release-readiness.md".to_string()],
             artifacts: vec![],
             active_session_ids: vec![],
+            prompt_tokens: 0,
+            completion_tokens: 0,
+            total_tokens: 0,
+            estimated_cost_usd: 0.0,
         };
 
         let objective = routine_objective_from_args(&run).expect("objective");
@@ -4081,6 +4239,10 @@ mod tests {
             output_targets: vec![],
             artifacts: vec![],
             active_session_ids: vec![],
+            prompt_tokens: 0,
+            completion_tokens: 0,
+            total_tokens: 0,
+            estimated_cost_usd: 0.0,
         };
 
         let objective = routine_objective_from_args(&run).expect("objective");
