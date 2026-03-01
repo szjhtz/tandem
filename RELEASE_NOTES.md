@@ -4,6 +4,24 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
 
 ## v0.3.27 (Unreleased)
 
+- Bot identity + personality configuration
+  - Added canonical identity API: `GET /config/identity` and `PATCH /config/identity`.
+  - Added built-in personality preset catalog: `balanced`, `concise`, `friendly`, `mentor`, `critical`.
+  - Added soft legacy migration: `bot_name` and `persona` patch payloads are accepted and normalized into canonical `identity` fields.
+  - Updated TypeScript and Python SDKs with identity namespace support:
+    - TypeScript: `client.identity.get()`, `client.identity.patch(...)`
+    - Python: `client.identity.get()`, `client.identity.patch(...)`
+- Runtime identity/personality prompt injection
+  - Server prompt-context augmentation now injects assistant name + personality guidance per run iteration.
+  - Supports per-agent personality overrides while keeping hidden utility agents (`compaction`, `title`, `summary`) on neutral default behavior.
+- Branding/identity surface updates
+  - VPS Web Portal now reads configured identity aliases and renders portal/bot labels dynamically.
+  - Control Panel now reads configured identity aliases and renders control-panel/bot labels dynamically.
+  - Core UI/TUI assistant-facing copy reduces hardcoded Tandem naming in primary runtime labels/placeholders.
+- Compatibility and protocol naming updates
+  - OpenRouter `X-Title` now supports configurable protocol title via `AGENT_PROTOCOL_TITLE` with `TANDEM_PROTOCOL_TITLE` compatibility fallback.
+  - Engine auth header parsing now accepts both canonical `x-agent-token` and compatibility `x-tandem-token`.
+
 - Telegram MarkdownV2 rendering and delivery hardening
   - Telegram heading rendering now outputs readable heading text style (instead of visible escaped `###` markers).
   - Long Telegram responses now split on markdown-safe boundaries where possible, reducing entity breakage across chunks.

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.3.27] - 2026-03-01
 
+### Added
+
+- **Identity configuration API + SDK parity**: Added `GET/PATCH /config/identity` with a typed personality preset catalog (`balanced`, `concise`, `friendly`, `mentor`, `critical`) and TypeScript/Python client support via `client.identity.get()/patch()`.
+
 ### Changed
 
 - **Control panel channel configuration UX**: Channels view now loads persisted channel config, pre-fills existing values, and supports editing Discord `mention_only`/`guild_id` and Slack `channel_id` directly from the web control panel.
@@ -17,6 +21,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Routine policy UX simplification (control panel)**: Added one-click `Allow everything` policy mode in routine create/edit that maps to unrestricted tools, external integrations enabled, and no approval gate.
 - **Routine approvals operability in control panel**: Added Approve/Deny actions for pending routine/automation runs directly in routine cards, automations list, recent runs, and run inspector.
 - **Telegram channel style customization**: Added configurable Telegram style profiles (`default`, `compact`, `friendly`, `ops`) with control panel support and server config exposure.
+- **Config identity schema + soft legacy migration**: Engine config now supports canonical identity/personality structure under `identity.*` while accepting legacy `bot_name`/`persona` patch payloads and normalizing them into canonical fields.
+- **Runtime assistant identity/personality injection**: Server prompt-context hook now injects bot name + personality preset/custom guidance into provider messages, with per-agent overrides applied to primary/subagent roles and hidden utility agents kept neutral.
+- **Portal/control-panel identity naming**: VPS portal and control panel now fetch identity config and render bot/portal/control-panel labels from configured aliases instead of fixed hardcoded branding.
+- **Protocol/header branding compatibility**: OpenRouter `X-Title` now supports `AGENT_PROTOCOL_TITLE` (canonical) with `TANDEM_PROTOCOL_TITLE` compatibility fallback, and auth now accepts both `x-agent-token` and `x-tandem-token`.
 
 ### Fixed
 
