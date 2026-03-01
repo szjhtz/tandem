@@ -134,7 +134,9 @@ async function refreshIdentityStatus() {
     return;
   }
   try {
-    const payload = await state.client.identity.get();
+    const payload = state.client?.identity?.get
+      ? await state.client.identity.get()
+      : await api("/api/engine/config/identity", { method: "GET" });
     const identity = payload?.identity || {};
     const canonical = String(
       identity?.bot?.canonical_name || identity?.bot?.canonicalName || ""
