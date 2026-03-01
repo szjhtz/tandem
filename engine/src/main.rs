@@ -12,8 +12,9 @@ use futures::stream::{self, StreamExt};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tandem_core::{
-    resolve_shared_paths, AgentRegistry, CancellationRegistry, ConfigStore, EngineLoop, EventBus,
-    PermissionManager, PluginRegistry, Storage, DEFAULT_ENGINE_HOST, DEFAULT_ENGINE_PORT,
+    build_mode_permission_rules, resolve_shared_paths, AgentRegistry, CancellationRegistry,
+    ConfigStore, EngineLoop, EventBus, PermissionAction, PermissionManager, PluginRegistry,
+    Storage, DEFAULT_ENGINE_HOST, DEFAULT_ENGINE_PORT,
 };
 use tandem_memory::{types::StoreMessageRequest, MemoryManager};
 use tandem_observability::{
@@ -827,6 +828,7 @@ async fn build_runtime(
     let agents = AgentRegistry::new(".").await?;
     let tools = ToolRegistry::new();
     let permissions = PermissionManager::new(event_bus.clone());
+    apply_default_permission_rules(&permissions).await;
     let mcp = McpRegistry::new();
     let pty = PtyManager::new();
     let lsp = LspManager::new(".");
@@ -883,6 +885,39 @@ async fn build_runtime(
         engine_loop,
         host_runtime_context,
     })
+}
+
+async fn apply_default_permission_rules(permissions: &PermissionManager) {
+    if !default_permission_rules_enabled() {
+        info!("engine.permission.defaults disabled by TANDEM_APPLY_DEFAULT_PERMISSION_RULES");
+        return;
+    }
+    let templates = build_mode_permission_rules(None);
+    let mut applied = 0usize;
+    for template in templates {
+        let action = match template.action.trim().to_ascii_lowercase().as_str() {
+            "allow" | "always" => PermissionAction::Allow,
+            "deny" | "reject" => PermissionAction::Deny,
+            _ => PermissionAction::Ask,
+        };
+        let _ = permissions
+            .add_rule(template.permission, template.pattern, action)
+            .await;
+        applied = applied.saturating_add(1);
+    }
+    info!("engine.permission.defaults applied_rules={applied}");
+}
+
+fn default_permission_rules_enabled() -> bool {
+    std::env::var("TANDEM_APPLY_DEFAULT_PERMISSION_RULES")
+        .ok()
+        .map(|raw| {
+            !matches!(
+                raw.trim().to_ascii_lowercase().as_str(),
+                "0" | "false" | "off" | "no"
+            )
+        })
+        .unwrap_or(true)
 }
 
 fn configure_memory_db_path_env(state_dir: &Path) {

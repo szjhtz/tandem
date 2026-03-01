@@ -546,6 +546,18 @@ export async function renderAgents(ctx) {
         </select>
         <input id="automation-v2-agent-count" class="tcp-input" type="number" min="1" max="12" value="2" />
       </div>
+      <div class="mt-3 grid gap-3 md:grid-cols-[1fr_auto]">
+        <select id="automation-v2-preset" class="tcp-select">
+          <option value="">Choose preset...</option>
+          <option value="github_bug_hunter">GitHub bug hunter</option>
+          <option value="code_generation_pipeline">Code generation pipeline</option>
+          <option value="release_notes_changelog">Release notes + changelog</option>
+          <option value="marketing_content_engine">Marketing content engine</option>
+          <option value="sales_lead_outreach">Sales lead outreach</option>
+          <option value="productivity_inbox_to_tasks">Productivity: inbox to tasks</option>
+        </select>
+        <button id="automation-v2-apply-preset" class="tcp-btn"><i data-lucide="sparkles"></i> Apply Preset</button>
+      </div>
       <div class="mt-2 text-xs text-slate-400">Per-agent model routing is supported. Example model policy: provider/model for each agent row below.</div>
       <div class="mt-3">
         <button id="automation-v2-generate-agents" class="tcp-btn"><i data-lucide="users"></i> Generate Agent Rows</button>

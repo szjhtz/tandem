@@ -1063,6 +1063,12 @@ async fn post_json_rpc_with_session(
         .send()
         .await
         .map_err(|e| format!("MCP request failed: {e}"))?;
+    let content_type = response
+        .headers()
+        .get(CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_ascii_lowercase();
     let response_session_id = response
         .headers()
         .get("mcp-session-id")
@@ -1081,9 +1087,49 @@ async fn post_json_rpc_with_session(
             payload.chars().take(400).collect::<String>()
         ));
     }
-    let value = serde_json::from_str::<Value>(&payload)
-        .map_err(|e| format!("Invalid MCP JSON response: {e}"))?;
+
+    let value = if content_type.starts_with("text/event-stream") {
+        parse_sse_first_event_json(&payload).map_err(|e| {
+            format!(
+                "Invalid MCP SSE JSON response: {} (snippet: {})",
+                e,
+                payload.chars().take(400).collect::<String>()
+            )
+        })?
+    } else if let Ok(value) = serde_json::from_str::<Value>(&payload) {
+        value
+    } else if let Ok(value) = parse_sse_first_event_json(&payload) {
+        // Some MCP servers return SSE payloads without setting text/event-stream.
+        value
+    } else {
+        return Err(format!(
+            "Invalid MCP JSON response: {}",
+            payload.chars().take(400).collect::<String>()
+        ));
+    };
+
     Ok((value, response_session_id))
+}
+
+fn parse_sse_first_event_json(payload: &str) -> Result<Value, String> {
+    let mut data_lines: Vec<&str> = Vec::new();
+    for raw in payload.lines() {
+        let line = raw.trim_end_matches('\r');
+        if let Some(rest) = line.strip_prefix("data:") {
+            data_lines.push(rest.trim_start());
+        }
+        if line.is_empty() {
+            if !data_lines.is_empty() {
+                break;
+            }
+            continue;
+        }
+    }
+    if data_lines.is_empty() {
+        return Err("no SSE data event found".to_string());
+    }
+    let joined = data_lines.join("\n");
+    serde_json::from_str::<Value>(&joined).map_err(|e| e.to_string())
 }
 
 fn render_mcp_content(value: &Value) -> String {

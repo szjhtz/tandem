@@ -583,87 +583,251 @@
   height: 130px;
 }
 
-.hero-grid line {
-  stroke: rgba(148, 163, 184, 0.12);
-  stroke-width: 1;
-  animation: gridPulse 4.2s ease-in-out infinite;
+.chip-hero {
+  overflow: visible;
 }
 
-.hero-path {
+.chip-board {
+  fill: rgba(2, 6, 23, 0.35);
+  stroke: rgba(100, 116, 139, 0.38);
+  stroke-width: 1;
+}
+
+.chip-grid line {
+  stroke: rgba(148, 163, 184, 0.13);
+  stroke-width: 1;
+  animation: chipGridPulse 4s ease-in-out infinite;
+}
+
+.chip-trace {
   fill: none;
-  stroke: url(#hero-path-grad);
+  stroke: url(#hero-trace-grad);
   stroke-width: 2;
   stroke-linecap: round;
-  stroke-dasharray: 8 9;
+  stroke-linejoin: round;
+  stroke-dasharray: 9 7;
 }
 
-.hero-path-left {
-  animation: heroFlowLeft 2.8s linear infinite;
+.chip-trace.flow-east {
+  animation: chipFlowEast 2.4s linear infinite;
 }
 
-.hero-path-right {
-  animation: heroFlowRight 2.6s linear infinite;
+.chip-trace.flow-west {
+  animation: chipFlowWest 2.4s linear infinite;
 }
 
-.hero-path-upper {
-  animation: heroFlowUpper 3.1s linear infinite;
+.chip-trace.flow-south {
+  animation: chipFlowSouth 2.2s linear infinite;
 }
 
-.hero-node circle {
-  fill: rgba(100, 116, 139, 0.28);
-  stroke: rgba(203, 213, 225, 0.75);
-  stroke-width: 1.2;
-  animation: heroNodePulse 2.4s ease-in-out infinite;
+.chip-trace.flow-north {
+  animation: chipFlowNorth 2.2s linear infinite;
 }
 
-.hero-node-top-left circle,
-.hero-node-top-right circle {
-  animation-delay: 0.3s;
+.chip-ports circle {
+  fill: rgba(100, 116, 139, 0.32);
+  stroke: rgba(203, 213, 225, 0.82);
+  stroke-width: 1.1;
+  animation: chipPortPulse 2.8s ease-in-out infinite;
 }
 
-.hero-core-glow {
-  fill: rgba(148, 163, 184, 0.08);
-  animation: heroCoreGlow 2.2s ease-in-out infinite;
+.chip-core-shell {
+  fill: rgba(15, 23, 42, 0.95);
+  stroke: rgba(148, 163, 184, 0.85);
+  stroke-width: 1.3;
 }
 
-.hero-core-ring {
+.chip-core {
+  fill: url(#hero-chip-core);
+  stroke: rgba(203, 213, 225, 0.4);
+  stroke-width: 0.8;
+  filter: url(#hero-chip-glow);
+}
+
+.chip-core-wire {
+  stroke: rgba(226, 232, 240, 0.72);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+  animation: chipWirePulse 1.2s linear infinite;
+}
+
+.chip-core-pulse {
   fill: none;
-  stroke: rgba(203, 213, 225, 0.65);
-  stroke-width: 1.4;
-  stroke-dasharray: 5 7;
-  transform-origin: 260px 80px;
-  animation: heroCoreSpin 5s linear infinite;
-}
-
-.hero-core {
-  fill: url(#hero-core-grad);
-  filter: drop-shadow(0 0 10px rgba(203, 213, 225, 0.6));
-  animation: heroCoreFlicker 2s ease-in-out infinite;
-}
-
-.hero-scan {
-  fill: none;
-  stroke: rgba(148, 163, 184, 0.35);
+  stroke: rgba(203, 213, 225, 0.5);
   stroke-width: 1;
   transform-origin: 260px 80px;
-  animation: heroScan 2.6s ease-out infinite;
+  animation: chipCorePulse 2.1s ease-out infinite;
 }
 
-.hero-packet circle {
-  fill: rgba(226, 232, 240, 0.95);
-  filter: drop-shadow(0 0 8px rgba(226, 232, 240, 0.75));
+.chip-packet circle {
+  fill: rgba(241, 245, 249, 0.95);
+  filter: drop-shadow(0 0 6px rgba(226, 232, 240, 0.72));
 }
 
-.hero-packet-left {
-  animation: heroPacketLeft 2.1s ease-in-out infinite;
+.packet-east-a {
+  animation: chipPacketEastA 2s linear infinite;
 }
 
-.hero-packet-right {
-  animation: heroPacketRight 2.2s ease-in-out infinite;
+.packet-east-b {
+  animation: chipPacketEastB 2.4s linear infinite;
 }
 
-.hero-packet-upper {
-  animation: heroPacketUpper 2.8s ease-in-out infinite;
+.packet-west-a {
+  animation: chipPacketWestA 2.1s linear infinite;
+}
+
+.packet-west-b {
+  animation: chipPacketWestB 2.5s linear infinite;
+}
+
+.packet-south {
+  animation: chipPacketSouth 2.2s linear infinite;
+}
+
+.packet-north {
+  animation: chipPacketNorth 2.2s linear infinite;
+}
+
+.dashboard-bars {
+  display: grid;
+  gap: 0.6rem;
+}
+
+.dashboard-bar-row {
+  display: grid;
+  gap: 0.28rem;
+}
+
+.dashboard-bar-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 0.76rem;
+  color: rgb(203 213 225);
+}
+
+.dashboard-bar-count {
+  color: rgb(148 163 184);
+  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.dashboard-bar-track {
+  height: 0.48rem;
+  overflow: hidden;
+  border-radius: 9999px;
+  border: 1px solid rgba(71, 85, 105, 0.52);
+  background: rgba(15, 23, 42, 0.6);
+}
+
+.dashboard-bar-fill {
+  display: block;
+  height: 100%;
+  border-radius: 9999px;
+}
+
+.dashboard-bar-fill.completed {
+  background: linear-gradient(90deg, rgba(16, 185, 129, 0.52), rgba(110, 231, 183, 0.95));
+}
+
+.dashboard-bar-fill.failed {
+  background: linear-gradient(90deg, rgba(244, 63, 94, 0.52), rgba(251, 113, 133, 0.95));
+}
+
+.dashboard-bar-fill.running {
+  background: linear-gradient(90deg, rgba(59, 130, 246, 0.48), rgba(125, 211, 252, 0.95));
+}
+
+.dashboard-bar-fill.queued {
+  background: linear-gradient(90deg, rgba(245, 158, 11, 0.52), rgba(253, 224, 71, 0.92));
+}
+
+.dashboard-bar-fill.scheduled {
+  background: linear-gradient(90deg, rgba(14, 165, 233, 0.55), rgba(147, 197, 253, 0.95));
+}
+
+.dashboard-bar-fill.manual {
+  background: linear-gradient(90deg, rgba(100, 116, 139, 0.6), rgba(148, 163, 184, 0.95));
+}
+
+.dashboard-bar-fill.paused {
+  background: linear-gradient(90deg, rgba(217, 119, 6, 0.55), rgba(251, 191, 36, 0.95));
+}
+
+.dashboard-kpis {
+  display: grid;
+  gap: 0.5rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.dashboard-kpis > div {
+  border: 1px solid rgba(71, 85, 105, 0.5);
+  border-radius: 0.5rem;
+  padding: 0.45rem 0.55rem;
+  background: rgba(2, 6, 23, 0.35);
+  display: grid;
+  gap: 0.1rem;
+}
+
+.dashboard-kpis strong {
+  font-size: 1rem;
+  line-height: 1.2;
+}
+
+.dashboard-kpi-label {
+  font-size: 0.7rem;
+  color: rgb(148 163 184);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.dashboard-histogram {
+  height: 172px;
+  border: 1px solid rgba(71, 85, 105, 0.46);
+  border-radius: 0.8rem;
+  background:
+    linear-gradient(180deg, rgba(15, 23, 42, 0.26), rgba(2, 6, 23, 0.52)),
+    repeating-linear-gradient(
+      0deg,
+      transparent 0,
+      transparent 22px,
+      rgba(148, 163, 184, 0.05) 22px,
+      rgba(148, 163, 184, 0.05) 23px
+    );
+  padding: 0.5rem 0.45rem 0.45rem;
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: 0.35rem;
+  align-items: end;
+}
+
+.dashboard-histogram-bin {
+  height: 100%;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  align-items: end;
+  gap: 0.2rem;
+}
+
+.dashboard-histogram-count {
+  text-align: center;
+  font-size: 0.66rem;
+  color: rgb(148 163 184);
+  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.dashboard-histogram-bar {
+  display: block;
+  width: 100%;
+  border-radius: 0.38rem 0.38rem 0.2rem 0.2rem;
+  border: 1px solid rgba(148, 163, 184, 0.46);
+  background: linear-gradient(180deg, rgba(148, 163, 184, 0.82), rgba(71, 85, 105, 0.95));
+  min-height: 8%;
+}
+
+.dashboard-histogram-label {
+  text-align: center;
+  font-size: 0.62rem;
+  color: rgb(148 163 184);
 }
 
 .wire-line-active {
@@ -696,171 +860,231 @@
   }
 }
 
-@keyframes gridPulse {
+@keyframes chipGridPulse {
   0%,
   100% {
-    opacity: 0.65;
+    opacity: 0.56;
   }
   50% {
     opacity: 1;
   }
 }
 
-@keyframes heroFlowLeft {
+@keyframes chipFlowEast {
   from {
     stroke-dashoffset: 0;
   }
   to {
-    stroke-dashoffset: -34;
+    stroke-dashoffset: -32;
   }
 }
 
-@keyframes heroFlowRight {
+@keyframes chipFlowWest {
   from {
     stroke-dashoffset: 0;
   }
   to {
-    stroke-dashoffset: 34;
+    stroke-dashoffset: 32;
   }
 }
 
-@keyframes heroFlowUpper {
+@keyframes chipFlowSouth {
   from {
     stroke-dashoffset: 0;
   }
   to {
-    stroke-dashoffset: -40;
+    stroke-dashoffset: -24;
   }
 }
 
-@keyframes heroNodePulse {
+@keyframes chipFlowNorth {
+  from {
+    stroke-dashoffset: 0;
+  }
+  to {
+    stroke-dashoffset: 24;
+  }
+}
+
+@keyframes chipPortPulse {
   0%,
   100% {
     filter: drop-shadow(0 0 0 rgba(148, 163, 184, 0));
-    transform: scale(1);
+    opacity: 0.85;
   }
   50% {
-    filter: drop-shadow(0 0 6px rgba(203, 213, 225, 0.5));
-    transform: scale(1.06);
-  }
-}
-
-@keyframes heroCoreGlow {
-  0%,
-  100% {
-    opacity: 0.55;
-    transform: scale(0.96);
-  }
-  50% {
+    filter: drop-shadow(0 0 5px rgba(203, 213, 225, 0.5));
     opacity: 1;
-    transform: scale(1.05);
   }
 }
 
-@keyframes heroCoreSpin {
+@keyframes chipWirePulse {
   from {
-    transform: rotate(0deg);
+    stroke-dashoffset: 0;
   }
   to {
-    transform: rotate(360deg);
+    stroke-dashoffset: -12;
   }
 }
 
-@keyframes heroCoreFlicker {
-  0%,
+@keyframes chipCorePulse {
+  0% {
+    opacity: 0.64;
+    transform: scale(0.7);
+  }
+  85% {
+    opacity: 0;
+    transform: scale(1.18);
+  }
   100% {
-    opacity: 0.9;
+    opacity: 0;
+    transform: scale(1.21);
   }
-  35% {
-    opacity: 0.7;
+}
+
+@keyframes chipPacketEastA {
+  0% {
+    transform: translate(48px, 48px);
+    opacity: 0;
   }
-  50% {
+  10% {
     opacity: 1;
   }
-}
-
-@keyframes heroScan {
-  0% {
-    opacity: 0.55;
-    transform: scale(0.45);
+  58% {
+    transform: translate(176px, 48px);
+    opacity: 1;
   }
-  90% {
-    opacity: 0;
-    transform: scale(1.05);
+  76% {
+    transform: translate(176px, 64px);
   }
-  100% {
+  96% {
+    transform: translate(220px, 64px);
     opacity: 0;
-    transform: scale(1.08);
   }
 }
 
-@keyframes heroPacketLeft {
+@keyframes chipPacketEastB {
   0%,
   100% {
-    transform: translate(60px, 92px);
+    transform: translate(48px, 112px);
+    opacity: 0;
+  }
+  14% {
+    opacity: 1;
+  }
+  58% {
+    transform: translate(176px, 112px);
+    opacity: 1;
+  }
+  76% {
+    transform: translate(176px, 96px);
+  }
+  96% {
+    transform: translate(220px, 96px);
+    opacity: 0;
+  }
+}
+
+@keyframes chipPacketWestA {
+  0%,
+  100% {
+    transform: translate(472px, 48px);
     opacity: 0;
   }
   12% {
     opacity: 1;
   }
-  82% {
+  56% {
+    transform: translate(344px, 48px);
     opacity: 1;
   }
-  90% {
-    transform: translate(258px, 80px);
+  74% {
+    transform: translate(344px, 64px);
+  }
+  96% {
+    transform: translate(300px, 64px);
     opacity: 0;
   }
 }
 
-@keyframes heroPacketRight {
+@keyframes chipPacketWestB {
   0%,
   100% {
-    transform: translate(460px, 68px);
+    transform: translate(472px, 112px);
     opacity: 0;
   }
-  15% {
+  11% {
     opacity: 1;
   }
-  84% {
+  57% {
+    transform: translate(344px, 112px);
     opacity: 1;
   }
-  92% {
-    transform: translate(262px, 80px);
+  74% {
+    transform: translate(344px, 96px);
+  }
+  96% {
+    transform: translate(300px, 96px);
     opacity: 0;
   }
 }
 
-@keyframes heroPacketUpper {
+@keyframes chipPacketSouth {
   0%,
   100% {
-    transform: translate(88px, 52px);
+    transform: translate(176px, 34px);
     opacity: 0;
   }
-  8% {
+  16% {
+    opacity: 1;
+  }
+  62% {
+    transform: translate(176px, 56px);
     opacity: 1;
   }
   78% {
+    transform: translate(220px, 56px);
+  }
+  96% {
+    transform: translate(220px, 64px);
+    opacity: 0;
+  }
+}
+
+@keyframes chipPacketNorth {
+  0%,
+  100% {
+    transform: translate(344px, 126px);
+    opacity: 0;
+  }
+  16% {
     opacity: 1;
   }
-  88% {
-    transform: translate(432px, 52px);
+  62% {
+    transform: translate(344px, 104px);
+    opacity: 1;
+  }
+  78% {
+    transform: translate(300px, 104px);
+  }
+  96% {
+    transform: translate(300px, 96px);
     opacity: 0;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .hero-grid line,
-  .hero-path-left,
-  .hero-path-right,
-  .hero-path-upper,
-  .hero-node circle,
-  .hero-core-glow,
-  .hero-core-ring,
-  .hero-core,
-  .hero-scan,
-  .hero-packet-left,
-  .hero-packet-right,
-  .hero-packet-upper,
+  .chip-grid line,
+  .chip-trace,
+  .chip-ports circle,
+  .chip-core-wire,
+  .chip-core-pulse,
+  .packet-east-a,
+  .packet-east-b,
+  .packet-west-a,
+  .packet-west-b,
+  .packet-south,
+  .packet-north,
   .tcp-thinking i,
   .wire-line-active,
   .node-active {

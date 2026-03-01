@@ -168,58 +168,84 @@ function renderLogin() {
     <main class="mx-auto grid min-h-screen w-full max-w-3xl place-items-center p-5">
       <section class="tcp-panel w-full max-w-xl">
         <div class="mb-6 rounded-2xl border border-slate-700 bg-black/20 p-3">
-          <svg viewBox="0 0 520 160" class="hero-svg" aria-hidden="true">
+          <svg viewBox="0 0 520 160" class="hero-svg chip-hero" aria-hidden="true">
             <defs>
-              <linearGradient id="hero-path-grad" x1="0" y1="0" x2="1" y2="0">
-                <stop offset="0%" stop-color="#64748b" stop-opacity="0.35"></stop>
-                <stop offset="50%" stop-color="#cbd5e1" stop-opacity="0.95"></stop>
-                <stop offset="100%" stop-color="#64748b" stop-opacity="0.35"></stop>
+              <linearGradient id="hero-trace-grad" x1="0" y1="0" x2="1" y2="0">
+                <stop offset="0%" stop-color="#64748b" stop-opacity="0.22"></stop>
+                <stop offset="50%" stop-color="#cbd5e1" stop-opacity="0.92"></stop>
+                <stop offset="100%" stop-color="#64748b" stop-opacity="0.22"></stop>
               </linearGradient>
-              <radialGradient id="hero-core-grad" cx="50%" cy="50%" r="60%">
-                <stop offset="0%" stop-color="#f1f5f9" stop-opacity="0.9"></stop>
-                <stop offset="100%" stop-color="#64748b" stop-opacity="0.15"></stop>
+              <radialGradient id="hero-chip-core" cx="50%" cy="50%" r="60%">
+                <stop offset="0%" stop-color="#f8fafc" stop-opacity="0.92"></stop>
+                <stop offset="100%" stop-color="#64748b" stop-opacity="0.18"></stop>
               </radialGradient>
+              <filter id="hero-chip-glow" x="-50%" y="-50%" width="200%" height="200%">
+                <feGaussianBlur stdDeviation="3.5" result="blur"></feGaussianBlur>
+                <feMerge>
+                  <feMergeNode in="blur"></feMergeNode>
+                  <feMergeNode in="SourceGraphic"></feMergeNode>
+                </feMerge>
+              </filter>
             </defs>
 
-            <g class="hero-grid">
-              <line x1="24" y1="34" x2="496" y2="34"></line>
-              <line x1="24" y1="80" x2="496" y2="80"></line>
-              <line x1="24" y1="126" x2="496" y2="126"></line>
-              <line x1="120" y1="24" x2="120" y2="136"></line>
-              <line x1="260" y1="24" x2="260" y2="136"></line>
-              <line x1="400" y1="24" x2="400" y2="136"></line>
+            <rect class="chip-board" x="24" y="24" width="472" height="112" rx="14"></rect>
+
+            <g class="chip-grid">
+              <line x1="48" y1="48" x2="472" y2="48"></line>
+              <line x1="48" y1="80" x2="472" y2="80"></line>
+              <line x1="48" y1="112" x2="472" y2="112"></line>
+              <line x1="92" y1="34" x2="92" y2="126"></line>
+              <line x1="176" y1="34" x2="176" y2="126"></line>
+              <line x1="260" y1="34" x2="260" y2="126"></line>
+              <line x1="344" y1="34" x2="344" y2="126"></line>
+              <line x1="428" y1="34" x2="428" y2="126"></line>
             </g>
 
-            <path class="hero-path hero-path-left" d="M60 92 C110 92, 150 78, 194 80 S238 80, 260 80"></path>
-            <path class="hero-path hero-path-right" d="M460 68 C410 68, 370 82, 326 80 S282 80, 260 80"></path>
-            <path class="hero-path hero-path-upper" d="M88 52 C150 52, 200 58, 260 58 S370 58, 432 52"></path>
-
-            <g class="hero-node hero-node-left">
-              <circle cx="60" cy="92" r="8"></circle>
-            </g>
-            <g class="hero-node hero-node-right">
-              <circle cx="460" cy="68" r="8"></circle>
-            </g>
-            <g class="hero-node hero-node-top-left">
-              <circle cx="88" cy="52" r="6"></circle>
-            </g>
-            <g class="hero-node hero-node-top-right">
-              <circle cx="432" cy="52" r="6"></circle>
+            <g class="chip-traces">
+              <path class="chip-trace flow-east" d="M48 48 H176 V64 H220"></path>
+              <path class="chip-trace flow-east" d="M48 112 H176 V96 H220"></path>
+              <path class="chip-trace flow-west" d="M472 48 H344 V64 H300"></path>
+              <path class="chip-trace flow-west" d="M472 112 H344 V96 H300"></path>
+              <path class="chip-trace flow-south" d="M176 34 V56 H220"></path>
+              <path class="chip-trace flow-south" d="M344 34 V56 H300"></path>
+              <path class="chip-trace flow-north" d="M176 126 V104 H220"></path>
+              <path class="chip-trace flow-north" d="M344 126 V104 H300"></path>
             </g>
 
-            <circle class="hero-core-glow" cx="260" cy="80" r="28"></circle>
-            <circle class="hero-core-ring" cx="260" cy="80" r="24"></circle>
-            <circle class="hero-core" cx="260" cy="80" r="12"></circle>
-            <circle class="hero-scan" cx="260" cy="80" r="34"></circle>
+            <g class="chip-ports">
+              <circle cx="48" cy="48" r="4"></circle>
+              <circle cx="48" cy="112" r="4"></circle>
+              <circle cx="472" cy="48" r="4"></circle>
+              <circle cx="472" cy="112" r="4"></circle>
+              <circle cx="176" cy="34" r="4"></circle>
+              <circle cx="344" cy="34" r="4"></circle>
+              <circle cx="176" cy="126" r="4"></circle>
+              <circle cx="344" cy="126" r="4"></circle>
+            </g>
 
-            <g class="hero-packet hero-packet-left">
-              <circle cx="0" cy="0" r="3"></circle>
+            <rect class="chip-core-shell" x="220" y="56" width="80" height="48" rx="8"></rect>
+            <rect class="chip-core" x="232" y="68" width="56" height="24" rx="4"></rect>
+            <line class="chip-core-wire" x1="232" y1="80" x2="288" y2="80"></line>
+            <line class="chip-core-wire" x1="260" y1="68" x2="260" y2="92"></line>
+            <circle class="chip-core-pulse" cx="260" cy="80" r="12"></circle>
+
+            <g class="chip-packet packet-east-a">
+              <circle cx="0" cy="0" r="2.4"></circle>
             </g>
-            <g class="hero-packet hero-packet-right">
-              <circle cx="0" cy="0" r="3"></circle>
+            <g class="chip-packet packet-east-b">
+              <circle cx="0" cy="0" r="2.4"></circle>
             </g>
-            <g class="hero-packet hero-packet-upper">
-              <circle cx="0" cy="0" r="2.5"></circle>
+            <g class="chip-packet packet-west-a">
+              <circle cx="0" cy="0" r="2.4"></circle>
+            </g>
+            <g class="chip-packet packet-west-b">
+              <circle cx="0" cy="0" r="2.4"></circle>
+            </g>
+            <g class="chip-packet packet-south">
+              <circle cx="0" cy="0" r="2.2"></circle>
+            </g>
+            <g class="chip-packet packet-north">
+              <circle cx="0" cy="0" r="2.2"></circle>
             </g>
           </svg>
         </div>

@@ -1,6 +1,7 @@
 import { renderMarkdown } from "../app/markdown.js";
 
 const CHAT_UPLOAD_DIR = "control-panel";
+const CHAT_AUTO_APPROVE_KEY = "tandem_control_panel_chat_auto_approve_tools";
 const EXT_MIME = {
   md: "text/markdown",
   txt: "text/plain",
@@ -26,8 +27,24 @@ function joinRootAndRel(root, rel) {
   return `${lhs}/${rhs}`;
 }
 
+function loadAutoApprovePreference() {
+  try {
+    return localStorage.getItem(CHAT_AUTO_APPROVE_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function saveAutoApprovePreference(enabled) {
+  try {
+    localStorage.setItem(CHAT_AUTO_APPROVE_KEY, enabled ? "1" : "0");
+  } catch {
+    // ignore storage failures
+  }
+}
+
 export async function renderChat(ctx) {
-  const { state, byId, toast, escapeHtml, api, renderIcons } = ctx;
+  const { state, byId, toast, escapeHtml, api, renderIcons, addCleanup } = ctx;
   const sessions = await loadSessions();
   if (!state.currentSessionId) state.currentSessionId = sessions[0]?.id || "";
   let sessionsOpen = false;
@@ -73,6 +90,20 @@ export async function renderChat(ctx) {
           </div>
           <div id="chat-tools-list" class="chat-tools-list"></div>
         </section>
+        <section class="min-h-0">
+          <div class="mb-2 flex items-center justify-between">
+            <p class="chat-rail-label">Approvals</p>
+            <span id="chat-rail-permissions-count" class="chat-rail-count">0</span>
+          </div>
+          <div class="mb-2 flex items-center gap-2">
+            <button id="chat-approve-all" class="tcp-btn h-7 px-2 text-[11px]">Approve all</button>
+            <label class="inline-flex items-center gap-1.5 text-[11px] text-zinc-400">
+              <input id="chat-auto-approve" type="checkbox" class="h-3.5 w-3.5 accent-slate-400" />
+              Auto
+            </label>
+          </div>
+          <div id="chat-permissions-list" class="chat-tools-activity"></div>
+        </section>
         <section class="min-h-0 flex-1">
           <div class="mb-2 flex items-center justify-between">
             <p class="chat-rail-label">Tool Activity</p>
@@ -101,6 +132,10 @@ export async function renderChat(ctx) {
   const chatTitleEl = byId("chat-title");
   const chatToolCountEl = byId("chat-tool-count");
   const railToolsCountEl = byId("chat-rail-tools-count");
+  const railPermissionsCountEl = byId("chat-rail-permissions-count");
+  const permissionsListEl = byId("chat-permissions-list");
+  const approveAllEl = byId("chat-approve-all");
+  const autoApproveEl = byId("chat-auto-approve");
   const toolsListEl = byId("chat-tools-list");
   const toolsActivityEl = byId("chat-tools-activity");
   const uploadedFiles = Array.isArray(state.chatUploadedFiles) ? state.chatUploadedFiles : [];
@@ -108,6 +143,10 @@ export async function renderChat(ctx) {
   const uploadState = new Map();
   const toolActivity = [];
   const toolEventSeen = new Set();
+  const permissionRequests = [];
+  const permissionBusy = new Set();
+  let autoApproveTools = loadAutoApprovePreference();
+  let autoApproveInFlight = false;
   let availableTools = [];
   let sending = false;
 
@@ -177,6 +216,7 @@ export async function renderChat(ctx) {
     state.currentSessionId = sid;
     resetToolTracking();
     renderSessions();
+    await refreshPermissionRequests();
     await renderMessages();
     return sid;
   }
@@ -266,6 +306,254 @@ export async function renderChat(ctx) {
     });
     if (toolActivity.length > 80) toolActivity.length = 80;
     renderToolRail();
+  }
+
+  function appendTransientUserMessage(text, attachedCount = 0) {
+    const content = String(text || "").trim();
+    if (!content) return;
+    const bubble = document.createElement("div");
+    bubble.className = "chat-msg user";
+    bubble.innerHTML = `
+      <div class="chat-msg-role">User</div>
+      <pre class="max-w-full whitespace-pre-wrap break-all font-mono text-xs text-slate-200">${escapeHtml(content)}</pre>
+      ${
+        attachedCount > 0
+          ? `<div class="mt-1 text-[10px] text-slate-400">${attachedCount} attachment${attachedCount === 1 ? "" : "s"}</div>`
+          : ""
+      }
+    `;
+    messagesEl.appendChild(bubble);
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+  }
+
+  function normalizeToolName(value) {
+    return String(value || "")
+      .trim()
+      .replace(/\s+/g, " ")
+      .replace(/[<>]/g, "");
+  }
+
+  function extractToolName(payload) {
+    const source = payload || {};
+    const nested = source.call || source.toolCall || source.part || {};
+    return normalizeToolName(
+      source.tool ||
+        source.name ||
+        source.toolName ||
+        source.tool_id ||
+        source.toolID ||
+        nested.tool ||
+        nested.name ||
+        nested.toolName ||
+        ""
+    );
+  }
+
+  function extractToolCallId(payload) {
+    const source = payload || {};
+    const nested = source.call || source.toolCall || source.part || {};
+    return String(
+      source.callID ||
+        source.toolCallID ||
+        source.tool_call_id ||
+        source.id ||
+        nested.callID ||
+        nested.toolCallID ||
+        nested.tool_call_id ||
+        nested.id ||
+        ""
+    ).trim();
+  }
+
+  function extractRunId(event, fallback = "") {
+    const props = event?.properties || {};
+    return String(
+      event?.runId ||
+        event?.runID ||
+        event?.run_id ||
+        props.runID ||
+        props.runId ||
+        props.run_id ||
+        props.run?.id ||
+        fallback
+    ).trim();
+  }
+
+  function normalizePermissionRequest(raw) {
+    if (!raw) return null;
+    const nested = raw.request || raw.approval || raw.permission || {};
+    const id = String(
+      raw.id ||
+        raw.requestID ||
+        raw.requestId ||
+        raw.approvalID ||
+        nested.id ||
+        nested.requestID ||
+        nested.requestId ||
+        ""
+    ).trim();
+    if (!id) return null;
+    const sessionId = String(
+      raw.sessionId ||
+        raw.sessionID ||
+        raw.session_id ||
+        nested.sessionId ||
+        nested.sessionID ||
+        nested.session_id ||
+        ""
+    ).trim();
+    return {
+      id,
+      tool: normalizeToolName(raw.tool || nested.tool || nested.name || "tool") || "tool",
+      permission: String(raw.permission || nested.permission || "").trim(),
+      pattern: String(raw.pattern || nested.pattern || "").trim(),
+      sessionId,
+      status: String(raw.status || nested.status || "").trim().toLowerCase(),
+    };
+  }
+
+  function isPendingPermissionStatus(statusRaw) {
+    const status = String(statusRaw || "").trim().toLowerCase();
+    if (!status) return true;
+    if (
+      status.includes("approved") ||
+      status.includes("rejected") ||
+      status.includes("denied") ||
+      status.includes("resolved") ||
+      status.includes("expired") ||
+      status.includes("cancel") ||
+      status.includes("complete") ||
+      status.includes("done") ||
+      status.includes("timeout")
+    ) {
+      return false;
+    }
+    return (
+      status.includes("pending") ||
+      status.includes("request") ||
+      status.includes("ask") ||
+      status.includes("await") ||
+      status.includes("open") ||
+      status.includes("queue") ||
+      status.includes("new") ||
+      status.includes("progress") ||
+      status === "unknown"
+    );
+  }
+
+  function upsertPermissionRequest(req) {
+    if (!isPendingPermissionStatus(req?.status)) return;
+    const idx = permissionRequests.findIndex((item) => item.id === req.id);
+    if (idx >= 0) permissionRequests[idx] = { ...permissionRequests[idx], ...req };
+    else permissionRequests.unshift(req);
+  }
+
+  function removePermissionRequest(requestId) {
+    const idx = permissionRequests.findIndex((item) => item.id === requestId);
+    if (idx >= 0) permissionRequests.splice(idx, 1);
+  }
+
+  function renderPermissionRail() {
+    const count = permissionRequests.length;
+    railPermissionsCountEl.textContent = String(count);
+    approveAllEl.disabled = count === 0 || autoApproveInFlight;
+    autoApproveEl.checked = autoApproveTools;
+    permissionsListEl.innerHTML =
+      permissionRequests
+        .slice(0, 20)
+        .map((req) => {
+          const busy = permissionBusy.has(req.id);
+          const bits = [req.permission, req.pattern].filter(Boolean).join(" ");
+          return `
+            <article class="rounded-sm border border-zinc-800 bg-zinc-900/65 px-2 py-1.5">
+              <div class="truncate text-[11px] text-zinc-200" title="${escapeHtml(req.id)}">${escapeHtml(req.tool)}</div>
+              <div class="mt-0.5 text-[10px] text-zinc-500">${escapeHtml(bits || req.id)}</div>
+              <div class="mt-1 flex gap-1">
+                <button class="tcp-btn h-6 px-1.5 text-[10px]" data-perm-allow="${escapeHtml(req.id)}" ${busy ? "disabled" : ""}>Allow</button>
+                <button class="tcp-btn h-6 px-1.5 text-[10px]" data-perm-always="${escapeHtml(req.id)}" ${busy ? "disabled" : ""}>Always</button>
+                <button class="tcp-btn-danger h-6 px-1.5 text-[10px]" data-perm-deny="${escapeHtml(req.id)}" ${busy ? "disabled" : ""}>Deny</button>
+              </div>
+            </article>
+          `;
+        })
+        .join("") || '<p class="chat-rail-empty">No pending approvals.</p>';
+
+    permissionsListEl.querySelectorAll("[data-perm-allow]").forEach((el) => {
+      el.addEventListener("click", async () => {
+        const requestId = String(el.dataset.permAllow || "").trim();
+        if (!requestId) return;
+        await replyPermission(requestId, "once");
+      });
+    });
+    permissionsListEl.querySelectorAll("[data-perm-always]").forEach((el) => {
+      el.addEventListener("click", async () => {
+        const requestId = String(el.dataset.permAlways || "").trim();
+        if (!requestId) return;
+        await replyPermission(requestId, "always");
+      });
+    });
+    permissionsListEl.querySelectorAll("[data-perm-deny]").forEach((el) => {
+      el.addEventListener("click", async () => {
+        const requestId = String(el.dataset.permDeny || "").trim();
+        if (!requestId) return;
+        await replyPermission(requestId, "deny");
+      });
+    });
+  }
+
+  async function replyPermission(requestId, replyMode, quiet = false) {
+    if (!requestId || permissionBusy.has(requestId)) return;
+    const normalizedReply = replyMode === "allow" ? "once" : replyMode;
+    permissionBusy.add(requestId);
+    renderPermissionRail();
+    try {
+      await state.client.permissions.reply(requestId, normalizedReply);
+      removePermissionRequest(requestId);
+      if (!quiet) {
+        toast(
+          "ok",
+          `Permission ${normalizedReply === "deny" ? "denied" : "approved"} (${requestId}).`
+        );
+      }
+    } catch (e) {
+      if (!quiet) {
+        toast("err", e instanceof Error ? e.message : String(e));
+      }
+    } finally {
+      permissionBusy.delete(requestId);
+      renderPermissionRail();
+      void refreshPermissionRequests();
+    }
+  }
+
+  async function autoApprovePendingRequests() {
+    if (!autoApproveTools || autoApproveInFlight || permissionRequests.length === 0) return;
+    autoApproveInFlight = true;
+    renderPermissionRail();
+    try {
+      for (const req of [...permissionRequests]) {
+        await replyPermission(req.id, "always", true);
+      }
+    } finally {
+      autoApproveInFlight = false;
+      renderPermissionRail();
+    }
+  }
+
+  async function refreshPermissionRequests() {
+    const snapshot = await state.client.permissions.list().catch(() => ({ requests: [] }));
+    const list = Array.isArray(snapshot?.requests) ? snapshot.requests : [];
+    const sessionId = String(state.currentSessionId || "").trim();
+    permissionRequests.splice(0, permissionRequests.length);
+    for (const raw of list) {
+      const normalized = normalizePermissionRequest(raw);
+      if (!normalized) continue;
+      if (normalized.sessionId && sessionId && normalized.sessionId !== sessionId) continue;
+      if (!isPendingPermissionStatus(normalized.status)) continue;
+      permissionRequests.push(normalized);
+    }
+    renderPermissionRail();
+    void autoApprovePendingRequests();
   }
 
   function extractToolsFromPayload(raw) {
@@ -462,6 +750,7 @@ export async function renderChat(ctx) {
         state.currentSessionId = btn.dataset.sid;
         resetToolTracking();
         renderSessions();
+        await refreshPermissionRequests();
         await renderMessages();
         setSessionsPanel(false);
       });
@@ -525,11 +814,41 @@ export async function renderChat(ctx) {
   }
 
   byId("new-session").addEventListener("click", async () => {
+    setSessionsPanel(false);
     try {
       await createSession();
     } catch (e) {
       toast("err", e instanceof Error ? e.message : String(e));
     }
+  });
+  approveAllEl?.addEventListener("click", async () => {
+    const pendingIds = permissionRequests.map((req) => req.id).filter(Boolean);
+    if (!pendingIds.length) return;
+    for (const requestId of pendingIds) {
+      // Approve once for currently pending requests.
+      await replyPermission(requestId, "once", true);
+    }
+    await refreshPermissionRequests();
+    const unresolved = pendingIds.filter((id) =>
+      permissionRequests.some((req) => String(req.id || "").trim() === id)
+    ).length;
+    if (unresolved > 0) {
+      toast(
+        "warn",
+        `${unresolved} request${unresolved === 1 ? "" : "s"} still pending (likely stale/expired).`
+      );
+    } else {
+      toast(
+        "ok",
+        `Approved ${pendingIds.length} pending request${pendingIds.length === 1 ? "" : "s"}.`
+      );
+    }
+  });
+  autoApproveEl?.addEventListener("change", () => {
+    autoApproveTools = !!autoApproveEl.checked;
+    saveAutoApprovePreference(autoApproveTools);
+    renderPermissionRail();
+    if (autoApproveTools) void autoApprovePendingRequests();
   });
 
   async function sendPrompt() {
@@ -545,6 +864,7 @@ export async function renderChat(ctx) {
 
     try {
       if (!state.currentSessionId) await createSession();
+      appendTransientUserMessage(prompt, attached.length);
       const modelRoute = await resolveModelRoute();
       if (!modelRoute) {
         throw new Error(
@@ -686,6 +1006,13 @@ export async function renderChat(ctx) {
         "session.run.cancelled",
         "session.run.canceled",
       ]);
+      const toolStartEvents = new Set(["tool.called", "tool_call.started", "session.tool_call"]);
+      const toolEndEvents = new Set([
+        "tool.result",
+        "tool_call.completed",
+        "tool_call.failed",
+        "session.tool_result",
+      ]);
 
       let streamTimedOut = false;
       const streamAbort = new AbortController();
@@ -730,9 +1057,33 @@ export async function renderChat(ctx) {
           if (isRunSignalEvent(event.type)) {
             resetNoEventTimer();
           }
-          const evRunId = String(
-            event.runId || event.runID || event.run_id || event.properties?.runID || ""
-          ).trim();
+          const evRunId = extractRunId(event);
+          if (
+            event.type === "approval.requested" ||
+            event.type === "permission.request" ||
+            event.type === "permission.asked"
+          ) {
+            const req = normalizePermissionRequest(event.properties || {});
+            if (req) {
+              if (!req.sessionId || req.sessionId === String(state.currentSessionId || "").trim()) {
+                upsertPermissionRequest(req);
+                renderPermissionRail();
+                void autoApprovePendingRequests();
+              }
+            } else {
+              void refreshPermissionRequests();
+            }
+          }
+          if (
+            event.type === "approval.resolved" ||
+            event.type === "permission.resolved" ||
+            event.type === "permission.replied"
+          ) {
+            const req = normalizePermissionRequest(event.properties || {});
+            if (req?.id) removePermissionRequest(req.id);
+            renderPermissionRail();
+            void refreshPermissionRequests();
+          }
           if (evRunId && evRunId !== runId) continue;
           if (event.type === "session.response") {
             const delta = String(event.properties?.delta || "");
@@ -744,43 +1095,76 @@ export async function renderChat(ctx) {
             pre.textContent = responseText;
             messagesEl.scrollTop = messagesEl.scrollHeight;
           }
-          if (event.type === "tool.called" || event.type === "tool_call.started") {
-            const tool = String(event.properties?.tool || "tool");
-            recordToolActivity(tool, "started", `${event.type}:${evRunId || runId}:${tool}:start`);
+          if (toolStartEvents.has(event.type)) {
+            const tool = extractToolName(event.properties) || "tool";
+            const callId = extractToolCallId(event.properties);
+            recordToolActivity(
+              tool,
+              "started",
+              `${callId || evRunId || runId}:${tool}:started`
+            );
           }
-          if (
-            event.type === "tool.result" ||
-            event.type === "tool_call.completed" ||
-            event.type === "tool_call.failed"
-          ) {
-            const tool = String(event.properties?.tool || "tool");
-            const failed = event.type === "tool_call.failed";
+          if (toolEndEvents.has(event.type)) {
+            const tool = extractToolName(event.properties) || "tool";
+            const callId = extractToolCallId(event.properties);
+            const statusHint = String(
+              event.properties?.status || event.properties?.state || ""
+            ).toLowerCase();
+            const failed =
+              event.type === "tool_call.failed" ||
+              statusHint.includes("fail") ||
+              statusHint.includes("error") ||
+              !!event.properties?.error;
             recordToolActivity(
               tool,
               failed ? "failed" : "completed",
-              `${event.type}:${evRunId || runId}:${tool}:${failed ? "failed" : "completed"}`
+              `${callId || evRunId || runId}:${tool}:${failed ? "failed" : "completed"}`
             );
           }
           if (event.type === "message.part.updated") {
             const part = event.properties?.part || {};
-            const partType = String(part.type || "").trim();
-            const tool = String(part.tool || part.toolName || "").trim();
-            if (tool && partType === "tool_invocation") {
-              const partId = String(part.id || "").trim();
+            const partType = String(part.type || "")
+              .trim()
+              .toLowerCase()
+              .replace(/_/g, "-");
+            const tool = extractToolName(part) || extractToolName(event.properties);
+            const partId = extractToolCallId(part);
+            const partState = part?.state;
+            const partStatus = String(
+              (partState && typeof partState === "object" ? partState.status : partState) ||
+                part.status ||
+                ""
+            )
+              .trim()
+              .toLowerCase();
+            const hasError =
+              !!part.error ||
+              !!(partState && typeof partState === "object" && partState.error) ||
+              partStatus.includes("fail") ||
+              partStatus.includes("error") ||
+              partStatus.includes("deny") ||
+              partStatus.includes("reject") ||
+              partStatus.includes("cancel");
+            const hasOutput =
+              !!part.result ||
+              !!part.output ||
+              !!(partState && typeof partState === "object" && (partState.output || partState.result)) ||
+              partStatus.includes("done") ||
+              partStatus.includes("complete") ||
+              partStatus.includes("success");
+            if (tool && (partType === "tool" || partType === "tool-invocation")) {
+              const status = hasError ? "failed" : hasOutput ? "completed" : "started";
               recordToolActivity(
                 tool,
-                "started",
-                `${event.type}:${partId || evRunId || runId}:${tool}:start`
+                status,
+                `${partId || evRunId || runId}:${tool}:${status}`
               );
             }
-            if (tool && partType === "tool_result") {
-              const partId = String(part.id || "").trim();
-              const pState = String(part.state || "").toLowerCase();
-              const failed = pState === "failed" || pState === "error";
+            if (tool && partType === "tool-result") {
               recordToolActivity(
                 tool,
-                failed ? "failed" : "completed",
-                `${event.type}:${partId || evRunId || runId}:${tool}:${failed ? "failed" : "completed"}`
+                hasError ? "failed" : "completed",
+                `${partId || evRunId || runId}:${tool}:${hasError ? "failed" : "completed"}`
               );
             }
           }
@@ -891,7 +1275,13 @@ export async function renderChat(ctx) {
   renderSessions();
   renderUploadedFiles();
   renderToolRail();
+  renderPermissionRail();
   void refreshAvailableTools();
+  void refreshPermissionRequests();
+  const permissionPoll = setInterval(() => {
+    if (state.route === "chat") void refreshPermissionRequests();
+  }, 2500);
+  addCleanup?.(() => clearInterval(permissionPoll));
   if (!state.currentSessionId && sessions.length === 0) {
     await createSession().catch(() => {});
   }

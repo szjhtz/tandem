@@ -1,96 +1,346 @@
+function parseUrl(input) {
+  try {
+    return new URL(input);
+  } catch {
+    return null;
+  }
+}
+
+function normalizeName(raw) {
+  const cleaned = String(raw || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return cleaned || "mcp-server";
+}
+
+function inferNameFromTransport(transport) {
+  const url = parseUrl(transport);
+  if (!url) return "";
+  const host = String(url.hostname || "").toLowerCase();
+  if (!host) return "";
+  if (host.endsWith("composio.dev")) return "composio";
+
+  const parts = host.split(".").filter(Boolean);
+  if (parts.length === 0) return "";
+  const preferred = ["backend", "api", "mcp", "www"].includes(parts[0]) ? parts[1] || parts[0] : parts[0];
+  return normalizeName(preferred);
+}
+
+function isComposioTransport(transport) {
+  const url = parseUrl(transport);
+  if (!url) return false;
+  const host = String(url.hostname || "").toLowerCase();
+  return host.endsWith("composio.dev");
+}
+
+function normalizeServerRow(input, fallbackName = "") {
+  if (!input || typeof input !== "object") return null;
+  const row = input;
+  const name = String(row.name || fallbackName || "").trim();
+  if (!name) return null;
+  return {
+    name,
+    transport: String(row.transport || "").trim(),
+    connected: !!row.connected,
+    enabled: row.enabled !== false,
+    lastError: String(row.last_error || row.lastError || "").trim(),
+    headers: row.headers && typeof row.headers === "object" ? row.headers : {},
+    toolCache: Array.isArray(row.tool_cache || row.toolCache) ? row.tool_cache || row.toolCache : [],
+  };
+}
+
+function normalizeServers(raw) {
+  if (Array.isArray(raw)) {
+    return raw
+      .map((entry) => normalizeServerRow(entry))
+      .filter(Boolean)
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  if (!raw || typeof raw !== "object") return [];
+  if (Array.isArray(raw.servers)) {
+    return raw.servers
+      .map((entry) => normalizeServerRow(entry))
+      .filter(Boolean)
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  return Object.entries(raw)
+    .map(([name, cfg]) =>
+      normalizeServerRow(
+        cfg && typeof cfg === "object" ? cfg : { transport: String(cfg || "") },
+        name
+      )
+    )
+    .filter(Boolean)
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function normalizeTools(raw) {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((tool) => {
+      if (typeof tool === "string") return tool;
+      if (!tool || typeof tool !== "object") return "";
+      return String(
+        tool.namespaced_name || tool.namespacedName || tool.id || tool.tool_name || tool.toolName || ""
+      ).trim();
+    })
+    .filter(Boolean);
+}
+
+function authPreview(authMode, token, customHeader, transport) {
+  const hasToken = !!String(token || "").trim();
+  if (!hasToken || authMode === "none") return "No auth header will be sent.";
+
+  if (authMode === "custom") {
+    return customHeader ? `Header preview: ${customHeader}: <token>` : "Set a custom header name.";
+  }
+
+  if (authMode === "x-api-key") return "Header preview: x-api-key: <token>";
+  if (authMode === "bearer") return "Header preview: Authorization: Bearer <token>";
+
+  if (isComposioTransport(transport)) return "Auto mode: detected Composio URL -> x-api-key";
+  return "Auto mode: using Authorization Bearer token";
+}
+
+function buildHeaders({ authMode, token, customHeader, transport }) {
+  const rawToken = String(token || "").trim();
+  if (!rawToken || authMode === "none") return {};
+
+  if (authMode === "custom") {
+    const headerName = String(customHeader || "").trim();
+    if (!headerName) throw new Error("Custom header name is required.");
+    return { [headerName]: rawToken };
+  }
+
+  if (authMode === "x-api-key") return { "x-api-key": rawToken };
+
+  if (authMode === "bearer") {
+    const bearerToken = rawToken.replace(/^bearer\s+/i, "").trim();
+    return { Authorization: `Bearer ${bearerToken}` };
+  }
+
+  if (isComposioTransport(transport)) return { "x-api-key": rawToken };
+  const bearerToken = rawToken.replace(/^bearer\s+/i, "").trim();
+  return { Authorization: `Bearer ${bearerToken}` };
+}
+
 export async function renderMcp(ctx) {
-  const { state, byId, toast, escapeHtml } = ctx;
-  const [servers, tools] = await Promise.all([
+  const { state, byId, api, toast, escapeHtml } = ctx;
+  const [serversRaw, toolsRaw] = await Promise.all([
     state.client.mcp.list().catch(() => ({})),
     state.client.mcp.listTools().catch(() => []),
   ]);
 
+  const servers = normalizeServers(serversRaw);
+  const toolIds = normalizeTools(toolsRaw);
+
   byId("view").innerHTML = `
-    <div class="grid gap-4 xl:grid-cols-[420px_1fr]">
+    <div class="grid gap-4 xl:grid-cols-[440px_1fr]">
       <div class="tcp-card">
-        <h3 class="tcp-title mb-3">Add MCP Server</h3>
+        <h3 class="tcp-title mb-2">Add MCP Server</h3>
+        <p class="tcp-subtle mb-3">Paste your MCP endpoint URL and token. For Composio URLs, Auto auth uses <code>x-api-key</code>.</p>
         <div class="grid gap-3">
-          <input id="mcp-name" class="tcp-input" placeholder="name" value="arcade" />
-          <input id="mcp-transport" class="tcp-input" placeholder="https://.../mcp or stdio:..." />
-          <button id="mcp-add" class="tcp-btn-primary"><i data-lucide="link"></i> Add + Connect</button>
+          <div>
+            <label class="mb-1 block text-sm text-slate-300">Name</label>
+            <input id="mcp-name" class="tcp-input" placeholder="composio" value="composio" />
+          </div>
+          <div>
+            <label class="mb-1 block text-sm text-slate-300">Transport URL</label>
+            <input id="mcp-transport" class="tcp-input" placeholder="https://backend.composio.dev/.../mcp?user_id=..." />
+          </div>
+          <div>
+            <label class="mb-1 block text-sm text-slate-300">Auth Mode</label>
+            <select id="mcp-auth-mode" class="tcp-select">
+              <option value="auto" selected>Auto (Composio => x-api-key, else Bearer)</option>
+              <option value="x-api-key">x-api-key</option>
+              <option value="bearer">Authorization Bearer</option>
+              <option value="custom">Custom Header</option>
+              <option value="none">No Auth Header</option>
+            </select>
+          </div>
+          <div id="mcp-custom-header-wrap" class="hidden">
+            <label class="mb-1 block text-sm text-slate-300">Custom Header Name</label>
+            <input id="mcp-custom-header" class="tcp-input" placeholder="X-My-Token" />
+          </div>
+          <div>
+            <label class="mb-1 block text-sm text-slate-300">Token (optional)</label>
+            <input id="mcp-token" class="tcp-input" type="password" placeholder="token" />
+          </div>
+          <p id="mcp-auth-preview" class="tcp-subtle"></p>
+          <button id="mcp-add" class="tcp-btn-primary"><i data-lucide="plug-zap"></i> Add + Connect</button>
         </div>
       </div>
+
       <div class="grid gap-4">
         <div class="tcp-card">
-          <h3 class="tcp-title mb-3">Servers</h3>
+          <div class="mb-3 flex items-center justify-between gap-2">
+            <h3 class="tcp-title">Servers (${servers.length})</h3>
+            <button id="mcp-refresh-all" class="tcp-btn"><i data-lucide="refresh-cw"></i> Reload</button>
+          </div>
           <div id="mcp-servers" class="tcp-list"></div>
         </div>
+
         <div class="tcp-card">
-          <h3 class="tcp-title mb-3">MCP Tools (${tools.length})</h3>
-          <pre class="tcp-code max-h-[280px] overflow-auto">${escapeHtml(tools.slice(0, 200).map((t) => t.id || JSON.stringify(t)).join("\n"))}</pre>
+          <h3 class="tcp-title mb-3">Discovered MCP Tools (${toolIds.length})</h3>
+          <pre class="tcp-code max-h-[320px] overflow-auto">${escapeHtml(toolIds.slice(0, 350).join("\n")) || "No tools discovered yet. Connect a server first."}</pre>
         </div>
       </div>
     </div>
   `;
 
+  const nameEl = byId("mcp-name");
+  const transportEl = byId("mcp-transport");
+  const tokenEl = byId("mcp-token");
+  const authModeEl = byId("mcp-auth-mode");
+  const customHeaderWrapEl = byId("mcp-custom-header-wrap");
+  const customHeaderEl = byId("mcp-custom-header");
+  const authPreviewEl = byId("mcp-auth-preview");
+
+  const refreshAuthUi = () => {
+    const mode = authModeEl.value;
+    customHeaderWrapEl.classList.toggle("hidden", mode !== "custom");
+    authPreviewEl.textContent = authPreview(
+      mode,
+      tokenEl.value,
+      customHeaderEl.value,
+      transportEl.value
+    );
+  };
+
+  const maybeInferName = () => {
+    const current = String(nameEl.value || "").trim();
+    if (!current || current === "composio" || current === "mcp-server") {
+      const inferred = inferNameFromTransport(transportEl.value.trim());
+      if (inferred) nameEl.value = inferred;
+    }
+  };
+
+  transportEl.addEventListener("input", () => {
+    maybeInferName();
+    refreshAuthUi();
+  });
+  tokenEl.addEventListener("input", refreshAuthUi);
+  authModeEl.addEventListener("change", refreshAuthUi);
+  customHeaderEl.addEventListener("input", refreshAuthUi);
+  refreshAuthUi();
+
   byId("mcp-add").addEventListener("click", async () => {
-    const name = byId("mcp-name").value.trim();
-    const transport = byId("mcp-transport").value.trim();
-    if (!name || !transport) return toast("err", "name and transport are required");
+    const transport = String(transportEl.value || "").trim();
+    const name = normalizeName(nameEl.value || inferNameFromTransport(transport));
+    const authMode = String(authModeEl.value || "auto");
+    const token = tokenEl.value;
+    const customHeader = customHeaderEl.value;
+
+    if (!transport) return toast("err", "Transport URL is required.");
+    if (!parseUrl(transport) && !transport.startsWith("stdio:")) {
+      return toast("err", "Transport must be a valid URL or stdio:* transport.");
+    }
+
     try {
-      await state.client.mcp.add({ name, transport, enabled: true });
-      await state.client.mcp.connect(name);
-      toast("ok", "MCP connected.");
-      renderMcp(ctx);
+      const headers = buildHeaders({ authMode, token, customHeader, transport });
+      const payload = { name, transport, enabled: true };
+      if (Object.keys(headers).length) payload.headers = headers;
+      await state.client.mcp.add(payload);
+      const connectResult = await state.client.mcp.connect(name);
+      if (!connectResult?.ok) {
+        const snapshot = normalizeServers(await state.client.mcp.list().catch(() => ({})));
+        const failed = snapshot.find((row) => row.name === name);
+        const detail = failed?.lastError ? ` ${failed.lastError}` : "";
+        const composioHint =
+          isComposioTransport(transport) &&
+          /401|403|unauthorized|forbidden|invalid api key|api key/i.test(detail)
+            ? " Composio usually expects `x-api-key` and a valid `user_id` query param."
+            : "";
+        throw new Error(`Unable to connect MCP server "${name}".${detail}${composioHint}`);
+      }
+      toast("ok", `MCP "${name}" connected.`);
+      await renderMcp(ctx);
     } catch (e) {
       toast("err", e instanceof Error ? e.message : String(e));
+      await renderMcp(ctx);
     }
   });
 
-  const list = byId("mcp-servers");
-  const rows = Object.entries(servers || {});
-  list.innerHTML =
-    rows
-      .map(
-        ([name, cfg]) => `
-      <div class="tcp-list-item flex items-center justify-between gap-3">
-        <div><strong>${escapeHtml(name)}</strong><div class="tcp-subtle">${escapeHtml(cfg.transport || "")}</div></div>
-        <div class="flex gap-2">
-          <button data-c="${name}" class="tcp-btn">Connect</button>
-          <button data-r="${name}" class="tcp-btn">Refresh</button>
-          <button data-d="${name}" class="tcp-btn-danger">Delete</button>
-        </div>
-      </div>
-    `
-      )
+  byId("mcp-refresh-all").addEventListener("click", () => {
+    renderMcp(ctx);
+  });
+
+  const listEl = byId("mcp-servers");
+  listEl.innerHTML =
+    servers
+      .map((server) => {
+        const headerKeys = Object.keys(server.headers || {}).filter(Boolean);
+        const toolCount = Array.isArray(server.toolCache) ? server.toolCache.length : 0;
+        return `
+          <div class="tcp-list-item grid gap-2">
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <div class="font-semibold">${escapeHtml(server.name)}</div>
+                <div class="tcp-subtle">${escapeHtml(server.transport || "No transport set")}</div>
+              </div>
+              <div class="flex flex-wrap gap-2">
+                <span class="${server.connected ? "tcp-badge-ok" : "tcp-badge-warn"}">${server.connected ? "Connected" : "Disconnected"}</span>
+                <span class="${server.enabled ? "tcp-badge-info" : "tcp-badge-warn"}">${server.enabled ? "Enabled" : "Disabled"}</span>
+                <span class="tcp-badge-info">Tools: ${toolCount}</span>
+              </div>
+            </div>
+            ${
+              server.lastError
+                ? `<div class="rounded-xl border border-rose-700/60 bg-rose-950/20 px-2 py-1 text-xs text-rose-300">${escapeHtml(server.lastError)}</div>`
+                : ""
+            }
+            ${
+              headerKeys.length
+                ? `<div class="tcp-subtle text-xs">Auth headers: ${escapeHtml(headerKeys.join(", "))}</div>`
+                : `<div class="tcp-subtle text-xs">No stored auth headers.</div>`
+            }
+            <div class="flex flex-wrap gap-2">
+              <button class="tcp-btn" data-action="${server.connected ? "disconnect" : "connect"}" data-name="${encodeURIComponent(server.name)}">
+                ${server.connected ? "Disconnect" : "Connect"}
+              </button>
+              <button class="tcp-btn" data-action="refresh" data-name="${encodeURIComponent(server.name)}">Refresh</button>
+              <button class="tcp-btn" data-action="toggle-enabled" data-name="${encodeURIComponent(server.name)}" data-enabled="${server.enabled ? "1" : "0"}">
+                ${server.enabled ? "Disable" : "Enable"}
+              </button>
+              <button class="tcp-btn-danger" data-action="delete" data-name="${encodeURIComponent(server.name)}">Delete</button>
+            </div>
+          </div>
+        `;
+      })
       .join("") || '<p class="tcp-subtle">No MCP servers configured.</p>';
 
-  list.querySelectorAll("[data-c]").forEach((b) =>
-    b.addEventListener("click", async () => {
+  listEl.querySelectorAll("button[data-action]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const action = String(button.dataset.action || "");
+      const encoded = String(button.dataset.name || "");
+      const name = encoded ? decodeURIComponent(encoded) : "";
+      if (!name) return;
       try {
-        await state.client.mcp.connect(b.dataset.c);
-        toast("ok", "Connected.");
+        if (action === "connect") {
+          await state.client.mcp.connect(name);
+          toast("ok", `Connected ${name}.`);
+        } else if (action === "disconnect") {
+          await state.client.mcp.disconnect(name);
+          toast("ok", `Disconnected ${name}.`);
+        } else if (action === "refresh") {
+          await state.client.mcp.refresh(name);
+          toast("ok", `Refreshed ${name}.`);
+        } else if (action === "toggle-enabled") {
+          const enabled = String(button.dataset.enabled || "0") === "1";
+          await state.client.mcp.setEnabled(name, !enabled);
+          toast("ok", `${!enabled ? "Enabled" : "Disabled"} ${name}.`);
+        } else if (action === "delete") {
+          await api(`/api/engine/mcp/${encodeURIComponent(name)}`, { method: "DELETE" });
+          toast("ok", `Deleted ${name}.`);
+        }
+        await renderMcp(ctx);
       } catch (e) {
         toast("err", e instanceof Error ? e.message : String(e));
       }
-    })
-  );
-
-  list.querySelectorAll("[data-r]").forEach((b) =>
-    b.addEventListener("click", async () => {
-      try {
-        await state.client.mcp.refresh(b.dataset.r);
-        toast("ok", "Refreshed.");
-      } catch (e) {
-        toast("err", e instanceof Error ? e.message : String(e));
-      }
-    })
-  );
-
-  list.querySelectorAll("[data-d]").forEach((b) =>
-    b.addEventListener("click", async () => {
-      try {
-        await state.client.mcp.delete(b.dataset.d);
-        toast("ok", "Deleted.");
-        renderMcp(ctx);
-      } catch (e) {
-        toast("err", e instanceof Error ? e.message : String(e));
-      }
-    })
-  );
+    });
+  });
 }
