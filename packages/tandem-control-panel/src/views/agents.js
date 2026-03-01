@@ -936,12 +936,12 @@ export async function renderAgents(ctx) {
         <input data-v2-agent-field="agent_id" data-v2-agent-index="${index}" class="tcp-input font-mono text-xs" value="${escapeHtml(String(seed.agent_id || `agent-${index + 1}`))}" />
         <input data-v2-agent-field="display_name" data-v2-agent-index="${index}" class="tcp-input" placeholder="Display name" value="${escapeHtml(String(seed.display_name || `Agent ${index + 1}`))}" />
         <select data-v2-agent-field="model_provider_select" data-v2-agent-index="${index}" class="tcp-select">${providerSelectOptionsMarkup}</select>
-        <input data-v2-agent-field="model_provider_custom" data-v2-agent-index="${index}" class="tcp-input hidden" placeholder="Custom provider id" value="${escapeHtml(String(seed.model_provider || ""))}" />
+        <input data-v2-agent-field="model_provider_custom" data-v2-agent-index="${index}" class="tcp-input" placeholder="Custom provider id (enabled when Custom provider selected)" value="${escapeHtml(String(seed.model_provider || ""))}" />
         <select data-v2-agent-field="model_id_select" data-v2-agent-index="${index}" class="tcp-select">
           <option value="">Default model for provider</option>
           <option value="__custom__">Custom model...</option>
         </select>
-        <input data-v2-agent-field="model_id_custom" data-v2-agent-index="${index}" class="tcp-input hidden" placeholder="Custom model id (e.g. openai/gpt-4o-mini)" value="${escapeHtml(String(seed.model_id || ""))}" />
+        <input data-v2-agent-field="model_id_custom" data-v2-agent-index="${index}" class="tcp-input" placeholder="Custom model id (enabled when Custom model selected)" value="${escapeHtml(String(seed.model_id || ""))}" />
         <input data-v2-agent-field="skills" data-v2-agent-index="${index}" class="tcp-input" placeholder="skills csv" value="${escapeHtml(String(Array.isArray(seed.skills) ? seed.skills.join(", ") : seed.skills || ""))}" />
         <input data-v2-agent-field="mcp_servers" data-v2-agent-index="${index}" class="tcp-input" placeholder="mcp servers csv (github, composio)" value="${escapeHtml(String(Array.isArray(seed.mcp_servers) ? seed.mcp_servers.join(", ") : seed.mcp_servers || ""))}" />
         <input data-v2-agent-field="allowlist" data-v2-agent-index="${index}" class="tcp-input" placeholder="tool allowlist csv (read,mcp.github.*)" value="${escapeHtml(String(Array.isArray(seed.allowlist) ? seed.allowlist.join(", ") : seed.allowlist || ""))}" />
@@ -976,20 +976,28 @@ export async function renderAgents(ctx) {
     const modelCustom = readEl("model_id_custom");
     if (!providerSelect || !providerCustom || !modelSelect || !modelCustom) return;
 
-    const providerValue =
-      providerSelect.value === "__custom__" ? String(providerCustom.value || "").trim() : String(providerSelect.value || "").trim();
+    const providerIsCustom = providerSelect.value === "__custom__";
+    const selectedProvider = String(providerSelect.value || "").trim();
+    const providerValue = providerIsCustom
+      ? String(providerCustom.value || "").trim()
+      : selectedProvider || initialProviderId || "";
+    providerCustom.disabled = !providerIsCustom;
+    providerCustom.classList.toggle("opacity-60", !providerIsCustom);
     const modelCandidates = providerValue ? modelIdsForProvider(providerValue) : [];
-    const previousModel = String(modelCustom.value || modelSelect.value || "").trim();
+    const previousModel = String(modelCustom.value || "").trim();
     modelSelect.innerHTML = [
       `<option value="">Default model for provider</option>`,
       ...modelCandidates.map((id) => `<option value="${escapeHtml(id)}">${escapeHtml(id)}</option>`),
       `<option value="__custom__">Custom model...</option>`,
     ].join("");
+    const currentSelect = String(modelSelect.value || "").trim();
     const hasKnownModel = !!previousModel && modelCandidates.includes(previousModel);
-    modelSelect.value = hasKnownModel ? previousModel : previousModel ? "__custom__" : "";
-    modelCustom.classList.toggle("hidden", modelSelect.value !== "__custom__");
-    if (modelSelect.value === "__custom__" && previousModel) modelCustom.value = previousModel;
-    providerCustom.classList.toggle("hidden", providerSelect.value !== "__custom__");
+    if (hasKnownModel) modelSelect.value = previousModel;
+    else if (previousModel || currentSelect === "__custom__") modelSelect.value = "__custom__";
+    else modelSelect.value = "";
+    const modelIsCustom = modelSelect.value === "__custom__";
+    modelCustom.disabled = !modelIsCustom;
+    modelCustom.classList.toggle("opacity-60", !modelIsCustom);
   };
   const initializeV2AgentModelControls = () => {
     const rows = [...byId("automation-v2-agents-editor").querySelectorAll("[data-v2-agent-row]")];
@@ -1020,9 +1028,7 @@ export async function renderAgents(ctx) {
       }
       if (modelSelect && modelSelect.dataset.wired !== "1") {
         modelSelect.dataset.wired = "1";
-        modelSelect.addEventListener("change", () =>
-          modelCustom?.classList.toggle("hidden", modelSelect.value !== "__custom__")
-        );
+        modelSelect.addEventListener("change", () => syncV2AgentRowModelControls(index));
       }
     }
   };
