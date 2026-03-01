@@ -57,6 +57,8 @@
   "connections": {
     "title": "连接",
     "description": "在这里配置 Telegram、Discord 和 Slack。机器人令牌会保存在加密保险库中。",
+    "runtimeNotice": "桌面端频道监听仅在应用保持打开且电脑处于唤醒状态时生效。",
+    "alwaysOnNotice": "如果需要 7x24 小时在线，请将 Tandem Control Panel/engine 部署在常开机器或服务器上。",
     "status": {
       "connected": "已连接",
       "configured": "已配置",
@@ -72,10 +74,18 @@
     "channelId": "频道 ID",
     "mentionOnly": "仅在提及时回复",
     "mentionOnlyDescription": "仅在消息中提到机器人时回复。",
+    "verify": {
+      "running": "正在验证配置...",
+      "passed": "验证通过：令牌鉴权、网关访问与 Message Content Intent 均已正确配置。",
+      "passedGeneric": "验证通过。",
+      "failedGeneric": "验证失败。",
+      "failedSummary": "验证失败：token={{token}}，gateway={{gateway}}，message intent={{intent}}。"
+    },
     "actions": {
       "save": "保存",
       "enable": "启用",
-      "forgetToken": "忘记令牌"
+      "forgetToken": "忘记令牌",
+      "verifyDiscord": "验证 Discord"
     },
     "channels": {
       "telegram": {

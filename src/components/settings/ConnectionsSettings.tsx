@@ -11,8 +11,10 @@ import {
   getChannelConnections,
   onSidecarEventV2,
   setChannelConnection,
+  verifyChannelConnection,
   type ChannelConnectionInput,
   type ChannelConnectionsView,
+  type ChannelVerifyResult,
   type ChannelName,
   type StreamEventEnvelopeV2,
 } from "@/lib/tauri";
@@ -26,6 +28,11 @@ type ChannelDraft = {
 };
 
 type ChannelDrafts = Record<ChannelName, ChannelDraft>;
+type VerifyTone = "ok" | "warn" | "error";
+type ChannelVerifyFeedback = {
+  tone: VerifyTone;
+  text: string;
+};
 
 const CHANNELS: ChannelName[] = ["telegram", "discord", "slack"];
 
@@ -111,6 +118,10 @@ export function ConnectionsSettings() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [savingChannel, setSavingChannel] = useState<ChannelName | null>(null);
+  const [verifyingChannel, setVerifyingChannel] = useState<ChannelName | null>(null);
+  const [verifyFeedback, setVerifyFeedback] = useState<
+    Partial<Record<ChannelName, ChannelVerifyFeedback>>
+  >({});
   const [busyAction, setBusyAction] = useState<string | null>(null);
 
   const applyConnections = useCallback((next: ChannelConnectionsView) => {
@@ -161,8 +172,8 @@ export function ConnectionsSettings() {
   }, [refresh]);
 
   const isBusy = useMemo(
-    () => savingChannel !== null || busyAction !== null,
-    [savingChannel, busyAction]
+    () => savingChannel !== null || verifyingChannel !== null || busyAction !== null,
+    [savingChannel, verifyingChannel, busyAction]
   );
 
   const updateDraft = (channel: ChannelName, next: Partial<ChannelDraft>) => {
@@ -175,15 +186,22 @@ export function ConnectionsSettings() {
     }));
   };
 
+  const buildChannelInput = useCallback(
+    (channel: ChannelName): ChannelConnectionInput => {
+      const draft = drafts[channel];
+      return {
+        token: draft.token.trim() || undefined,
+        allowed_users: parseUsersCsv(draft.allowedUsers),
+        mention_only: channel === "slack" ? undefined : draft.mentionOnly,
+        guild_id: channel === "discord" ? draft.guildId.trim() || null : undefined,
+        channel_id: channel === "slack" ? draft.channelId.trim() || null : undefined,
+      };
+    },
+    [drafts]
+  );
+
   const onSave = async (channel: ChannelName) => {
-    const draft = drafts[channel];
-    const input: ChannelConnectionInput = {
-      token: draft.token.trim() || undefined,
-      allowed_users: parseUsersCsv(draft.allowedUsers),
-      mention_only: channel === "slack" ? undefined : draft.mentionOnly,
-      guild_id: channel === "discord" ? draft.guildId.trim() || null : undefined,
-      channel_id: channel === "slack" ? draft.channelId.trim() || null : undefined,
-    };
+    const input = buildChannelInput(channel);
 
     setSavingChannel(channel);
     try {
@@ -194,6 +212,84 @@ export function ConnectionsSettings() {
       setError(err instanceof Error ? err.message : "Failed to save channel settings");
     } finally {
       setSavingChannel(null);
+    }
+  };
+
+  const formatDiscordVerifyMessage = (result: ChannelVerifyResult): ChannelVerifyFeedback => {
+    const checks = result.checks ?? {};
+    const tokenOk = checks.token_auth_ok === true;
+    const gatewayOk = checks.gateway_ok === true;
+    const messageIntentOk = checks.message_content_intent_ok === true;
+    const firstHint = result.hints?.[0] ?? "";
+
+    if (result.ok) {
+      return {
+        tone: "ok",
+        text: t("connections.verify.passed", {
+          ns: "settings",
+          defaultValue:
+            "Verification passed: token auth, gateway access, and Message Content Intent are all configured.",
+        }),
+      };
+    }
+
+    const statusLine = t("connections.verify.failedSummary", {
+      ns: "settings",
+      defaultValue:
+        "Verification failed: token={{token}}, gateway={{gateway}}, message intent={{intent}}.",
+      token: tokenOk ? "ok" : "fail",
+      gateway: gatewayOk ? "ok" : "fail",
+      intent: messageIntentOk ? "ok" : "fail",
+    });
+
+    return {
+      tone: "warn",
+      text: firstHint ? `${statusLine} ${firstHint}` : statusLine,
+    };
+  };
+
+  const onVerify = async (channel: ChannelName) => {
+    setVerifyingChannel(channel);
+    setVerifyFeedback((prev) => ({
+      ...prev,
+      [channel]: {
+        tone: "warn",
+        text: t("connections.verify.running", {
+          ns: "settings",
+          defaultValue: "Running verification...",
+        }),
+      },
+    }));
+    try {
+      const result = await verifyChannelConnection(channel, buildChannelInput(channel));
+      const feedback =
+        channel === "discord"
+          ? formatDiscordVerifyMessage(result)
+          : {
+              tone: result.ok ? "ok" : "warn",
+              text: result.ok
+                ? t("connections.verify.passedGeneric", {
+                    ns: "settings",
+                    defaultValue: "Verification passed.",
+                  })
+                : (result.hints?.[0] ??
+                  t("connections.verify.failedGeneric", {
+                    ns: "settings",
+                    defaultValue: "Verification failed.",
+                  })),
+            };
+
+      setVerifyFeedback((prev) => ({ ...prev, [channel]: feedback }));
+      setError(result.ok ? null : feedback.text);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to verify channel";
+      setVerifyFeedback((prev) => ({
+        ...prev,
+        [channel]: { tone: "error", text: message },
+      }));
+      setError(message);
+    } finally {
+      setVerifyingChannel(null);
     }
   };
 
@@ -258,6 +354,20 @@ export function ConnectionsSettings() {
               ns: "settings",
               defaultValue:
                 "Configure Telegram, Discord, and Slack channels. Bot tokens are stored in your encrypted vault.",
+            })}
+          </p>
+          <p className="mt-2 text-xs text-text-subtle">
+            {t("connections.runtimeNotice", {
+              ns: "settings",
+              defaultValue:
+                "Desktop channel listeners run only while this app is open and your computer is awake.",
+            })}
+          </p>
+          <p className="text-xs text-text-subtle">
+            {t("connections.alwaysOnNotice", {
+              ns: "settings",
+              defaultValue:
+                "For always-on channel automation, deploy Tandem Control Panel/engine on an always-on machine or server.",
             })}
           </p>
         </div>
@@ -414,6 +524,20 @@ export function ConnectionsSettings() {
                 </div>
               )}
 
+              {verifyFeedback[channel] && (
+                <div
+                  className={`rounded-lg p-3 text-xs ${
+                    verifyFeedback[channel].tone === "ok"
+                      ? "border border-success/20 bg-success/10 text-success"
+                      : verifyFeedback[channel].tone === "error"
+                        ? "border border-error/20 bg-error/10 text-error"
+                        : "border border-warning/20 bg-warning/10 text-warning"
+                  }`}
+                >
+                  {verifyFeedback[channel].text}
+                </div>
+              )}
+
               <div className="flex flex-wrap items-center gap-2 pt-1">
                 <Button
                   size="sm"
@@ -429,6 +553,20 @@ export function ConnectionsSettings() {
                         defaultValue: "Enable",
                       })}
                 </Button>
+                {channel === "discord" && (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => void onVerify(channel)}
+                    loading={verifyingChannel === channel}
+                    disabled={isBusy && verifyingChannel !== channel}
+                  >
+                    {t("connections.actions.verifyDiscord", {
+                      ns: "settings",
+                      defaultValue: "Verify Discord",
+                    })}
+                  </Button>
+                )}
                 <Button
                   size="sm"
                   variant="ghost"

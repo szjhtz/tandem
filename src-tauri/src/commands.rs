@@ -2414,6 +2414,77 @@ pub async fn set_channel_connection(
 }
 
 #[tauri::command]
+pub async fn verify_channel_connection(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    channel: String,
+    input: Option<ChannelConnectionInput>,
+) -> Result<serde_json::Value> {
+    let channel = normalize_channel_name(&channel)?;
+    let input = input.unwrap_or_default();
+
+    let mut token = trim_to_option(input.token.clone());
+    if token.is_none() {
+        if let Some(keystore) = app.try_state::<SecureKeyStore>() {
+            if let Ok(project_id) = active_project_id(state.inner()) {
+                let key = channel_token_storage_key(&project_id, channel);
+                if let Some(saved) = keystore.get(&key)? {
+                    token = trim_to_option(Some(saved));
+                }
+            }
+        }
+    }
+
+    let existing_cfg = state.sidecar.channels_config().await.unwrap_or_default();
+    let payload = match channel {
+        "telegram" => {
+            let allowed_users =
+                normalize_allowed_users(input.allowed_users, &existing_cfg.telegram.allowed_users);
+            let mention_only = input
+                .mention_only
+                .unwrap_or(existing_cfg.telegram.mention_only);
+            serde_json::json!({
+                "bot_token": token.unwrap_or_default(),
+                "allowed_users": allowed_users,
+                "mention_only": mention_only,
+            })
+        }
+        "discord" => {
+            let allowed_users =
+                normalize_allowed_users(input.allowed_users, &existing_cfg.discord.allowed_users);
+            let mention_only = input
+                .mention_only
+                .unwrap_or(existing_cfg.discord.mention_only);
+            let guild_id = trim_to_option(input.guild_id).or(existing_cfg.discord.guild_id);
+            serde_json::json!({
+                "bot_token": token.unwrap_or_default(),
+                "allowed_users": allowed_users,
+                "mention_only": mention_only,
+                "guild_id": guild_id,
+            })
+        }
+        "slack" => {
+            let allowed_users =
+                normalize_allowed_users(input.allowed_users, &existing_cfg.slack.allowed_users);
+            let channel_id = trim_to_option(input.channel_id).or(existing_cfg.slack.channel_id);
+            serde_json::json!({
+                "bot_token": token.unwrap_or_default(),
+                "allowed_users": allowed_users,
+                "channel_id": channel_id,
+            })
+        }
+        _ => {
+            return Err(TandemError::InvalidConfig(format!(
+                "Unsupported channel: {}",
+                channel
+            )))
+        }
+    };
+
+    state.sidecar.channels_verify(channel, payload).await
+}
+
+#[tauri::command]
 pub async fn disable_channel_connection(
     app: AppHandle,
     state: State<'_, AppState>,

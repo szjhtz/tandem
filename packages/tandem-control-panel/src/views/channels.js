@@ -1,5 +1,5 @@
 export async function renderChannels(ctx) {
-  const { state, byId, toast, escapeHtml } = ctx;
+  const { state, byId, toast, escapeHtml, api } = ctx;
   const [status, config] = await Promise.all([
     state.client.channels.status().catch(() => ({})),
     state.client.channels.config().catch(() => ({})),
@@ -12,8 +12,25 @@ export async function renderChannels(ctx) {
     return fallback;
   };
   const usersCsv = (raw) => (Array.isArray(raw) && raw.length ? raw.join(", ") : "*");
+  const discordHasToken = !!readField(config.discord || {}, "has_token", "hasToken", false);
 
-  byId("view").innerHTML = '<div class="tcp-card"><div class="mb-3 flex items-center justify-between"><h3 class="tcp-title">Channels</h3><i data-lucide="messages-square"></i></div><div id="channels-list" class="tcp-list"></div></div>';
+  byId("view").innerHTML = `
+    <div class="tcp-card">
+      <div class="mb-3 flex items-center justify-between">
+        <h3 class="tcp-title">Channels</h3>
+        <i data-lucide="messages-square"></i>
+      </div>
+      ${
+        !discordHasToken
+          ? `<div class="mb-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-100">
+               <div class="font-semibold">Discord Quick Setup</div>
+               <div class="mt-1">1) Create bot and copy token. 2) Enable Message Content Intent. 3) Invite bot with channel send/read permissions. 4) Save then click Verify Discord.</div>
+             </div>`
+          : ""
+      }
+      <div id="channels-list" class="tcp-list"></div>
+    </div>
+  `;
 
   const list = byId("channels-list");
   list.innerHTML = channels
@@ -43,6 +60,7 @@ export async function renderChannels(ctx) {
             }
             <div class="flex gap-2">
               <button class="tcp-btn-primary" data-save="${c}"><i data-lucide="save"></i> Save</button>
+              ${c === "discord" ? `<button class="tcp-btn" data-verify="${c}">Verify Discord</button>` : ""}
               <button class="tcp-btn-danger" data-del="${c}"><i data-lucide="trash-2"></i></button>
             </div>
           </div>
@@ -50,6 +68,7 @@ export async function renderChannels(ctx) {
             ${c === "telegram" || c === "discord" ? `<label class="inline-flex items-center gap-2"><input id="${c}-mention" type="checkbox" /> mention only</label>` : ""}
             ${c === "discord" ? `<span>Tip: use <code>@bot /help</code> style commands (Discord app slash commands are not registered).</span>` : ""}
           </div>
+          ${c === "discord" ? `<div id="${c}-verify-result" class="mt-2 text-xs text-slate-300"></div>` : ""}
           ${lastError ? `<div class="mt-2 text-xs text-rose-300">last error: ${escapeHtml(String(lastError))}</div>` : ""}
         </div>
       `;
@@ -84,33 +103,82 @@ export async function renderChannels(ctx) {
     if (styleEl) styleEl.value = styleProfile;
   });
 
+  const buildPayload = (ch) => {
+    const token = byId(`${ch}-token`).value.trim();
+    const users = byId(`${ch}-users`).value.trim();
+    const payload = {
+      bot_token: token,
+      allowed_users: users ? users.split(",").map((v) => v.trim()).filter(Boolean) : ["*"],
+    };
+    if (ch === "telegram" || ch === "discord") {
+      payload.mention_only = !!byId(`${ch}-mention`)?.checked;
+    }
+    if (ch === "telegram") {
+      payload.style_profile = String(byId(`${ch}-style`)?.value || "default");
+    }
+    if (ch === "discord") {
+      payload.guild_id = byId(`${ch}-guild`)?.value?.trim() || null;
+    }
+    if (ch === "slack") {
+      payload.channel_id = byId(`${ch}-channel`)?.value?.trim() || null;
+    }
+    return payload;
+  };
+
   list.querySelectorAll("[data-save]").forEach((btn) =>
     btn.addEventListener("click", async () => {
       const ch = btn.dataset.save;
-      const token = byId(`${ch}-token`).value.trim();
-      const users = byId(`${ch}-users`).value.trim();
-      const payload = {
-        bot_token: token,
-        allowed_users: users ? users.split(",").map((v) => v.trim()).filter(Boolean) : ["*"],
-      };
-      if (ch === "telegram" || ch === "discord") {
-        payload.mention_only = !!byId(`${ch}-mention`)?.checked;
-      }
-      if (ch === "telegram") {
-        payload.style_profile = String(byId(`${ch}-style`)?.value || "default");
-      }
-      if (ch === "discord") {
-        payload.guild_id = byId(`${ch}-guild`)?.value?.trim() || null;
-      }
-      if (ch === "slack") {
-        payload.channel_id = byId(`${ch}-channel`)?.value?.trim() || null;
-      }
+      const payload = buildPayload(ch);
       try {
         await state.client.channels.put(ch, payload);
         toast("ok", `${ch} saved.`);
         renderChannels(ctx);
       } catch (e) {
         toast("err", e instanceof Error ? e.message : String(e));
+      }
+    })
+  );
+
+  list.querySelectorAll("[data-verify]").forEach((btn) =>
+    btn.addEventListener("click", async () => {
+      const ch = btn.dataset.verify;
+      const target = byId(`${ch}-verify-result`);
+      if (target) {
+        target.className = "mt-2 text-xs text-slate-300";
+        target.textContent = "Verifying Discord configuration...";
+      }
+      try {
+        const result = await api(`/api/engine/channels/${encodeURIComponent(ch)}/verify`, {
+          method: "POST",
+          body: JSON.stringify(buildPayload(ch)),
+        });
+        const checks = readField(result, "checks", "checks", {});
+        const hints = readField(result, "hints", "hints", []);
+        const ok = !!readField(result, "ok", "ok", false);
+        const tokenAuth = !!readField(checks, "token_auth_ok", "tokenAuthOk", false);
+        const gatewayOk = !!readField(checks, "gateway_ok", "gatewayOk", false);
+        const messageIntent = !!readField(
+          checks,
+          "message_content_intent_ok",
+          "messageContentIntentOk",
+          false
+        );
+        const hintText = Array.isArray(hints) && hints.length > 0 ? String(hints[0]) : "";
+        const line = ok
+          ? "Verification passed: token/auth, gateway, and Message Content intent are OK."
+          : `Verification failed: token=${tokenAuth ? "ok" : "fail"}, gateway=${gatewayOk ? "ok" : "fail"}, message_intent=${messageIntent ? "ok" : "fail"}. ${hintText}`;
+        if (target) {
+          target.className = `mt-2 text-xs ${ok ? "text-emerald-300" : "text-amber-200"}`;
+          target.innerHTML = escapeHtml(line);
+        }
+        toast(ok ? "ok" : "warn", ok ? "Discord verify passed." : "Discord verify failed.");
+      } catch (e) {
+        const message = e instanceof Error ? e.message : String(e);
+        if (target) {
+          target.className = "mt-2 text-xs text-rose-300";
+          target.textContent = `Verify request failed: ${message}`;
+        }
+        toast("err", message);
       }
     })
   );

@@ -1232,6 +1232,7 @@ fn app_router(state: AppState) -> Router {
         .route("/memory/{id}", axum::routing::delete(memory_delete))
         .route("/channels/config", get(channels_config))
         .route("/channels/status", get(channels_status))
+        .route("/channels/{name}/verify", post(channels_verify))
         .route(
             "/channels/{name}",
             put(channels_put).delete(channels_delete),
@@ -5581,6 +5582,205 @@ async fn channels_status(State(state): State<AppState>) -> Json<Value> {
             meta: json!({}),
         }),
     }))
+}
+
+async fn channels_verify(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+    input: Option<Json<Value>>,
+) -> Result<Json<Value>, StatusCode> {
+    let normalized = name.to_ascii_lowercase();
+    let payload = input.map(|Json(v)| v).unwrap_or_else(|| json!({}));
+
+    match normalized.as_str() {
+        "discord" => Ok(Json(discord_channel_verify(&state, &payload).await)),
+        _ => Err(StatusCode::NOT_FOUND),
+    }
+}
+
+const DISCORD_FLAG_GATEWAY_PRESENCE: u64 = 1 << 12;
+const DISCORD_FLAG_GATEWAY_PRESENCE_LIMITED: u64 = 1 << 13;
+const DISCORD_FLAG_GATEWAY_MEMBERS: u64 = 1 << 14;
+const DISCORD_FLAG_GATEWAY_MEMBERS_LIMITED: u64 = 1 << 15;
+const DISCORD_FLAG_GATEWAY_MESSAGE_CONTENT: u64 = 1 << 18;
+const DISCORD_FLAG_GATEWAY_MESSAGE_CONTENT_LIMITED: u64 = 1 << 19;
+
+async fn discord_channel_verify(state: &AppState, payload: &Value) -> Value {
+    let provided_token = payload
+        .get("bot_token")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(ToString::to_string);
+
+    let effective = state.config.get_effective_value().await;
+    let saved_token = effective
+        .get("channels")
+        .and_then(Value::as_object)
+        .and_then(|obj| obj.get("discord"))
+        .and_then(Value::as_object)
+        .and_then(|cfg| cfg.get("bot_token"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(ToString::to_string);
+
+    let token = provided_token.or(saved_token).unwrap_or_default();
+    let has_token = !token.is_empty();
+    let mut hints: Vec<String> = Vec::new();
+    if !has_token {
+        hints.push("Add your Discord bot token, then click Save or Verify again.".to_string());
+        return json!({
+            "ok": false,
+            "channel": "discord",
+            "checks": {
+                "has_token": false,
+                "token_auth_ok": false,
+                "gateway_ok": false,
+                "message_content_intent_ok": false
+            },
+            "status_codes": {
+                "users_me": null,
+                "gateway_bot": null,
+                "application_me": null
+            },
+            "hints": hints,
+            "details": {}
+        });
+    }
+
+    let client = match reqwest::Client::builder()
+        .timeout(Duration::from_secs(15))
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            return json!({
+                "ok": false,
+                "channel": "discord",
+                "checks": {
+                    "has_token": true,
+                    "token_auth_ok": false,
+                    "gateway_ok": false,
+                    "message_content_intent_ok": false
+                },
+                "status_codes": {
+                    "users_me": null,
+                    "gateway_bot": null,
+                    "application_me": null
+                },
+                "hints": ["Local HTTP client setup failed. Restart Tandem and retry verification."],
+                "details": {
+                    "error": e.to_string()
+                }
+            });
+        }
+    };
+    let auth_header = format!("Bot {token}");
+
+    let users_resp = client
+        .get("https://discord.com/api/v10/users/@me")
+        .header("Authorization", auth_header.clone())
+        .send()
+        .await;
+    let gateway_resp = client
+        .get("https://discord.com/api/v10/gateway/bot")
+        .header("Authorization", auth_header.clone())
+        .send()
+        .await;
+    let app_resp = client
+        .get("https://discord.com/api/v10/applications/@me")
+        .header("Authorization", auth_header)
+        .send()
+        .await;
+
+    let users_status = users_resp.as_ref().ok().map(|r| r.status().as_u16());
+    let gateway_status = gateway_resp.as_ref().ok().map(|r| r.status().as_u16());
+    let app_status = app_resp.as_ref().ok().map(|r| r.status().as_u16());
+
+    let token_auth_ok = users_status == Some(200);
+    let gateway_ok = gateway_status == Some(200);
+
+    let mut bot_username: Option<String> = None;
+    let mut bot_id: Option<String> = None;
+    if let Ok(resp) = users_resp {
+        if resp.status().is_success() {
+            if let Ok(v) = resp.json::<Value>().await {
+                bot_username = v
+                    .get("username")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string);
+                bot_id = v.get("id").and_then(Value::as_str).map(ToString::to_string);
+            }
+        }
+    }
+
+    let mut app_flags: Option<u64> = None;
+    if let Ok(resp) = app_resp {
+        if resp.status().is_success() {
+            if let Ok(v) = resp.json::<Value>().await {
+                app_flags = v.get("flags").and_then(Value::as_u64);
+            }
+        }
+    }
+
+    let message_content_intent_ok = app_flags.is_some_and(|flags| {
+        flags
+            & (DISCORD_FLAG_GATEWAY_MESSAGE_CONTENT | DISCORD_FLAG_GATEWAY_MESSAGE_CONTENT_LIMITED)
+            != 0
+    });
+    let presence_intent_enabled = app_flags.is_some_and(|flags| {
+        flags & (DISCORD_FLAG_GATEWAY_PRESENCE | DISCORD_FLAG_GATEWAY_PRESENCE_LIMITED) != 0
+    });
+    let server_members_intent_enabled = app_flags.is_some_and(|flags| {
+        flags & (DISCORD_FLAG_GATEWAY_MEMBERS | DISCORD_FLAG_GATEWAY_MEMBERS_LIMITED) != 0
+    });
+
+    if !token_auth_ok {
+        if users_status == Some(401) {
+            hints.push("Discord rejected this token (401). Regenerate bot token in Developer Portal -> Bot and update Tandem.".to_string());
+        } else {
+            hints.push("Could not authenticate bot token with Discord `/users/@me`.".to_string());
+        }
+    }
+    if !gateway_ok {
+        if gateway_status == Some(429) {
+            hints.push("Discord gateway verification is rate-limited right now. Wait a few seconds and verify again.".to_string());
+        } else {
+            hints.push("Discord `/gateway/bot` check failed. Verify outbound network access to discord.com.".to_string());
+        }
+    }
+    if token_auth_ok && gateway_ok && !message_content_intent_ok {
+        hints.push("Enable `Message Content Intent` in Discord Developer Portal -> Bot -> Privileged Gateway Intents.".to_string());
+    }
+    if hints.is_empty() {
+        hints.push("Discord checks passed. If replies are still missing, verify channel/thread permissions: View Channel, Send Messages, Read Message History, Send Messages in Threads.".to_string());
+    }
+
+    let ok = token_auth_ok && gateway_ok && message_content_intent_ok;
+    json!({
+        "ok": ok,
+        "channel": "discord",
+        "checks": {
+            "has_token": has_token,
+            "token_auth_ok": token_auth_ok,
+            "gateway_ok": gateway_ok,
+            "message_content_intent_ok": message_content_intent_ok,
+            "presence_intent_enabled": presence_intent_enabled,
+            "server_members_intent_enabled": server_members_intent_enabled
+        },
+        "status_codes": {
+            "users_me": users_status,
+            "gateway_bot": gateway_status,
+            "application_me": app_status
+        },
+        "hints": hints,
+        "details": {
+            "bot_username": bot_username,
+            "bot_id": bot_id,
+            "application_flags": app_flags
+        }
+    })
 }
 
 async fn channels_put(
@@ -13461,6 +13661,7 @@ mod tests {
         for (method, uri) in [
             ("GET", "/channels/config"),
             ("GET", "/channels/status"),
+            ("POST", "/channels/discord/verify"),
             ("POST", "/admin/reload-config"),
             ("GET", "/memory"),
         ] {
@@ -13534,6 +13735,41 @@ mod tests {
             .get("slack")
             .and_then(Value::as_object)
             .is_some_and(|obj| !obj.contains_key("bot_token")));
+    }
+
+    #[tokio::test]
+    async fn channels_verify_discord_without_token_returns_setup_hint() {
+        let state = test_state().await;
+        let app = app_router(state);
+
+        let req = Request::builder()
+            .method("POST")
+            .uri("/channels/discord/verify")
+            .body(Body::empty())
+            .expect("request");
+        let resp = app.clone().oneshot(req).await.expect("response");
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let body = to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .expect("response body");
+        let payload: Value = serde_json::from_slice(&body).expect("json body");
+        assert_eq!(
+            payload.get("ok").and_then(Value::as_bool),
+            Some(false),
+            "verify should fail without token"
+        );
+        assert_eq!(
+            payload.get("channel").and_then(Value::as_str),
+            Some("discord")
+        );
+        assert!(
+            payload
+                .get("hints")
+                .and_then(Value::as_array)
+                .is_some_and(|arr| !arr.is_empty()),
+            "verify should include setup hints"
+        );
     }
 
     #[test]

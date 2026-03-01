@@ -600,6 +600,7 @@ pub fn run() {
             // Channel connections
             commands::get_channel_connections,
             commands::set_channel_connection,
+            commands::verify_channel_connection,
             commands::disable_channel_connection,
             commands::delete_channel_connection_token,
             // Sidecar management

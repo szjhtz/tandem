@@ -5206,6 +5206,25 @@ impl SidecarManager {
         Ok(())
     }
 
+    pub async fn channels_verify(
+        &self,
+        name: &str,
+        body: serde_json::Value,
+    ) -> Result<serde_json::Value> {
+        self.check_circuit_breaker().await?;
+        let url = format!("{}/channels/{}/verify", self.base_url().await?, name);
+        let response = self
+            .http_client
+            .post(&url)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| {
+                TandemError::Sidecar(format!("Failed to verify channel '{}': {}", name, e))
+            })?;
+        self.handle_response(response).await
+    }
+
     pub async fn channels_delete(&self, name: &str) -> Result<()> {
         self.check_circuit_breaker().await?;
         let url = format!("{}/channels/{}", self.base_url().await?, name);

@@ -24,6 +24,7 @@ import type {
   ChannelName,
   ChannelsConfigResponse,
   ChannelsStatusResponse,
+  ChannelVerifyResponse,
   AddMcpServerOptions,
   MemoryPutOptions,
   MemoryPutResponse,
@@ -721,6 +722,14 @@ class Channels {
   /** Remove a channel configuration. */
   async delete(channel: ChannelName): Promise<{ ok: boolean }> {
     return this.req<{ ok: boolean }>(`/channels/${channel}`, { method: "DELETE" });
+  }
+
+  /** Verify channel connectivity and prerequisites (token, gateway, intents, etc.). */
+  async verify(channel: ChannelName, payload: JsonObject = {}): Promise<ChannelVerifyResponse> {
+    return this.req<ChannelVerifyResponse>(`/channels/${channel}/verify`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
   }
 }
 

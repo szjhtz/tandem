@@ -57,6 +57,8 @@
   "connections": {
     "title": "Connections",
     "description": "Configure Telegram, Discord, and Slack channels. Bot tokens are stored in your encrypted vault.",
+    "runtimeNotice": "Desktop channel listeners run only while this app is open and your computer is awake.",
+    "alwaysOnNotice": "For always-on channel automation, deploy Tandem Control Panel/engine on an always-on machine or server.",
     "status": {
       "connected": "Connected",
       "configured": "Configured",
@@ -72,10 +74,18 @@
     "channelId": "Channel ID",
     "mentionOnly": "Mention only",
     "mentionOnlyDescription": "Reply only when the bot is mentioned.",
+    "verify": {
+      "running": "Running verification...",
+      "passed": "Verification passed: token auth, gateway access, and Message Content Intent are all configured.",
+      "passedGeneric": "Verification passed.",
+      "failedGeneric": "Verification failed.",
+      "failedSummary": "Verification failed: token={{token}}, gateway={{gateway}}, message intent={{intent}}."
+    },
     "actions": {
       "save": "Save",
       "enable": "Enable",
-      "forgetToken": "Forget token"
+      "forgetToken": "Forget token",
+      "verifyDiscord": "Verify Discord"
     },
     "channels": {
       "telegram": {

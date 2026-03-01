@@ -7,6 +7,11 @@
   - Added editable Discord controls for `mention_only` and optional `guild_id` (plus Slack `channel_id` parity in the same surface).
   - Added channel-level `last_error` visibility in the control panel so channel failures are diagnosable without backend log inspection.
   - Added inline Discord usage guidance clarifying this integration's message flow (`@bot /help`) and that Discord app slash commands are not auto-registered.
+- **Desktop Connections parity + first-run clarity**:
+  - Added desktop-side channel verification command and wiring (`verify_channel_connection`) so Tauri Settings can run the same Discord setup checks as the web/control-panel flow.
+  - Added a `Verify Discord` action in desktop Settings -> Connections with actionable failure summaries (token auth, gateway reachability, Message Content intent).
+  - Added explicit runtime guidance in desktop Settings that channel listeners run only while the app is open and the machine is awake.
+  - Added always-on guidance pointing users to deploy Tandem Control Panel/engine on an always-on host for 24/7 channel availability.
 - **Discord allowlist matching compatibility fix**:
   - Discord adapter allowlist matching now accepts multiple identity forms: user ID, username, global name, and mention-style entries (`<@id>`, `<@!id>`, `@name`).
   - Resolves common “bot appears connected/online but ignores messages” failures when allowlists were configured with names rather than raw user IDs.

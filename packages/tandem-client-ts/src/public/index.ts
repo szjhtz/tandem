@@ -229,6 +229,15 @@ export interface ChannelsStatusResponse {
   slack: ChannelStatusEntry;
 }
 
+export interface ChannelVerifyResponse {
+  ok: boolean;
+  channel: ChannelName;
+  checks?: Record<string, boolean | null>;
+  statusCodes?: Record<string, number | null>;
+  hints?: string[];
+  details?: JsonObject;
+}
+
 // ─── MCP ─────────────────────────────────────────────────────────────────────
 
 export interface AddMcpServerOptions {

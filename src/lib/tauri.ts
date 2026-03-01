@@ -784,6 +784,15 @@ export interface ChannelConnectionInput {
   channel_id?: string | null;
 }
 
+export interface ChannelVerifyResult {
+  ok: boolean;
+  channel: ChannelName | string;
+  checks?: Record<string, boolean | null>;
+  status_codes?: Record<string, number | null>;
+  hints?: string[];
+  details?: Record<string, unknown>;
+}
+
 export async function getChannelConnections(): Promise<ChannelConnectionsView> {
   return invoke("get_channel_connections");
 }
@@ -793,6 +802,13 @@ export async function setChannelConnection(
   input: ChannelConnectionInput
 ): Promise<ChannelConnectionsView> {
   return invoke("set_channel_connection", { channel, input });
+}
+
+export async function verifyChannelConnection(
+  channel: ChannelName,
+  input?: ChannelConnectionInput
+): Promise<ChannelVerifyResult> {
+  return invoke("verify_channel_connection", { channel, input });
 }
 
 export async function disableChannelConnection(
