@@ -272,6 +272,12 @@ async function installServices() {
     TANDEM_ENABLE_GLOBAL_MEMORY: existingEngineEnv.TANDEM_ENABLE_GLOBAL_MEMORY || "1",
     TANDEM_DISABLE_TOOL_GUARD_BUDGETS:
       existingEngineEnv.TANDEM_DISABLE_TOOL_GUARD_BUDGETS || "1",
+    TANDEM_PROMPT_CONTEXT_HOOK_TIMEOUT_MS:
+      existingEngineEnv.TANDEM_PROMPT_CONTEXT_HOOK_TIMEOUT_MS || "5000",
+    TANDEM_PROVIDER_STREAM_CONNECT_TIMEOUT_MS:
+      existingEngineEnv.TANDEM_PROVIDER_STREAM_CONNECT_TIMEOUT_MS || "30000",
+    TANDEM_PROVIDER_STREAM_IDLE_TIMEOUT_MS:
+      existingEngineEnv.TANDEM_PROVIDER_STREAM_IDLE_TIMEOUT_MS || "90000",
   };
   const engineEnvBody = Object.entries(engineEnv)
     .map(([k, v]) => `${k}=${v}`)
@@ -609,6 +615,12 @@ async function ensureEngineRunning() {
         TANDEM_API_TOKEN: managedEngineToken,
         TANDEM_DISABLE_TOOL_GUARD_BUDGETS:
           process.env.TANDEM_DISABLE_TOOL_GUARD_BUDGETS || "1",
+        TANDEM_PROMPT_CONTEXT_HOOK_TIMEOUT_MS:
+          process.env.TANDEM_PROMPT_CONTEXT_HOOK_TIMEOUT_MS || "5000",
+        TANDEM_PROVIDER_STREAM_CONNECT_TIMEOUT_MS:
+          process.env.TANDEM_PROVIDER_STREAM_CONNECT_TIMEOUT_MS || "30000",
+        TANDEM_PROVIDER_STREAM_IDLE_TIMEOUT_MS:
+          process.env.TANDEM_PROVIDER_STREAM_IDLE_TIMEOUT_MS || "90000",
       },
       stdio: "inherit",
     }

@@ -28,8 +28,9 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
 - Engine/channel stability hardening for stuck runs
   - Fixed startup race in server prompt-context hook that could panic with `runtime accessed before startup completion` during boot.
   - Added provider stream timeout fail-safes in engine loop so stuck upstream calls fail and release active runs:
-    - `TANDEM_PROVIDER_STREAM_CONNECT_TIMEOUT_MS` (default `45000`)
-    - `TANDEM_PROVIDER_STREAM_IDLE_TIMEOUT_MS` (default `120000`)
+    - `TANDEM_PROVIDER_STREAM_CONNECT_TIMEOUT_MS` (default `30000`)
+    - `TANDEM_PROVIDER_STREAM_IDLE_TIMEOUT_MS` (default `90000`)
+    - `TANDEM_PROMPT_CONTEXT_HOOK_TIMEOUT_MS` (default `5000`)
   - This prevents long-lived stuck active runs that caused downstream `SESSION_RUN_CONFLICT` symptoms across web chat and channel adapters.
 - Control panel chat stream watchdog hardening
   - Increased stream no-event and max-window thresholds.

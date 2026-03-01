@@ -75,6 +75,9 @@ Variables:
 - `TANDEM_API_TOKEN` (backward-compatible alias for engine token)
 - `TANDEM_CONTROL_PANEL_SESSION_TTL_MINUTES` (default `1440`)
 - `TANDEM_DISABLE_TOOL_GUARD_BUDGETS` (`1` disables per-run guard budgets; default in installer/service env is `1`)
+- `TANDEM_PROMPT_CONTEXT_HOOK_TIMEOUT_MS` (default `5000`)
+- `TANDEM_PROVIDER_STREAM_CONNECT_TIMEOUT_MS` (default `30000`)
+- `TANDEM_PROVIDER_STREAM_IDLE_TIMEOUT_MS` (default `90000`)
 - `TANDEM_TOOL_BUDGET_DEFAULT`, `TANDEM_TOOL_BUDGET_BATCH`, `TANDEM_TOOL_BUDGET_WEBSEARCH`,
   `TANDEM_TOOL_BUDGET_READ`, `TANDEM_TOOL_BUDGET_SEARCH`, `TANDEM_TOOL_BUDGET_GLOB` (used when guards are enabled)
 

@@ -39,6 +39,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Context sizing behavior for trivial prompts**: Added compact context profile selection for short/simple prompts and server-side memory-injection skip heuristics for low-signal greetings/chitchat to reduce token overhead.
 - **SDK prompt parity for routing controls**: TypeScript and Python session prompt clients now support passing routing options (`toolMode`/`toolAllowlist`/`contextMode`) to `prompt_async`.
 - **Provider stream fail-safe behavior**: Engine provider streaming now enforces configurable connect/idle timeouts to fail stuck upstream calls deterministically and release active runs instead of hanging sessions.
+- **Timeout defaults aligned across engine and installers**: Engine runtime defaults now use `TANDEM_PROMPT_CONTEXT_HOOK_TIMEOUT_MS=5000`, `TANDEM_PROVIDER_STREAM_CONNECT_TIMEOUT_MS=30000`, and `TANDEM_PROVIDER_STREAM_IDLE_TIMEOUT_MS=90000`; quickstart/VPS/control-panel installers now write these into default engine env files.
 - **Control panel chat stream resiliency**: Chat stream watchdog now uses longer no-event/max-window thresholds and a run-settlement wait path before surfacing a stuck-run failure.
 
 ### Fixed

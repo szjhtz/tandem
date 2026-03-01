@@ -407,10 +407,42 @@ impl EngineLoop {
                         model_id: model_id_value.clone(),
                         iteration,
                     };
-                    if let Ok(augmented) =
-                        hook.augment_provider_messages(ctx, messages.clone()).await
+                    let hook_timeout =
+                        Duration::from_millis(prompt_context_hook_timeout_ms() as u64);
+                    match tokio::time::timeout(
+                        hook_timeout,
+                        hook.augment_provider_messages(ctx, messages.clone()),
+                    )
+                    .await
                     {
-                        messages = augmented;
+                        Ok(Ok(augmented)) => {
+                            messages = augmented;
+                        }
+                        Ok(Err(err)) => {
+                            self.event_bus.publish(EngineEvent::new(
+                                "memory.context.error",
+                                json!({
+                                    "sessionID": session_id,
+                                    "messageID": user_message_id,
+                                    "iteration": iteration,
+                                    "error": truncate_text(&err.to_string(), 500),
+                                }),
+                            ));
+                        }
+                        Err(_) => {
+                            self.event_bus.publish(EngineEvent::new(
+                                "memory.context.error",
+                                json!({
+                                    "sessionID": session_id,
+                                    "messageID": user_message_id,
+                                    "iteration": iteration,
+                                    "error": format!(
+                                        "prompt context hook timeout after {} ms",
+                                        hook_timeout.as_millis()
+                                    ),
+                                }),
+                            ));
+                        }
                     }
                 }
                 let all_tools = self.tools.list().await;
@@ -2239,7 +2271,7 @@ fn provider_stream_connect_timeout_ms() -> usize {
         .ok()
         .and_then(|raw| raw.trim().parse::<usize>().ok())
         .filter(|value| *value > 0)
-        .unwrap_or(45_000)
+        .unwrap_or(30_000)
 }
 
 fn provider_stream_idle_timeout_ms() -> usize {
@@ -2247,7 +2279,15 @@ fn provider_stream_idle_timeout_ms() -> usize {
         .ok()
         .and_then(|raw| raw.trim().parse::<usize>().ok())
         .filter(|value| *value > 0)
-        .unwrap_or(120_000)
+        .unwrap_or(90_000)
+}
+
+fn prompt_context_hook_timeout_ms() -> usize {
+    std::env::var("TANDEM_PROMPT_CONTEXT_HOOK_TIMEOUT_MS")
+        .ok()
+        .and_then(|raw| raw.trim().parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(5_000)
 }
 
 fn duplicate_signature_limit_for(tool_name: &str) -> usize {
