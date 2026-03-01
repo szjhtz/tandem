@@ -1,4 +1,5 @@
 import { TandemClient } from "@frumu/tandem-client";
+import { animate, stagger } from "motion";
 import "./styles.css";
 import { api } from "./app/api.js";
 import { byId, escapeHtml } from "./app/dom.js";
@@ -347,6 +348,39 @@ async function renderRoute() {
   const renderer = VIEW_RENDERERS[state.route] || VIEW_RENDERERS.dashboard;
   await renderer(ctx);
   renderIcons(byId("view"));
+  animateRouteView(view);
+  animateNav();
+}
+
+function animateRouteView(view) {
+  try {
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches) return;
+    animate(view, { opacity: [0.72, 1] }, { duration: 0.16, easing: "ease-out" });
+    const items = [...view.querySelectorAll(".tcp-card, .tcp-panel, .tcp-list-item")].slice(0, 24);
+    if (!items.length) return;
+    animate(
+      items,
+      { opacity: [0, 1], transform: ["translateY(8px)", "translateY(0px)"] },
+      { duration: 0.2, easing: "ease-out", delay: stagger(0.02) }
+    );
+  } catch {
+    // ignore animation failures
+  }
+}
+
+function animateNav() {
+  try {
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches) return;
+    const active = document.querySelector("#nav .nav-item.active");
+    if (!active) return;
+    animate(
+      active,
+      { opacity: [0.72, 1], transform: ["translateX(-3px)", "translateX(0px)"] },
+      { duration: 0.16, easing: "ease-out" }
+    );
+  } catch {
+    // ignore animation failures
+  }
 }
 
 function renderShell() {

@@ -34,6 +34,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Control panel V2 operations**: Added Automations V2 list/controls in `agents` view, including run-now, automation pause/resume, per-automation runs inspection, and run pause/resume/cancel actions.
 - **Automation UX naming simplification**: Control panel copy now presents advanced automation flow tooling without exposing internal V2 labels to operators.
 - **Control panel animation runtime**: Added lightweight `motion` animation library and panel transition animations for tabs/wizard interactions.
+- **Control panel route transitions animation pass**: Extended motion-based transitions across routed views (`tcp-card`/list/nav-active) with reduced-motion awareness.
 
 ### Fixed
 
@@ -42,6 +43,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Approval queue stale-state cleanup**: Fixed stale/previous permission requests persisting in chat approvals rail; pending request filtering, one-time approval semantics (`once`), and refresh-on-session-change behavior now clear resolved approvals reliably.
 - **Composio MCP stream response compatibility**: Fixed MCP runtime parsing for streamable/SSE JSON-RPC responses during remote discovery (`initialize` / `tools/list`), resolving `Invalid MCP JSON response: expected value at line 1 column 1` failures on Composio endpoints.
 - **Routine hard-pause runtime semantics**: Pausing a `running` routine run now actively cancels tracked live session(s) and records cancelled session IDs in pause responses/events.
+- **Swarm view route-stability fix**: Fixed Swarm page re-render race/leak where timer/SSE-triggered refreshes could leave Swarm content stuck after navigating to other views.
 
 ## [0.3.27] - 2026-03-01
 

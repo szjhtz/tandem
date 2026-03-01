@@ -29,8 +29,21 @@ function reasonText(reason) {
 
 export async function renderSwarm(ctx) {
   const { api, byId, escapeHtml, toast, state, addCleanup } = ctx;
+  if (state.route !== "swarm") return;
+  const renderRouteSnapshot = state.route;
+  if (state.__swarmLiveCleanup && Array.isArray(state.__swarmLiveCleanup)) {
+    for (const fn of state.__swarmLiveCleanup) {
+      try {
+        fn();
+      } catch {
+        // ignore cleanup failure
+      }
+    }
+  }
+  state.__swarmLiveCleanup = [];
   const status = await api("/api/swarm/status").catch(() => ({ status: "error" }));
   const snapshot = await api("/api/swarm/snapshot").catch(() => ({ registry: { value: { tasks: {} } }, logs: [], reasons: [] }));
+  if (state.route !== renderRouteSnapshot) return;
   const tasks = Object.values(snapshot.registry?.value?.tasks || {});
   const reasons = (snapshot.reasons || []).slice().reverse();
   const roleSummary = buildRoleSummary(tasks);
@@ -41,6 +54,9 @@ export async function renderSwarm(ctx) {
         <h3 class="tcp-title flex items-center gap-2"><i data-lucide="cpu"></i> Node Swarm Orchestrator</h3>
         <span class="${pickStatusClass(status.status)}">${escapeHtml(status.status || "idle")}</span>
       </div>
+      <p class="mb-3 rounded-xl border border-slate-700/60 bg-slate-900/25 px-3 py-2 text-xs text-slate-300">
+        Swarm is best for short-lived interactive orchestration. For persistent scheduled multi-agent pipelines, use <strong>Automations</strong>.
+      </p>
       <div class="grid gap-3 md:grid-cols-[1fr_1fr_120px_auto]">
         <input id="swarm-root" class="tcp-input" value="${escapeHtml(status.workspaceRoot || "")}" placeholder="workspace root" />
         <input id="swarm-objective" class="tcp-input" value="${escapeHtml(status.objective || "Ship a small feature end-to-end")}" placeholder="objective" />
@@ -189,7 +205,9 @@ export async function renderSwarm(ctx) {
   const poll = setInterval(() => {
     if (state.route === "swarm") renderSwarm(ctx);
   }, 4000);
-  addCleanup(() => clearInterval(poll));
+  const stopPoll = () => clearInterval(poll);
+  state.__swarmLiveCleanup.push(stopPoll);
+  addCleanup(stopPoll);
 
   try {
     const evt = new EventSource("/api/swarm/events", { withCredentials: true });
@@ -197,7 +215,9 @@ export async function renderSwarm(ctx) {
       if (state.route === "swarm") renderSwarm(ctx);
     };
     evt.onerror = () => evt.close();
-    addCleanup(() => evt.close());
+    const stopEvt = () => evt.close();
+    state.__swarmLiveCleanup.push(stopEvt);
+    addCleanup(stopEvt);
   } catch {
     // ignore
   }
