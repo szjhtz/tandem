@@ -37,6 +37,10 @@
   - Added preset packs for fast setup:
     - Engineering: `GitHub bug hunter`, `Code generation pipeline`, `Release notes + changelog`
     - Marketing/productivity: `Marketing content engine`, `Sales lead outreach`, `Inbox to tasks`
+- **Guide docs refresh (`guide/src`)**:
+  - Updated SDK documentation for V2 automation namespaces (`automationsV2` / `automations_v2`) and per-agent model-policy examples.
+  - Added agent template CRUD examples in SDK docs.
+  - Updated MCP automation guide with `/automations/v2` DAG creation/run examples.
 
 ---
 

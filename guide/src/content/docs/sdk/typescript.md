@@ -296,6 +296,68 @@ const run = await client.automations.getRun(runId);
 await client.automations.approveRun(runId, "LGTM");
 ```
 
+### `client.automationsV2`
+
+Use V2 for persistent multi-agent DAG flows with per-agent model selection.
+
+```typescript
+await client.automationsV2.create({
+  name: "Daily Marketing Engine",
+  status: "active",
+  schedule: {
+    type: "interval",
+    interval_seconds: 86400,
+    timezone: "UTC",
+    misfire_policy: "run_once",
+  },
+  agents: [
+    {
+      agent_id: "research",
+      display_name: "Research",
+      model_policy: {
+        default_model: {
+          provider_id: "openrouter",
+          model_id: "openai/gpt-4o-mini",
+        },
+      },
+      tool_policy: { allowlist: ["read", "websearch"], denylist: [] },
+      mcp_policy: { allowed_servers: ["composio"] },
+    },
+    {
+      agent_id: "writer",
+      display_name: "Writer",
+      model_policy: {
+        default_model: {
+          provider_id: "openrouter",
+          model_id: "anthropic/claude-3.5-sonnet",
+        },
+      },
+      tool_policy: { allowlist: ["read", "write", "edit"], denylist: [] },
+      mcp_policy: { allowed_servers: [] },
+    },
+  ],
+  flow: {
+    nodes: [
+      {
+        node_id: "market-scan",
+        agent_id: "research",
+        objective: "Find trends and audience signals.",
+      },
+      {
+        node_id: "draft-copy",
+        agent_id: "writer",
+        objective: "Draft campaign copy and CTA variants.",
+        depends_on: ["market-scan"],
+      },
+    ],
+  },
+});
+
+const runs = await client.automationsV2.listRuns("automation-v2-id", 20);
+await client.automationsV2.pauseRun(runs.runs[0].run_id!);
+await client.automationsV2.resumeRun(runs.runs[0].run_id!);
+```
+
 ### `client.agentTeams`
 
 ```typescript
@@ -310,6 +372,18 @@ const result = await client.agentTeams.spawn({
 
 const { spawnApprovals } = await client.agentTeams.listApprovals();
 await client.agentTeams.approveSpawn(spawnApprovals[0].approvalID!);
+
+await client.agentTeams.createTemplate({
+  template: {
+    templateID: "marketing-writer",
+    role: "worker",
+    system_prompt: "Write concise conversion-focused copy.",
+  },
+});
+await client.agentTeams.updateTemplate("marketing-writer", {
+  system_prompt: "Write concise copy with product-proof points.",
+});
+await client.agentTeams.deleteTemplate("marketing-writer");
 ```
 
 ### `client.missions`

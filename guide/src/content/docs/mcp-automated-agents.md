@@ -168,6 +168,71 @@ curl -sS "http://127.0.0.1:39731/automations/runs?routine_id=daily-mcp-research&
 
 Each run record includes `allowed_tools` so you can verify tool scope at execution time.
 
+### V2 Path (Recommended): Persistent Multi-Agent DAG Automation
+
+For per-agent model routing and DAG checkpoints, use `/automations/v2`:
+
+```bash
+curl -sS -X POST http://127.0.0.1:39731/automations/v2 \
+  -H "content-type: application/json" \
+  -d '{
+    "name": "daily-mcp-research-v2",
+    "status": "active",
+    "schedule": {
+      "type": "interval",
+      "interval_seconds": 86400,
+      "timezone": "UTC",
+      "misfire_policy": "run_once"
+    },
+    "agents": [
+      {
+        "agent_id": "research",
+        "display_name": "Research",
+        "model_policy": {
+          "default_model": {
+            "provider_id": "openrouter",
+            "model_id": "openai/gpt-4o-mini"
+          }
+        },
+        "tool_policy": { "allowlist": ["read", "websearch", "mcp.composio.*"], "denylist": [] },
+        "mcp_policy": { "allowed_servers": ["composio"] }
+      },
+      {
+        "agent_id": "writer",
+        "display_name": "Writer",
+        "model_policy": {
+          "default_model": {
+            "provider_id": "openrouter",
+            "model_id": "anthropic/claude-3.5-sonnet"
+          }
+        },
+        "tool_policy": { "allowlist": ["read", "write", "edit"], "denylist": [] },
+        "mcp_policy": { "allowed_servers": [] }
+      }
+    ],
+    "flow": {
+      "nodes": [
+        { "node_id": "scan", "agent_id": "research", "objective": "Find relevant MCP updates." },
+        { "node_id": "draft", "agent_id": "writer", "objective": "Draft daily summary.", "depends_on": ["scan"] }
+      ]
+    }
+  }'
+```
+
+Run immediately:
+
+```bash
+curl -sS -X POST http://127.0.0.1:39731/automations/v2/daily-mcp-research-v2/run_now \
+  -H "content-type: application/json" \
+  -d '{}'
+```
+
+Observe runs:
+
+```bash
+curl -sS "http://127.0.0.1:39731/automations/v2/daily-mcp-research-v2/runs?limit=10"
+```
+
 ## 2.5) Which Tools Should You Start With?
 
 For autonomous bots, start narrow and expand only when runs are stable.

@@ -305,6 +305,58 @@ run = await client.automations.get_run(run_id)
 await client.automations.approve_run(run_id, "LGTM")
 ```
 
+### `client.automations_v2`
+
+Use V2 for persistent multi-agent DAG flows with per-agent model selection.
+
+```python
+automation = await client.automations_v2.create({
+    "name": "Daily Marketing Engine",
+    "status": "active",
+    "schedule": {
+        "type": "interval",
+        "interval_seconds": 86400,
+        "timezone": "UTC",
+        "misfire_policy": "run_once",
+    },
+    "agents": [
+        {
+            "agent_id": "research",
+            "display_name": "Research",
+            "model_policy": {
+                "default_model": {
+                    "provider_id": "openrouter",
+                    "model_id": "openai/gpt-4o-mini",
+                }
+            },
+            "tool_policy": {"allowlist": ["read", "websearch"], "denylist": []},
+            "mcp_policy": {"allowed_servers": ["composio"]},
+        },
+        {
+            "agent_id": "writer",
+            "display_name": "Writer",
+            "model_policy": {
+                "default_model": {
+                    "provider_id": "openrouter",
+                    "model_id": "anthropic/claude-3.5-sonnet",
+                }
+            },
+            "tool_policy": {"allowlist": ["read", "write", "edit"], "denylist": []},
+            "mcp_policy": {"allowed_servers": []},
+        },
+    ],
+    "flow": {
+        "nodes": [
+            {"node_id": "market-scan", "agent_id": "research", "objective": "Find trend signals."},
+            {"node_id": "draft-copy", "agent_id": "writer", "objective": "Draft campaign copy.", "depends_on": ["market-scan"]},
+        ]
+    },
+})
+runs = await client.automations_v2.list_runs(automation.automation_id or "", limit=20)
+await client.automations_v2.pause_run(runs.runs[0].run_id or "")
+await client.automations_v2.resume_run(runs.runs[0].run_id or "")
+```
+
 ### `client.agent_teams`
 
 ```python
@@ -319,6 +371,14 @@ result = await client.agent_teams.spawn(
 
 approvals = await client.agent_teams.list_approvals()
 await client.agent_teams.approve_spawn(approvals.spawnApprovals[0].approvalID)
+
+await client.agent_teams.create_template({
+    "templateID": "marketing-writer",
+    "role": "worker",
+    "system_prompt": "Write concise conversion-focused copy.",
+})
+await client.agent_teams.update_template("marketing-writer", {"system_prompt": "Write concise copy with proof points."})
+await client.agent_teams.delete_template("marketing-writer")
 ```
 
 ### `client.missions`

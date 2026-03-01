@@ -45,18 +45,19 @@ Both SDKs expose the same SSE event stream. These are the most common types you 
 
 All namespaces exist on both the TypeScript and Python clients.
 
-| Namespace     | What it covers                                                    |
-| ------------- | ----------------------------------------------------------------- |
-| `sessions`    | Create, list, message, fork, abort, cancel, diff, revert sessions |
-| `permissions` | List and reply to permission requests                             |
-| `questions`   | List/reply/reject AI-generated approval questions                 |
-| `providers`   | Catalog, config, set API keys and defaults                        |
-| `channels`    | Telegram, Discord, Slack integration config                       |
-| `mcp`         | Register, connect, refresh MCP servers and tools                  |
-| `memory`      | Global memory: put, search, list, promote, demote, delete, audit  |
-| `skills`      | Agent skill packs: list, import, preview, install templates       |
-| `resources`   | Key-value resource store (shared agent state)                     |
-| `routines`    | Scheduled routines: create, run, approve/deny/pause/resume runs   |
-| `automations` | Mission-scoped automations with rich policy control               |
-| `agentTeams`  | Spawn and manage multi-agent teams                                |
-| `missions`    | Multi-agent goals and work item tracking                          |
+| Namespace                          | What it covers                                                     |
+| ---------------------------------- | ------------------------------------------------------------------ |
+| `sessions`                         | Create, list, message, fork, abort, cancel, diff, revert sessions  |
+| `permissions`                      | List and reply to permission requests                              |
+| `questions`                        | List/reply/reject AI-generated approval questions                  |
+| `providers`                        | Catalog, config, set API keys and defaults                         |
+| `channels`                         | Telegram, Discord, Slack integration config                        |
+| `mcp`                              | Register, connect, refresh MCP servers and tools                   |
+| `memory`                           | Global memory: put, search, list, promote, demote, delete, audit   |
+| `skills`                           | Agent skill packs: list, import, preview, install templates        |
+| `resources`                        | Key-value resource store (shared agent state)                      |
+| `routines`                         | Scheduled routines: create, run, approve/deny/pause/resume runs    |
+| `automations`                      | Legacy mission-scoped automations (compatibility path)             |
+| `automationsV2` / `automations_v2` | Persistent multi-agent DAG automations with per-agent model policy |
+| `agentTeams`                       | Spawn and manage multi-agent teams                                 |
+| `missions`                         | Multi-agent goals and work item tracking                           |

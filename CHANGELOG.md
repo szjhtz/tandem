@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Python SDK parity for V2 + template management**: Added `client.automations_v2` namespace and agent-team template create/update/delete methods in `tandem-client-py`.
 - **Control panel Automation Builder V2 (first iteration)**: Added a new V2 builder in `agents` view with schedule setup, configurable agent count, per-agent model/skill/MCP/tool-policy inputs, DAG node editor, and create flow.
 - **Automation preset packs (engineering + business)**: Added one-click V2 presets for `GitHub bug hunter`, `Code generation pipeline`, `Release notes + changelog`, plus marketing/productivity packs (`Marketing content engine`, `Sales lead outreach`, `Productivity: inbox to tasks`).
+- **Guide docs V2 refresh (`guide/src`)**: Updated SDK + MCP automation docs to include `automations/v2`, per-agent model policy examples, and agent template CRUD examples for TypeScript/Python.
 
 ### Changed
 

@@ -37,6 +37,9 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
   - Added one-click presets:
     - Engineering: `GitHub bug hunter`, `Code generation pipeline`, `Release notes + changelog`
     - Marketing/productivity: `Marketing content engine`, `Sales lead outreach`, `Inbox to tasks`
+- Guide documentation updates (`guide/src`)
+  - Updated SDK docs (`sdk/index`, `sdk/typescript`, `sdk/python`) for `automationsV2` / `automations_v2`, per-agent model routing examples, and agent template CRUD examples.
+  - Updated MCP automation guide with a full `/automations/v2` DAG example and operations workflow.
 
 ## v0.3.27 (Unreleased)
 
