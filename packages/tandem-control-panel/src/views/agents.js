@@ -690,30 +690,30 @@ export async function renderAgents(ctx) {
     if (!v2Enabled) throw new Error("Automations V2 API unavailable.");
     return fn(automationV2Api);
   };
-  const v2AgentRowMarkup = (index) => `
-    <div class="rounded-xl border border-slate-700/60 bg-slate-900/30 p-3">
+  const v2AgentRowMarkup = (index, seed = {}) => `
+    <div data-v2-agent-row="${index}" class="rounded-xl border border-slate-700/60 bg-slate-900/30 p-3">
       <div class="mb-2 text-xs text-slate-300 font-semibold">Agent ${index + 1}</div>
       <div class="grid gap-2 md:grid-cols-2">
-        <input data-v2-agent-field="agent_id" data-v2-agent-index="${index}" class="tcp-input font-mono text-xs" value="agent-${index + 1}" />
-        <input data-v2-agent-field="display_name" data-v2-agent-index="${index}" class="tcp-input" placeholder="Display name" value="Agent ${index + 1}" />
-        <input data-v2-agent-field="model_provider" data-v2-agent-index="${index}" class="tcp-input" placeholder="model provider (e.g. openrouter)" />
-        <input data-v2-agent-field="model_id" data-v2-agent-index="${index}" class="tcp-input" placeholder="model id (e.g. openai/gpt-4o-mini)" />
-        <input data-v2-agent-field="skills" data-v2-agent-index="${index}" class="tcp-input" placeholder="skills csv" />
-        <input data-v2-agent-field="mcp_servers" data-v2-agent-index="${index}" class="tcp-input" placeholder="mcp servers csv (github, composio)" />
-        <input data-v2-agent-field="allowlist" data-v2-agent-index="${index}" class="tcp-input" placeholder="tool allowlist csv (read,mcp.github.*)" />
-        <input data-v2-agent-field="denylist" data-v2-agent-index="${index}" class="tcp-input" placeholder="tool denylist csv" />
+        <input data-v2-agent-field="agent_id" data-v2-agent-index="${index}" class="tcp-input font-mono text-xs" value="${escapeHtml(String(seed.agent_id || `agent-${index + 1}`))}" />
+        <input data-v2-agent-field="display_name" data-v2-agent-index="${index}" class="tcp-input" placeholder="Display name" value="${escapeHtml(String(seed.display_name || `Agent ${index + 1}`))}" />
+        <input data-v2-agent-field="model_provider" data-v2-agent-index="${index}" class="tcp-input" placeholder="model provider (e.g. openrouter)" value="${escapeHtml(String(seed.model_provider || ""))}" />
+        <input data-v2-agent-field="model_id" data-v2-agent-index="${index}" class="tcp-input" placeholder="model id (e.g. openai/gpt-4o-mini)" value="${escapeHtml(String(seed.model_id || ""))}" />
+        <input data-v2-agent-field="skills" data-v2-agent-index="${index}" class="tcp-input" placeholder="skills csv" value="${escapeHtml(String(Array.isArray(seed.skills) ? seed.skills.join(", ") : seed.skills || ""))}" />
+        <input data-v2-agent-field="mcp_servers" data-v2-agent-index="${index}" class="tcp-input" placeholder="mcp servers csv (github, composio)" value="${escapeHtml(String(Array.isArray(seed.mcp_servers) ? seed.mcp_servers.join(", ") : seed.mcp_servers || ""))}" />
+        <input data-v2-agent-field="allowlist" data-v2-agent-index="${index}" class="tcp-input" placeholder="tool allowlist csv (read,mcp.github.*)" value="${escapeHtml(String(Array.isArray(seed.allowlist) ? seed.allowlist.join(", ") : seed.allowlist || ""))}" />
+        <input data-v2-agent-field="denylist" data-v2-agent-index="${index}" class="tcp-input" placeholder="tool denylist csv" value="${escapeHtml(String(Array.isArray(seed.denylist) ? seed.denylist.join(", ") : seed.denylist || ""))}" />
       </div>
     </div>
   `;
-  const v2NodeRowMarkup = (index) => `
-    <div class="rounded-xl border border-slate-700/60 bg-slate-900/30 p-3">
+  const v2NodeRowMarkup = (index, seed = {}) => `
+    <div data-v2-node-row="${index}" class="rounded-xl border border-slate-700/60 bg-slate-900/30 p-3">
       <div class="mb-2 text-xs text-slate-300 font-semibold">Node ${index + 1}</div>
       <div class="grid gap-2 md:grid-cols-2">
-        <input data-v2-node-field="node_id" data-v2-node-index="${index}" class="tcp-input font-mono text-xs" value="node-${index + 1}" />
-        <input data-v2-node-field="agent_id" data-v2-node-index="${index}" class="tcp-input font-mono text-xs" value="agent-1" />
-        <input data-v2-node-field="objective" data-v2-node-index="${index}" class="tcp-input md:col-span-2" placeholder="Node objective" />
-        <input data-v2-node-field="depends_on" data-v2-node-index="${index}" class="tcp-input md:col-span-2 font-mono text-xs" placeholder="depends_on csv (node-1,node-2)" />
-        <input data-v2-node-field="timeout_ms" data-v2-node-index="${index}" class="tcp-input" type="number" min="0" placeholder="timeout ms" />
+        <input data-v2-node-field="node_id" data-v2-node-index="${index}" class="tcp-input font-mono text-xs" value="${escapeHtml(String(seed.node_id || `node-${index + 1}`))}" />
+        <input data-v2-node-field="agent_id" data-v2-node-index="${index}" class="tcp-input font-mono text-xs" value="${escapeHtml(String(seed.agent_id || "agent-1"))}" />
+        <input data-v2-node-field="objective" data-v2-node-index="${index}" class="tcp-input md:col-span-2" placeholder="Node objective" value="${escapeHtml(String(seed.objective || ""))}" />
+        <input data-v2-node-field="depends_on" data-v2-node-index="${index}" class="tcp-input md:col-span-2 font-mono text-xs" placeholder="depends_on csv (node-1,node-2)" value="${escapeHtml(String(Array.isArray(seed.depends_on) ? seed.depends_on.join(", ") : seed.depends_on || ""))}" />
+        <input data-v2-node-field="timeout_ms" data-v2-node-index="${index}" class="tcp-input" type="number" min="0" placeholder="timeout ms" value="${escapeHtml(String(seed.timeout_ms || ""))}" />
       </div>
     </div>
   `;
@@ -727,14 +727,132 @@ export async function renderAgents(ctx) {
       1,
       Math.min(12, Number.parseInt(String(byId("automation-v2-agent-count")?.value || "2"), 10) || 2)
     );
-    byId("automation-v2-agents-editor").innerHTML = Array.from({ length: count }, (_, i) =>
-      v2AgentRowMarkup(i)
-    ).join("");
+    byId("automation-v2-agents-editor").innerHTML = Array.from({ length: count }, (_, i) => v2AgentRowMarkup(i)).join("");
   };
   const appendV2NodeRow = () => {
     const editor = byId("automation-v2-nodes-editor");
-    const count = editor.querySelectorAll("[data-v2-node-index]").length;
+    const count = editor.querySelectorAll("[data-v2-node-row]").length;
     editor.insertAdjacentHTML("beforeend", v2NodeRowMarkup(count));
+  };
+  const setV2AgentsAndNodes = (agents = [], nodes = []) => {
+    const safeAgents = Array.isArray(agents) && agents.length ? agents : [{ agent_id: "agent-1" }];
+    byId("automation-v2-agent-count").value = String(Math.min(12, Math.max(1, safeAgents.length)));
+    byId("automation-v2-agents-editor").innerHTML = safeAgents
+      .slice(0, 12)
+      .map((agent, i) => v2AgentRowMarkup(i, agent))
+      .join("");
+    const safeNodes = Array.isArray(nodes) && nodes.length ? nodes : [{ node_id: "node-1", agent_id: "agent-1" }];
+    byId("automation-v2-nodes-editor").innerHTML = safeNodes.map((node, i) => v2NodeRowMarkup(i, node)).join("");
+  };
+  const v2PresetCatalog = {
+    github_bug_hunter: {
+      name: "GitHub Bug Hunter",
+      description: "Monitor issues, reproduce, patch, and verify fixes automatically.",
+      schedule: { type: "interval", interval_seconds: 3600, timezone: "UTC", misfire_policy: "run_once" },
+      agents: [
+        {
+          agent_id: "triage",
+          display_name: "Issue Triage",
+          model_provider: "openrouter",
+          model_id: "openai/gpt-4o-mini",
+          skills: ["issue-triage"],
+          mcp_servers: ["github", "composio"],
+          allowlist: ["read", "mcp.github.*", "mcp.composio.*"],
+        },
+        {
+          agent_id: "fixer",
+          display_name: "Fix Implementer",
+          model_provider: "openrouter",
+          model_id: "anthropic/claude-3.5-sonnet",
+          skills: ["coding"],
+          mcp_servers: ["github"],
+          allowlist: ["read", "write", "edit", "bash", "mcp.github.*"],
+        },
+        {
+          agent_id: "qa",
+          display_name: "Regression Tester",
+          model_provider: "openrouter",
+          model_id: "openai/gpt-4o-mini",
+          skills: ["testing"],
+          mcp_servers: ["github"],
+          allowlist: ["read", "bash", "mcp.github.*"],
+        },
+      ],
+      nodes: [
+        { node_id: "scan-issues", agent_id: "triage", objective: "Find high-signal open bugs and collect repro clues." },
+        { node_id: "implement-fix", agent_id: "fixer", objective: "Implement minimal safe fix and prepare patch summary.", depends_on: ["scan-issues"] },
+        { node_id: "run-tests", agent_id: "qa", objective: "Run targeted checks and report verification status.", depends_on: ["implement-fix"] },
+      ],
+    },
+    code_generation_pipeline: {
+      name: "Code Generation Pipeline",
+      description: "Draft implementation, refine quality, and validate quickly.",
+      schedule: { type: "manual", timezone: "UTC", misfire_policy: "run_once" },
+      agents: [
+        { agent_id: "planner", display_name: "Planner", model_provider: "openrouter", model_id: "openai/gpt-4o-mini", allowlist: ["read"] },
+        { agent_id: "builder", display_name: "Builder", model_provider: "openrouter", model_id: "anthropic/claude-3.5-sonnet", allowlist: ["read", "write", "edit", "bash"] },
+        { agent_id: "reviewer", display_name: "Reviewer", model_provider: "openrouter", model_id: "openai/gpt-4o-mini", allowlist: ["read", "bash"] },
+      ],
+      nodes: [
+        { node_id: "plan", agent_id: "planner", objective: "Produce implementation plan with acceptance criteria." },
+        { node_id: "implement", agent_id: "builder", objective: "Generate and refine code changes from plan.", depends_on: ["plan"] },
+        { node_id: "validate", agent_id: "reviewer", objective: "Run checks/tests and summarize risks.", depends_on: ["implement"] },
+      ],
+    },
+    release_notes_changelog: {
+      name: "Release Notes + Changelog",
+      description: "Collect changes and draft release comms.",
+      schedule: { type: "cron", cron_expression: "0 15 * * 5", timezone: "UTC", misfire_policy: "run_once" },
+      agents: [
+        { agent_id: "collector", display_name: "Change Collector", model_provider: "openrouter", model_id: "openai/gpt-4o-mini", allowlist: ["read", "bash", "mcp.github.*"], mcp_servers: ["github"] },
+        { agent_id: "writer", display_name: "Release Writer", model_provider: "openrouter", model_id: "anthropic/claude-3.5-sonnet", allowlist: ["read", "write", "edit"] },
+      ],
+      nodes: [
+        { node_id: "collect", agent_id: "collector", objective: "Gather merged PRs/issues since last release." },
+        { node_id: "draft", agent_id: "writer", objective: "Draft release notes and changelog sections.", depends_on: ["collect"] },
+      ],
+    },
+    marketing_content_engine: {
+      name: "Marketing Content Engine",
+      description: "Generate campaign-ready social + email content from product updates.",
+      schedule: { type: "interval", interval_seconds: 86400, timezone: "UTC", misfire_policy: "run_once" },
+      agents: [
+        { agent_id: "research", display_name: "Trend Research", model_provider: "openrouter", model_id: "openai/gpt-4o-mini", allowlist: ["websearch", "webfetch", "read"] },
+        { agent_id: "copy", display_name: "Copywriter", model_provider: "openrouter", model_id: "anthropic/claude-3.5-sonnet", allowlist: ["read", "write", "edit"] },
+        { agent_id: "editor", display_name: "Brand Editor", model_provider: "openrouter", model_id: "openai/gpt-4o-mini", allowlist: ["read", "edit"] },
+      ],
+      nodes: [
+        { node_id: "market-scan", agent_id: "research", objective: "Find relevant trends and competitor angles." },
+        { node_id: "draft-assets", agent_id: "copy", objective: "Draft LinkedIn post, email blurb, and CTA variations.", depends_on: ["market-scan"] },
+        { node_id: "brand-check", agent_id: "editor", objective: "Align tone/style and produce final approved copy.", depends_on: ["draft-assets"] },
+      ],
+    },
+    sales_lead_outreach: {
+      name: "Sales Lead Outreach",
+      description: "Enrich leads and generate personalized outreach drafts.",
+      schedule: { type: "interval", interval_seconds: 21600, timezone: "UTC", misfire_policy: "run_once" },
+      agents: [
+        { agent_id: "enrichment", display_name: "Lead Enrichment", model_provider: "openrouter", model_id: "openai/gpt-4o-mini", allowlist: ["read", "websearch", "mcp.composio.*"], mcp_servers: ["composio"] },
+        { agent_id: "outreach", display_name: "Outreach Writer", model_provider: "openrouter", model_id: "anthropic/claude-3.5-sonnet", allowlist: ["read", "write", "edit", "mcp.composio.*"], mcp_servers: ["composio"] },
+      ],
+      nodes: [
+        { node_id: "enrich-leads", agent_id: "enrichment", objective: "Enrich lead list with role/company context." },
+        { node_id: "draft-outreach", agent_id: "outreach", objective: "Create personalized outreach drafts and follow-up options.", depends_on: ["enrich-leads"] },
+      ],
+    },
+    productivity_inbox_to_tasks: {
+      name: "Inbox to Tasks",
+      description: "Convert inbound messages into prioritized action items and calendar-ready summaries.",
+      schedule: { type: "interval", interval_seconds: 1800, timezone: "UTC", misfire_policy: "run_once" },
+      agents: [
+        { agent_id: "classifier", display_name: "Inbox Classifier", model_provider: "openrouter", model_id: "openai/gpt-4o-mini", allowlist: ["read", "mcp.composio.*"], mcp_servers: ["composio"] },
+        { agent_id: "planner", display_name: "Task Planner", model_provider: "openrouter", model_id: "openai/gpt-4o-mini", allowlist: ["read", "write", "edit", "todo_write"] },
+      ],
+      nodes: [
+        { node_id: "classify", agent_id: "classifier", objective: "Classify inbox items into urgent, important, and informational." },
+        { node_id: "task-plan", agent_id: "planner", objective: "Generate prioritized tasks with due windows and concise summaries.", depends_on: ["classify"] },
+      ],
+    },
   };
   rebuildV2AgentRows();
   appendV2NodeRow();
@@ -744,6 +862,28 @@ export async function renderAgents(ctx) {
   });
   byId("automation-v2-add-node")?.addEventListener("click", () => {
     appendV2NodeRow();
+  });
+  byId("automation-v2-apply-preset")?.addEventListener("click", () => {
+    const presetId = String(byId("automation-v2-preset")?.value || "").trim();
+    if (!presetId) {
+      toast("err", "Choose a preset first.");
+      return;
+    }
+    const preset = v2PresetCatalog[presetId];
+    if (!preset) {
+      toast("err", "Preset not found.");
+      return;
+    }
+    byId("automation-v2-name").value = String(preset.name || "");
+    byId("automation-v2-description").value = String(preset.description || "");
+    const schedule = preset.schedule || {};
+    byId("automation-v2-schedule-type").value = String(schedule.type || "manual");
+    byId("automation-v2-cron").value = String(schedule.cron_expression || "");
+    byId("automation-v2-interval-seconds").value = String(schedule.interval_seconds || 3600);
+    byId("automation-v2-timezone").value = String(schedule.timezone || "UTC");
+    byId("automation-v2-misfire").value = String(schedule.misfire_policy || "run_once");
+    setV2AgentsAndNodes(preset.agents || [], preset.nodes || []);
+    toast("ok", `Preset applied: ${preset.name}`);
   });
   byId("automation-v2-create")?.addEventListener("click", async () => {
     try {
@@ -765,7 +905,7 @@ export async function renderAgents(ctx) {
         throw new Error("Interval seconds must be greater than 0.");
       }
 
-      const agentRows = [...byId("automation-v2-agents-editor").querySelectorAll("[data-v2-agent-index]")];
+      const agentRows = [...byId("automation-v2-agents-editor").querySelectorAll("[data-v2-agent-row]")];
       const seenAgents = new Set();
       const agents = [];
       for (const row of agentRows) {
@@ -797,7 +937,7 @@ export async function renderAgents(ctx) {
       }
       if (!agents.length) throw new Error("At least one agent is required.");
 
-      const nodeRows = [...byId("automation-v2-nodes-editor").querySelectorAll("[data-v2-node-index]")];
+      const nodeRows = [...byId("automation-v2-nodes-editor").querySelectorAll("[data-v2-node-row]")];
       const seenNodes = new Set();
       const nodes = [];
       for (const row of nodeRows) {

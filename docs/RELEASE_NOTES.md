@@ -33,6 +33,9 @@
 - **Control panel V2 builder + run operations**:
   - Added `Automation Builder V2` in the Agents view (mission metadata, schedule, dynamic agent count, per-agent model/skills/MCP/tool policy fields, and DAG node editor).
   - Added V2 automation operations in UI: run-now, pause/resume automation, list runs for automation, and per-run pause/resume/cancel actions from run inspector.
+  - Added preset packs for fast setup:
+    - Engineering: `GitHub bug hunter`, `Code generation pipeline`, `Release notes + changelog`
+    - Marketing/productivity: `Marketing content engine`, `Sales lead outreach`, `Inbox to tasks`
 
 ---
 

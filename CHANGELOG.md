@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Agent template write APIs**: Added `POST/PATCH/DELETE /agent-team/templates` so template selection and editing can be managed via API (not file-only).
 - **SDK surface for V2 + template management**: TypeScript client now exposes `automationsV2` namespace and agent-team template create/update/delete methods.
 - **Control panel Automation Builder V2 (first iteration)**: Added a new V2 builder in `agents` view with schedule setup, configurable agent count, per-agent model/skill/MCP/tool-policy inputs, DAG node editor, and create flow.
+- **Automation preset packs (engineering + business)**: Added one-click V2 presets for `GitHub bug hunter`, `Code generation pipeline`, `Release notes + changelog`, plus marketing/productivity packs (`Marketing content engine`, `Sales lead outreach`, `Productivity: inbox to tasks`).
 
 ### Changed
 

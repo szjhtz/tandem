@@ -33,6 +33,9 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
 - Control panel V2 builder and operator flow
   - Added Automation Builder V2 UI in `Agents` view with mission metadata, schedule fields, dynamic agent rows, per-agent model policy inputs, and DAG node editor.
   - Added Automations V2 list controls for run-now and pause/resume, plus run inspector actions for pause/resume/cancel.
+  - Added one-click presets:
+    - Engineering: `GitHub bug hunter`, `Code generation pipeline`, `Release notes + changelog`
+    - Marketing/productivity: `Marketing content engine`, `Sales lead outreach`, `Inbox to tasks`
 
 ## v0.3.27 (Unreleased)
 
