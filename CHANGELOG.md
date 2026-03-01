@@ -26,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Portal/control-panel identity naming**: VPS portal and control panel now fetch identity config and render bot/portal/control-panel labels from configured aliases instead of fixed hardcoded branding.
 - **Protocol/header branding compatibility**: OpenRouter `X-Title` now supports `AGENT_PROTOCOL_TITLE` (canonical) with `TANDEM_PROTOCOL_TITLE` compatibility fallback, and auth now accepts both `x-agent-token` and `x-tandem-token`.
 - **Guide docs identity/auth refresh**: Updated `guide/src` docs for identity/personality configuration and SDK usage, and switched curl examples to canonical `X-Agent-Token` while documenting `X-Tandem-Token` compatibility.
+- **Engine tool-loop guard tuning**: Engine loop now supports `TANDEM_MAX_TOOL_ITERATIONS` and `TANDEM_TOOL_LOOP_DUPLICATE_SIGNATURE_LIMIT` to reduce high-cost retry spirals on repeated tool signatures.
 
 ### Fixed
 
@@ -34,6 +35,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Channel setup consistency across surfaces**: Added unified Discord verify backend (`POST /channels/{name}/verify`) and desktop integration so setup checks are consistent across web and Tauri flows.
 - **Telegram MarkdownV2 heading readability**: Telegram formatter now renders markdown headings as styled heading text instead of leaking literal escaped `###` markers in bot replies.
 - **Telegram MarkdownV2 chunk boundary robustness**: Message chunking now prefers safe markdown-entity boundaries to reduce formatting breakage and parse-mode failures when splitting long responses.
+- **Runaway repeated tool-call retries**: Engine now guards duplicate non-read-only tool signatures (including repeated `bash` calls), emits deterministic loop-guard terminal messaging, and stops wasteful repeated provider/tool cycles.
 
 ## [0.3.26] - 2026-02-28
 

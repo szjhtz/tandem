@@ -22,6 +22,12 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
   - OpenRouter `X-Title` now supports configurable protocol title via `AGENT_PROTOCOL_TITLE` with `TANDEM_PROTOCOL_TITLE` compatibility fallback.
   - Engine auth header parsing now accepts both canonical `x-agent-token` and compatibility `x-tandem-token`.
   - Guide docs now include identity/personality configuration + SDK coverage and use canonical `X-Agent-Token` examples (with compatibility note for `X-Tandem-Token`).
+- Engine tool-loop retry protection and tuning
+  - Added duplicate-signature loop guard for non-read-only tools (including repeated `bash` signatures) to stop runaway repeated provider/tool cycles.
+  - Added deterministic terminal summary when duplicate-signature guard triggers, reducing token burn from repeated retries.
+  - Added env tuning controls:
+    - `TANDEM_MAX_TOOL_ITERATIONS` (max provider/tool loop turns per run; default `25`)
+    - `TANDEM_TOOL_LOOP_DUPLICATE_SIGNATURE_LIMIT` (max repeated identical mutable-tool signatures before guard; defaults: shell `2`, other mutable tools `3`)
 
 - Telegram MarkdownV2 rendering and delivery hardening
   - Telegram heading rendering now outputs readable heading text style (instead of visible escaped `###` markers).
