@@ -10,6 +10,7 @@ use futures::future::BoxFuture;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
+use tandem_memory::types::MemoryTier;
 use tandem_memory::{GovernedMemoryTier, MemoryClassification, MemoryContentKind, MemoryPartition};
 use tandem_orchestrator::MissionState;
 use tandem_types::{
@@ -1631,6 +1632,13 @@ impl ServerPromptContextHook {
         MemoryDatabase::new(&paths.memory_db_path).await.ok()
     }
 
+    async fn open_memory_manager(&self) -> Option<tandem_memory::MemoryManager> {
+        let paths = resolve_shared_paths().ok()?;
+        tandem_memory::MemoryManager::new(&paths.memory_db_path)
+            .await
+            .ok()
+    }
+
     fn hash_query(input: &str) -> String {
         let mut hasher = Sha256::new();
         hasher.update(input.as_bytes());
@@ -1662,45 +1670,109 @@ impl ServerPromptContextHook {
         out.join("\n")
     }
 
+    fn extract_docs_source_url(chunk: &tandem_memory::types::MemoryChunk) -> Option<String> {
+        chunk
+            .metadata
+            .as_ref()
+            .and_then(|meta| meta.get("source_url"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .map(ToString::to_string)
+    }
+
+    fn extract_docs_relative_path(chunk: &tandem_memory::types::MemoryChunk) -> String {
+        if let Some(path) = chunk
+            .metadata
+            .as_ref()
+            .and_then(|meta| meta.get("relative_path"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+        {
+            return path.to_string();
+        }
+        chunk
+            .source
+            .strip_prefix("guide_docs:")
+            .unwrap_or(chunk.source.as_str())
+            .to_string()
+    }
+
+    fn build_docs_memory_block(hits: &[tandem_memory::types::MemorySearchResult]) -> String {
+        let mut out = vec!["<docs_context>".to_string()];
+        let mut used = 0usize;
+        for hit in hits {
+            let url = Self::extract_docs_source_url(&hit.chunk).unwrap_or_default();
+            let path = Self::extract_docs_relative_path(&hit.chunk);
+            let text = hit
+                .chunk
+                .content
+                .split_whitespace()
+                .take(70)
+                .collect::<Vec<_>>()
+                .join(" ");
+            let line = format!(
+                "- [{:.3}] {} (doc_path={}, source_url={})",
+                hit.similarity, text, path, url
+            );
+            used = used.saturating_add(line.len());
+            if used > 2800 {
+                break;
+            }
+            out.push(line);
+        }
+        out.push("</docs_context>".to_string());
+        out.join("\n")
+    }
+
+    async fn search_embedded_docs(
+        &self,
+        query: &str,
+        limit: usize,
+    ) -> Vec<tandem_memory::types::MemorySearchResult> {
+        let Some(manager) = self.open_memory_manager().await else {
+            return Vec::new();
+        };
+        let search_limit = (limit.saturating_mul(3)).clamp(6, 36) as i64;
+        manager
+            .search(
+                query,
+                Some(MemoryTier::Global),
+                None,
+                None,
+                Some(search_limit),
+            )
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|hit| hit.chunk.source.starts_with("guide_docs:"))
+            .take(limit)
+            .collect()
+    }
+
     fn should_skip_memory_injection(query: &str) -> bool {
         let trimmed = query.trim();
         if trimmed.is_empty() {
             return true;
         }
-        if trimmed.len() > 72 {
-            return false;
-        }
         let lower = trimmed.to_ascii_lowercase();
-        let has_action_signal = [
-            "read ",
-            "edit ",
-            "write ",
-            "search ",
-            "grep ",
-            "run ",
-            "execute ",
-            "file",
-            "code",
-            "repo",
-            "directory",
-            "folder",
-            "mcp",
-            "websearch",
-            "web fetch",
-            "memory",
-            ".rs",
-            ".ts",
-            ".py",
-            "/src",
-            "engine/",
-        ]
-        .iter()
-        .any(|needle| lower.contains(needle));
-        if has_action_signal {
-            return false;
-        }
-        let words = lower.split_whitespace().count();
-        words <= 10
+        let social = [
+            "hi",
+            "hello",
+            "hey",
+            "thanks",
+            "thank you",
+            "ok",
+            "okay",
+            "cool",
+            "nice",
+            "yo",
+            "good morning",
+            "good afternoon",
+            "good evening",
+        ];
+        lower.len() <= 32 && social.contains(&lower.as_str())
     }
 
     fn personality_preset_text(preset: &str) -> &'static str {
@@ -1841,6 +1913,29 @@ impl PromptContextHook for ServerPromptContextHook {
                 return Ok(messages);
             }
             if Self::should_skip_memory_injection(&query) {
+                return Ok(messages);
+            }
+
+            let docs_hits = this.search_embedded_docs(&query, 6).await;
+            if !docs_hits.is_empty() {
+                let docs_block = Self::build_docs_memory_block(&docs_hits);
+                messages.push(ChatMessage {
+                    role: "system".to_string(),
+                    content: docs_block.clone(),
+                    attachments: Vec::new(),
+                });
+                this.state.event_bus.publish(EngineEvent::new(
+                    "memory.docs.context.injected",
+                    json!({
+                        "runID": run_id,
+                        "sessionID": ctx.session_id,
+                        "messageID": ctx.message_id,
+                        "iteration": ctx.iteration,
+                        "count": docs_hits.len(),
+                        "tokenSizeApprox": docs_block.split_whitespace().count(),
+                        "sourcePrefix": "guide_docs:"
+                    }),
+                ));
                 return Ok(messages);
             }
 

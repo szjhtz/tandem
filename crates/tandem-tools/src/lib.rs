@@ -666,7 +666,8 @@ impl Tool for BashTool {
             input_schema: json!({
                 "type":"object",
                 "properties":{
-                    "command":{"type":"string"}
+                    "command":{"type":"string"},
+                    "timeout_ms":{"type":"integer","minimum":1000}
                 },
                 "required":["command"]
             }),
@@ -699,7 +700,13 @@ impl Tool for BashTool {
                 }
             }
         }
-        let output = command.output().await?;
+        let timeout_ms = bash_timeout_ms(&args);
+        let output = tokio::time::timeout(
+            std::time::Duration::from_millis(timeout_ms),
+            command.output(),
+        )
+        .await
+        .map_err(|_| anyhow::anyhow!("BASH_TIMEOUT_MS_EXCEEDED({timeout_ms})"))??;
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
         let metadata = shell_metadata(
             translated_command.as_deref(),
@@ -757,6 +764,9 @@ impl Tool for BashTool {
                 }
             }
         }
+        let timeout_ms = bash_timeout_ms(&args);
+        let timeout = tokio::time::sleep(std::time::Duration::from_millis(timeout_ms));
+        tokio::pin!(timeout);
         command.stdout(Stdio::piped());
         command.stderr(Stdio::piped());
         let mut child = command.spawn()?;
@@ -766,6 +776,13 @@ impl Tool for BashTool {
                 return Ok(ToolResult {
                     output: "command cancelled".to_string(),
                     metadata: json!({"cancelled": true}),
+                });
+            }
+            _ = &mut timeout => {
+                let _ = child.kill().await;
+                return Ok(ToolResult {
+                    output: format!("command timed out after {} ms", timeout_ms),
+                    metadata: json!({"timeout": true, "timeout_ms": timeout_ms}),
                 });
             }
             result = child.wait() => result?
@@ -816,6 +833,18 @@ impl Tool for BashTool {
             metadata,
         })
     }
+}
+
+fn bash_timeout_ms(args: &Value) -> u64 {
+    let from_args = args
+        .get("timeout_ms")
+        .and_then(|v| v.as_u64())
+        .filter(|v| *v >= 1_000);
+    let from_env = std::env::var("TANDEM_BASH_TIMEOUT_MS")
+        .ok()
+        .and_then(|raw| raw.trim().parse::<u64>().ok())
+        .filter(|v| *v >= 1_000);
+    from_args.or(from_env).unwrap_or(30_000)
 }
 
 struct ShellExecutionPlan {

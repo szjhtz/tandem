@@ -550,9 +550,22 @@ impl EngineLoop {
                         "mcpIncluded": routing_decision.mcp_included
                     }),
                 ));
+                let allowed_tool_names = tool_schemas
+                    .iter()
+                    .map(|schema| normalize_tool_name(&schema.name))
+                    .collect::<HashSet<_>>();
+                self.event_bus.publish(EngineEvent::new(
+                    "provider.call.iteration.start",
+                    json!({
+                        "sessionID": session_id,
+                        "messageID": user_message_id,
+                        "iteration": iteration,
+                        "selectedToolCount": allowed_tool_names.len(),
+                    }),
+                ));
                 let provider_connect_timeout =
                     Duration::from_millis(provider_stream_connect_timeout_ms() as u64);
-                let stream = tokio::time::timeout(
+                let stream_result = tokio::time::timeout(
                     provider_connect_timeout,
                     self.providers.stream_for_provider(
                         Some(provider_id.as_str()),
@@ -569,44 +582,74 @@ impl EngineLoop {
                         provider_connect_timeout.as_millis()
                     )
                 })
-                .and_then(|result| result)
-                .inspect_err(|err| {
-                    let error_text = err.to_string();
-                    let error_code = provider_error_code(&error_text);
-                    let detail = truncate_text(&error_text, 500);
-                    emit_event(
-                        Level::ERROR,
-                        ProcessKind::Engine,
-                        ObservabilityEvent {
-                            event: "provider.call.error",
-                            component: "engine.loop",
-                            correlation_id: correlation_ref,
-                            session_id: Some(&session_id),
-                            run_id: None,
-                            message_id: Some(&user_message_id),
-                            provider_id: Some(provider_id.as_str()),
-                            model_id,
-                            status: Some("failed"),
-                            error_code: Some(error_code),
-                            detail: Some(&detail),
-                        },
-                    );
-                })?;
+                .and_then(|result| result);
+                let stream = match stream_result {
+                    Ok(stream) => stream,
+                    Err(err) => {
+                        let error_text = err.to_string();
+                        let error_code = provider_error_code(&error_text);
+                        let detail = truncate_text(&error_text, 500);
+                        emit_event(
+                            Level::ERROR,
+                            ProcessKind::Engine,
+                            ObservabilityEvent {
+                                event: "provider.call.error",
+                                component: "engine.loop",
+                                correlation_id: correlation_ref,
+                                session_id: Some(&session_id),
+                                run_id: None,
+                                message_id: Some(&user_message_id),
+                                provider_id: Some(provider_id.as_str()),
+                                model_id,
+                                status: Some("failed"),
+                                error_code: Some(error_code),
+                                detail: Some(&detail),
+                            },
+                        );
+                        self.event_bus.publish(EngineEvent::new(
+                            "provider.call.iteration.error",
+                            json!({
+                                "sessionID": session_id,
+                                "messageID": user_message_id,
+                                "iteration": iteration,
+                                "error": detail,
+                            }),
+                        ));
+                        return Err(err);
+                    }
+                };
                 tokio::pin!(stream);
                 completion.clear();
                 let mut streamed_tool_calls: HashMap<String, StreamedToolCall> = HashMap::new();
                 let mut provider_usage: Option<TokenUsage> = None;
+                let mut accepted_tool_calls_in_cycle = 0usize;
                 let provider_idle_timeout =
                     Duration::from_millis(provider_stream_idle_timeout_ms() as u64);
                 loop {
-                    let next_chunk = tokio::time::timeout(provider_idle_timeout, stream.next())
-                        .await
-                        .map_err(|_| {
-                            anyhow::anyhow!(
-                                "provider stream idle timeout after {} ms",
-                                provider_idle_timeout.as_millis()
-                            )
-                        })?;
+                    let next_chunk_result =
+                        tokio::time::timeout(provider_idle_timeout, stream.next())
+                            .await
+                            .map_err(|_| {
+                                anyhow::anyhow!(
+                                    "provider stream idle timeout after {} ms",
+                                    provider_idle_timeout.as_millis()
+                                )
+                            });
+                    let next_chunk = match next_chunk_result {
+                        Ok(next_chunk) => next_chunk,
+                        Err(err) => {
+                            self.event_bus.publish(EngineEvent::new(
+                                "provider.call.iteration.error",
+                                json!({
+                                    "sessionID": session_id,
+                                    "messageID": user_message_id,
+                                    "iteration": iteration,
+                                    "error": truncate_text(&err.to_string(), 500),
+                                }),
+                            ));
+                            return Err(err);
+                        }
+                    };
                     let Some(chunk) = next_chunk else {
                         break;
                     };
@@ -633,6 +676,15 @@ impl EngineLoop {
                                     detail: Some(&detail),
                                 },
                             );
+                            self.event_bus.publish(EngineEvent::new(
+                                "provider.call.iteration.error",
+                                json!({
+                                    "sessionID": session_id,
+                                    "messageID": user_message_id,
+                                    "iteration": iteration,
+                                    "error": detail,
+                                }),
+                            ));
                             return Err(anyhow::anyhow!(
                                 "provider stream chunk error: {error_text}"
                             ));
@@ -753,11 +805,23 @@ impl EngineLoop {
                         "Tool access is now enabled for this request. Use only necessary tools and then answer concisely."
                             .to_string(),
                     );
+                    self.event_bus.publish(EngineEvent::new(
+                        "provider.call.iteration.finish",
+                        json!({
+                            "sessionID": session_id,
+                            "messageID": user_message_id,
+                            "iteration": iteration,
+                            "finishReason": "auto_escalate",
+                            "acceptedToolCalls": accepted_tool_calls_in_cycle,
+                            "rejectedToolCalls": 0,
+                        }),
+                    ));
                     continue;
                 }
                 if tool_calls.is_empty()
                     && !auto_workspace_probe_attempted
                     && should_force_workspace_probe(&text, &completion)
+                    && allowed_tool_names.contains("glob")
                 {
                     auto_workspace_probe_attempted = true;
                     tool_calls = vec![("glob".to_string(), json!({ "pattern": "*" }))];
@@ -897,6 +961,8 @@ impl EngineLoop {
                             continue;
                         }
                         *entry += 1;
+                        accepted_tool_calls_in_cycle =
+                            accepted_tool_calls_in_cycle.saturating_add(1);
                         if let Some(output) = self
                             .execute_tool_with_permission(
                                 &session_id,
@@ -953,6 +1019,17 @@ impl EngineLoop {
                                 "{}\nContinue with a concise final response and avoid repeating identical tool calls.",
                                 summarize_tool_outputs(&outputs)
                             ));
+                            self.event_bus.publish(EngineEvent::new(
+                                "provider.call.iteration.finish",
+                                json!({
+                                    "sessionID": session_id,
+                                    "messageID": user_message_id,
+                                    "iteration": iteration,
+                                    "finishReason": "tool_followup",
+                                    "acceptedToolCalls": accepted_tool_calls_in_cycle,
+                                    "rejectedToolCalls": 0,
+                                }),
+                            ));
                             continue;
                         }
                         if guard_budget_hit {
@@ -970,6 +1047,17 @@ impl EngineLoop {
                         } else {
                             completion.clear();
                         }
+                        self.event_bus.publish(EngineEvent::new(
+                            "provider.call.iteration.finish",
+                            json!({
+                                "sessionID": session_id,
+                                "messageID": user_message_id,
+                                "iteration": iteration,
+                                "finishReason": "tool_summary",
+                                "acceptedToolCalls": accepted_tool_calls_in_cycle,
+                                "rejectedToolCalls": 0,
+                            }),
+                        ));
                         break;
                     }
                 }
@@ -987,6 +1075,17 @@ impl EngineLoop {
                     ));
                 }
 
+                self.event_bus.publish(EngineEvent::new(
+                    "provider.call.iteration.finish",
+                    json!({
+                        "sessionID": session_id,
+                        "messageID": user_message_id,
+                        "iteration": iteration,
+                        "finishReason": "provider_completion",
+                        "acceptedToolCalls": accepted_tool_calls_in_cycle,
+                        "rejectedToolCalls": 0,
+                    }),
+                ));
                 break;
             }
             if completion.trim().is_empty() && !last_tool_outputs.is_empty() {
@@ -1015,6 +1114,11 @@ impl EngineLoop {
                     "I completed project analysis steps using tools, but the model returned no final narrative text.\n\nTool result summary:\n{}",
                     preview
                 );
+            }
+            if completion.trim().is_empty() {
+                completion =
+                    "I couldn't produce a final response for that run. Please retry your request."
+                        .to_string();
             }
             completion = strip_model_control_markers(&completion);
             truncate_text(&completion, 16_000)
@@ -1277,10 +1381,43 @@ impl EngineLoop {
             ));
             let reply = self
                 .permissions
-                .wait_for_reply(&pending.id, cancel.clone())
+                .wait_for_reply_with_timeout(
+                    &pending.id,
+                    cancel.clone(),
+                    Some(Duration::from_millis(permission_wait_timeout_ms() as u64)),
+                )
                 .await;
+            let (reply, timed_out) = reply;
             if cancel.is_cancelled() {
                 return Ok(None);
+            }
+            if timed_out {
+                let timeout_ms = permission_wait_timeout_ms();
+                self.event_bus.publish(EngineEvent::new(
+                    "permission.wait.timeout",
+                    json!({
+                        "sessionID": session_id,
+                        "messageID": message_id,
+                        "tool": tool,
+                        "requestID": pending.id,
+                        "timeoutMs": timeout_ms,
+                    }),
+                ));
+                let mut timeout_part =
+                    WireMessagePart::tool_result(session_id, message_id, tool.clone(), json!(null));
+                timeout_part.id = Some(pending.id);
+                timeout_part.state = Some("failed".to_string());
+                timeout_part.error = Some(format!(
+                    "Permission request timed out after {} ms",
+                    timeout_ms
+                ));
+                self.event_bus.publish(EngineEvent::new(
+                    "message.part.updated",
+                    json!({"part": timeout_part}),
+                ));
+                return Ok(Some(format!(
+                    "Permission request for tool `{tool}` timed out after {timeout_ms} ms."
+                )));
             }
             let approved = matches!(reply.as_deref(), Some("once" | "always" | "allow"));
             if !approved {
@@ -1392,13 +1529,32 @@ impl EngineLoop {
             return Ok(Some(output.to_string()));
         }
         let result = match self
-            .tools
-            .execute_with_cancel(&tool, args, cancel.clone())
+            .execute_tool_with_timeout(&tool, args, cancel.clone())
             .await
         {
             Ok(result) => result,
             Err(err) => {
                 let err_text = err.to_string();
+                if err_text.contains("TOOL_EXEC_TIMEOUT_MS_EXCEEDED(") {
+                    let timeout_ms = tool_exec_timeout_ms();
+                    let timeout_output = format!(
+                        "Tool `{tool}` timed out after {timeout_ms} ms. It was stopped to keep this run responsive."
+                    );
+                    let mut failed_part = WireMessagePart::tool_result(
+                        session_id,
+                        message_id,
+                        tool.clone(),
+                        json!(null),
+                    );
+                    failed_part.id = invoke_part_id.clone();
+                    failed_part.state = Some("failed".to_string());
+                    failed_part.error = Some(timeout_output.clone());
+                    self.event_bus.publish(EngineEvent::new(
+                        "message.part.updated",
+                        json!({"part": failed_part}),
+                    ));
+                    return Ok(Some(timeout_output));
+                }
                 if let Some(auth) = extract_mcp_auth_required_from_error_text(&tool, &err_text) {
                     self.event_bus.publish(EngineEvent::new(
                         "mcp.auth.required",
@@ -1512,6 +1668,24 @@ impl EngineLoop {
             &format!("Tool `{tool}` result:\n{output}"),
             16_000,
         )))
+    }
+
+    async fn execute_tool_with_timeout(
+        &self,
+        tool: &str,
+        args: Value,
+        cancel: CancellationToken,
+    ) -> anyhow::Result<tandem_types::ToolResult> {
+        let timeout_ms = tool_exec_timeout_ms() as u64;
+        match tokio::time::timeout(
+            Duration::from_millis(timeout_ms),
+            self.tools.execute_with_cancel(tool, args, cancel),
+        )
+        .await
+        {
+            Ok(result) => result,
+            Err(_) => anyhow::bail!("TOOL_EXEC_TIMEOUT_MS_EXCEEDED({timeout_ms})"),
+        }
     }
 
     async fn find_recent_matching_user_message_id(
@@ -2288,6 +2462,22 @@ fn prompt_context_hook_timeout_ms() -> usize {
         .and_then(|raw| raw.trim().parse::<usize>().ok())
         .filter(|value| *value > 0)
         .unwrap_or(5_000)
+}
+
+fn permission_wait_timeout_ms() -> usize {
+    std::env::var("TANDEM_PERMISSION_WAIT_TIMEOUT_MS")
+        .ok()
+        .and_then(|raw| raw.trim().parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(15_000)
+}
+
+fn tool_exec_timeout_ms() -> usize {
+    std::env::var("TANDEM_TOOL_EXEC_TIMEOUT_MS")
+        .ok()
+        .and_then(|raw| raw.trim().parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(45_000)
 }
 
 fn duplicate_signature_limit_for(tool_name: &str) -> usize {
@@ -3867,6 +4057,14 @@ fn extract_tool_call_from_value(value: &Value) -> Option<(String, Value)> {
                 }
             }
         }
+
+        if let Some(calls) = obj.get("tool_calls").and_then(|v| v.as_array()) {
+            for call in calls {
+                if let Some(found) = extract_tool_call_from_value(call) {
+                    return Some(found);
+                }
+            }
+        }
     }
 
     if let Some(items) = value.as_array() {
@@ -4652,6 +4850,17 @@ Here is the tool call:
         let parsed = parse_tool_invocation_from_response(input).expect("tool call");
         assert_eq!(parsed.0, "todo_write");
         assert!(parsed.1.get("todos").is_some());
+    }
+
+    #[test]
+    fn parses_top_level_name_args_tool_call() {
+        let input = r#"{"name":"bash","args":{"command":"echo hi"}}"#;
+        let parsed = parse_tool_invocation_from_response(input).expect("top-level tool call");
+        assert_eq!(parsed.0, "bash");
+        assert_eq!(
+            parsed.1.get("command").and_then(|v| v.as_str()),
+            Some("echo hi")
+        );
     }
 
     #[test]

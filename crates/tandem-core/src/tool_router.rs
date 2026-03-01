@@ -28,12 +28,12 @@ pub fn tool_router_enabled() -> bool {
     std::env::var("TANDEM_TOOL_ROUTER_ENABLED")
         .ok()
         .map(|raw| {
-            !matches!(
+            matches!(
                 raw.trim().to_ascii_lowercase().as_str(),
-                "0" | "false" | "off" | "no"
+                "1" | "true" | "on" | "yes"
             )
         })
-        .unwrap_or(true)
+        .unwrap_or(false)
 }
 
 pub fn max_tools_per_call() -> usize {

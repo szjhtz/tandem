@@ -4,6 +4,7 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tokio::sync::{watch, RwLock};
+use tokio::time::Duration;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
@@ -208,28 +209,63 @@ impl PermissionManager {
     }
 
     pub async fn wait_for_reply(&self, id: &str, cancel: CancellationToken) -> Option<String> {
+        let (reply, _timed_out) = self.wait_for_reply_with_timeout(id, cancel, None).await;
+        reply
+    }
+
+    pub async fn wait_for_reply_with_timeout(
+        &self,
+        id: &str,
+        cancel: CancellationToken,
+        timeout: Option<Duration>,
+    ) -> (Option<String>, bool) {
         let mut rx = {
             let waiters = self.waiters.read().await;
-            waiters.get(id).map(|tx| tx.subscribe())?
+            let Some(tx) = waiters.get(id) else {
+                return (None, false);
+            };
+            tx.subscribe()
         };
         let immediate = { rx.borrow().clone() };
         if let Some(reply) = immediate {
             self.waiters.write().await.remove(id);
-            return Some(reply);
+            return (Some(reply), false);
         }
-        let waited: Option<String> = tokio::select! {
-            _ = cancel.cancelled() => None,
-            changed = rx.changed() => {
-                if changed.is_ok() {
-                    let updated = { rx.borrow().clone() };
-                    updated
-                } else {
-                    None
+
+        let (waited, timed_out): (Option<String>, bool) = match timeout {
+            Some(duration) => {
+                let timeout_sleep = tokio::time::sleep(duration);
+                tokio::pin!(timeout_sleep);
+                tokio::select! {
+                    _ = cancel.cancelled() => (None, false),
+                    _ = &mut timeout_sleep => (None, true),
+                    changed = rx.changed() => {
+                        if changed.is_ok() {
+                            let updated = { rx.borrow().clone() };
+                            (updated, false)
+                        } else {
+                            (None, false)
+                        }
+                    }
                 }
+            }
+            None => {
+                let waited = tokio::select! {
+                    _ = cancel.cancelled() => None,
+                    changed = rx.changed() => {
+                        if changed.is_ok() {
+                            let updated = { rx.borrow().clone() };
+                            updated
+                        } else {
+                            None
+                        }
+                    }
+                };
+                (waited, false)
             }
         };
         self.waiters.write().await.remove(id);
-        waited
+        (waited, timed_out)
     }
 }
 
@@ -292,6 +328,26 @@ mod tests {
         let cancel = CancellationToken::new();
         let reply = manager.wait_for_reply(&request.id, cancel).await;
         assert_eq!(reply.as_deref(), Some("allow"));
+    }
+
+    #[tokio::test]
+    async fn wait_for_reply_with_timeout_reports_timeout() {
+        let bus = EventBus::new();
+        let manager = PermissionManager::new(bus);
+        let request = manager
+            .ask_for_session(Some("ses_1"), "bash", json!({"command":"sleep 10"}))
+            .await;
+
+        let cancel = CancellationToken::new();
+        let (reply, timed_out) = manager
+            .wait_for_reply_with_timeout(
+                &request.id,
+                cancel,
+                Some(tokio::time::Duration::from_millis(20)),
+            )
+            .await;
+        assert!(reply.is_none());
+        assert!(timed_out);
     }
 
     #[tokio::test]
