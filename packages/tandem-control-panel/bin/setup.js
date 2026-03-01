@@ -975,15 +975,24 @@ async function proxyEngineRequest(req, res, session) {
       res.end();
     }
   } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
     if (res.headersSent) {
-      if (!res.destroyed) {
+      const lower = message.toLowerCase();
+      // SSE/streaming upstream can terminate normally from the engine side.
+      if (lower.includes("terminated") || lower.includes("aborted")) {
+        if (!res.writableEnded && !res.destroyed) {
+          res.end();
+        }
+        return;
+      }
+      if (!res.destroyed && !res.writableEnded) {
         res.destroy(e instanceof Error ? e : undefined);
       }
       return;
     }
     sendJson(res, 502, {
       ok: false,
-      error: `Engine proxy stream failed: ${e instanceof Error ? e.message : String(e)}`,
+      error: `Engine proxy stream failed: ${message}`,
     });
   }
 }

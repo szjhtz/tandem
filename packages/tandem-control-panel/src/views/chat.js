@@ -654,6 +654,8 @@ export async function renderChat(ctx) {
       let streamTimedOut = false;
       const streamAbort = new AbortController();
       let noEventTimer = null;
+      let maxStreamTimer = null;
+      let streamAbortReason = "";
       const isRunSignalEvent = (eventType) => {
         const t = String(eventType || "").trim();
         return t !== "server.connected" && t !== "engine.lifecycle.ready";
@@ -662,10 +664,16 @@ export async function renderChat(ctx) {
         if (noEventTimer) clearTimeout(noEventTimer);
         noEventTimer = setTimeout(() => {
           streamTimedOut = true;
+          streamAbortReason = "no-events-timeout";
           streamAbort.abort("no-events-timeout");
         }, 12000);
       };
       resetNoEventTimer();
+      maxStreamTimer = setTimeout(() => {
+        streamTimedOut = true;
+        streamAbortReason = "max-stream-window";
+        streamAbort.abort("max-stream-window");
+      }, 90000);
 
       try {
         for await (const event of state.client.stream(state.currentSessionId, runId, { signal: streamAbort.signal })) {
@@ -734,9 +742,16 @@ export async function renderChat(ctx) {
           }
         }
       } catch (streamErr) {
-        if (!streamTimedOut) throw streamErr;
+        const errText = String(streamErr?.message || streamErr || "").toLowerCase();
+        const isAbortLike =
+          streamTimedOut ||
+          errText.includes("abort") ||
+          errText.includes("terminated") ||
+          errText.includes("networkerror");
+        if (!isAbortLike) throw streamErr;
       }
       if (noEventTimer) clearTimeout(noEventTimer);
+      if (maxStreamTimer) clearTimeout(maxStreamTimer);
 
       if (streamTimedOut) {
         // Fallback: if run already settled, refresh messages; otherwise fail explicitly.
@@ -761,10 +776,21 @@ export async function renderChat(ctx) {
       await renderMessages();
       await new Promise((resolve) => setTimeout(resolve, 220));
       await renderMessages();
+
+      if (!gotDelta) {
+        const activeAfter = await getActiveRunId().catch(() => "");
+        if (activeAfter === runId) {
+          const reason = streamAbortReason || "stream-ended-without-final-delta";
+          throw new Error(`Run ${runId} is still active without a final response (${reason}).`);
+        }
+      }
     } catch (e) {
       const rawMsg = e instanceof Error ? e.message : String(e);
       const msg =
-        rawMsg.includes("no-events-timeout") || rawMsg.includes("AbortError")
+        rawMsg.includes("no-events-timeout") ||
+        rawMsg.includes("max-stream-window") ||
+        rawMsg.includes("AbortError") ||
+        rawMsg.toLowerCase().includes("terminated")
           ? "Run stream timed out before events were received. Check engine/provider logs and retry."
           : rawMsg;
       toast("err", msg);
