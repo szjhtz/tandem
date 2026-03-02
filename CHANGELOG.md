@@ -163,6 +163,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Starter pack templates + personal tutorial**: Added three concrete importable starter templates under `examples/packs/` (`daily_github_pr_reviewer`, `slack_release_notes_writer`, `customer_support_drafter`) and a step-by-step personal walkthrough at `specs/packs/PERSONAL_TUTORIAL_FIRST_PACK.md`.
 - **Settings icon hydration stability**: Added mutation-observer-backed icon rehydration in Settings so icons remain visible when switching tabs with async subview updates.
 - **Automations tab style parity**: Updated `#/agents` section tabs to reuse the same underline tab styling and accessibility roles used in Settings.
+- **Multi-theme selection restored**: Re-enabled full control-panel theme catalog (Web Control, Electric Blue, Emerald Night, Hello Bunny, Porcelain, Neon Riot) and restored Settings Appearance selector with quick theme swatches.
 - **Provider-key visibility mismatch in web control panel**: fixed false “No stored key detected” status caused by a stubbed auth-status route and non-durable auth writes.
 - **Provider test ambiguity**: fixed settings “Test Model Run” paths that could execute with implicit defaults instead of the selected provider/model.
 

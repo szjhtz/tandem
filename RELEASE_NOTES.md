@@ -265,6 +265,9 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
     - `specs/packs/PERSONAL_TUTORIAL_FIRST_PACK.md`
   - Fixed Settings icon disappearance edge cases by rehydrating icons after async tab-content mutations.
   - Updated Automations (`#/agents`) top tabs to the same Settings-style underline tab treatment for consistent UX.
+  - Restored multi-theme switching in Settings Appearance:
+    - full theme list is back (`Web Control`, `Electric Blue`, `Emerald Night`, `Hello Bunny`, `Porcelain`, `Neon Riot`)
+    - dropdown + quick-swatch selectors both apply themes instantly across the control panel
 
 - Internal execution tracking
   - Added implementation Kanban board:

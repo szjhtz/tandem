@@ -27,7 +27,7 @@ function writeSettingsTabToHash(tab) {
 }
 
 export async function renderSettings(ctx) {
-  const { byId, state, escapeHtml, renderIcons } = ctx;
+  const { byId, state, escapeHtml, renderIcons, THEMES = [], setTheme } = ctx;
   const settingsRoot = byId("view");
   const providerLocked = !state.providerReady;
   const requestedTab = parseSettingsTabFromHash();
@@ -80,9 +80,27 @@ export async function renderSettings(ctx) {
       <div class="tcp-card">
         <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
           <h3 class="tcp-title flex items-center gap-2"><i data-lucide="sparkles"></i> Appearance</h3>
-          <span class="tcp-badge-info">Web Design Lock</span>
+          <span class="tcp-badge-info">Theme Selector</span>
         </div>
-        <p class="tcp-subtle">The control panel now uses the shared web design system by default for consistent styling across all routes.</p>
+        <p class="tcp-subtle mb-3">Pick the control-panel theme. Changes apply instantly across all pages.</p>
+        <div class="grid gap-3 md:grid-cols-2">
+          <div>
+            <label class="mb-1 block text-sm text-slate-300">Theme</label>
+            <select id="settings-theme-id" class="tcp-select">
+              ${THEMES.map((theme) => `<option value="${escapeHtml(theme.id)}" ${theme.id === state.themeId ? "selected" : ""}>${escapeHtml(theme.name)}</option>`).join("")}
+            </select>
+          </div>
+        </div>
+        <div class="theme-swatch-grid mt-3">
+          ${THEMES.map(
+            (theme) => `
+            <button class="theme-swatch ${theme.id === state.themeId ? "active" : ""}" data-theme-select="${escapeHtml(theme.id)}" type="button">
+              <span class="theme-swatch-dot" style="background:${escapeHtml(theme.cssVars["--color-primary"] || "#888")}"></span>
+              <span>${escapeHtml(theme.name)}</span>
+            </button>
+          `
+          ).join("")}
+        </div>
       </div>
       <div class="tcp-card">
         <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
@@ -103,6 +121,20 @@ export async function renderSettings(ctx) {
         <p class="tcp-subtle">Use Logout in the sidebar to clear your current portal session token binding.</p>
       </div>
     `;
+    const applyThemeSelection = (id) => {
+      const nextId = String(id || "").trim();
+      if (!nextId || !setTheme) return;
+      setTheme(nextId);
+      renderSettings(ctx);
+    };
+    byId("settings-theme-id")?.addEventListener("change", (e) =>
+      applyThemeSelection(e?.target?.value)
+    );
+    settingsRoot.querySelectorAll("[data-theme-select]").forEach((btn) =>
+      btn.addEventListener("click", () =>
+        applyThemeSelection(btn.getAttribute("data-theme-select"))
+      )
+    );
     await renderProvidersBlock(ctx, byId("provider-settings"));
     await renderIdentityBlock(ctx, byId("identity-settings"));
     renderIcons(settingsRoot);

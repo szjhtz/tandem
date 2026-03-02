@@ -72,6 +72,7 @@ Owner: Core Runtime + Product Architecture
   - [x] Apply theme-token consistency fixes to Automations page (wizard/cards/tabs residual slate-zinc classes)
   - [x] Harden Settings tab icon hydration for async subview updates
   - [x] Align `#/agents` top tab treatment with Settings underline tab style
+  - [x] Restore multi-theme selector + full theme catalog in Settings Appearance
 
 ## Active Backlog
 

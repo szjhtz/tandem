@@ -1312,6 +1312,44 @@ html[data-theme="porcelain"] .tcp-markdown-ai {
   cursor: not-allowed;
 }
 
+.theme-swatch-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.theme-swatch {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  border: 1px solid color-mix(in srgb, var(--color-border-subtle) 90%, transparent);
+  background: color-mix(in srgb, var(--color-surface-elevated) 88%, #000 12%);
+  color: var(--color-text-muted);
+  border-radius: 9999px;
+  font-size: 0.75rem;
+  line-height: 1;
+  padding: 0.34rem 0.7rem;
+  transition: border-color 120ms ease, color 120ms ease, background-color 120ms ease;
+}
+
+.theme-swatch:hover {
+  border-color: color-mix(in srgb, var(--color-primary) 40%, transparent);
+  color: var(--color-text);
+}
+
+.theme-swatch.active {
+  border-color: color-mix(in srgb, var(--color-primary) 52%, transparent);
+  background: color-mix(in srgb, var(--color-surface-elevated) 72%, var(--color-primary) 9%);
+  color: var(--color-text);
+}
+
+.theme-swatch-dot {
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 9999px;
+  border: 1px solid color-mix(in srgb, var(--color-border) 70%, transparent);
+}
+
 #view .text-slate-500,
 #view .text-zinc-500 {
   color: var(--color-text-subtle) !important;
