@@ -1,5 +1,6 @@
 export async function renderChannels(ctx) {
   const { state, byId, toast, escapeHtml, api, setRoute } = ctx;
+  const embeddedInSettings = ctx?.embeddedInSettings === true;
   const [status, config] = await Promise.all([
     state.client.channels.status().catch(() => ({})),
     state.client.channels.config().catch(() => ({})),
@@ -14,7 +15,9 @@ export async function renderChannels(ctx) {
   const usersCsv = (raw) => (Array.isArray(raw) && raw.length ? raw.join(", ") : "*");
   const discordHasToken = !!readField(config.discord || {}, "has_token", "hasToken", false);
 
-  byId("view").innerHTML = `
+  const movedCard = embeddedInSettings
+    ? ""
+    : `
     <div class="tcp-card">
       <div class="flex flex-wrap items-center justify-between gap-2">
         <div>
@@ -23,7 +26,9 @@ export async function renderChannels(ctx) {
         </div>
         <button id="channels-open-settings" class="tcp-btn"><i data-lucide="settings"></i> Open Settings</button>
       </div>
-    </div>
+    </div>`;
+  byId("view").innerHTML = `
+    ${movedCard}
     <div class="tcp-card">
       <div class="mb-3 flex items-center justify-between">
         <h3 class="tcp-title">Channels</h3>
@@ -40,7 +45,9 @@ export async function renderChannels(ctx) {
       <div id="channels-list" class="tcp-list"></div>
     </div>
   `;
-  byId("channels-open-settings")?.addEventListener("click", () => setRoute("settings"));
+  if (!embeddedInSettings) {
+    byId("channels-open-settings")?.addEventListener("click", () => setRoute("settings"));
+  }
 
   const list = byId("channels-list");
   list.innerHTML = channels

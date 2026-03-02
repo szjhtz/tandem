@@ -92,12 +92,15 @@ function ensureScopedDir(value) {
 
 export async function renderFiles(ctx) {
   const { state, byId, api, escapeHtml, toast, renderIcons, setRoute } = ctx;
+  const embeddedInSettings = ctx?.embeddedInSettings === true;
   const uploadState = new Map();
   const files = [];
   const currentDir = ensureScopedDir(state.filesDir || FILES_SCOPE);
   state.filesDir = currentDir;
 
-  byId("view").innerHTML = `
+  const movedCard = embeddedInSettings
+    ? ""
+    : `
     <div class="tcp-card">
       <div class="flex flex-wrap items-center justify-between gap-2">
         <div>
@@ -106,7 +109,9 @@ export async function renderFiles(ctx) {
         </div>
         <button id="files-open-settings" class="tcp-btn"><i data-lucide="settings"></i> Open Settings</button>
       </div>
-    </div>
+    </div>`;
+  byId("view").innerHTML = `
+    ${movedCard}
     <div class="tcp-card grid gap-3">
       <div class="flex flex-wrap items-center justify-between gap-2">
         <h3 class="tcp-title">Storage Browser</h3>
@@ -133,7 +138,9 @@ export async function renderFiles(ctx) {
       </div>
     </div>
   `;
-  byId("files-open-settings")?.addEventListener("click", () => setRoute("settings"));
+  if (!embeddedInSettings) {
+    byId("files-open-settings")?.addEventListener("click", () => setRoute("settings"));
+  }
 
   const tableEl = byId("files-table");
   const progressEl = byId("files-upload-progress");

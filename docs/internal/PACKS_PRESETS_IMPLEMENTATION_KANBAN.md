@@ -57,7 +57,7 @@ Owner: Core Runtime + Product Architecture
 
 - [x] Control Panel IA alignment under Settings
   - [x] Move `Packs`, `Channels`, `MCP`, and `Files` out of primary sidebar nav
-  - [x] Add `Settings` launchers for packs/channels/mcp/files management surfaces
+  - [x] Convert Settings integration launchers into tabs (`General`, `Packs`, `Channels`, `MCP`, `Files`) and keep users on `#/settings`
   - [x] Add migration prompts in Automations and legacy surfaces to direct users to Settings
 
 ## Active Backlog

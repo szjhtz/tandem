@@ -1,46 +1,105 @@
+import { renderChannels } from "./channels.js";
+import { renderFiles } from "./files.js";
+import { renderMcp } from "./mcp.js";
+import { renderPacks } from "./packs.js";
+
 const CUSTOM_PROVIDER_VALUE = "__custom_provider__";
+const SETTINGS_TABS = ["general", "packs", "channels", "mcp", "files"];
+
+function parseSettingsTabFromHash() {
+  const hash = String(window.location.hash || "");
+  const [, rawQuery = ""] = hash.split("?");
+  const params = new URLSearchParams(rawQuery);
+  const tab = String(params.get("tab") || "general")
+    .trim()
+    .toLowerCase();
+  return SETTINGS_TABS.includes(tab) ? tab : "general";
+}
+
+function writeSettingsTabToHash(tab) {
+  const next = SETTINGS_TABS.includes(String(tab || "").toLowerCase())
+    ? String(tab).toLowerCase()
+    : "general";
+  const params = new URLSearchParams();
+  params.set("tab", next);
+  const nextHash = `#/settings?${params.toString()}`;
+  if (window.location.hash !== nextHash) window.location.hash = nextHash;
+}
 
 export async function renderSettings(ctx) {
-  const { byId, state, escapeHtml, setRoute } = ctx;
+  const { byId, state, escapeHtml, renderIcons } = ctx;
+  const activeTab = parseSettingsTabFromHash();
   byId("view").innerHTML = `
     <div class="tcp-card">
       <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
-        <h3 class="tcp-title flex items-center gap-2"><i data-lucide="sliders-horizontal"></i> Integrations & Assets</h3>
-        <span class="tcp-badge-info">Settings Home</span>
+        <h3 class="tcp-title flex items-center gap-2"><i data-lucide="sliders-horizontal"></i> Settings</h3>
+        <span class="tcp-badge-info">Unified Surface</span>
       </div>
-      <p class="tcp-subtle">Packs, Channels, MCP, and Files are managed from Settings. Use these launchers to open each surface.</p>
-      <div class="mt-3 grid gap-2 md:grid-cols-2">
-        <button id="settings-open-packs" class="tcp-btn"><i data-lucide="package"></i> Open Packs</button>
-        <button id="settings-open-channels" class="tcp-btn"><i data-lucide="message-circle"></i> Open Channels</button>
-        <button id="settings-open-mcp" class="tcp-btn"><i data-lucide="link"></i> Open MCP</button>
-        <button id="settings-open-files" class="tcp-btn"><i data-lucide="folder-open"></i> Open Files</button>
+      <div class="flex flex-wrap gap-2">
+        <button class="tcp-btn ${activeTab === "general" ? "border-slate-300/90" : ""}" data-settings-tab="general"><i data-lucide="settings-2"></i> General</button>
+        <button class="tcp-btn ${activeTab === "packs" ? "border-slate-300/90" : ""}" data-settings-tab="packs"><i data-lucide="package"></i> Packs</button>
+        <button class="tcp-btn ${activeTab === "channels" ? "border-slate-300/90" : ""}" data-settings-tab="channels"><i data-lucide="message-circle"></i> Channels</button>
+        <button class="tcp-btn ${activeTab === "mcp" ? "border-slate-300/90" : ""}" data-settings-tab="mcp"><i data-lucide="link"></i> MCP</button>
+        <button class="tcp-btn ${activeTab === "files" ? "border-slate-300/90" : ""}" data-settings-tab="files"><i data-lucide="folder-open"></i> Files</button>
       </div>
     </div>
-    <div class="tcp-card">
-      <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
-        <h3 class="tcp-title flex items-center gap-2"><i data-lucide="settings-2"></i> Provider Setup Wizard</h3>
-        <span class="${state.providerReady ? "tcp-badge-ok" : "tcp-badge-warn"}">${state.providerReady ? "Ready" : "Not Configured"}</span>
-      </div>
-      <p class="tcp-subtle">Step 1: Select provider. Step 2: Configure model. Step 3: Add key (if required). Step 4: Run test. Step 5: Set bot identity + personality.</p>
-      <div class="mt-3 flex flex-wrap gap-2">
-        <span class="${state.providerDefault ? "tcp-badge-ok" : "tcp-badge-warn"}">Default: ${escapeHtml(state.providerDefault || "none")}</span>
-        <span class="${state.providerConnected.length > 0 ? "tcp-badge-info" : "tcp-badge-warn"}">Connected: ${state.providerConnected.length}</span>
-      </div>
-      ${state.providerError ? `<p class="mt-3 rounded-xl border border-amber-700/60 bg-amber-950/30 px-3 py-2 text-sm text-amber-300"><i data-lucide="triangle-alert"></i> ${escapeHtml(state.providerError)}</p>` : ""}
-      <div id="provider-settings" class="mt-4"></div>
-      <div id="identity-settings" class="mt-6 border-t border-slate-800 pt-5"></div>
-    </div>
-    <div class="tcp-card">
-      <h3 class="tcp-title mb-2 flex items-center gap-2"><i data-lucide="shield"></i> Session Authorization</h3>
-      <p class="tcp-subtle">Use Logout in the sidebar to clear your current portal session token binding.</p>
-    </div>
+    <div id="settings-tab-content" class="grid gap-4"></div>
   `;
-  byId("settings-open-packs")?.addEventListener("click", () => setRoute("packs"));
-  byId("settings-open-channels")?.addEventListener("click", () => setRoute("channels"));
-  byId("settings-open-mcp")?.addEventListener("click", () => setRoute("mcp"));
-  byId("settings-open-files")?.addEventListener("click", () => setRoute("files"));
-  await renderProvidersBlock(ctx, byId("provider-settings"));
-  await renderIdentityBlock(ctx, byId("identity-settings"));
+
+  byId("view")
+    .querySelectorAll("[data-settings-tab]")
+    .forEach((btn) =>
+      btn.addEventListener("click", () => {
+        const tab = String(btn.getAttribute("data-settings-tab") || "").trim().toLowerCase();
+        writeSettingsTabToHash(tab);
+      })
+    );
+
+  const content = byId("settings-tab-content");
+  if (!content) return;
+
+  if (activeTab === "general") {
+    content.innerHTML = `
+      <div class="tcp-card">
+        <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <h3 class="tcp-title flex items-center gap-2"><i data-lucide="settings-2"></i> Provider Setup Wizard</h3>
+          <span class="${state.providerReady ? "tcp-badge-ok" : "tcp-badge-warn"}">${state.providerReady ? "Ready" : "Not Configured"}</span>
+        </div>
+        <p class="tcp-subtle">Step 1: Select provider. Step 2: Configure model. Step 3: Add key (if required). Step 4: Run test. Step 5: Set bot identity + personality.</p>
+        <div class="mt-3 flex flex-wrap gap-2">
+          <span class="${state.providerDefault ? "tcp-badge-ok" : "tcp-badge-warn"}">Default: ${escapeHtml(state.providerDefault || "none")}</span>
+          <span class="${state.providerConnected.length > 0 ? "tcp-badge-info" : "tcp-badge-warn"}">Connected: ${state.providerConnected.length}</span>
+        </div>
+        ${state.providerError ? `<p class="mt-3 rounded-xl border border-amber-700/60 bg-amber-950/30 px-3 py-2 text-sm text-amber-300"><i data-lucide="triangle-alert"></i> ${escapeHtml(state.providerError)}</p>` : ""}
+        <div id="provider-settings" class="mt-4"></div>
+        <div id="identity-settings" class="mt-6 border-t border-slate-800 pt-5"></div>
+      </div>
+      <div class="tcp-card">
+        <h3 class="tcp-title mb-2 flex items-center gap-2"><i data-lucide="shield"></i> Session Authorization</h3>
+        <p class="tcp-subtle">Use Logout in the sidebar to clear your current portal session token binding.</p>
+      </div>
+    `;
+    await renderProvidersBlock(ctx, byId("provider-settings"));
+    await renderIdentityBlock(ctx, byId("identity-settings"));
+    return;
+  }
+
+  content.innerHTML = `<div id="settings-subview-host" class="grid gap-4"></div>`;
+  const host = byId("settings-subview-host");
+  if (!host) return;
+  const scopedCtx = {
+    ...ctx,
+    embeddedInSettings: true,
+    byId: (id) => {
+      if (id === "view") return host;
+      return host.querySelector(`#${id}`);
+    },
+  };
+  if (activeTab === "packs") await renderPacks(scopedCtx);
+  else if (activeTab === "channels") await renderChannels(scopedCtx);
+  else if (activeTab === "mcp") await renderMcp(scopedCtx);
+  else if (activeTab === "files") await renderFiles(scopedCtx);
+  renderIcons(host);
 }
 
 async function renderProvidersBlock(ctx, container) {

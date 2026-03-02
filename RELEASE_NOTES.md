@@ -218,7 +218,7 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
     - save override (`PUT /presets/overrides/automation_preset/{id}`)
   - Updated control-panel information architecture for settings-centric management:
     - moved `Packs`, `Channels`, `MCP`, and `Files` out of primary sidebar nav
-    - added `Settings` launchers for these surfaces under `Integrations & Assets`
+    - added settings tabs for these surfaces under a unified `Settings` view (`General`, `Packs`, `Channels`, `MCP`, `Files`)
     - added migration prompts in Automations and legacy pages to route users to Settings
 
 - Control Panel pack event cards + actions

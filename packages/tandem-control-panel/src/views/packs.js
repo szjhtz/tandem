@@ -1,5 +1,6 @@
 export async function renderPacks(ctx) {
   const { byId, state, toast, renderIcons, escapeHtml, api, setRoute } = ctx;
+  const embeddedInSettings = ctx?.embeddedInSettings === true;
   const trustBadgeClass = (badge) => {
     const value = String(badge || "").toLowerCase();
     if (value === "official") return "tcp-badge-info";
@@ -54,7 +55,9 @@ export async function renderPacks(ctx) {
   const unique = (items) => [...new Set(asArray(items).map((item) => String(item || "").trim()).filter(Boolean))];
 
   const app = byId("view");
-  app.innerHTML = `
+  const movedCard = embeddedInSettings
+    ? ""
+    : `
     <div class="tcp-card mb-4">
       <div class="flex flex-wrap items-center justify-between gap-2">
         <div>
@@ -63,7 +66,9 @@ export async function renderPacks(ctx) {
         </div>
         <button id="packs-open-settings" class="tcp-btn"><i data-lucide="settings"></i> Open Settings</button>
       </div>
-    </div>
+    </div>`;
+  app.innerHTML = `
+    ${movedCard}
     <div class="tcp-card mb-4">
       <h3 class="tcp-title mb-2">Pack Library</h3>
       <p class="tcp-subtle mb-3">Install, inspect, export, and remove Tandem Packs.</p>
@@ -566,7 +571,9 @@ export async function renderPacks(ctx) {
   };
 
   byId("packs-refresh-btn")?.addEventListener("click", () => void loadPacks());
-  byId("packs-open-settings")?.addEventListener("click", () => setRoute("settings"));
+  if (!embeddedInSettings) {
+    byId("packs-open-settings")?.addEventListener("click", () => setRoute("settings"));
+  }
   byId("presets-refresh-btn")?.addEventListener("click", () => void loadPresetIndex());
   byId("presets-filter-text")?.addEventListener("input", renderSkills);
   byId("presets-filter-publisher")?.addEventListener("input", renderSkills);
