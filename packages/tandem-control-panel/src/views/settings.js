@@ -423,7 +423,7 @@ async function renderProvidersBlock(ctx, container) {
       const testBtn = container.querySelector("#provider-test");
       const statusEl = container.querySelector("#provider-test-status");
       const originalLabel = testBtn.innerHTML;
-      const TEST_TIMEOUT_MS = 120000;
+      const TEST_TIMEOUT_MS = 25000;
       const waitForRunToSettle = async (sessionId, targetRunId, timeoutMs) => {
         const startedAt = Date.now();
         while (Date.now() - startedAt < timeoutMs) {
@@ -469,8 +469,9 @@ async function renderProvidersBlock(ctx, container) {
             // leave a long-running sync run in-flight and make the test look stuck.
             const { runId } = await state.client.sessions.promptAsync(
               sid,
-              "Provider connectivity test: reply with READY.",
-              { provider: runProviderId, model: runModelId }
+              "READY",
+              { provider: runProviderId, model: runModelId },
+              { toolMode: "none", contextMode: "none" }
             );
             if (statusEl) {
               statusEl.className = "mt-2 text-xs tcp-subtle";
@@ -478,7 +479,11 @@ async function renderProvidersBlock(ctx, container) {
             }
             const settled = await waitForRunToSettle(sid, String(runId || "").trim(), TEST_TIMEOUT_MS);
             if (!settled) {
-              throw new Error("Model test timed out waiting for run completion.");
+              await state.client.sessions.cancelRun(sid, String(runId || "").trim()).catch(() => {});
+              await state.client.sessions.cancel(sid).catch(() => {});
+              throw new Error(
+                "Model test timed out after 25s. Provider is reachable but response is slow."
+              );
             }
             const runEvents = await state.client.runEvents(String(runId || "").trim(), {
               tail: 80,
