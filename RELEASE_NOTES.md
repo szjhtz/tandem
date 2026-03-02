@@ -121,6 +121,12 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
   - For trusted sources, dispatcher calls `/packs/install_from_attachment` automatically.
   - For untrusted sources, dispatcher responds with manual install guidance instead of auto-installing.
 
+- Rust UI client parity updates (`tandem-tui` network client)
+  - Added pack API helpers:
+    - `packs_list`, `packs_get`, `packs_install`, `packs_uninstall`, `packs_export`, `packs_detect`, `packs_updates`, `packs_update`
+  - Added capability API helpers:
+    - `capabilities_bindings_get`, `capabilities_bindings_put`, `capabilities_discovery`, `capabilities_resolve`
+
 - Internal execution tracking
   - Added implementation Kanban board:
     - `docs/internal/PACKS_PRESETS_IMPLEMENTATION_KANBAN.md`

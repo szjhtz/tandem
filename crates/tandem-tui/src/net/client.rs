@@ -381,6 +381,154 @@ struct RoutineHistoryResponse {
     events: Vec<RoutineHistoryEvent>,
 }
 
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
+pub struct PackInstallRecord {
+    pub pack_id: String,
+    pub name: String,
+    pub version: String,
+    #[serde(default)]
+    pub pack_type: Option<String>,
+    #[serde(default)]
+    pub install_path: Option<String>,
+    #[serde(default)]
+    pub sha256: Option<String>,
+    #[serde(default)]
+    pub installed_at_ms: Option<u64>,
+    #[serde(default)]
+    pub routines_enabled: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
+struct PacksListResponse {
+    #[serde(default)]
+    packs: Vec<PackInstallRecord>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
+struct PackRecordEnvelope {
+    pack: PackRecordPayload,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
+struct PackRecordPayload {
+    installed: PackInstallRecord,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
+struct PackInstallResponse {
+    installed: PackInstallRecord,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
+struct PackUninstallResponse {
+    removed: PackInstallRecord,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
+pub struct PackExportInfo {
+    pub path: String,
+    pub sha256: String,
+    pub bytes: u64,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
+struct PackExportResponse {
+    exported: PackExportInfo,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
+pub struct PackDetectionResponse {
+    pub is_pack: bool,
+    pub marker: String,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
+pub struct PackUpdatesResponse {
+    #[serde(default)]
+    pub pack_id: Option<String>,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub current_version: Option<String>,
+    #[serde(default)]
+    pub updates: Vec<serde_json::Value>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
+pub struct PackUpdateResult {
+    pub updated: bool,
+    #[serde(default)]
+    pub pack_id: Option<String>,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub current_version: Option<String>,
+    #[serde(default)]
+    pub target_version: Option<String>,
+    #[serde(default)]
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
+pub struct CapabilityBinding {
+    pub capability_id: String,
+    pub provider: String,
+    pub tool_name: String,
+    #[serde(default)]
+    pub request_transform: Option<serde_json::Value>,
+    #[serde(default)]
+    pub response_transform: Option<serde_json::Value>,
+    #[serde(default)]
+    pub metadata: serde_json::Value,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
+pub struct CapabilityBindingsFile {
+    pub schema_version: String,
+    #[serde(default)]
+    pub generated_at: Option<String>,
+    #[serde(default)]
+    pub bindings: Vec<CapabilityBinding>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
+struct CapabilityBindingsEnvelope {
+    bindings: CapabilityBindingsFile,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
+pub struct CapabilityDiscoveredTool {
+    pub provider: String,
+    pub tool_name: String,
+    #[serde(default)]
+    pub schema: serde_json::Value,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
+pub struct CapabilityDiscoveryResponse {
+    #[serde(default)]
+    pub tools: Vec<CapabilityDiscoveredTool>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
+pub struct CapabilityResolutionResponse {
+    pub resolution: serde_json::Value,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
+pub struct CapabilityResolveRequest {
+    #[serde(default)]
+    pub workflow_id: Option<String>,
+    #[serde(default)]
+    pub required_capabilities: Vec<String>,
+    #[serde(default)]
+    pub optional_capabilities: Vec<String>,
+    #[serde(default)]
+    pub provider_preference: Vec<String>,
+    #[serde(default)]
+    pub available_tools: Vec<CapabilityDiscoveredTool>,
+}
+
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ContextRunStatus {
@@ -1259,6 +1407,97 @@ impl EngineClient {
         let resp = req.send().await?;
         let payload = resp.json::<RoutineHistoryResponse>().await?;
         Ok(payload.events)
+    }
+
+    pub async fn packs_list(&self) -> Result<Vec<PackInstallRecord>> {
+        let url = format!("{}/packs", self.base_url);
+        let resp = self.client.get(&url).send().await?;
+        let payload = resp.json::<PacksListResponse>().await?;
+        Ok(payload.packs)
+    }
+
+    pub async fn packs_get(&self, selector: &str) -> Result<PackInstallRecord> {
+        let url = format!("{}/packs/{}", self.base_url, selector);
+        let resp = self.client.get(&url).send().await?;
+        let payload = resp.json::<PackRecordEnvelope>().await?;
+        Ok(payload.pack.installed)
+    }
+
+    pub async fn packs_install(&self, request: serde_json::Value) -> Result<PackInstallRecord> {
+        let url = format!("{}/packs/install", self.base_url);
+        let resp = self.client.post(&url).json(&request).send().await?;
+        let payload = resp.json::<PackInstallResponse>().await?;
+        Ok(payload.installed)
+    }
+
+    pub async fn packs_uninstall(&self, request: serde_json::Value) -> Result<PackInstallRecord> {
+        let url = format!("{}/packs/uninstall", self.base_url);
+        let resp = self.client.post(&url).json(&request).send().await?;
+        let payload = resp.json::<PackUninstallResponse>().await?;
+        Ok(payload.removed)
+    }
+
+    pub async fn packs_export(&self, request: serde_json::Value) -> Result<PackExportInfo> {
+        let url = format!("{}/packs/export", self.base_url);
+        let resp = self.client.post(&url).json(&request).send().await?;
+        let payload = resp.json::<PackExportResponse>().await?;
+        Ok(payload.exported)
+    }
+
+    pub async fn packs_detect(&self, request: serde_json::Value) -> Result<PackDetectionResponse> {
+        let url = format!("{}/packs/detect", self.base_url);
+        let resp = self.client.post(&url).json(&request).send().await?;
+        let payload = resp.json::<PackDetectionResponse>().await?;
+        Ok(payload)
+    }
+
+    pub async fn packs_updates(&self, selector: &str) -> Result<PackUpdatesResponse> {
+        let url = format!("{}/packs/{}/updates", self.base_url, selector);
+        let resp = self.client.get(&url).send().await?;
+        let payload = resp.json::<PackUpdatesResponse>().await?;
+        Ok(payload)
+    }
+
+    pub async fn packs_update(
+        &self,
+        selector: &str,
+        request: serde_json::Value,
+    ) -> Result<PackUpdateResult> {
+        let url = format!("{}/packs/{}/update", self.base_url, selector);
+        let resp = self.client.post(&url).json(&request).send().await?;
+        let payload = resp.json::<PackUpdateResult>().await?;
+        Ok(payload)
+    }
+
+    pub async fn capabilities_bindings_get(&self) -> Result<CapabilityBindingsFile> {
+        let url = format!("{}/capabilities/bindings", self.base_url);
+        let resp = self.client.get(&url).send().await?;
+        let payload = resp.json::<CapabilityBindingsEnvelope>().await?;
+        Ok(payload.bindings)
+    }
+
+    pub async fn capabilities_bindings_put(&self, request: CapabilityBindingsFile) -> Result<bool> {
+        let url = format!("{}/capabilities/bindings", self.base_url);
+        let resp = self.client.put(&url).json(&request).send().await?;
+        let payload = resp.json::<serde_json::Value>().await?;
+        Ok(payload.get("ok").and_then(|v| v.as_bool()).unwrap_or(false))
+    }
+
+    pub async fn capabilities_discovery(&self) -> Result<CapabilityDiscoveryResponse> {
+        let url = format!("{}/capabilities/discovery", self.base_url);
+        let resp = self.client.get(&url).send().await?;
+        let payload = resp.json::<CapabilityDiscoveryResponse>().await?;
+        Ok(payload)
+    }
+
+    pub async fn capabilities_resolve(
+        &self,
+        request: CapabilityResolveRequest,
+    ) -> Result<CapabilityResolutionResponse> {
+        let url = format!("{}/capabilities/resolve", self.base_url);
+        let resp = self.client.post(&url).json(&request).send().await?;
+        let payload = resp.json::<CapabilityResolutionResponse>().await?;
+        Ok(payload)
     }
 
     pub async fn context_runs_list(&self) -> Result<Vec<ContextRunState>> {
@@ -2249,6 +2488,71 @@ mod tests {
         assert_eq!(run.run_id, "ctx-8");
         assert_eq!(run.steps.len(), 1);
         assert_eq!(run.steps[0].step_id, "task-1");
+    }
+
+    #[tokio::test]
+    async fn packs_list_reads_engine_packs_endpoint() {
+        let base = spawn_single_response_server(
+            "/packs",
+            "200 OK",
+            r#"{"packs":[{"pack_id":"p1","name":"pack-one","version":"1.0.0"}]}"#,
+        )
+        .await;
+        let client = EngineClient::new(base);
+        let packs = client.packs_list().await.expect("packs_list");
+        assert_eq!(packs.len(), 1);
+        assert_eq!(packs[0].pack_id, "p1");
+        assert_eq!(packs[0].name, "pack-one");
+    }
+
+    #[tokio::test]
+    async fn capabilities_bindings_get_reads_engine_endpoint() {
+        let base = spawn_single_response_server(
+            "/capabilities/bindings",
+            "200 OK",
+            r#"{"bindings":{"schema_version":"v1","bindings":[{"capability_id":"github.create_pull_request","provider":"composio","tool_name":"mcp.composio.github_create_pull_request","metadata":{}}]}}"#,
+        )
+        .await;
+        let client = EngineClient::new(base);
+        let bindings = client
+            .capabilities_bindings_get()
+            .await
+            .expect("capabilities_bindings_get");
+        assert_eq!(bindings.schema_version, "v1");
+        assert_eq!(bindings.bindings.len(), 1);
+        assert_eq!(
+            bindings.bindings[0].capability_id,
+            "github.create_pull_request"
+        );
+    }
+
+    #[tokio::test]
+    async fn capabilities_resolve_posts_engine_endpoint() {
+        let base = spawn_single_response_server(
+            "/capabilities/resolve",
+            "200 OK",
+            r#"{"resolution":{"resolved":[{"capability_id":"github.create_pull_request","provider":"arcade","tool_name":"mcp.arcade.github_create_pull_request"}],"missing_required":[]}}"#,
+        )
+        .await;
+        let client = EngineClient::new(base);
+        let resolved = client
+            .capabilities_resolve(CapabilityResolveRequest {
+                workflow_id: Some("wf-pr".to_string()),
+                required_capabilities: vec!["github.create_pull_request".to_string()],
+                optional_capabilities: vec![],
+                provider_preference: vec!["arcade".to_string(), "composio".to_string()],
+                available_tools: vec![],
+            })
+            .await
+            .expect("capabilities_resolve");
+        let provider = resolved
+            .resolution
+            .get("resolved")
+            .and_then(|v| v.as_array())
+            .and_then(|rows| rows.first())
+            .and_then(|row| row.get("provider"))
+            .and_then(|v| v.as_str());
+        assert_eq!(provider, Some("arcade"));
     }
 
     #[test]

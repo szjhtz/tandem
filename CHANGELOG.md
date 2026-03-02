@@ -75,6 +75,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - trusted-source auto-install policy added via `TANDEM_PACK_AUTO_INSTALL_TRUSTED_SOURCES`
   - trusted zip uploads can auto-install through `/packs/install_from_attachment`
   - untrusted detections now return explicit install guidance to the user (no auto-install)
+- **Rust UI network client parity (`tandem-tui`):**
+  - added `EngineClient` methods for pack lifecycle endpoints (`packs_list/get/install/uninstall/export/detect/updates/update`)
+  - added `EngineClient` methods for capability resolver endpoints (`capabilities_bindings_get/put`, `capabilities_discovery`, `capabilities_resolve`)
 - **Pack implementation Kanban tracking**:
   - added `docs/internal/PACKS_PRESETS_IMPLEMENTATION_KANBAN.md` for phased execution tracking
 - **Deterministic composition and governance rules** in specs:
