@@ -2,6 +2,65 @@
 
 Canonical release notes live in `docs/RELEASE_NOTES.md`.
 
+## v0.4.0 (Unreleased)
+
+- Marketplace Pack architecture/spec expansion
+  - Added a full marketplace-ready spec set under `specs/packs/`:
+    - `MARKETPLACE_PACK_REQUIREMENTS.md`
+    - `PUBLISHING_AND_TRUST.md`
+    - `STORE_LISTING_SCHEMA.md`
+    - `DIFF_V1_TO_MARKETPLACE.md`
+  - Promoted pack identity fields to core manifest requirements in the spec model:
+    - top-level immutable `pack_id`
+    - top-level `manifest_schema_version`
+  - Added explicit `contents` list validation requirements so installers can verify pack completeness before registration.
+  - Added trust/signing hooks:
+    - root `tandempack.sig`
+    - publisher verification tiers (`unverified`, `verified`, `official`)
+    - signature/trust status requirements for install UX
+  - Added marketplace scanner/rejection policy coverage:
+    - marker validation
+    - archive safety checks
+    - secret detection
+    - SPDX/license checks
+    - portability flagging for provider-specific dependencies
+  - Added strict routine safety defaults in spec:
+    - routines installed disabled by default
+    - auto-enable allowed only under trusted source + explicit policy.
+
+- New marketplace-ready example packs
+  - Added `examples/packs/skill_minimal_marketplace/`.
+  - Added `examples/packs/workflow_minimal_marketplace/`.
+  - Each template includes a marketplace-ready `tandempack.yaml`, required content files, README, and sample marketplace assets/changelog.
+
+- Modular Preset System specification (enterprise scale)
+  - Added comprehensive preset architecture docs under `specs/presets/`:
+    - `PRESET_CONCEPTS.md`
+    - `PRESET_STORAGE_AND_OVERRIDES.md`
+    - `PROMPT_COMPOSITION.md`
+    - `UI_REQUIREMENTS.md`
+    - `API_CONTRACT.md`
+    - `IMPLEMENTATION_PLAN.md`
+  - Defined three core entities:
+    - `SkillModule` (reusable capability/prompt building block)
+    - `AgentPreset` (base persona + composed modules + policy profile)
+    - `AutomationPreset` (mission DAG + routines + task-agent bindings)
+  - Added deterministic prompt composition contract:
+    - fixed ordering phases
+    - params schema validation
+    - stable separators and composition hash requirements
+  - Added capability and policy merge semantics:
+    - capability union with required dominance
+    - least-privilege policy merge with deny precedence
+  - Added immutable source + fork override model:
+    - built-ins and installed packs are read-only
+    - editing creates project-local fork/override
+    - tracking-fork update/diff semantics with scope-increase re-approval gate
+  - Added shared PackManager + PresetRegistry API contracts designed for both frontends:
+    - Tandem Desktop (Tauri)
+    - `packages/tandem-control-panel`
+  - Added explicit chat attachment ingestion contract for pack detection/install cards (`tandempack.yaml` marker-driven).
+
 ## v0.3.28 (Unreleased)
 
 - Control panel UX and workflow hotfixes

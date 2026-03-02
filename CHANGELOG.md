@@ -5,6 +5,44 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - Unreleased
+
+### Added
+
+- **Marketplace pack specification set** under `specs/packs/`:
+  - `MARKETPLACE_PACK_REQUIREMENTS.md`
+  - `PUBLISHING_AND_TRUST.md`
+  - `STORE_LISTING_SCHEMA.md`
+  - `DIFF_V1_TO_MARKETPLACE.md`
+- **Pack identity hardening** in specs:
+  - top-level immutable `pack_id`
+  - top-level `manifest_schema_version`
+  - explicit `contents` completeness validation for install-time checks
+- **Pack trust/signing hooks** in specs:
+  - root `tandempack.sig` signing contract
+  - publisher verification tiers (`unverified`, `verified`, `official`)
+  - client trust UX requirements and marketplace reject reason taxonomy
+- **Marketplace-ready pack templates** under `examples/packs/`:
+  - `skill_minimal_marketplace/`
+  - `workflow_minimal_marketplace/`
+  - each includes `tandempack.yaml`, README, content files, and marketplace assets
+- **Modular preset specification set** under `specs/presets/`:
+  - `PRESET_CONCEPTS.md`
+  - `PRESET_STORAGE_AND_OVERRIDES.md`
+  - `PROMPT_COMPOSITION.md`
+  - `UI_REQUIREMENTS.md`
+  - `API_CONTRACT.md`
+  - `IMPLEMENTATION_PLAN.md`
+- **Cross-UI preset and pack management contract**:
+  - first-class PackManager API surface
+  - shared PresetRegistry API surface for Desktop + Control Panel
+  - attachment-driven pack detection/install UX contract for chat surfaces
+- **Deterministic composition and governance rules** in specs:
+  - stable prompt assembly ordering
+  - capability/policy merge semantics
+  - immutable installed pack sources with project-local fork/override editing model
+  - explicit routine safety default (`disabled` on install)
+
 ## [0.3.28] - 2026-03-01
 
 ### Added
