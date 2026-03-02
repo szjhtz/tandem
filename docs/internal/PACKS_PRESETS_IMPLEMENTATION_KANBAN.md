@@ -68,6 +68,7 @@ Owner: Core Runtime + Product Architecture
   - [x] Expand icon registry for packs/presets/settings surfaces to prevent missing icons across rerenders
   - [x] Fix Settings tab icon hydration scope so tab icons persist across section switches
   - [x] Tokenize chat UI color system so Settings theme selection applies to chat rails/messages/composer/dynamic cards
+  - [x] Raise Porcelain contrast (theme tokens + markdown light-mode overrides) to fix washed-out text
 
 ## Active Backlog
 

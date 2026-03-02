@@ -149,6 +149,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Control panel icon coverage**: Expanded Lucide icon registration for packs/settings builders (`archive`, `copy-plus`, `sparkles`, `shield-check`, `arrow-up-circle`, `badge-check`, `binary`, `list`, `pencil`) to prevent missing icons after view/tab rerenders.
 - **Settings tab icon persistence**: Fixed Settings subview icon hydration scope so top-level Settings tab icons no longer disappear when switching between `Packs/Channels/MCP/Files`.
 - **Chat theme parity**: Refactored chat surface styles (sessions rail, message panes, composer, pills/chips, tool/approval/pack rails, upload progress, message pre blocks) to use shared theme tokens instead of hardcoded `zinc/slate` palettes so theme selection updates chat consistently.
+- **Porcelain readability hardening**: Increased Porcelain text and border contrast and switched markdown rendering styles to token-based colors with light-theme overrides to prevent washed-out chat/content text.
 
 ## [0.3.28] - 2026-03-01
 
