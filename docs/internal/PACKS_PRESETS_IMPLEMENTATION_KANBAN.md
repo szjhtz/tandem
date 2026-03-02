@@ -41,14 +41,14 @@ Owner: Core Runtime + Product Architecture
   - [x] Permission/risk sheet generation API for pre-install UX (`pack.inspect.permission_sheet`)
   - [x] Secret scanning hooks integrated (`TANDEM_PACK_SECRET_SCAN_STRICT` for local strict reject)
 
-## Active Backlog
-
-- [ ] Preset registry implementation
+- [x] Preset registry implementation
   - [x] Build layered registry: built-ins + installed packs + project overrides
   - [x] Deterministic prompt composition engine (core->domain->style->safety)
   - [x] Fork/edit/save flow for immutable installed presets
   - [x] Permission/capability summary computation at agent + automation levels
-  - [ ] Export composed project overrides as pack content
+  - [x] Export composed project overrides as pack content
+
+## Active Backlog
 
 - [ ] UI parity (Desktop + Control Panel)
   - [x] Pack Library view: install/inspect/uninstall/export/trust status

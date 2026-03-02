@@ -528,6 +528,16 @@ struct PresetOverrideWriteInput {
     content: String,
 }
 
+#[derive(Debug, Deserialize, Default)]
+struct PresetOverridesExportInput {
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    version: Option<String>,
+    #[serde(default)]
+    output_path: Option<String>,
+}
+
 #[derive(Debug, Deserialize)]
 struct SkillLocationQuery {
     location: Option<SkillLocation>,
@@ -1523,6 +1533,23 @@ async fn presets_capability_summary(
     Ok(Json(json!({ "summary": summary })))
 }
 
+async fn presets_export_overrides(
+    State(state): State<AppState>,
+    Json(input): Json<PresetOverridesExportInput>,
+) -> Result<Json<Value>, StatusCode> {
+    let name = input.name.as_deref().unwrap_or("preset-overrides");
+    let version = input.version.as_deref().unwrap_or("0.1.0");
+    let exported = state
+        .preset_registry
+        .export_overrides(name, version, input.output_path.as_deref())
+        .await
+        .map_err(|err| {
+            tracing::warn!("preset overrides export failed: {}", err);
+            StatusCode::BAD_REQUEST
+        })?;
+    Ok(Json(json!({ "exported": exported })))
+}
+
 fn app_router(state: AppState) -> Router {
     let cors = CorsLayer::new()
         .allow_origin(Any)
@@ -1774,6 +1801,7 @@ fn app_router(state: AppState) -> Router {
             "/presets/capability_summary",
             post(presets_capability_summary),
         )
+        .route("/presets/export_overrides", post(presets_export_overrides))
         .route("/channels/config", get(channels_config))
         .route("/channels/status", get(channels_status))
         .route("/channels/{name}/verify", post(channels_verify))
@@ -10916,6 +10944,7 @@ async fn openapi_doc() -> Json<Value> {
             "/presets/fork":{"post":{"summary":"Fork builtin/pack preset file into project overrides"}},
             "/presets/overrides/{kind}/{id}":{"put":{"summary":"Save project override preset content"},"delete":{"summary":"Delete project override preset"}},
             "/presets/capability_summary":{"post":{"summary":"Compute agent + automation capability summary (required dominates optional)"}},
+            "/presets/export_overrides":{"post":{"summary":"Export project preset overrides as portable tandempack zip"}},
             "/mission":{"get":{"summary":"List missions"},"post":{"summary":"Create mission"}},
             "/mission/{id}":{"get":{"summary":"Get mission"}},
             "/mission/{id}/event":{"post":{"summary":"Apply mission event through reducer"}},
@@ -11840,6 +11869,58 @@ mod tests {
                 .and_then(|v| v.get("task_count"))
                 .and_then(|v| v.as_u64()),
             Some(2)
+        );
+    }
+
+    #[tokio::test]
+    async fn presets_export_overrides_returns_zip_payload() {
+        let state = test_state().await;
+        let app = app_router(state);
+        let seed_req = Request::builder()
+            .method("PUT")
+            .uri("/presets/overrides/skill_module/export_seed")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({
+                    "content": "id: export_seed\nversion: 1.0.0\n"
+                })
+                .to_string(),
+            ))
+            .expect("request");
+        let seed_resp = app.clone().oneshot(seed_req).await.expect("response");
+        assert_eq!(seed_resp.status(), StatusCode::OK);
+
+        let export_req = Request::builder()
+            .method("POST")
+            .uri("/presets/export_overrides")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({
+                    "name": "exported-overrides",
+                    "version": "1.0.0"
+                })
+                .to_string(),
+            ))
+            .expect("request");
+        let export_resp = app.clone().oneshot(export_req).await.expect("response");
+        assert_eq!(export_resp.status(), StatusCode::OK);
+        let export_body = to_bytes(export_resp.into_body(), usize::MAX)
+            .await
+            .expect("body");
+        let export_payload: Value = serde_json::from_slice(&export_body).expect("json");
+        assert!(export_payload
+            .get("exported")
+            .and_then(|v| v.get("path"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.ends_with(".zip"))
+            .unwrap_or(false));
+        assert!(
+            export_payload
+                .get("exported")
+                .and_then(|v| v.get("bytes"))
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0)
+                > 0
         );
     }
 

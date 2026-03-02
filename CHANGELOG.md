@@ -48,6 +48,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - `DELETE /presets/overrides/{kind}/{id}`
   - added capability summary route for composed presets/automations:
     - `POST /presets/capability_summary` (required dominates optional across agent + task scopes)
+  - added export route for composed project overrides:
+    - `POST /presets/export_overrides` (generates portable tandempack zip with marker manifest)
 - **Initial PackManager runtime/API implementation (server)**:
   - added pack routes:
     - `GET /packs`

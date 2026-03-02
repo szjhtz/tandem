@@ -83,6 +83,9 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
     - `POST /presets/capability_summary`
     - merges required/optional capability sets with required precedence
     - returns normalized agent view, automation view, and totals
+  - Added project override export API:
+    - `POST /presets/export_overrides`
+    - bundles project override presets into a portable zip with root `tandempack.yaml`
 
 - PackManager runtime/API implementation (first tranche)
   - Added initial server PackManager endpoints:
