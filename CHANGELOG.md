@@ -56,6 +56,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - pack lifecycle events emitted (`pack.detected`, `pack.install.started|succeeded|failed`, `registry.updated`)
   - expanded HTTP regression tests for pack flows: marker-required detection, marker-negative zip behavior, deterministic install path/current pointer, and lifecycle events
   - pack inspect trust/risk summary now derives from installed content (`tandempack.sig` presence, publisher verification fields, capability/routine risk counts)
+  - pack inspect now emits normalized verification badge tiers (`unverified`, `verified`, `official`) in API trust payload
 - **Initial capability resolver runtime/API implementation (server)**:
   - added capability routes:
     - `GET /capabilities/bindings`

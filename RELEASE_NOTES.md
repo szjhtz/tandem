@@ -92,7 +92,7 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
     - detect/install emit expected pack lifecycle events for UI surfaces
   - Pack inspect now returns computed trust/risk summary derived from installed files/manifest:
     - signature status reflects root `tandempack.sig` presence (`present_unverified` vs `unsigned`)
-    - publisher verification tier is surfaced when declared in manifest
+    - publisher verification tier is surfaced and normalized into UI-safe badge levels (`unverified`, `verified`, `official`)
     - risk summary includes capability counts, routine declaration flag, and non-portable dependency signal
 
 - Capability Resolver runtime/API implementation (first tranche)

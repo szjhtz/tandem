@@ -647,8 +647,20 @@ fn inspect_trust(manifest: &Value, install_path: &str) -> Value {
         .or_else(|| manifest.pointer("/marketplace/publisher_verification"))
         .and_then(|v| v.as_str())
         .unwrap_or("unknown");
+    let publisher_verification_normalized =
+        match publisher_verification.to_ascii_lowercase().as_str() {
+            "official" => "official",
+            "verified" => "verified",
+            _ => "unverified",
+        };
+    let verification_badge = match publisher_verification_normalized {
+        "official" => "official",
+        "verified" => "verified",
+        _ => "unverified",
+    };
     serde_json::json!({
-        "publisher_verification": publisher_verification,
+        "publisher_verification": publisher_verification_normalized,
+        "verification_badge": verification_badge,
         "signature": signature,
     })
 }
@@ -820,6 +832,13 @@ mod tests {
         );
         assert_eq!(
             inspection
+                .trust
+                .get("verification_badge")
+                .and_then(|v| v.as_str()),
+            Some("verified")
+        );
+        assert_eq!(
+            inspection
                 .risk
                 .get("required_capabilities_count")
                 .and_then(|v| v.as_u64()),
@@ -831,6 +850,42 @@ mod tests {
                 .get("routines_declared")
                 .and_then(|v| v.as_bool()),
             Some(true)
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn inspect_defaults_verification_badge_to_unverified() {
+        let root = std::env::temp_dir().join(format!("tandem-pack-test-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&root).expect("mkdir");
+        let pack_zip = root.join("inspect-unverified.zip");
+        write_zip(
+            &pack_zip,
+            &[(
+                "tandempack.yaml",
+                "name: inspect-pack-2\nversion: 1.0.0\ntype: workflow\npack_id: inspect-pack-2\n",
+            )],
+        );
+        let manager = PackManager::new(root.join("packs"));
+        let installed = manager
+            .install(PackInstallRequest {
+                path: Some(pack_zip.to_string_lossy().to_string()),
+                url: None,
+                source: Value::Null,
+            })
+            .await
+            .expect("install");
+        let inspection = manager.inspect(&installed.pack_id).await.expect("inspect");
+        assert_eq!(
+            inspection
+                .trust
+                .get("verification_badge")
+                .and_then(|v| v.as_str()),
+            Some("unverified")
+        );
+        assert_eq!(
+            inspection.trust.get("signature").and_then(|v| v.as_str()),
+            Some("unsigned")
         );
         let _ = std::fs::remove_dir_all(root);
     }
