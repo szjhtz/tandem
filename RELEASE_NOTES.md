@@ -86,6 +86,10 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
     - `pack.install.succeeded`
     - `pack.install.failed`
     - `registry.updated`
+  - Added/expanded pack route regression coverage:
+    - `detect` returns `is_pack=false` for zip files without root marker
+    - install writes deterministic `.../packs/<name>/<version>` and updates `current`
+    - detect/install emit expected pack lifecycle events for UI surfaces
 
 - Capability Resolver runtime/API implementation (first tranche)
   - Added capability endpoints:

@@ -10935,6 +10935,19 @@ mod tests {
         zip.finish().expect("finish zip");
     }
 
+    fn write_plain_zip_without_marker(path: &std::path::Path) {
+        let file = std::fs::File::create(path).expect("create zip");
+        let mut zip = zip::ZipWriter::new(file);
+        let opts = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Deflated);
+        zip.start_file("README.md", opts).expect("start readme");
+        std::io::Write::write_all(&mut zip, b"# not a pack").expect("write readme");
+        zip.start_file("agents/a.txt", opts)
+            .expect("start agents file");
+        std::io::Write::write_all(&mut zip, b"agent body").expect("write agents file");
+        zip.finish().expect("finish zip");
+    }
+
     async fn next_event_of_type(
         rx: &mut broadcast::Receiver<EngineEvent>,
         expected_type: &str,
@@ -11160,6 +11173,7 @@ mod tests {
     #[tokio::test]
     async fn packs_detect_requires_root_marker() {
         let state = test_state().await;
+        let mut rx = state.event_bus.subscribe();
         let root = std::env::temp_dir().join(format!("tandem-pack-detect-{}", Uuid::new_v4()));
         std::fs::create_dir_all(&root).expect("mkdir");
         let plain_zip = root.join("plain.zip");
@@ -11184,12 +11198,52 @@ mod tests {
         let body = to_bytes(resp.into_body(), usize::MAX).await.expect("body");
         let payload: Value = serde_json::from_slice(&body).expect("json");
         assert_eq!(payload.get("is_pack").and_then(|v| v.as_bool()), Some(true));
+        let event = next_event_of_type(&mut rx, "pack.detected").await;
+        assert_eq!(
+            event.properties.get("marker").and_then(|v| v.as_str()),
+            Some("tandempack.yaml")
+        );
+        assert_eq!(
+            event.properties.get("path").and_then(|v| v.as_str()),
+            Some(plain_zip.to_string_lossy().as_ref())
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn packs_detect_returns_false_without_marker() {
+        let state = test_state().await;
+        let root = std::env::temp_dir().join(format!("tandem-pack-detect-none-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&root).expect("mkdir");
+        let plain_zip = root.join("plain.zip");
+        write_plain_zip_without_marker(&plain_zip);
+        let app = app_router(state);
+        let req = Request::builder()
+            .method("POST")
+            .uri("/packs/detect")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({
+                    "path": plain_zip.to_string_lossy()
+                })
+                .to_string(),
+            ))
+            .expect("request");
+        let resp = app.oneshot(req).await.expect("response");
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = to_bytes(resp.into_body(), usize::MAX).await.expect("body");
+        let payload: Value = serde_json::from_slice(&body).expect("json");
+        assert_eq!(
+            payload.get("is_pack").and_then(|v| v.as_bool()),
+            Some(false)
+        );
         let _ = std::fs::remove_dir_all(root);
     }
 
     #[tokio::test]
     async fn packs_install_list_and_uninstall_roundtrip() {
         let state = test_state().await;
+        let mut rx = state.event_bus.subscribe();
         let root = std::env::temp_dir().join(format!("tandem-pack-install-{}", Uuid::new_v4()));
         std::fs::create_dir_all(&root).expect("mkdir");
         let pack_zip = root.join("pack.zip");
@@ -11212,6 +11266,37 @@ mod tests {
             .expect("request");
         let install_resp = app.clone().oneshot(install_req).await.expect("response");
         assert_eq!(install_resp.status(), StatusCode::OK);
+        let install_body = to_bytes(install_resp.into_body(), usize::MAX)
+            .await
+            .expect("body");
+        let install_payload: Value = serde_json::from_slice(&install_body).expect("json");
+        let install_path = install_payload
+            .get("installed")
+            .and_then(|v| v.get("install_path"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        assert!(install_path.ends_with("/roundtrip-pack/1.2.3"));
+        let current_pointer = std::path::PathBuf::from(install_path)
+            .parent()
+            .expect("parent")
+            .join("current");
+        let current_version = std::fs::read_to_string(&current_pointer).expect("read current");
+        assert_eq!(current_version.trim(), "1.2.3");
+        let started = next_event_of_type(&mut rx, "pack.install.started").await;
+        assert_eq!(
+            started.properties.get("path").and_then(|v| v.as_str()),
+            Some(pack_zip.to_string_lossy().as_ref())
+        );
+        let succeeded = next_event_of_type(&mut rx, "pack.install.succeeded").await;
+        assert_eq!(
+            succeeded.properties.get("pack_id").and_then(|v| v.as_str()),
+            Some("roundtrip-pack")
+        );
+        let registry = next_event_of_type(&mut rx, "registry.updated").await;
+        assert_eq!(
+            registry.properties.get("entity").and_then(|v| v.as_str()),
+            Some("packs")
+        );
 
         let list_req = Request::builder()
             .method("GET")

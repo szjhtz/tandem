@@ -66,8 +66,8 @@ Owner: Core Runtime + Product Architecture
 
 ## Exit Criteria for v0.4.0
 
-- [ ] Valid zip without root marker does not auto-install and returns `is_pack=false`
-- [ ] Valid pack zip installs to deterministic path and updates index/current atomically
-- [ ] Pack install emits lifecycle events (`pack.detected`, `pack.install.*`, `registry.updated`)
+- [x] Valid zip without root marker does not auto-install and returns `is_pack=false`
+- [x] Valid pack zip installs to deterministic path and updates index/current atomically
+- [x] Pack install emits lifecycle events (`pack.detected`, `pack.install.*`, `registry.updated`)
 - [x] Workflow capability request can resolve `github.create_pull_request` via at least one non-hardcoded binding
 - [x] Missing required capability returns structured error consumable by UI/chat
