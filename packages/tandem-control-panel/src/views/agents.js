@@ -544,12 +544,12 @@ export async function renderAgents(ctx) {
           <button id="agents-launch-wizard" class="tcp-btn-primary"><i data-lucide="sparkles"></i> Launch Walkthrough</button>
         </div>
       </div>
-      <div class="agents-tabs mt-3">
-        <button class="agents-tab-btn ${uiState.tab === "overview" ? "active" : ""}" data-agents-tab="overview">Overview</button>
-        <button class="agents-tab-btn ${uiState.tab === "routines" ? "active" : ""}" data-agents-tab="routines">Routines</button>
-        <button class="agents-tab-btn ${uiState.tab === "automations" ? "active" : ""}" data-agents-tab="automations">Automations</button>
-        <button class="agents-tab-btn ${uiState.tab === "templates" ? "active" : ""}" data-agents-tab="templates">Templates</button>
-        <button class="agents-tab-btn ${uiState.tab === "runs" ? "active" : ""}" data-agents-tab="runs">Runs & Approvals</button>
+      <div class="tcp-settings-tabs mt-3" role="tablist" aria-label="Automation sections">
+        <button class="tcp-settings-tab tcp-settings-tab-underline ${uiState.tab === "overview" ? "active" : ""}" data-agents-tab="overview" role="tab" aria-selected="${uiState.tab === "overview"}">Overview</button>
+        <button class="tcp-settings-tab tcp-settings-tab-underline ${uiState.tab === "routines" ? "active" : ""}" data-agents-tab="routines" role="tab" aria-selected="${uiState.tab === "routines"}">Routines</button>
+        <button class="tcp-settings-tab tcp-settings-tab-underline ${uiState.tab === "automations" ? "active" : ""}" data-agents-tab="automations" role="tab" aria-selected="${uiState.tab === "automations"}">Automations</button>
+        <button class="tcp-settings-tab tcp-settings-tab-underline ${uiState.tab === "templates" ? "active" : ""}" data-agents-tab="templates" role="tab" aria-selected="${uiState.tab === "templates"}">Templates</button>
+        <button class="tcp-settings-tab tcp-settings-tab-underline ${uiState.tab === "runs" ? "active" : ""}" data-agents-tab="runs" role="tab" aria-selected="${uiState.tab === "runs"}">Runs & Approvals</button>
       </div>
     </div>
     <div class="tcp-card${panelClass("overview")}" data-agents-panel="overview">

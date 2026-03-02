@@ -152,6 +152,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Porcelain readability hardening**: Increased Porcelain text and border contrast and switched markdown rendering styles to token-based colors with light-theme overrides to prevent washed-out chat/content text.
 - **Automations theme consistency**: Added `agents-theme` scoped token overrides for remaining `slate/zinc` utility islands in Automations/Wizard surfaces and converted agents tab/step chips to token-driven colors so Automations now follows theme selection.
 - **Starter pack templates + personal tutorial**: Added three concrete importable starter templates under `examples/packs/` (`daily_github_pr_reviewer`, `slack_release_notes_writer`, `customer_support_drafter`) and a step-by-step personal walkthrough at `specs/packs/PERSONAL_TUTORIAL_FIRST_PACK.md`.
+- **Settings icon hydration stability**: Added mutation-observer-backed icon rehydration in Settings so icons remain visible when switching tabs with async subview updates.
+- **Automations tab style parity**: Updated `#/agents` section tabs to reuse the same underline tab styling and accessibility roles used in Settings.
 
 ## [0.3.28] - 2026-03-01
 

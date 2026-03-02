@@ -70,6 +70,8 @@ Owner: Core Runtime + Product Architecture
   - [x] Tokenize chat UI color system so Settings theme selection applies to chat rails/messages/composer/dynamic cards
   - [x] Raise Porcelain contrast (theme tokens + markdown light-mode overrides) to fix washed-out text
   - [x] Apply theme-token consistency fixes to Automations page (wizard/cards/tabs residual slate-zinc classes)
+  - [x] Harden Settings tab icon hydration for async subview updates
+  - [x] Align `#/agents` top tab treatment with Settings underline tab style
 
 ## Active Backlog
 

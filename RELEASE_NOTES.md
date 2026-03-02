@@ -250,6 +250,8 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
     - `examples/packs/customer_support_drafter/`
   - Added a practical personal tutorial to build/zip/import/run your first pack:
     - `specs/packs/PERSONAL_TUTORIAL_FIRST_PACK.md`
+  - Fixed Settings icon disappearance edge cases by rehydrating icons after async tab-content mutations.
+  - Updated Automations (`#/agents`) top tabs to the same Settings-style underline tab treatment for consistent UX.
 
 - Internal execution tracking
   - Added implementation Kanban board:

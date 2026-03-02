@@ -27,9 +27,10 @@ function writeSettingsTabToHash(tab) {
 }
 
 export async function renderSettings(ctx) {
-  const { byId, state, escapeHtml, renderIcons, THEMES = [], setTheme } = ctx;
+  const { byId, state, escapeHtml, renderIcons, THEMES = [], setTheme, addCleanup } = ctx;
+  const settingsRoot = byId("view");
   const activeTab = parseSettingsTabFromHash();
-  byId("view").innerHTML = `
+  settingsRoot.innerHTML = `
     <div class="tcp-card">
       <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
         <h3 class="tcp-title flex items-center gap-2"><i data-lucide="sliders-horizontal"></i> Settings</h3>
@@ -49,7 +50,7 @@ export async function renderSettings(ctx) {
     </div>
   `;
 
-  byId("view")
+  settingsRoot
     .querySelectorAll("[data-settings-tab]")
     .forEach((btn) =>
       btn.addEventListener("click", () => {
@@ -57,6 +58,20 @@ export async function renderSettings(ctx) {
         writeSettingsTabToHash(tab);
       })
     );
+
+  // Keep icons hydrated even when embedded tab views update asynchronously.
+  const iconObserver = new MutationObserver((mutations) => {
+    let shouldRender = false;
+    for (const mutation of mutations) {
+      if (mutation.type !== "childList") continue;
+      if (mutation.addedNodes.length === 0) continue;
+      shouldRender = true;
+      break;
+    }
+    if (shouldRender) renderIcons(settingsRoot);
+  });
+  iconObserver.observe(settingsRoot, { childList: true, subtree: true });
+  addCleanup?.(() => iconObserver.disconnect());
 
   const content = byId("settings-tab-content");
   if (!content) return;
@@ -105,7 +120,7 @@ export async function renderSettings(ctx) {
     });
     await renderProvidersBlock(ctx, byId("provider-settings"));
     await renderIdentityBlock(ctx, byId("identity-settings"));
-    renderIcons(byId("view"));
+    renderIcons(settingsRoot);
     return;
   }
 
@@ -126,7 +141,7 @@ export async function renderSettings(ctx) {
   else if (activeTab === "files") await renderFiles(scopedCtx);
   // Re-hydrate icons for the full settings surface so tab icons remain visible
   // after switching away from General.
-  renderIcons(byId("view"));
+  renderIcons(settingsRoot);
 }
 
 async function renderProvidersBlock(ctx, container) {
