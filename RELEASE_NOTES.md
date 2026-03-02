@@ -61,6 +61,17 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
     - `packages/tandem-control-panel`
   - Added explicit chat attachment ingestion contract for pack detection/install cards (`tandempack.yaml` marker-driven).
 
+- Preset registry runtime/API foundation (first tranche)
+  - Added layered preset indexing in server runtime across:
+    - built-ins
+    - installed packs
+    - project overrides
+  - Added `GET /presets/index` endpoint returning unified index shape:
+    - `skill_modules`
+    - `agent_presets`
+    - `automation_presets`
+    - `generated_at_ms`
+
 - PackManager runtime/API implementation (first tranche)
   - Added initial server PackManager endpoints:
     - `GET /packs`

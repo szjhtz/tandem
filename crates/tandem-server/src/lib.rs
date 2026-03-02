@@ -40,12 +40,14 @@ mod agent_teams;
 mod capability_resolver;
 mod http;
 mod pack_manager;
+mod preset_registry;
 pub mod webui;
 
 pub use agent_teams::AgentTeamRuntime;
 pub use capability_resolver::CapabilityResolver;
 pub use http::serve;
 pub use pack_manager::PackManager;
+pub use preset_registry::PresetRegistry;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ChannelStatus {
@@ -753,6 +755,7 @@ pub struct AppState {
     pub host_runtime_context: HostRuntimeContext,
     pub pack_manager: Arc<PackManager>,
     pub capability_resolver: Arc<CapabilityResolver>,
+    pub preset_registry: Arc<PresetRegistry>,
 }
 
 #[derive(Debug, Clone)]
@@ -803,6 +806,16 @@ impl AppState {
             token_cost_per_1k_usd: resolve_token_cost_per_1k_usd(),
             pack_manager: Arc::new(PackManager::new(PackManager::default_root())),
             capability_resolver: Arc::new(CapabilityResolver::new(PackManager::default_root())),
+            preset_registry: Arc::new(PresetRegistry::new(
+                PackManager::default_root(),
+                resolve_shared_paths()
+                    .map(|paths| paths.canonical_root)
+                    .unwrap_or_else(|_| {
+                        dirs::home_dir()
+                            .unwrap_or_else(|| PathBuf::from("."))
+                            .join(".tandem")
+                    }),
+            )),
         }
     }
 

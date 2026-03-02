@@ -37,6 +37,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - first-class PackManager API surface
   - shared PresetRegistry API surface for Desktop + Control Panel
   - attachment-driven pack detection/install UX contract for chat surfaces
+- **Preset registry runtime/API foundation (server)**:
+  - added layered preset indexer over built-ins, installed packs, and project overrides
+  - added `GET /presets/index` route for shared backend preset discovery
+  - added index contract with `skill_modules`, `agent_presets`, `automation_presets`, and source-layer metadata
 - **Initial PackManager runtime/API implementation (server)**:
   - added pack routes:
     - `GET /packs`

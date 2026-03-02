@@ -1421,6 +1421,14 @@ async fn capabilities_resolve(
     Ok(Json(json!({ "resolution": result })).into_response())
 }
 
+async fn presets_index(State(state): State<AppState>) -> Result<Json<Value>, StatusCode> {
+    let index = state.preset_registry.index().await.map_err(|err| {
+        tracing::warn!("presets index failed: {}", err);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+    Ok(Json(json!({ "index": index })))
+}
+
 fn app_router(state: AppState) -> Router {
     let cors = CorsLayer::new()
         .allow_origin(Any)
@@ -1661,6 +1669,7 @@ fn app_router(state: AppState) -> Router {
         )
         .route("/capabilities/discovery", get(capabilities_discovery))
         .route("/capabilities/resolve", post(capabilities_resolve))
+        .route("/presets/index", get(presets_index))
         .route("/channels/config", get(channels_config))
         .route("/channels/status", get(channels_status))
         .route("/channels/{name}/verify", post(channels_verify))
@@ -10798,6 +10807,7 @@ async fn openapi_doc() -> Json<Value> {
             "/capabilities/bindings":{"get":{"summary":"List capability bindings"},"put":{"summary":"Replace capability bindings file"}},
             "/capabilities/discovery":{"get":{"summary":"Discover available provider tools for capability resolution"}},
             "/capabilities/resolve":{"post":{"summary":"Resolve required capabilities to provider tools based on bindings and preference"}},
+            "/presets/index":{"get":{"summary":"List layered preset registry index (builtins, packs, overrides)"}},
             "/mission":{"get":{"summary":"List missions"},"post":{"summary":"Create mission"}},
             "/mission/{id}":{"get":{"summary":"Get mission"}},
             "/mission/{id}/event":{"post":{"summary":"Apply mission event through reducer"}},
@@ -11496,6 +11506,38 @@ mod tests {
             payload.get("workflow_id").and_then(|v| v.as_str()),
             Some("wf-pr")
         );
+    }
+
+    #[tokio::test]
+    async fn presets_index_route_returns_layered_index_shape() {
+        let state = test_state().await;
+        let app = app_router(state);
+        let req = Request::builder()
+            .method("GET")
+            .uri("/presets/index")
+            .body(Body::empty())
+            .expect("request");
+        let resp = app.oneshot(req).await.expect("response");
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = to_bytes(resp.into_body(), usize::MAX).await.expect("body");
+        let payload: Value = serde_json::from_slice(&body).expect("json");
+        let index = payload.get("index").cloned().unwrap_or(Value::Null);
+        assert!(index
+            .get("skill_modules")
+            .and_then(|v| v.as_array())
+            .is_some());
+        assert!(index
+            .get("agent_presets")
+            .and_then(|v| v.as_array())
+            .is_some());
+        assert!(index
+            .get("automation_presets")
+            .and_then(|v| v.as_array())
+            .is_some());
+        assert!(index
+            .get("generated_at_ms")
+            .and_then(|v| v.as_u64())
+            .is_some());
     }
 
     #[tokio::test]
