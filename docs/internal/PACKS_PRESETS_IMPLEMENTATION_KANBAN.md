@@ -47,7 +47,7 @@ Owner: Core Runtime + Product Architecture
   - [x] Build layered registry: built-ins + installed packs + project overrides
   - [x] Deterministic prompt composition engine (core->domain->style->safety)
   - [x] Fork/edit/save flow for immutable installed presets
-  - [ ] Permission/capability summary computation at agent + automation levels
+  - [x] Permission/capability summary computation at agent + automation levels
   - [ ] Export composed project overrides as pack content
 
 - [ ] UI parity (Desktop + Control Panel)

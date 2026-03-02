@@ -1516,6 +1516,13 @@ async fn presets_override_delete(
     Ok(Json(json!({ "removed": removed })))
 }
 
+async fn presets_capability_summary(
+    Json(input): Json<crate::preset_summary::CapabilitySummaryInput>,
+) -> Result<Json<Value>, StatusCode> {
+    let summary = crate::preset_summary::summarize(input);
+    Ok(Json(json!({ "summary": summary })))
+}
+
 fn app_router(state: AppState) -> Router {
     let cors = CorsLayer::new()
         .allow_origin(Any)
@@ -1762,6 +1769,10 @@ fn app_router(state: AppState) -> Router {
         .route(
             "/presets/overrides/{kind}/{id}",
             put(presets_override_put).delete(presets_override_delete),
+        )
+        .route(
+            "/presets/capability_summary",
+            post(presets_capability_summary),
         )
         .route("/channels/config", get(channels_config))
         .route("/channels/status", get(channels_status))
@@ -10904,6 +10915,7 @@ async fn openapi_doc() -> Json<Value> {
             "/presets/compose/preview":{"post":{"summary":"Deterministically compose preset prompt fragments (core->domain->style->safety)"}},
             "/presets/fork":{"post":{"summary":"Fork builtin/pack preset file into project overrides"}},
             "/presets/overrides/{kind}/{id}":{"put":{"summary":"Save project override preset content"},"delete":{"summary":"Delete project override preset"}},
+            "/presets/capability_summary":{"post":{"summary":"Compute agent + automation capability summary (required dominates optional)"}},
             "/mission":{"get":{"summary":"List missions"},"post":{"summary":"Create mission"}},
             "/mission/{id}":{"get":{"summary":"Get mission"}},
             "/mission/{id}/event":{"post":{"summary":"Apply mission event through reducer"}},
@@ -11777,6 +11789,58 @@ mod tests {
             .and_then(|v| v.as_str())
             .unwrap_or("");
         assert!(forked_path.ends_with("forked_skill.yaml"));
+    }
+
+    #[tokio::test]
+    async fn presets_capability_summary_merges_agent_and_task_caps() {
+        let state = test_state().await;
+        let app = app_router(state);
+        let req = Request::builder()
+            .method("POST")
+            .uri("/presets/capability_summary")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({
+                    "agent": {
+                        "required": ["github.create_pull_request"],
+                        "optional": ["slack.post_message"]
+                    },
+                    "tasks": [
+                        {"required": ["slack.post_message"], "optional": []},
+                        {"required": [], "optional": ["jira.create_issue"]}
+                    ]
+                })
+                .to_string(),
+            ))
+            .expect("request");
+        let resp = app.oneshot(req).await.expect("response");
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = to_bytes(resp.into_body(), usize::MAX).await.expect("body");
+        let payload: Value = serde_json::from_slice(&body).expect("json");
+        let required = payload
+            .get("summary")
+            .and_then(|v| v.get("automation"))
+            .and_then(|v| v.get("required"))
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        let optional = payload
+            .get("summary")
+            .and_then(|v| v.get("automation"))
+            .and_then(|v| v.get("optional"))
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        assert_eq!(required.len(), 2);
+        assert_eq!(optional.len(), 1);
+        assert_eq!(
+            payload
+                .get("summary")
+                .and_then(|v| v.get("totals"))
+                .and_then(|v| v.get("task_count"))
+                .and_then(|v| v.as_u64()),
+            Some(2)
+        );
     }
 
     #[tokio::test]

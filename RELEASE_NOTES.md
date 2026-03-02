@@ -79,6 +79,10 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
     - `POST /presets/fork` (fork from builtin/pack/runtime path into overrides)
     - `PUT /presets/overrides/{kind}/{id}` (save editable override)
     - `DELETE /presets/overrides/{kind}/{id}` (remove override)
+  - Added capability summary API for agent + automation composition:
+    - `POST /presets/capability_summary`
+    - merges required/optional capability sets with required precedence
+    - returns normalized agent view, automation view, and totals
 
 - PackManager runtime/API implementation (first tranche)
   - Added initial server PackManager endpoints:

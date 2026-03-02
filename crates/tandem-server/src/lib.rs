@@ -42,6 +42,7 @@ mod http;
 mod pack_manager;
 mod preset_composer;
 mod preset_registry;
+mod preset_summary;
 pub mod webui;
 
 pub use agent_teams::AgentTeamRuntime;

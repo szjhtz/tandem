@@ -46,6 +46,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - `POST /presets/fork`
     - `PUT /presets/overrides/{kind}/{id}`
     - `DELETE /presets/overrides/{kind}/{id}`
+  - added capability summary route for composed presets/automations:
+    - `POST /presets/capability_summary` (required dominates optional across agent + task scopes)
 - **Initial PackManager runtime/API implementation (server)**:
   - added pack routes:
     - `GET /packs`
