@@ -124,7 +124,9 @@ export async function renderSettings(ctx) {
   else if (activeTab === "channels") await renderChannels(scopedCtx);
   else if (activeTab === "mcp") await renderMcp(scopedCtx);
   else if (activeTab === "files") await renderFiles(scopedCtx);
-  renderIcons(host);
+  // Re-hydrate icons for the full settings surface so tab icons remain visible
+  // after switching away from General.
+  renderIcons(byId("view"));
 }
 
 async function renderProvidersBlock(ctx, container) {

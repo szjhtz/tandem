@@ -66,6 +66,7 @@ Owner: Core Runtime + Product Architecture
   - [x] Refactor shell styles (cards/nav/buttons/inputs/settings tabs) to token-driven theme variables
   - [x] Replace route-loading placeholders with themed skeleton surfaces for first-paint polish
   - [x] Expand icon registry for packs/presets/settings surfaces to prevent missing icons across rerenders
+  - [x] Fix Settings tab icon hydration scope so tab icons persist across section switches
 
 ## Active Backlog
 

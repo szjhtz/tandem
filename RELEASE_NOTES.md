@@ -237,6 +237,7 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
   - Updated control-panel shell styles (cards, nav, buttons, inputs, tabs) to consume theme tokens for cleaner first paint and more consistent transitions across route/tab changes.
   - Replaced plain loading copy with themed skeleton placeholders and tokenized sidebar/brand surfaces for a more polished first impression during route changes.
   - Expanded registered Lucide icon set used in packs/preset/settings surfaces to avoid missing icons during rerenders (`archive`, `copy-plus`, `sparkles`, `shield-check`, `arrow-up-circle`, `badge-check`, `binary`, `list`, `pencil`).
+  - Fixed Settings tab icon disappearance on section switches by rehydrating icons at full Settings view scope (not only inner subview scope).
 
 - Internal execution tracking
   - Added implementation Kanban board:

@@ -147,6 +147,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Control panel visual polish + theme parity**: Added shared theme-token application (`tandem.themeId`) and an Appearance selector in Settings so control panel visuals align with desktop themes, while upgrading shell controls/cards/nav/tabs to token-driven styling with smoother first-paint consistency.
 - **Control panel first-load polish**: Replaced bare “Loading...” placeholders with themed skeleton surfaces and tokenized sidebar/brand chrome to reduce perceived jank during route/view switches.
 - **Control panel icon coverage**: Expanded Lucide icon registration for packs/settings builders (`archive`, `copy-plus`, `sparkles`, `shield-check`, `arrow-up-circle`, `badge-check`, `binary`, `list`, `pencil`) to prevent missing icons after view/tab rerenders.
+- **Settings tab icon persistence**: Fixed Settings subview icon hydration scope so top-level Settings tab icons no longer disappear when switching between `Packs/Channels/MCP/Files`.
 
 ## [0.3.28] - 2026-03-01
 
