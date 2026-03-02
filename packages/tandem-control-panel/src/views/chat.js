@@ -77,7 +77,7 @@ export async function renderChat(ctx) {
           <div id="chat-upload-progress" class="mb-2 grid gap-1.5"></div>
           <div class="chat-input-wrap">
             <button id="chat-file-pick-inner" type="button" class="chat-icon-btn chat-icon-btn-inner" title="Attach files"><i data-lucide="paperclip"></i></button>
-            <textarea id="chat-input" rows="1" class="tcp-input chat-input-with-clip chat-input-modern resize-none border-slate-600/80 bg-slate-800/60" placeholder="Ask anything... (Enter to send, Shift+Enter newline)"></textarea>
+            <textarea id="chat-input" rows="1" class="tcp-input chat-input-with-clip chat-input-modern resize-none" placeholder="Ask anything... (Enter to send, Shift+Enter newline)"></textarea>
             <button id="send-chat" class="chat-send-btn" title="Send"><i data-lucide="send"></i></button>
           </div>
         </div>
@@ -97,8 +97,8 @@ export async function renderChat(ctx) {
           </div>
           <div class="mb-2 flex items-center gap-2">
             <button id="chat-approve-all" class="tcp-btn h-7 px-2 text-[11px]">Approve all</button>
-            <label class="inline-flex items-center gap-1.5 text-[11px] text-zinc-400">
-              <input id="chat-auto-approve" type="checkbox" class="h-3.5 w-3.5 accent-slate-400" />
+            <label class="chat-auto-approve-label">
+              <input id="chat-auto-approve" type="checkbox" class="chat-auto-approve-checkbox" />
               Auto
             </label>
           </div>
@@ -342,13 +342,13 @@ export async function renderChat(ctx) {
         .map((ev) => {
           const at = new Date(ev.at).toLocaleTimeString();
           return `
-          <article class="rounded-sm border border-zinc-800 bg-zinc-900/65 px-2 py-1.5">
+          <article class="chat-pack-event-card">
             <div class="flex items-center justify-between gap-2">
-              <div class="truncate text-[11px] text-zinc-200" title="${escapeHtml(ev.type)}">${escapeHtml(ev.type)}</div>
-              <span class="text-[10px] text-zinc-500">${escapeHtml(at)}</span>
+              <div class="chat-pack-event-title truncate" title="${escapeHtml(ev.type)}">${escapeHtml(ev.type)}</div>
+              <span class="chat-pack-event-time">${escapeHtml(at)}</span>
             </div>
-            <div class="mt-0.5 text-[10px] text-zinc-500">${escapeHtml(ev.summary)}</div>
-            ${ev.error ? `<div class="mt-1 text-[10px] text-rose-300">${escapeHtml(ev.error)}</div>` : ""}
+            <div class="chat-pack-event-summary mt-0.5">${escapeHtml(ev.summary)}</div>
+            ${ev.error ? `<div class="chat-pack-event-error mt-1">${escapeHtml(ev.error)}</div>` : ""}
             <div class="mt-1 flex flex-wrap gap-1">
               <button class="tcp-btn h-6 px-1.5 text-[10px]" data-pack-open="1">Packs</button>
               ${
@@ -462,10 +462,10 @@ export async function renderChat(ctx) {
     bubble.className = "chat-msg user";
     bubble.innerHTML = `
       <div class="chat-msg-role">User</div>
-      <pre class="max-w-full whitespace-pre-wrap break-all font-mono text-xs text-slate-200">${escapeHtml(content)}</pre>
+      <pre class="chat-msg-pre">${escapeHtml(content)}</pre>
       ${
         attachedCount > 0
-          ? `<div class="mt-1 text-[10px] text-slate-400">${attachedCount} attachment${attachedCount === 1 ? "" : "s"}</div>`
+          ? `<div class="chat-msg-attachments mt-1">${attachedCount} attachment${attachedCount === 1 ? "" : "s"}</div>`
           : ""
       }
     `;
@@ -612,9 +612,9 @@ export async function renderChat(ctx) {
           const busy = permissionBusy.has(req.id);
           const bits = [req.permission, req.pattern].filter(Boolean).join(" ");
           return `
-            <article class="rounded-sm border border-zinc-800 bg-zinc-900/65 px-2 py-1.5">
-              <div class="truncate text-[11px] text-zinc-200" title="${escapeHtml(req.id)}">${escapeHtml(req.tool)}</div>
-              <div class="mt-0.5 text-[10px] text-zinc-500">${escapeHtml(bits || req.id)}</div>
+            <article class="chat-pack-event-card">
+              <div class="chat-pack-event-title truncate" title="${escapeHtml(req.id)}">${escapeHtml(req.tool)}</div>
+              <div class="chat-pack-event-summary mt-0.5">${escapeHtml(bits || req.id)}</div>
               <div class="mt-1 flex gap-1">
                 <button class="tcp-btn h-6 px-1.5 text-[10px]" data-perm-allow="${escapeHtml(req.id)}" ${busy ? "disabled" : ""}>Allow</button>
                 <button class="tcp-btn h-6 px-1.5 text-[10px]" data-perm-always="${escapeHtml(req.id)}" ${busy ? "disabled" : ""}>Always</button>
@@ -739,13 +739,13 @@ export async function renderChat(ctx) {
       .map(([id, item]) => {
         const pct = Math.max(0, Math.min(100, Number(item.progress || 0)));
         return `
-          <div class="rounded-lg border border-slate-700/70 bg-slate-900/40 px-2 py-1.5">
+          <div class="chat-upload-card">
             <div class="mb-1 flex items-center justify-between gap-2 text-xs">
-              <span class="truncate text-slate-200">${escapeHtml(item.name)}</span>
-              <span class="${item.error ? "text-rose-300" : "text-slate-400"}">${item.error ? escapeHtml(item.error) : `${pct}%`}</span>
+              <span class="chat-upload-name truncate">${escapeHtml(item.name)}</span>
+              <span class="${item.error ? "chat-upload-meta-error" : "chat-upload-meta"}">${item.error ? escapeHtml(item.error) : `${pct}%`}</span>
             </div>
-            <div class="h-1.5 overflow-hidden rounded-full bg-slate-800">
-              <div class="h-full rounded-full bg-slate-400/80 transition-all duration-150" style="width:${pct}%"></div>
+            <div class="chat-upload-bar">
+              <div class="chat-upload-bar-fill" style="width:${pct}%"></div>
             </div>
           </div>
         `;
@@ -947,13 +947,13 @@ export async function renderChat(ctx) {
         const role = escapeHtml(displayRole);
         const roleHtml =
           roleRaw === "assistant"
-            ? `<span class="inline-flex items-center gap-2">${assistantAvatar ? `<img src="${escapeHtml(assistantAvatar)}" alt="${escapeHtml(assistantLabel)}" class="h-5 w-5 rounded-full object-cover ring-1 ring-slate-600" />` : ""}<span>${role}</span></span>`
+            ? `<span class="inline-flex items-center gap-2">${assistantAvatar ? `<img src="${escapeHtml(assistantAvatar)}" alt="${escapeHtml(assistantLabel)}" class="chat-avatar-ring h-5 w-5 rounded-full object-cover" />` : ""}<span>${role}</span></span>`
             : role;
         const textRaw = (m.parts || []).map((p) => p.text || "").join("\n");
         const isAssistantLike = roleRaw === "assistant" || roleRaw === "system";
         const content = isAssistantLike
           ? `<div class="tcp-markdown tcp-markdown-ai">${renderMarkdown(textRaw)}</div>`
-          : `<pre class="max-w-full whitespace-pre-wrap break-all font-mono text-xs text-slate-200">${escapeHtml(textRaw)}</pre>`;
+          : `<pre class="chat-msg-pre">${escapeHtml(textRaw)}</pre>`;
         const roleClass = isAssistantLike ? "assistant" : "user";
         return `<div class="chat-msg ${roleClass}"><div class="chat-msg-role">${roleHtml}</div>${content}</div>`;
       })
@@ -1129,12 +1129,12 @@ export async function renderChat(ctx) {
       const placeholder = document.createElement("div");
       placeholder.className = "chat-msg assistant";
       placeholder.innerHTML = `
-        <div class="chat-msg-role"><span class="inline-flex items-center gap-2">${assistantAvatar ? `<img src="${escapeHtml(assistantAvatar)}" alt="${assistantLabel}" class="h-5 w-5 rounded-full object-cover ring-1 ring-slate-600" />` : ""}<span>${assistantLabel}</span></span></div>
+        <div class="chat-msg-role"><span class="inline-flex items-center gap-2">${assistantAvatar ? `<img src="${escapeHtml(assistantAvatar)}" alt="${assistantLabel}" class="chat-avatar-ring h-5 w-5 rounded-full object-cover" />` : ""}<span>${assistantLabel}</span></span></div>
         <div class="tcp-thinking" aria-live="polite">
           <span>Thinking</span>
           <i></i><i></i><i></i>
         </div>
-        <pre class="streaming-msg hidden whitespace-pre-wrap break-all font-mono text-xs text-slate-200"></pre>
+        <pre class="streaming-msg chat-msg-pre hidden"></pre>
       `;
       messagesEl.appendChild(placeholder);
       messagesEl.scrollTop = messagesEl.scrollHeight;

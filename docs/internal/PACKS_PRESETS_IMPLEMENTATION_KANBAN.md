@@ -67,6 +67,7 @@ Owner: Core Runtime + Product Architecture
   - [x] Replace route-loading placeholders with themed skeleton surfaces for first-paint polish
   - [x] Expand icon registry for packs/presets/settings surfaces to prevent missing icons across rerenders
   - [x] Fix Settings tab icon hydration scope so tab icons persist across section switches
+  - [x] Tokenize chat UI color system so Settings theme selection applies to chat rails/messages/composer/dynamic cards
 
 ## Active Backlog
 
