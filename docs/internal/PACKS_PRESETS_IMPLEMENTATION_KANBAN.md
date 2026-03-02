@@ -18,7 +18,7 @@ Owner: Core Runtime + Product Architecture
   - [x] Deterministic install path (`TANDEM_HOME/packs/<name>/<version>/`)
   - [x] Atomic index update (tmp write then rename)
   - [x] `current` pointer per pack name
-  - [ ] Per-pack lock granularity (current implementation uses one global pack-manager lock)
+  - [x] Per-pack lock granularity (install/uninstall serialize per pack name; index writes remain atomic)
   - [ ] Zip-bomb ratio heuristic and compressed/uncompressed ratio checks
 
 - [ ] Chat attachment ingestion flow

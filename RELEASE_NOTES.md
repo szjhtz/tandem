@@ -78,6 +78,7 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
     - max file count/size/depth enforcement
     - max extracted bytes guardrail
   - Added deterministic pack install/index layout under `TANDEM_HOME/packs` with atomic index updates.
+  - Added per-pack install/uninstall locking (by pack name) while preserving atomic index writes.
   - Added install lifecycle event emission for UI progress/status:
     - `pack.detected`
     - `pack.install.started`

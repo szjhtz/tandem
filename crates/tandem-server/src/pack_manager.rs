@@ -111,14 +111,16 @@ pub struct PackExportResult {
 #[derive(Clone)]
 pub struct PackManager {
     root: PathBuf,
-    lock: Arc<Mutex<()>>,
+    index_lock: Arc<Mutex<()>>,
+    pack_locks: Arc<Mutex<HashMap<String, Arc<Mutex<()>>>>>,
 }
 
 impl PackManager {
     pub fn new(root: PathBuf) -> Self {
         Self {
             root,
-            lock: Arc::new(Mutex::new(())),
+            index_lock: Arc::new(Mutex::new(())),
+            pack_locks: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -165,7 +167,6 @@ impl PackManager {
     }
 
     pub async fn install(&self, input: PackInstallRequest) -> anyhow::Result<PackInstallRecord> {
-        let _guard = self.lock.lock().await;
         self.ensure_layout().await?;
         let source_file = if let Some(path) = input.path.as_deref() {
             PathBuf::from(path)
@@ -194,6 +195,8 @@ impl PackManager {
             .pack_id
             .clone()
             .unwrap_or_else(|| manifest.name.clone());
+        let pack_lock = self.pack_lock(&manifest.name).await;
+        let _pack_guard = pack_lock.lock().await;
 
         let stage_id = format!("install-{}", Uuid::new_v4());
         let stage_root = self.root.join(STAGING_DIR).join(stage_id);
@@ -255,9 +258,17 @@ impl PackManager {
     }
 
     pub async fn uninstall(&self, req: PackUninstallRequest) -> anyhow::Result<PackInstallRecord> {
-        let _guard = self.lock.lock().await;
-        let mut index = self.read_index().await?;
         let selector = req.pack_id.as_deref().or(req.name.as_deref());
+        let index_snapshot = self.read_index().await?;
+        let Some(snapshot_record) =
+            select_record(&index_snapshot, selector, req.version.as_deref())
+        else {
+            return Err(anyhow!("pack not found"));
+        };
+        let pack_lock = self.pack_lock(&snapshot_record.name).await;
+        let _pack_guard = pack_lock.lock().await;
+
+        let mut index = self.read_index().await?;
         let Some(record) = select_record(&index, selector, req.version.as_deref()) else {
             return Err(anyhow!("pack not found"));
         };
@@ -277,7 +288,6 @@ impl PackManager {
     }
 
     pub async fn export(&self, req: PackExportRequest) -> anyhow::Result<PackExportResult> {
-        let _guard = self.lock.lock().await;
         let index = self.read_index().await?;
         let selector = req.pack_id.as_deref().or(req.name.as_deref());
         let Some(record) = select_record(&index, selector, req.version.as_deref()) else {
@@ -339,6 +349,16 @@ impl PackManager {
     }
 
     async fn read_index(&self) -> anyhow::Result<PackIndex> {
+        let _index_guard = self.index_lock.lock().await;
+        self.read_index_unlocked().await
+    }
+
+    async fn write_index(&self, index: &PackIndex) -> anyhow::Result<()> {
+        let _index_guard = self.index_lock.lock().await;
+        self.write_index_unlocked(index).await
+    }
+
+    async fn read_index_unlocked(&self) -> anyhow::Result<PackIndex> {
         let index_path = self.root.join(INDEX_FILE);
         if !index_path.exists() {
             return Ok(PackIndex::default());
@@ -350,7 +370,7 @@ impl PackManager {
         Ok(parsed)
     }
 
-    async fn write_index(&self, index: &PackIndex) -> anyhow::Result<()> {
+    async fn write_index_unlocked(&self, index: &PackIndex) -> anyhow::Result<()> {
         self.ensure_layout().await?;
         let index_path = self.root.join(INDEX_FILE);
         let tmp = self
@@ -363,14 +383,15 @@ impl PackManager {
     }
 
     async fn write_record(&self, record: PackInstallRecord) -> anyhow::Result<()> {
-        let mut index = self.read_index().await?;
+        let _index_guard = self.index_lock.lock().await;
+        let mut index = self.read_index_unlocked().await?;
         index.packs.retain(|row| {
             !(row.pack_id == record.pack_id
                 && row.name == record.name
                 && row.version == record.version)
         });
         index.packs.push(record);
-        self.write_index(&index).await
+        self.write_index_unlocked(&index).await
     }
 
     async fn repoint_current_if_needed(&self, pack_name: &str) -> anyhow::Result<()> {
@@ -390,6 +411,14 @@ impl PackManager {
             tokio::fs::remove_file(current_path).await.ok();
         }
         Ok(())
+    }
+
+    async fn pack_lock(&self, pack_name: &str) -> Arc<Mutex<()>> {
+        let mut locks = self.pack_locks.lock().await;
+        locks
+            .entry(pack_name.to_string())
+            .or_insert_with(|| Arc::new(Mutex::new(())))
+            .clone()
     }
 }
 
