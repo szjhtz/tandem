@@ -98,6 +98,15 @@ export async function renderFiles(ctx) {
   state.filesDir = currentDir;
 
   byId("view").innerHTML = `
+    <div class="tcp-card">
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <h3 class="tcp-title">Moved To Settings</h3>
+          <p class="tcp-subtle">Files and storage tools are now organized under Settings.</p>
+        </div>
+        <button id="files-open-settings" class="tcp-btn"><i data-lucide="settings"></i> Open Settings</button>
+      </div>
+    </div>
     <div class="tcp-card grid gap-3">
       <div class="flex flex-wrap items-center justify-between gap-2">
         <h3 class="tcp-title">Storage Browser</h3>
@@ -124,6 +133,7 @@ export async function renderFiles(ctx) {
       </div>
     </div>
   `;
+  byId("files-open-settings")?.addEventListener("click", () => setRoute("settings"));
 
   const tableEl = byId("files-table");
   const progressEl = byId("files-upload-progress");

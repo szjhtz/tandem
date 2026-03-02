@@ -13,6 +13,10 @@ export const ROUTES = [
   ["settings", "Settings", "settings"],
 ];
 
+export const NAV_ROUTES = ROUTES.filter(
+  ([id]) => !["channels", "mcp", "packs", "files"].includes(id)
+);
+
 export const providerHints = {
   openai: {
     label: "OpenAI",

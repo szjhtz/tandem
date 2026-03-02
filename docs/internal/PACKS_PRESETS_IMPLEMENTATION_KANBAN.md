@@ -55,12 +55,14 @@ Owner: Core Runtime + Product Architecture
   - [x] Automation Preset builder with step-agent binding swaps
   - [x] Upgrade flow with permissions diff + re-approval (stub-backed API/UI signaling)
 
+- [x] Control Panel IA alignment under Settings
+  - [x] Move `Packs`, `Channels`, `MCP`, and `Files` out of primary sidebar nav
+  - [x] Add `Settings` launchers for packs/channels/mcp/files management surfaces
+  - [x] Add migration prompts in Automations and legacy surfaces to direct users to Settings
+
 ## Active Backlog
 
-- [x] Desktop native surfaces for preset builders (command-first in TUI; backed by shared preset APIs)
-  - [x] TUI engine client preset API methods (`presets_index`, `presets_compose_preview`, `presets_capability_summary`, `presets_fork`, `presets_override_put`)
-  - [x] Add desktop commands/views for agent preset compose/summary/fork flows
-  - [x] Add desktop commands/views for automation task-agent binding summary/save flows
+- [ ] None (current v0.4.0 packs/presets scope complete)
 
 ## Done
 

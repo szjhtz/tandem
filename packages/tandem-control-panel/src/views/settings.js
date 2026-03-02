@@ -1,8 +1,21 @@
 const CUSTOM_PROVIDER_VALUE = "__custom_provider__";
 
 export async function renderSettings(ctx) {
-  const { byId, state, escapeHtml } = ctx;
+  const { byId, state, escapeHtml, setRoute } = ctx;
   byId("view").innerHTML = `
+    <div class="tcp-card">
+      <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <h3 class="tcp-title flex items-center gap-2"><i data-lucide="sliders-horizontal"></i> Integrations & Assets</h3>
+        <span class="tcp-badge-info">Settings Home</span>
+      </div>
+      <p class="tcp-subtle">Packs, Channels, MCP, and Files are managed from Settings. Use these launchers to open each surface.</p>
+      <div class="mt-3 grid gap-2 md:grid-cols-2">
+        <button id="settings-open-packs" class="tcp-btn"><i data-lucide="package"></i> Open Packs</button>
+        <button id="settings-open-channels" class="tcp-btn"><i data-lucide="message-circle"></i> Open Channels</button>
+        <button id="settings-open-mcp" class="tcp-btn"><i data-lucide="link"></i> Open MCP</button>
+        <button id="settings-open-files" class="tcp-btn"><i data-lucide="folder-open"></i> Open Files</button>
+      </div>
+    </div>
     <div class="tcp-card">
       <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
         <h3 class="tcp-title flex items-center gap-2"><i data-lucide="settings-2"></i> Provider Setup Wizard</h3>
@@ -22,6 +35,10 @@ export async function renderSettings(ctx) {
       <p class="tcp-subtle">Use Logout in the sidebar to clear your current portal session token binding.</p>
     </div>
   `;
+  byId("settings-open-packs")?.addEventListener("click", () => setRoute("packs"));
+  byId("settings-open-channels")?.addEventListener("click", () => setRoute("channels"));
+  byId("settings-open-mcp")?.addEventListener("click", () => setRoute("mcp"));
+  byId("settings-open-files")?.addEventListener("click", () => setRoute("files"));
   await renderProvidersBlock(ctx, byId("provider-settings"));
   await renderIdentityBlock(ctx, byId("identity-settings"));
 }

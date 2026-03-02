@@ -189,7 +189,7 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
     - `/preset automation save <id> :: <tasks_json> [:: required=<csv> :: optional=<csv>]`
 
 - Control Panel Pack Library UI (`packages/tandem-control-panel`)
-  - Added new `Packs` route in left nav.
+  - Added dedicated `Packs` management view (now launched from `Settings`).
   - Added Pack Library view with actions:
     - list installed packs
     - inspect metadata
@@ -216,6 +216,10 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
     - task-agent binding rows with add/remove and per-step capability inputs
     - merged automation capability summary (`/presets/capability_summary`)
     - save override (`PUT /presets/overrides/automation_preset/{id}`)
+  - Updated control-panel information architecture for settings-centric management:
+    - moved `Packs`, `Channels`, `MCP`, and `Files` out of primary sidebar nav
+    - added `Settings` launchers for these surfaces under `Integrations & Assets`
+    - added migration prompts in Automations and legacy pages to route users to Settings
 
 - Control Panel pack event cards + actions
   - Added `pack.*` event-specific cards in `Live Feed` with direct actions:

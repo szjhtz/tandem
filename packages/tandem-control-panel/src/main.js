@@ -5,7 +5,7 @@ import { api } from "./app/api.js";
 import { byId, escapeHtml } from "./app/dom.js";
 import { routeFromHash, ensureRoute, setHashRoute } from "./app/router.js";
 import { createToasts } from "./app/toasts.js";
-import { createState, ROUTES, providerHints } from "./app/store.js";
+import { createState, NAV_ROUTES, ROUTES, providerHints } from "./app/store.js";
 import { VIEW_RENDERERS } from "./views/index.js";
 import { renderIcons } from "./app/icons.js";
 
@@ -437,7 +437,7 @@ function renderShell() {
   `;
 
   const nav = byId("nav");
-  nav.innerHTML = ROUTES.map(
+  nav.innerHTML = NAV_ROUTES.map(
     ([id, label, icon]) => `
       <button data-route="${id}" class="nav-item ${id === state.route ? "active" : ""}">
         <i data-lucide="${icon}"></i><span>${label}</span>

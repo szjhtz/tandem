@@ -129,7 +129,7 @@ function buildHeaders({ authMode, token, customHeader, transport }) {
 }
 
 export async function renderMcp(ctx) {
-  const { state, byId, api, toast, escapeHtml } = ctx;
+  const { state, byId, api, toast, escapeHtml, setRoute } = ctx;
   const [serversRaw, toolsRaw] = await Promise.all([
     state.client.mcp.list().catch(() => ({})),
     state.client.mcp.listTools().catch(() => []),
@@ -139,6 +139,15 @@ export async function renderMcp(ctx) {
   const toolIds = normalizeTools(toolsRaw);
 
   byId("view").innerHTML = `
+    <div class="tcp-card">
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <h3 class="tcp-title">Moved To Settings</h3>
+          <p class="tcp-subtle">MCP connection management is now organized under Settings.</p>
+        </div>
+        <button id="mcp-open-settings" class="tcp-btn"><i data-lucide="settings"></i> Open Settings</button>
+      </div>
+    </div>
     <div class="grid gap-4 xl:grid-cols-[440px_1fr]">
       <div class="tcp-card">
         <h3 class="tcp-title mb-2">Add MCP Server</h3>
@@ -191,6 +200,7 @@ export async function renderMcp(ctx) {
       </div>
     </div>
   `;
+  byId("mcp-open-settings")?.addEventListener("click", () => setRoute("settings"));
 
   const nameEl = byId("mcp-name");
   const transportEl = byId("mcp-transport");

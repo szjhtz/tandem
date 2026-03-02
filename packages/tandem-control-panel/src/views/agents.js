@@ -1,5 +1,5 @@
 export async function renderAgents(ctx) {
-  const { state, byId, toast, escapeHtml, api, renderIcons } = ctx;
+  const { state, byId, toast, escapeHtml, api, renderIcons, setRoute } = ctx;
   const AGENTS_TABS = ["overview", "routines", "automations", "templates", "runs"];
   const AGENTS_WIZARD_SEEN_KEY = "tcp_agents_wizard_seen_v1";
   const parseAgentsUiState = () => {
@@ -538,7 +538,10 @@ export async function renderAgents(ctx) {
           <h3 class="tcp-title">Automations</h3>
           <p class="tcp-subtle text-xs">Build, schedule, and operate routines and multi-agent automations.</p>
         </div>
-        <button id="agents-launch-wizard" class="tcp-btn-primary"><i data-lucide="sparkles"></i> Launch Walkthrough</button>
+        <div class="flex flex-wrap gap-2">
+          <button id="agents-open-settings-integrations" class="tcp-btn"><i data-lucide="settings"></i> Integrations In Settings</button>
+          <button id="agents-launch-wizard" class="tcp-btn-primary"><i data-lucide="sparkles"></i> Launch Walkthrough</button>
+        </div>
       </div>
       <div class="agents-tabs mt-3">
         <button class="agents-tab-btn ${uiState.tab === "overview" ? "active" : ""}" data-agents-tab="overview">Overview</button>
@@ -830,6 +833,9 @@ export async function renderAgents(ctx) {
     );
   byId("agents-launch-wizard")?.addEventListener("click", () => {
     writeAgentsUiState({ wizard: true, step: 0 });
+  });
+  byId("agents-open-settings-integrations")?.addEventListener("click", () => {
+    setRoute("settings");
   });
   byId("agents-wizard-close")?.addEventListener("click", () => {
     try {

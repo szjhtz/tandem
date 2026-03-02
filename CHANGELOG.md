@@ -124,6 +124,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - task-agent binding rows (step-level agent swaps)
     - automation-level merged capability summary via `/presets/capability_summary`
     - override save flow via `/presets/overrides/automation_preset/{id}`
+  - moved `Packs`, `Channels`, `MCP`, and `Files` out of primary sidebar navigation into a Settings-centric information architecture
+  - added `Settings -> Integrations & Assets` launcher panel to open pack/channel/mcp/file management surfaces
+  - added in-view migration prompts from Automations and legacy surfaces to direct users into Settings
 - **Control Panel pack-event action surfaces (`packages/tandem-control-panel`)**:
   - added pack-specific event cards in `Live Feed` for `pack.*` events
   - added one-click actions from feed cards: open pack library, install from path, install from attachment
