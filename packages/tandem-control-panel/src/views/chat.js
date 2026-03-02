@@ -1,4 +1,5 @@
 import { renderMarkdown } from "../app/markdown.js";
+import { confirmActionModal } from "../app/dom.js";
 
 const CHAT_UPLOAD_DIR = "control-panel";
 const CHAT_AUTO_APPROVE_KEY = "tandem_control_panel_chat_auto_approve_tools";
@@ -917,7 +918,12 @@ export async function renderChat(ctx) {
         e.stopPropagation();
         const sid = btn.dataset.delSid;
         if (!sid) return;
-        if (!window.confirm("Delete this session?")) return;
+        const approved = await confirmActionModal({
+          title: "Delete session",
+          message: "This will permanently remove this chat session and its messages.",
+          confirmLabel: "Delete session",
+        });
+        if (!approved) return;
         try {
           await removeSession(sid);
           toast("ok", "Session deleted.");

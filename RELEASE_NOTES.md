@@ -16,6 +16,7 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
   - Settings “Test Model Run” now pins explicit provider/model and blocks early when key prerequisites are missing.
   - Custom provider IDs are normalized consistently during save/test/delete key flows.
   - Reduced false “No stored key detected” states by consuming the real `/provider/auth` status response.
+  - Replaced browser-native delete confirms with themed in-app confirmation modals for session, file, and pack deletion actions.
 
 - Marketplace Pack architecture/spec expansion
   - Added a full marketplace-ready spec set under `specs/packs/`:

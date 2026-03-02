@@ -1,3 +1,5 @@
+import { confirmActionModal } from "../app/dom.js";
+
 function formatBytes(bytes) {
   const n = Number(bytes || 0);
   if (n < 1024) return `${n} B`;
@@ -222,7 +224,12 @@ export async function renderFiles(ctx) {
         const i = Number(el.dataset.delFile);
         if (!Number.isFinite(i) || !files[i]) return;
         const pick = files[i];
-        if (!window.confirm(`Delete ${pick.path}?`)) return;
+        const approved = await confirmActionModal({
+          title: "Delete file",
+          message: `Permanently delete ${pick.path}?`,
+          confirmLabel: "Delete file",
+        });
+        if (!approved) return;
         try {
           await api("/api/files/delete", { method: "POST", body: JSON.stringify({ path: pick.path }) });
           toast("ok", `${pick.name} deleted.`);

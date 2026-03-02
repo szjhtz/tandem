@@ -118,6 +118,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - added Agent Preset Builder section with:
     - source preset selection
     - deterministic compose preview via `/presets/compose/preview`
+  - replaced browser `window.confirm` destructive prompts with themed in-app confirmation modals for:
+    - chat session deletion
+    - pack uninstall
+    - file deletion
     - capability summary via `/presets/capability_summary`
     - fork/save override flows via `/presets/fork` and `/presets/overrides/agent_preset/{id}`
   - added Automation Preset Builder section with:

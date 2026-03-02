@@ -1,3 +1,5 @@
+import { confirmActionModal } from "../app/dom.js";
+
 export async function renderPacks(ctx) {
   const { byId, state, toast, renderIcons, escapeHtml, api, setRoute } = ctx;
   const embeddedInSettings = ctx?.embeddedInSettings === true;
@@ -552,7 +554,12 @@ export async function renderPacks(ctx) {
         btn.addEventListener("click", async () => {
           const id = btn.getAttribute("data-pack-remove");
           if (!id) return;
-          if (!window.confirm(`Uninstall pack ${id}?`)) return;
+          const approved = await confirmActionModal({
+            title: "Uninstall pack",
+            message: `Remove installed pack ${id}? This does not delete exported zip files.`,
+            confirmLabel: "Uninstall",
+          });
+          if (!approved) return;
           try {
             await packsApi.uninstall({ pack_id: id });
             toast("ok", `Uninstalled ${id}`);

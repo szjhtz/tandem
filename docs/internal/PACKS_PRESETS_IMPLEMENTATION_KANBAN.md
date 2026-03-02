@@ -75,6 +75,7 @@ Owner: Core Runtime + Product Architecture
   - [x] Restore multi-theme selector + full theme catalog in Settings Appearance
   - [x] Fix provider test flow in Settings to use single async probe (remove sync/async double-run stall path)
   - [x] Hide internal provider-test sessions from chat list and run tests outside workspace-scoped session surface
+  - [x] Replace browser-native delete confirms with themed in-app modals (chat sessions, pack uninstall, file delete)
 
 ## Active Backlog
 
