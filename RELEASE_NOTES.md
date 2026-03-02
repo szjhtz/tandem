@@ -100,6 +100,13 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
     - `composio` -> `arcade` -> `mcp` -> `custom`
   - Added structured resolver conflict payload (`missing_capability`) for unresolved required capabilities.
 
+- TypeScript SDK parity updates (`@frumu/tandem-client`)
+  - Added `client.packs` namespace:
+    - `list`, `inspect`, `install`, `installFromAttachment`, `uninstall`, `export`, `detect`, `updates`, `update`
+  - Added `client.capabilities` namespace:
+    - `getBindings`, `setBindings`, `discovery`, `resolve`
+  - Added public TS types for pack and capability contracts used by these APIs.
+
 - Internal execution tracking
   - Added implementation Kanban board:
     - `docs/internal/PACKS_PRESETS_IMPLEMENTATION_KANBAN.md`

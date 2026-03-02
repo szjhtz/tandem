@@ -151,6 +151,29 @@ const tools = await client.mcp.listTools();
 | `put(channel, payload)` | Configure a channel            |
 | `delete(channel)`       | Remove a channel configuration |
 
+### `client.packs`
+
+| Method                                | Description                                 |
+| ------------------------------------- | ------------------------------------------- |
+| `list()`                              | List installed packs                        |
+| `inspect(selector)`                   | Inspect pack manifest/trust/risk            |
+| `install({ path \| url, source? })`   | Install a pack zip                          |
+| `installFromAttachment(options)`      | Install from downloaded attachment path     |
+| `uninstall({ pack_id \| name })`      | Uninstall pack                              |
+| `export(options)`                     | Export installed pack to zip                |
+| `detect({ path, ... })`               | Detect root `tandempack.yaml` marker in zip |
+| `updates(selector)`                   | Check updates (stub in v0.4.0)              |
+| `update(selector, { target_version})` | Apply update (stub in v0.4.0)               |
+
+### `client.capabilities`
+
+| Method              | Description                                      |
+| ------------------- | ------------------------------------------------ |
+| `getBindings()`     | Load current capability bindings file            |
+| `setBindings(file)` | Replace capability bindings file                 |
+| `discovery()`       | Discover provider tools for capability resolver  |
+| `resolve(input)`    | Resolve capability IDs to provider tool bindings |
+
 ### `client.permissions`
 
 | Method                    | Description                       |

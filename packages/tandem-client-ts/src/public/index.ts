@@ -471,6 +471,87 @@ export interface ResourceWriteResponse {
   [key: string]: unknown;
 }
 
+// ─── Packs + Capabilities ────────────────────────────────────────────────────
+
+export interface PackInstallRecord {
+  pack_id: string;
+  name: string;
+  version: string;
+  pack_type?: string;
+  install_path?: string;
+  sha256?: string;
+  installed_at_ms?: number;
+  routines_enabled?: boolean;
+  [key: string]: unknown;
+}
+
+export interface PacksListResponse {
+  packs: PackInstallRecord[];
+}
+
+export interface PackInspectionResponse {
+  pack: {
+    installed: PackInstallRecord;
+    manifest?: JsonObject;
+    trust?: JsonObject;
+    risk?: JsonObject;
+  };
+}
+
+export interface PackInstallOptions {
+  path?: string;
+  url?: string;
+  source?: JsonObject;
+}
+
+export interface PackUninstallOptions {
+  pack_id?: string;
+  name?: string;
+  version?: string;
+}
+
+export interface PackExportOptions {
+  pack_id?: string;
+  name?: string;
+  version?: string;
+  output_path?: string;
+}
+
+export interface PackDetectOptions {
+  path: string;
+  attachment_id?: string;
+  connector?: string;
+  channel_id?: string;
+  sender_id?: string;
+}
+
+export interface CapabilityBindingRecord {
+  capability_id: string;
+  provider: string;
+  tool_name: string;
+  request_transform?: JsonObject | null;
+  response_transform?: JsonObject | null;
+  metadata?: JsonObject;
+}
+
+export interface CapabilityBindingsFile {
+  schema_version: string;
+  generated_at?: string | null;
+  bindings: CapabilityBindingRecord[];
+}
+
+export interface CapabilityResolveInput {
+  workflow_id?: string;
+  required_capabilities?: string[];
+  optional_capabilities?: string[];
+  provider_preference?: string[];
+  available_tools?: Array<{
+    provider: string;
+    tool_name: string;
+    schema?: JsonObject;
+  }>;
+}
+
 // ─── Routines & Automations ──────────────────────────────────────────────────
 
 export type RoutineFamily = "routines" | "automations";

@@ -49,6 +49,15 @@ import type {
   ResourceListResponse,
   ResourceWriteOptions,
   ResourceWriteResponse,
+  PackInstallRecord,
+  PacksListResponse,
+  PackInspectionResponse,
+  PackInstallOptions,
+  PackUninstallOptions,
+  PackExportOptions,
+  PackDetectOptions,
+  CapabilityBindingsFile,
+  CapabilityResolveInput,
   RoutineRecord,
   DefinitionListResponse,
   DefinitionCreateResponse,
@@ -184,6 +193,10 @@ export class TandemClient {
   readonly memory: Memory;
   /** Agent skill packs */
   readonly skills: Skills;
+  /** Tandem pack lifecycle management */
+  readonly packs: Packs;
+  /** Capability bindings + resolver APIs */
+  readonly capabilities: Capabilities;
   /** Key-value resource store */
   readonly resources: Resources;
   /** Agent team orchestration */
@@ -209,6 +222,8 @@ export class TandemClient {
     this.automationsV2 = new AutomationsV2(req);
     this.memory = new Memory(req);
     this.skills = new Skills(req);
+    this.packs = new Packs(req);
+    this.capabilities = new Capabilities(req);
     this.resources = new Resources(req);
     this.agentTeams = new AgentTeams(req);
     this.missions = new Missions(req);
@@ -972,6 +987,156 @@ class Skills {
     const raw = await this.req<unknown>("/skills/templates");
     if (Array.isArray(raw)) return { templates: raw as SkillTemplate[], count: raw.length };
     return raw as SkillTemplatesResponse;
+  }
+}
+
+// ─── Packs namespace ──────────────────────────────────────────────────────────
+
+class Packs {
+  constructor(private req: TandemClient["_request"]) {}
+
+  /** List installed tandem packs. */
+  async list(): Promise<PacksListResponse> {
+    return this.req<PacksListResponse>("/packs");
+  }
+
+  /** Inspect an installed pack by `pack_id` or `name`. */
+  async inspect(selector: string): Promise<PackInspectionResponse> {
+    return this.req<PackInspectionResponse>(`/packs/${encodeURIComponent(selector)}`);
+  }
+
+  /** Install a pack from local path or URL. */
+  async install(options: PackInstallOptions): Promise<{ installed: PackInstallRecord }> {
+    return this.req<{ installed: PackInstallRecord }>("/packs/install", {
+      method: "POST",
+      body: JSON.stringify(options),
+    });
+  }
+
+  /** Install a pack from a downloaded attachment path. */
+  async installFromAttachment(options: {
+    attachment_id: string;
+    path: string;
+    connector?: string;
+    channel_id?: string;
+    sender_id?: string;
+  }): Promise<{ installed: PackInstallRecord }> {
+    return this.req<{ installed: PackInstallRecord }>("/packs/install_from_attachment", {
+      method: "POST",
+      body: JSON.stringify(options),
+    });
+  }
+
+  /** Uninstall a pack by `pack_id` or `name` (+ optional version). */
+  async uninstall(options: PackUninstallOptions): Promise<{ removed: PackInstallRecord }> {
+    return this.req<{ removed: PackInstallRecord }>("/packs/uninstall", {
+      method: "POST",
+      body: JSON.stringify(options),
+    });
+  }
+
+  /** Export an installed pack to zip. */
+  async export(options: PackExportOptions): Promise<{
+    exported: { path: string; sha256: string; bytes: number };
+  }> {
+    return this.req<{
+      exported: { path: string; sha256: string; bytes: number };
+    }>("/packs/export", {
+      method: "POST",
+      body: JSON.stringify(options),
+    });
+  }
+
+  /** Detect `tandempack.yaml` marker in zip path. */
+  async detect(options: PackDetectOptions): Promise<{ is_pack: boolean; marker: string }> {
+    return this.req<{ is_pack: boolean; marker: string }>("/packs/detect", {
+      method: "POST",
+      body: JSON.stringify(options),
+    });
+  }
+
+  /** Check available updates for a pack (stub endpoint in v0.4.0). */
+  async updates(selector: string): Promise<{
+    pack_id?: string;
+    name?: string;
+    current_version?: string;
+    updates: JsonObject[];
+  }> {
+    const raw = await this.req<unknown>(`/packs/${encodeURIComponent(selector)}/updates`);
+    const asObj = (raw || {}) as JsonObject;
+    const updates = Array.isArray(asObj.updates) ? (asObj.updates as JsonObject[]) : [];
+    return {
+      pack_id: asString(asObj.pack_id) ?? undefined,
+      name: asString(asObj.name) ?? undefined,
+      current_version: asString(asObj.current_version) ?? undefined,
+      updates,
+    };
+  }
+
+  /** Apply a pack update (stub endpoint in v0.4.0). */
+  async update(
+    selector: string,
+    options?: { target_version?: string }
+  ): Promise<{
+    updated: boolean;
+    pack_id?: string;
+    name?: string;
+    current_version?: string;
+    target_version?: string;
+    reason?: string;
+  }> {
+    const raw = await this.req<JsonObject>(`/packs/${encodeURIComponent(selector)}/update`, {
+      method: "POST",
+      body: JSON.stringify(options ?? {}),
+    });
+    return {
+      updated: Boolean(raw.updated),
+      pack_id: asString(raw.pack_id) ?? undefined,
+      name: asString(raw.name) ?? undefined,
+      current_version: asString(raw.current_version) ?? undefined,
+      target_version: asString(raw.target_version) ?? undefined,
+      reason: asString(raw.reason) ?? undefined,
+    };
+  }
+}
+
+// ─── Capabilities namespace ───────────────────────────────────────────────────
+
+class Capabilities {
+  constructor(private req: TandemClient["_request"]) {}
+
+  /** Get current capability bindings file. */
+  async getBindings(): Promise<CapabilityBindingsFile> {
+    const raw = await this.req<{ bindings: CapabilityBindingsFile }>("/capabilities/bindings");
+    return raw.bindings;
+  }
+
+  /** Replace capability bindings file. */
+  async setBindings(bindings: CapabilityBindingsFile): Promise<{ ok: boolean }> {
+    return this.req<{ ok: boolean }>("/capabilities/bindings", {
+      method: "PUT",
+      body: JSON.stringify(bindings),
+    });
+  }
+
+  /** Discover provider tools available for resolution. */
+  async discovery(): Promise<{
+    tools: Array<{ provider: string; tool_name: string; schema?: JsonObject }>;
+  }> {
+    return this.req<{
+      tools: Array<{ provider: string; tool_name: string; schema?: JsonObject }>;
+    }>("/capabilities/discovery");
+  }
+
+  /**
+   * Resolve capability IDs to provider tools.
+   * Returns resolver payload on success; throws on HTTP errors (including 409 missing capability).
+   */
+  async resolve(input: CapabilityResolveInput): Promise<{ resolution: JsonObject }> {
+    return this.req<{ resolution: JsonObject }>("/capabilities/resolve", {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
   }
 }
 
