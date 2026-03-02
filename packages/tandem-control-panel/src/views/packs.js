@@ -1,5 +1,12 @@
 export async function renderPacks(ctx) {
   const { byId, state, toast, renderIcons, escapeHtml } = ctx;
+  const trustBadgeClass = (badge) => {
+    const value = String(badge || "").toLowerCase();
+    if (value === "official") return "tcp-badge-info";
+    if (value === "verified") return "tcp-badge-warn";
+    return "tcp-badge-err";
+  };
+  const asArray = (value) => (Array.isArray(value) ? value : []);
   const app = byId("view");
   app.innerHTML = `
     <div class="tcp-card mb-4">
@@ -14,6 +21,7 @@ export async function renderPacks(ctx) {
         <button id="packs-refresh-btn" class="tcp-btn"><i data-lucide="refresh-cw"></i> Refresh</button>
         <button id="packs-cap-discovery-btn" class="tcp-btn"><i data-lucide="binary"></i> Capability Discovery</button>
       </div>
+      <div id="packs-inspect-summary" class="mt-3 hidden rounded-xl border border-slate-800 bg-slate-950/70 p-3 text-xs text-slate-200"></div>
       <pre id="packs-meta" class="mt-3 rounded-xl border border-slate-800 bg-slate-950/70 p-3 text-xs text-slate-300 hidden"></pre>
     </div>
     <div id="packs-list" class="grid gap-3"></div>
@@ -21,11 +29,45 @@ export async function renderPacks(ctx) {
 
   const packsListEl = byId("packs-list");
   const metaEl = byId("packs-meta");
+  const summaryEl = byId("packs-inspect-summary");
+
+  const setInspectSummary = (inspection) => {
+    if (!summaryEl) return;
+    const pack = inspection?.pack || {};
+    const installed = pack?.installed || {};
+    const trust = pack?.trust || {};
+    const risk = pack?.risk || {};
+    const sheet = pack?.permission_sheet || {};
+    const badge = String(trust?.verification_badge || "unverified");
+    const signature = String(trust?.signature || "unsigned");
+    const required = asArray(sheet?.required_capabilities);
+    const optional = asArray(sheet?.optional_capabilities);
+    const providerSpecific = asArray(sheet?.provider_specific_dependencies);
+    const routines = asArray(sheet?.routines_declared);
+    const packLabel = `${String(installed?.name || "unknown")}@${String(installed?.version || "unknown")}`;
+    summaryEl.classList.remove("hidden");
+    summaryEl.innerHTML = `
+      <div class="flex items-center justify-between gap-2">
+        <strong class="text-sm">${escapeHtml(packLabel)}</strong>
+        <span class="${trustBadgeClass(badge)}">${escapeHtml(badge)}</span>
+      </div>
+      <div class="mt-2 grid gap-1 text-[11px] text-slate-300">
+        <div>signature: <span class="font-mono">${escapeHtml(signature)}</span></div>
+        <div>risk level: <span class="font-mono">${escapeHtml(String(sheet?.risk_level || "standard"))}</span></div>
+        <div>required capabilities: <span class="font-mono">${required.length}</span></div>
+        <div>optional capabilities: <span class="font-mono">${optional.length}</span></div>
+        <div>provider-specific deps: <span class="font-mono">${providerSpecific.length}</span></div>
+        <div>routines declared: <span class="font-mono">${routines.length}</span></div>
+        <div>routines enabled: <span class="font-mono">${escapeHtml(String(risk?.routines_enabled ?? false))}</span></div>
+      </div>
+    `;
+  };
   const setMeta = (value) => {
     if (!metaEl) return;
     if (!value) {
       metaEl.classList.add("hidden");
       metaEl.textContent = "";
+      summaryEl?.classList.add("hidden");
       return;
     }
     metaEl.classList.remove("hidden");
@@ -73,6 +115,7 @@ export async function renderPacks(ctx) {
           if (!id) return;
           try {
             const inspected = await state.client.packs.inspect(id);
+            setInspectSummary(inspected);
             setMeta(inspected);
           } catch (e) {
             toast("err", `Inspect failed: ${e instanceof Error ? e.message : String(e)}`);

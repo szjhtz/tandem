@@ -45,7 +45,7 @@ Owner: Core Runtime + Product Architecture
   - [ ] Export composed project overrides as pack content
 
 - [ ] UI parity (Desktop + Control Panel)
-  - [ ] Pack Library view: install/inspect/uninstall/export/trust status
+  - [x] Pack Library view: install/inspect/uninstall/export/trust status
   - [ ] Skill Module library with capability + publisher filters
   - [ ] Agent Preset builder with prompt preview + capability summary
   - [ ] Automation Preset builder with step-agent binding swaps

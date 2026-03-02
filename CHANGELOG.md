@@ -92,6 +92,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - added dedicated `Packs` route/view for install/inspect/export/uninstall/update-stub actions
   - added control-panel UI hooks for capability discovery (`client.capabilities.discovery()`)
   - added pack install flows for URL/server-path sources from within control panel
+  - added inspect-time trust/risk summary card in Pack Library (verification badge, signature state, capability/routine summary, provider-specific dependency count)
 - **Control Panel pack-event action surfaces (`packages/tandem-control-panel`)**:
   - added pack-specific event cards in `Live Feed` for `pack.*` events
   - added one-click actions from feed cards: open pack library, install from path, install from attachment

@@ -161,6 +161,11 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
     - uninstall
     - update checks and update stub calls
   - Added capability discovery action to inspect currently discovered tools from UI.
+  - Added inspect-time trust/risk summary panel in Pack Library:
+    - verification badge + signature status
+    - required/optional capability counts
+    - provider-specific dependency count
+    - routines declared/enabled summary
 
 - Control Panel pack event cards + actions
   - Added `pack.*` event-specific cards in `Live Feed` with direct actions:
