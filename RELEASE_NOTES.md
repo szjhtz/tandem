@@ -61,6 +61,32 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
     - `packages/tandem-control-panel`
   - Added explicit chat attachment ingestion contract for pack detection/install cards (`tandempack.yaml` marker-driven).
 
+- PackManager runtime/API implementation (first tranche)
+  - Added initial server PackManager endpoints:
+    - `GET /packs`
+    - `GET /packs/{selector}`
+    - `POST /packs/install`
+    - `POST /packs/install_from_attachment`
+    - `POST /packs/uninstall`
+    - `POST /packs/export`
+    - `POST /packs/detect`
+  - Added zip root-marker detection for pack eligibility (`tandempack.yaml` at archive root only).
+  - Added install safety controls for zip extraction:
+    - path traversal rejection
+    - max file count/size/depth enforcement
+    - max extracted bytes guardrail
+  - Added deterministic pack install/index layout under `TANDEM_HOME/packs` with atomic index updates.
+  - Added install lifecycle event emission for UI progress/status:
+    - `pack.detected`
+    - `pack.install.started`
+    - `pack.install.succeeded`
+    - `pack.install.failed`
+    - `registry.updated`
+
+- Internal execution tracking
+  - Added implementation Kanban board:
+    - `docs/internal/PACKS_PRESETS_IMPLEMENTATION_KANBAN.md`
+
 ## v0.3.28 (Unreleased)
 
 - Control panel UX and workflow hotfixes

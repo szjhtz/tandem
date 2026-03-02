@@ -37,6 +37,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - first-class PackManager API surface
   - shared PresetRegistry API surface for Desktop + Control Panel
   - attachment-driven pack detection/install UX contract for chat surfaces
+- **Initial PackManager runtime/API implementation (server)**:
+  - added pack routes:
+    - `GET /packs`
+    - `GET /packs/{selector}`
+    - `POST /packs/install`
+    - `POST /packs/install_from_attachment`
+    - `POST /packs/uninstall`
+    - `POST /packs/export`
+    - `POST /packs/detect`
+  - root-marker detection enforced via zip central directory entry `tandempack.yaml`
+  - safe install extraction checks added (path traversal, size/count/depth limits)
+  - deterministic install/index paths under `TANDEM_HOME/packs` with atomic index writes
+  - pack lifecycle events emitted (`pack.detected`, `pack.install.started|succeeded|failed`, `registry.updated`)
+- **Pack implementation Kanban tracking**:
+  - added `docs/internal/PACKS_PRESETS_IMPLEMENTATION_KANBAN.md` for phased execution tracking
 - **Deterministic composition and governance rules** in specs:
   - stable prompt assembly ordering
   - capability/policy merge semantics

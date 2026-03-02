@@ -58,13 +58,14 @@ use tandem_wire::{
 use crate::ResourceStoreError;
 use crate::{
     agent_teams::{emit_spawn_approved, emit_spawn_denied, emit_spawn_requested},
-    evaluate_routine_execution_policy, ActiveRun, AppState, AutomationAgentMcpPolicy,
-    AutomationAgentProfile, AutomationAgentToolPolicy, AutomationExecutionPolicy,
-    AutomationFlowSpec, AutomationRunStatus, AutomationV2Schedule, AutomationV2Spec,
-    AutomationV2Status, ChannelStatus, DiscordConfigFile, RoutineExecutionDecision,
-    RoutineHistoryEvent, RoutineMisfirePolicy, RoutineRunArtifact, RoutineRunRecord,
-    RoutineRunStatus, RoutineSchedule, RoutineSpec, RoutineStatus, RoutineStoreError,
-    SlackConfigFile, StartupStatus, TelegramConfigFile,
+    evaluate_routine_execution_policy,
+    pack_manager::{PackExportRequest, PackInstallRequest, PackUninstallRequest},
+    ActiveRun, AppState, AutomationAgentMcpPolicy, AutomationAgentProfile,
+    AutomationAgentToolPolicy, AutomationExecutionPolicy, AutomationFlowSpec, AutomationRunStatus,
+    AutomationV2Schedule, AutomationV2Spec, AutomationV2Status, ChannelStatus, DiscordConfigFile,
+    RoutineExecutionDecision, RoutineHistoryEvent, RoutineMisfirePolicy, RoutineRunArtifact,
+    RoutineRunRecord, RoutineRunStatus, RoutineSchedule, RoutineSpec, RoutineStatus,
+    RoutineStoreError, SlackConfigFile, StartupStatus, TelegramConfigFile,
 };
 
 #[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq)]
@@ -475,6 +476,36 @@ struct QuestionReplyInput {
 #[derive(Debug, Deserialize, Default)]
 struct QuestionAnswerInput {
     answer: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct PackSelectorPath {
+    selector: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct PackDetectInput {
+    path: String,
+    #[serde(default)]
+    attachment_id: Option<String>,
+    #[serde(default)]
+    connector: Option<String>,
+    #[serde(default)]
+    channel_id: Option<String>,
+    #[serde(default)]
+    sender_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct PackInstallFromAttachmentInput {
+    attachment_id: String,
+    path: String,
+    #[serde(default)]
+    connector: Option<String>,
+    #[serde(default)]
+    channel_id: Option<String>,
+    #[serde(default)]
+    sender_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1084,6 +1115,153 @@ async fn execute_tool(
     })))
 }
 
+async fn packs_list(State(state): State<AppState>) -> Result<Json<Value>, StatusCode> {
+    let packs = state.pack_manager.list().await.map_err(|err| {
+        tracing::warn!("packs list failed: {}", err);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+    Ok(Json(json!({ "packs": packs })))
+}
+
+async fn packs_get(
+    State(state): State<AppState>,
+    Path(PackSelectorPath { selector }): Path<PackSelectorPath>,
+) -> Result<Json<Value>, StatusCode> {
+    let inspection = state.pack_manager.inspect(&selector).await.map_err(|err| {
+        if err.to_string().contains("not found") {
+            StatusCode::NOT_FOUND
+        } else {
+            tracing::warn!("pack inspect failed: {}", err);
+            StatusCode::INTERNAL_SERVER_ERROR
+        }
+    })?;
+    Ok(Json(json!({
+        "pack": inspection,
+    })))
+}
+
+async fn packs_install(
+    State(state): State<AppState>,
+    Json(input): Json<PackInstallRequest>,
+) -> Result<Json<Value>, StatusCode> {
+    state.event_bus.publish(EngineEvent::new(
+        "pack.install.started",
+        json!({
+            "source": input.source,
+            "path": input.path,
+            "url": input.url,
+        }),
+    ));
+    let result = state.pack_manager.install(input).await;
+    match result {
+        Ok(installed) => {
+            state.event_bus.publish(EngineEvent::new(
+                "pack.install.succeeded",
+                json!({
+                    "pack_id": installed.pack_id,
+                    "name": installed.name,
+                    "version": installed.version,
+                }),
+            ));
+            state.event_bus.publish(EngineEvent::new(
+                "registry.updated",
+                json!({ "entity": "packs" }),
+            ));
+            Ok(Json(json!({ "installed": installed })))
+        }
+        Err(err) => {
+            state.event_bus.publish(EngineEvent::new(
+                "pack.install.failed",
+                json!({
+                    "error": err.to_string(),
+                    "code": "pack_install_failed",
+                }),
+            ));
+            Err(StatusCode::BAD_REQUEST)
+        }
+    }
+}
+
+async fn packs_install_from_attachment(
+    State(state): State<AppState>,
+    Json(input): Json<PackInstallFromAttachmentInput>,
+) -> Result<Json<Value>, StatusCode> {
+    let source = json!({
+        "kind": "attachment",
+        "attachment_id": input.attachment_id,
+        "connector": input.connector,
+        "channel_id": input.channel_id,
+        "sender_id": input.sender_id,
+    });
+    packs_install(
+        State(state),
+        Json(PackInstallRequest {
+            path: Some(input.path),
+            url: None,
+            source,
+        }),
+    )
+    .await
+}
+
+async fn packs_uninstall(
+    State(state): State<AppState>,
+    Json(input): Json<PackUninstallRequest>,
+) -> Result<Json<Value>, StatusCode> {
+    let removed = state.pack_manager.uninstall(input).await.map_err(|err| {
+        if err.to_string().contains("not found") {
+            StatusCode::NOT_FOUND
+        } else {
+            tracing::warn!("pack uninstall failed: {}", err);
+            StatusCode::INTERNAL_SERVER_ERROR
+        }
+    })?;
+    state.event_bus.publish(EngineEvent::new(
+        "registry.updated",
+        json!({ "entity": "packs" }),
+    ));
+    Ok(Json(json!({ "removed": removed })))
+}
+
+async fn packs_export(
+    State(state): State<AppState>,
+    Json(input): Json<PackExportRequest>,
+) -> Result<Json<Value>, StatusCode> {
+    let exported = state.pack_manager.export(input).await.map_err(|err| {
+        tracing::warn!("pack export failed: {}", err);
+        StatusCode::BAD_REQUEST
+    })?;
+    Ok(Json(json!({ "exported": exported })))
+}
+
+async fn packs_detect(
+    State(state): State<AppState>,
+    Json(input): Json<PackDetectInput>,
+) -> Result<Json<Value>, StatusCode> {
+    let path = PathBuf::from(&input.path);
+    let is_pack = state.pack_manager.detect(&path).await.map_err(|err| {
+        tracing::warn!("pack detect failed: {}", err);
+        StatusCode::BAD_REQUEST
+    })?;
+    if is_pack {
+        state.event_bus.publish(EngineEvent::new(
+            "pack.detected",
+            json!({
+                "path": input.path,
+                "attachment_id": input.attachment_id,
+                "connector": input.connector,
+                "channel_id": input.channel_id,
+                "sender_id": input.sender_id,
+                "marker": "tandempack.yaml",
+            }),
+        ));
+    }
+    Ok(Json(json!({
+        "is_pack": is_pack,
+        "marker": "tandempack.yaml",
+    })))
+}
+
 fn app_router(state: AppState) -> Router {
     let cors = CorsLayer::new()
         .allow_origin(Any)
@@ -1306,6 +1484,16 @@ fn app_router(state: AppState) -> Router {
         .route("/memory/audit", get(memory_audit))
         .route("/memory", get(memory_list))
         .route("/memory/{id}", axum::routing::delete(memory_delete))
+        .route("/packs", get(packs_list))
+        .route("/packs/{selector}", get(packs_get))
+        .route("/packs/install", post(packs_install))
+        .route(
+            "/packs/install_from_attachment",
+            post(packs_install_from_attachment),
+        )
+        .route("/packs/uninstall", post(packs_uninstall))
+        .route("/packs/export", post(packs_export))
+        .route("/packs/detect", post(packs_detect))
         .route("/channels/config", get(channels_config))
         .route("/channels/status", get(channels_status))
         .route("/channels/{name}/verify", post(channels_verify))
@@ -10431,6 +10619,13 @@ async fn openapi_doc() -> Json<Value> {
             "/memory/audit":{"get":{"summary":"List memory audit events"}},
             "/memory":{"get":{"summary":"List memory records"}},
             "/memory/{id}":{"delete":{"summary":"Delete memory record"}},
+            "/packs":{"get":{"summary":"List installed packs"}},
+            "/packs/{selector}":{"get":{"summary":"Inspect installed pack by pack_id or name"}},
+            "/packs/install":{"post":{"summary":"Install tandem pack from local path or URL"}},
+            "/packs/install_from_attachment":{"post":{"summary":"Install tandem pack from downloaded attachment path"}},
+            "/packs/uninstall":{"post":{"summary":"Uninstall tandem pack"}},
+            "/packs/export":{"post":{"summary":"Export installed tandem pack as zip"}},
+            "/packs/detect":{"post":{"summary":"Detect tandem pack marker in zip and emit pack.detected"}},
             "/mission":{"get":{"summary":"List missions"},"post":{"summary":"Create mission"}},
             "/mission/{id}":{"get":{"summary":"Get mission"}},
             "/mission/{id}/event":{"post":{"summary":"Apply mission event through reducer"}},
@@ -10512,7 +10707,9 @@ mod tests {
     async fn test_state() -> AppState {
         let root = std::env::temp_dir().join(format!("tandem-http-test-{}", Uuid::new_v4()));
         let global = root.join("global-config.json");
+        let tandem_home = root.join("tandem-home");
         std::env::set_var("TANDEM_GLOBAL_CONFIG", &global);
+        std::env::set_var("TANDEM_HOME", &tandem_home);
         let storage = Arc::new(Storage::new(root.join("storage")).await.expect("storage"));
         let config = ConfigStore::new(root.join("config.json"), None)
             .await
@@ -10567,6 +10764,19 @@ mod tests {
             .await
             .expect("runtime ready");
         state
+    }
+
+    fn write_pack_zip(path: &std::path::Path, manifest: &str) {
+        let file = std::fs::File::create(path).expect("create zip");
+        let mut zip = zip::ZipWriter::new(file);
+        let opts = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Deflated);
+        zip.start_file("tandempack.yaml", opts)
+            .expect("start marker");
+        std::io::Write::write_all(&mut zip, manifest.as_bytes()).expect("write marker");
+        zip.start_file("README.md", opts).expect("start readme");
+        std::io::Write::write_all(&mut zip, b"# pack").expect("write readme");
+        zip.finish().expect("finish zip");
     }
 
     async fn next_event_of_type(
@@ -10789,6 +10999,100 @@ mod tests {
         let body = to_bytes(resp.into_body(), usize::MAX).await.expect("body");
         let payload: Value = serde_json::from_slice(&body).expect("json");
         assert!(payload.as_array().map(|v| !v.is_empty()).unwrap_or(false));
+    }
+
+    #[tokio::test]
+    async fn packs_detect_requires_root_marker() {
+        let state = test_state().await;
+        let root = std::env::temp_dir().join(format!("tandem-pack-detect-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&root).expect("mkdir");
+        let plain_zip = root.join("plain.zip");
+        write_pack_zip(
+            &plain_zip,
+            "name: detect-test\nversion: 1.0.0\ntype: skill\npack_id: detect-test\n",
+        );
+        let app = app_router(state);
+        let req = Request::builder()
+            .method("POST")
+            .uri("/packs/detect")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({
+                    "path": plain_zip.to_string_lossy()
+                })
+                .to_string(),
+            ))
+            .expect("request");
+        let resp = app.oneshot(req).await.expect("response");
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = to_bytes(resp.into_body(), usize::MAX).await.expect("body");
+        let payload: Value = serde_json::from_slice(&body).expect("json");
+        assert_eq!(payload.get("is_pack").and_then(|v| v.as_bool()), Some(true));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn packs_install_list_and_uninstall_roundtrip() {
+        let state = test_state().await;
+        let root = std::env::temp_dir().join(format!("tandem-pack-install-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&root).expect("mkdir");
+        let pack_zip = root.join("pack.zip");
+        write_pack_zip(
+            &pack_zip,
+            "name: roundtrip-pack\nversion: 1.2.3\ntype: workflow\npack_id: roundtrip-pack\n",
+        );
+        let app = app_router(state.clone());
+        let install_req = Request::builder()
+            .method("POST")
+            .uri("/packs/install")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({
+                    "path": pack_zip.to_string_lossy(),
+                    "source": {"kind":"test"}
+                })
+                .to_string(),
+            ))
+            .expect("request");
+        let install_resp = app.clone().oneshot(install_req).await.expect("response");
+        assert_eq!(install_resp.status(), StatusCode::OK);
+
+        let list_req = Request::builder()
+            .method("GET")
+            .uri("/packs")
+            .body(Body::empty())
+            .expect("request");
+        let list_resp = app.clone().oneshot(list_req).await.expect("response");
+        assert_eq!(list_resp.status(), StatusCode::OK);
+        let list_body = to_bytes(list_resp.into_body(), usize::MAX)
+            .await
+            .expect("body");
+        let list_payload: Value = serde_json::from_slice(&list_body).expect("json");
+        let packs = list_payload
+            .get("packs")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        assert!(packs.iter().any(|p| {
+            p.get("pack_id").and_then(|v| v.as_str()) == Some("roundtrip-pack")
+                && p.get("version").and_then(|v| v.as_str()) == Some("1.2.3")
+        }));
+
+        let uninstall_req = Request::builder()
+            .method("POST")
+            .uri("/packs/uninstall")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({
+                    "pack_id": "roundtrip-pack",
+                    "version": "1.2.3"
+                })
+                .to_string(),
+            ))
+            .expect("request");
+        let uninstall_resp = app.clone().oneshot(uninstall_req).await.expect("response");
+        assert_eq!(uninstall_resp.status(), StatusCode::OK);
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[tokio::test]

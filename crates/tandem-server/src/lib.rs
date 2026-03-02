@@ -38,10 +38,12 @@ use tandem_tools::ToolRegistry;
 
 mod agent_teams;
 mod http;
+mod pack_manager;
 pub mod webui;
 
 pub use agent_teams::AgentTeamRuntime;
 pub use http::serve;
+pub use pack_manager::PackManager;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ChannelStatus {
@@ -747,6 +749,7 @@ pub struct AppState {
     pub server_base_url: Arc<std::sync::RwLock<String>>,
     pub channels_runtime: Arc<tokio::sync::Mutex<ChannelRuntime>>,
     pub host_runtime_context: HostRuntimeContext,
+    pub pack_manager: Arc<PackManager>,
 }
 
 #[derive(Debug, Clone)]
@@ -795,6 +798,7 @@ impl AppState {
             channels_runtime: Arc::new(tokio::sync::Mutex::new(ChannelRuntime::default())),
             host_runtime_context: detect_host_runtime_context(),
             token_cost_per_1k_usd: resolve_token_cost_per_1k_usd(),
+            pack_manager: Arc::new(PackManager::new(PackManager::default_root())),
         }
     }
 
