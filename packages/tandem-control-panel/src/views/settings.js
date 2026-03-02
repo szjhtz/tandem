@@ -37,11 +37,11 @@ export async function renderSettings(ctx) {
       </div>
       <p class="tcp-subtle mb-3">Configure platform behavior, integrations, and assets without leaving Settings.</p>
       <div class="tcp-settings-tabs" role="tablist" aria-label="Settings sections">
-        <button class="tcp-settings-tab ${activeTab === "general" ? "active" : ""}" data-settings-tab="general" role="tab" aria-selected="${activeTab === "general"}"><i data-lucide="settings-2"></i> General</button>
-        <button class="tcp-settings-tab ${activeTab === "packs" ? "active" : ""}" data-settings-tab="packs" role="tab" aria-selected="${activeTab === "packs"}"><i data-lucide="package"></i> Packs</button>
-        <button class="tcp-settings-tab ${activeTab === "channels" ? "active" : ""}" data-settings-tab="channels" role="tab" aria-selected="${activeTab === "channels"}"><i data-lucide="message-circle"></i> Channels</button>
-        <button class="tcp-settings-tab ${activeTab === "mcp" ? "active" : ""}" data-settings-tab="mcp" role="tab" aria-selected="${activeTab === "mcp"}"><i data-lucide="link"></i> MCP</button>
-        <button class="tcp-settings-tab ${activeTab === "files" ? "active" : ""}" data-settings-tab="files" role="tab" aria-selected="${activeTab === "files"}"><i data-lucide="folder-open"></i> Files</button>
+        <button class="tcp-settings-tab tcp-settings-tab-underline ${activeTab === "general" ? "active" : ""}" data-settings-tab="general" role="tab" aria-selected="${activeTab === "general"}"><i data-lucide="settings-2"></i> General</button>
+        <button class="tcp-settings-tab tcp-settings-tab-underline ${activeTab === "packs" ? "active" : ""}" data-settings-tab="packs" role="tab" aria-selected="${activeTab === "packs"}"><i data-lucide="package"></i> Packs</button>
+        <button class="tcp-settings-tab tcp-settings-tab-underline ${activeTab === "channels" ? "active" : ""}" data-settings-tab="channels" role="tab" aria-selected="${activeTab === "channels"}"><i data-lucide="message-circle"></i> Channels</button>
+        <button class="tcp-settings-tab tcp-settings-tab-underline ${activeTab === "mcp" ? "active" : ""}" data-settings-tab="mcp" role="tab" aria-selected="${activeTab === "mcp"}"><i data-lucide="link"></i> MCP</button>
+        <button class="tcp-settings-tab tcp-settings-tab-underline ${activeTab === "files" ? "active" : ""}" data-settings-tab="files" role="tab" aria-selected="${activeTab === "files"}"><i data-lucide="folder-open"></i> Files</button>
       </div>
     </div>
     <div id="settings-tab-content" class="grid gap-4"></div>

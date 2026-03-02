@@ -880,15 +880,11 @@
 }
 
 .tcp-settings-tabs {
-  display: inline-flex;
+  display: flex;
   flex-wrap: wrap;
-  gap: 0.4rem;
-  padding: 0.36rem;
-  border: 1px solid rgba(71, 85, 105, 0.62);
-  border-radius: 0.9rem;
-  background:
-    linear-gradient(180deg, rgba(15, 23, 42, 0.56), rgba(2, 6, 23, 0.72)),
-    radial-gradient(90% 130% at 50% -20%, rgba(148, 163, 184, 0.1), transparent 68%);
+  gap: 0.2rem;
+  border-bottom: 1px solid rgba(71, 85, 105, 0.62);
+  padding: 0.1rem 0;
 }
 
 .tcp-settings-tab {
@@ -896,32 +892,38 @@
   align-items: center;
   justify-content: center;
   gap: 0.38rem;
-  height: 2.15rem;
-  padding: 0 0.85rem;
-  border: 1px solid rgba(71, 85, 105, 0.66);
-  border-radius: 0.66rem;
+  height: 2.35rem;
+  padding: 0 0.9rem;
+  border: 1px solid transparent;
+  border-radius: 0.5rem 0.5rem 0 0;
   color: rgb(203 213 225);
-  background: rgba(15, 23, 42, 0.45);
+  background: transparent;
   font-size: 0.8rem;
   font-weight: 600;
   line-height: 1;
   letter-spacing: 0.01em;
-  transition: border-color 120ms ease, background-color 120ms ease, color 120ms ease, box-shadow 120ms ease;
+  transition: border-color 120ms ease, background-color 120ms ease, color 120ms ease;
 }
 
 .tcp-settings-tab:hover {
-  border-color: rgba(148, 163, 184, 0.75);
+  border-color: rgba(71, 85, 105, 0.75);
   color: rgb(241 245 249);
-  background: rgba(30, 41, 59, 0.68);
+  background: rgba(30, 41, 59, 0.45);
 }
 
 .tcp-settings-tab.active {
-  border-color: rgba(226, 232, 240, 0.92);
+  border-color: rgba(71, 85, 105, 0.82);
   color: rgb(248 250 252);
-  background: linear-gradient(180deg, rgba(100, 116, 139, 0.58), rgba(30, 41, 59, 0.84));
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.22),
-    0 8px 18px rgba(2, 6, 23, 0.35);
+  background: rgba(30, 41, 59, 0.65);
+}
+
+.tcp-settings-tab-underline {
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+}
+
+.tcp-settings-tab-underline.active {
+  border-bottom-color: rgba(148, 163, 184, 0.95);
 }
 
 .tcp-settings-tab svg {
