@@ -103,6 +103,7 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
     - scanner checks extracted text files for common high-risk token patterns
     - examples/placeholders (e.g. `secrets.example.env`, `.example`) are ignored
     - strict reject mode enabled with `TANDEM_PACK_SECRET_SCAN_STRICT=1`
+  - Update check/apply stubs now return structured `permissions_diff` and `reapproval_required` flags for future permission re-approval workflows.
 
 - Capability Resolver runtime/API implementation (first tranche)
   - Added capability endpoints:
@@ -166,6 +167,7 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
     - required/optional capability counts
     - provider-specific dependency count
     - routines declared/enabled summary
+  - Pack update actions now surface `reapproval_required` warnings when update permission scope expands.
 
 - Control Panel pack event cards + actions
   - Added `pack.*` event-specific cards in `Live Feed` with direct actions:

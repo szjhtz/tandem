@@ -144,7 +144,13 @@ export async function renderPacks(ctx) {
             const updates = await state.client.packs.updates(id);
             setMeta(updates);
             const count = Array.isArray(updates?.updates) ? updates.updates.length : 0;
-            toast("info", `Updates available: ${count}`);
+            const needsReapproval = !!updates?.reapproval_required;
+            toast(
+              needsReapproval ? "warn" : "info",
+              needsReapproval
+                ? `Updates available: ${count}. Permission scope changed; re-approval required.`
+                : `Updates available: ${count}`
+            );
           } catch (e) {
             toast("err", `Updates check failed: ${e instanceof Error ? e.message : String(e)}`);
           }
@@ -158,7 +164,16 @@ export async function renderPacks(ctx) {
           try {
             const updated = await state.client.packs.update(id, {});
             setMeta(updated);
-            toast("info", updated?.reason || (updated?.updated ? "Pack updated" : "No update applied"));
+            const needsReapproval = !!updated?.reapproval_required;
+            toast(
+              needsReapproval ? "warn" : "info",
+              updated?.reason ||
+                (updated?.updated
+                  ? "Pack updated"
+                  : needsReapproval
+                    ? "No update applied. Permission re-approval required."
+                    : "No update applied")
+            );
           } catch (e) {
             toast("err", `Update failed: ${e instanceof Error ? e.message : String(e)}`);
           }

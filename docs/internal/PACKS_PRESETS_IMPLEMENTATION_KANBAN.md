@@ -49,7 +49,7 @@ Owner: Core Runtime + Product Architecture
   - [ ] Skill Module library with capability + publisher filters
   - [ ] Agent Preset builder with prompt preview + capability summary
   - [ ] Automation Preset builder with step-agent binding swaps
-  - [ ] Upgrade flow with permissions diff + re-approval
+  - [x] Upgrade flow with permissions diff + re-approval (stub-backed API/UI signaling)
 
 - [ ] Trust/signing + marketplace readiness
   - [x] Parse and expose `tandempack.sig` status in inspect endpoint

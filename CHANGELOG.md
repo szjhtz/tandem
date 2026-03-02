@@ -59,6 +59,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - pack inspect now emits normalized verification badge tiers (`unverified`, `verified`, `official`) in API trust payload
   - pack inspect now includes a structured `permission_sheet` payload (required/optional capabilities, provider-specific dependencies, routine declarations, and risk level) for install UX
   - optional local secret scanning hook added during install (`TANDEM_PACK_SECRET_SCAN_STRICT`) with explicit `embedded_secret_detected` rejection on matches
+  - pack update check/apply stubs now return structured `permissions_diff` plus `reapproval_required` flags for upgrade-approval UX wiring
 - **Initial capability resolver runtime/API implementation (server)**:
   - added capability routes:
     - `GET /capabilities/bindings`
@@ -93,6 +94,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - added control-panel UI hooks for capability discovery (`client.capabilities.discovery()`)
   - added pack install flows for URL/server-path sources from within control panel
   - added inspect-time trust/risk summary card in Pack Library (verification badge, signature state, capability/routine summary, provider-specific dependency count)
+  - added update warning UX that surfaces `reapproval_required` on update checks/apply calls
 - **Control Panel pack-event action surfaces (`packages/tandem-control-panel`)**:
   - added pack-specific event cards in `Live Feed` for `pack.*` events
   - added one-click actions from feed cards: open pack library, install from path, install from attachment

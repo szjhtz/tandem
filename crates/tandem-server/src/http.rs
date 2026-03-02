@@ -1257,7 +1257,15 @@ async fn packs_updates_get(
         "pack_id": inspection.installed.pack_id,
         "name": inspection.installed.name,
         "current_version": inspection.installed.version,
-        "updates": []
+        "updates": [],
+        "permissions_diff": {
+            "added_required_capabilities": [],
+            "removed_required_capabilities": [],
+            "added_provider_specific_dependencies": [],
+            "removed_provider_specific_dependencies": [],
+            "routine_scope_changed": false
+        },
+        "reapproval_required": false
     })))
 }
 
@@ -1290,7 +1298,15 @@ async fn packs_update_post(
         "name": inspection.installed.name,
         "current_version": inspection.installed.version,
         "target_version": input.target_version,
-        "reason": "updates_not_implemented"
+        "reason": "updates_not_implemented",
+        "permissions_diff": {
+            "added_required_capabilities": [],
+            "removed_required_capabilities": [],
+            "added_provider_specific_dependencies": [],
+            "removed_provider_specific_dependencies": [],
+            "routine_scope_changed": false
+        },
+        "reapproval_required": false
     })))
 }
 
@@ -11414,6 +11430,16 @@ mod tests {
                 .and_then(|v| v.as_str()),
             Some("1.0.0")
         );
+        assert_eq!(
+            updates_payload
+                .get("reapproval_required")
+                .and_then(|v| v.as_bool()),
+            Some(false)
+        );
+        assert!(updates_payload
+            .get("permissions_diff")
+            .and_then(|v| v.as_object())
+            .is_some());
 
         let apply_req = Request::builder()
             .method("POST")
@@ -11430,6 +11456,12 @@ mod tests {
         assert_eq!(
             apply_payload.get("reason").and_then(|v| v.as_str()),
             Some("updates_not_implemented")
+        );
+        assert_eq!(
+            apply_payload
+                .get("reapproval_required")
+                .and_then(|v| v.as_bool()),
+            Some(false)
         );
         let _ = std::fs::remove_dir_all(root);
     }
