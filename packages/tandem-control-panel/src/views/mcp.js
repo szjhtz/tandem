@@ -129,7 +129,7 @@ function authPreview(authMode, token, customHeader, transport) {
   if (authMode === "x-api-key") return "Header preview: x-api-key: <token>";
   if (authMode === "bearer") return "Header preview: Authorization: Bearer <token>";
 
-  if (isComposioTransport(transport)) return "Auto mode: detected Composio URL -> x-api-key";
+  if (isComposioTransport(transport)) return "Auto mode: selected x-api-key for this endpoint";
   return "Auto mode: using Authorization Bearer token";
 }
 
@@ -191,24 +191,24 @@ export async function renderMcp(ctx) {
     <div class="grid gap-4 xl:grid-cols-[440px_1fr]">
       <div id="mcp-add-card" class="tcp-card">
         <h3 class="tcp-title mb-2">Add MCP Server</h3>
-        <p class="tcp-subtle mb-3">Paste your MCP endpoint URL and token. For Composio URLs, Auto auth uses <code>x-api-key</code>.</p>
+        <p class="tcp-subtle mb-3">Paste your MCP endpoint URL and optional auth token/header.</p>
         <div class="grid gap-3">
           <div>
             <label class="mb-1 block text-sm text-slate-300">Name</label>
-            <input id="mcp-name" class="tcp-input" placeholder="composio" value="composio" />
+            <input id="mcp-name" class="tcp-input" placeholder="mcp-server" />
           </div>
           <div>
             <label class="mb-1 block text-sm text-slate-300">Transport URL</label>
-            <input id="mcp-transport" class="tcp-input" placeholder="https://backend.composio.dev/.../mcp?user_id=..." />
+            <input id="mcp-transport" class="tcp-input" placeholder="https://example.com/mcp" />
           </div>
           <div>
             <label class="mb-1 block text-sm text-slate-300">Auth Mode</label>
             <select id="mcp-auth-mode" class="tcp-select">
-              <option value="auto" selected>Auto (Composio => x-api-key, else Bearer)</option>
+              <option value="none" selected>No Auth Header</option>
+              <option value="auto">Auto (x-api-key for known providers, else Bearer)</option>
               <option value="x-api-key">x-api-key</option>
               <option value="bearer">Authorization Bearer</option>
               <option value="custom">Custom Header</option>
-              <option value="none">No Auth Header</option>
             </select>
           </div>
           <div id="mcp-custom-header-wrap" class="hidden">
