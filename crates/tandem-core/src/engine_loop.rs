@@ -18,8 +18,9 @@ use tokio_util::sync::CancellationToken;
 use tracing::Level;
 
 use crate::tool_router::{
-    classify_intent, default_mode_name, is_short_simple_prompt, select_tool_subset,
-    should_escalate_auto_tools, tool_router_enabled, ToolIntent, ToolRoutingDecision,
+    classify_intent, default_mode_name, is_short_simple_prompt, max_tools_per_call_expanded,
+    select_tool_subset, should_escalate_auto_tools, tool_router_enabled, ToolIntent,
+    ToolRoutingDecision,
 };
 use crate::{
     any_policy_matches, derive_session_title_from_prompt, title_needs_repair,
@@ -344,6 +345,13 @@ impl EngineLoop {
             let mut auto_workspace_probe_attempted = false;
             let intent = classify_intent(&text);
             let router_enabled = tool_router_enabled();
+            let retrieval_enabled = semantic_tool_retrieval_enabled();
+            let retrieval_k = semantic_tool_retrieval_k();
+            let mcp_server_names = if mcp_catalog_in_system_prompt_enabled() {
+                self.tools.mcp_server_names().await
+            } else {
+                Vec::new()
+            };
             let mut auto_tools_escalated = matches!(requested_tool_mode, ToolMode::Required);
             let context_is_auto_compact = matches!(requested_context_mode, ContextMode::Auto)
                 && runtime_attachments.is_empty()
@@ -380,8 +388,10 @@ impl EngineLoop {
                         "memoryInjected": false
                     }),
                 ));
-                let mut system_parts =
-                    vec![tandem_runtime_system_prompt(&self.host_runtime_context)];
+                let mut system_parts = vec![tandem_runtime_system_prompt(
+                    &self.host_runtime_context,
+                    &mcp_server_names,
+                )];
                 if let Some(system) = active_agent.system_prompt.as_ref() {
                     system_parts.push(system.clone());
                 }
@@ -447,13 +457,18 @@ impl EngineLoop {
                     }
                 }
                 let all_tools = self.tools.list().await;
+                let candidate_tools = if retrieval_enabled {
+                    self.tools.retrieve(&text, retrieval_k).await
+                } else {
+                    all_tools.clone()
+                };
                 let mut tool_schemas = if !router_enabled {
-                    all_tools
+                    candidate_tools
                 } else {
                     match requested_tool_mode {
                         ToolMode::None => Vec::new(),
                         ToolMode::Required => select_tool_subset(
-                            all_tools,
+                            candidate_tools,
                             intent,
                             &request_tool_allowlist,
                             iteration > 1,
@@ -463,7 +478,7 @@ impl EngineLoop {
                                 Vec::new()
                             } else {
                                 select_tool_subset(
-                                    all_tools,
+                                    candidate_tools,
                                     intent,
                                     &request_tool_allowlist,
                                     iteration > 1,
@@ -472,6 +487,36 @@ impl EngineLoop {
                         }
                     }
                 };
+                let mut policy_patterns =
+                    request_tool_allowlist.iter().cloned().collect::<Vec<_>>();
+                if let Some(agent_tools) = active_agent.tools.as_ref() {
+                    policy_patterns
+                        .extend(agent_tools.iter().map(|tool| normalize_tool_name(tool)));
+                }
+                let session_allowed_tools = self
+                    .session_allowed_tools
+                    .read()
+                    .await
+                    .get(&session_id)
+                    .cloned()
+                    .unwrap_or_default();
+                policy_patterns.extend(session_allowed_tools.iter().cloned());
+                if !policy_patterns.is_empty() {
+                    let mut included = tool_schemas
+                        .iter()
+                        .map(|schema| normalize_tool_name(&schema.name))
+                        .collect::<HashSet<_>>();
+                    for schema in &all_tools {
+                        let normalized = normalize_tool_name(&schema.name);
+                        if policy_patterns
+                            .iter()
+                            .any(|pattern| tool_name_matches_policy(pattern, &normalized))
+                            && included.insert(normalized)
+                        {
+                            tool_schemas.push(schema.clone());
+                        }
+                    }
+                }
                 if !request_tool_allowlist.is_empty() {
                     tool_schemas.retain(|schema| {
                         let tool = normalize_tool_name(&schema.name);
@@ -535,7 +580,7 @@ impl EngineLoop {
                     },
                     intent,
                     selected_count: tool_schemas.len(),
-                    total_available_count: self.tools.list().await.len(),
+                    total_available_count: all_tools.len(),
                     mcp_included: tool_schemas
                         .iter()
                         .any(|schema| normalize_tool_name(&schema.name).starts_with("mcp.")),
@@ -1866,7 +1911,10 @@ impl EngineLoop {
             ChatHistoryProfile::Standard,
         )
         .await;
-        let mut system_parts = vec![tandem_runtime_system_prompt(&self.host_runtime_context)];
+        let mut system_parts = vec![tandem_runtime_system_prompt(
+            &self.host_runtime_context,
+            &[],
+        )];
         if let Some(system) = active_agent.system_prompt.as_ref() {
             system_parts.push(system.clone());
         }
@@ -3727,7 +3775,7 @@ fn format_context_mode(requested: &ContextMode, auto_compact: bool) -> &'static 
     }
 }
 
-fn tandem_runtime_system_prompt(host: &HostRuntimeContext) -> String {
+fn tandem_runtime_system_prompt(host: &HostRuntimeContext, mcp_server_names: &[String]) -> String {
     let mut sections = Vec::new();
     if os_aware_prompts_enabled() {
         sections.push(format!(
@@ -3764,6 +3812,26 @@ Use cross-platform tools (`glob`, `grep`, `read`) when they are simpler and safe
                 .to_string(),
         );
     }
+    if !mcp_server_names.is_empty() {
+        let cap = mcp_catalog_max_servers();
+        let mut listed = mcp_server_names
+            .iter()
+            .take(cap)
+            .cloned()
+            .collect::<Vec<_>>();
+        listed.sort();
+        let mut catalog = listed
+            .iter()
+            .map(|name| format!("- {name}"))
+            .collect::<Vec<_>>();
+        if mcp_server_names.len() > cap {
+            catalog.push(format!("- (+{} more)", mcp_server_names.len() - cap));
+        }
+        sections.push(format!(
+            "[Connected Integrations]\nThe following external integrations are currently connected and available:\n{}",
+            catalog.join("\n")
+        ));
+    }
     sections.join("\n\n")
 }
 
@@ -3775,6 +3843,46 @@ fn os_aware_prompts_enabled() -> bool {
             !(normalized == "0" || normalized == "false" || normalized == "off")
         })
         .unwrap_or(true)
+}
+
+fn semantic_tool_retrieval_enabled() -> bool {
+    std::env::var("TANDEM_SEMANTIC_TOOL_RETRIEVAL")
+        .ok()
+        .map(|raw| {
+            !matches!(
+                raw.trim().to_ascii_lowercase().as_str(),
+                "0" | "false" | "off" | "no"
+            )
+        })
+        .unwrap_or(true)
+}
+
+fn semantic_tool_retrieval_k() -> usize {
+    std::env::var("TANDEM_SEMANTIC_TOOL_RETRIEVAL_K")
+        .ok()
+        .and_then(|raw| raw.trim().parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or_else(max_tools_per_call_expanded)
+}
+
+fn mcp_catalog_in_system_prompt_enabled() -> bool {
+    std::env::var("TANDEM_MCP_CATALOG_IN_SYSTEM_PROMPT")
+        .ok()
+        .map(|raw| {
+            !matches!(
+                raw.trim().to_ascii_lowercase().as_str(),
+                "0" | "false" | "off" | "no"
+            )
+        })
+        .unwrap_or(true)
+}
+
+fn mcp_catalog_max_servers() -> usize {
+    std::env::var("TANDEM_MCP_CATALOG_MAX_SERVERS")
+        .ok()
+        .and_then(|raw| raw.trim().parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(20)
 }
 
 fn host_os_label(os: HostOs) -> &'static str {
@@ -5738,16 +5846,35 @@ Call: todowrite(task_id=3, status="in_progress")
 
     #[test]
     fn runtime_prompt_includes_execution_environment_block() {
-        let prompt = tandem_runtime_system_prompt(&HostRuntimeContext {
-            os: HostOs::Windows,
-            arch: "x86_64".to_string(),
-            shell_family: ShellFamily::Powershell,
-            path_style: PathStyle::Windows,
-        });
+        let prompt = tandem_runtime_system_prompt(
+            &HostRuntimeContext {
+                os: HostOs::Windows,
+                arch: "x86_64".to_string(),
+                shell_family: ShellFamily::Powershell,
+                path_style: PathStyle::Windows,
+            },
+            &[],
+        );
         assert!(prompt.contains("[Execution Environment]"));
         assert!(prompt.contains("Host OS: windows"));
         assert!(prompt.contains("Shell: powershell"));
         assert!(prompt.contains("Path style: windows"));
+    }
+
+    #[test]
+    fn runtime_prompt_includes_connected_integrations_block() {
+        let prompt = tandem_runtime_system_prompt(
+            &HostRuntimeContext {
+                os: HostOs::Linux,
+                arch: "x86_64".to_string(),
+                shell_family: ShellFamily::Posix,
+                path_style: PathStyle::Posix,
+            },
+            &["notion".to_string(), "github".to_string()],
+        );
+        assert!(prompt.contains("[Connected Integrations]"));
+        assert!(prompt.contains("- notion"));
+        assert!(prompt.contains("- github"));
     }
 
     #[test]

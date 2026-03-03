@@ -10,6 +10,7 @@ use async_trait::async_trait;
 use ignore::WalkBuilder;
 use regex::Regex;
 use serde_json::{json, Value};
+use tandem_memory::embeddings::{get_embedding_service, EmbeddingService};
 use tandem_skills::SkillService;
 use tokio::fs;
 use tokio::process::Command;
@@ -45,6 +46,7 @@ pub trait Tool: Send + Sync {
 #[derive(Clone)]
 pub struct ToolRegistry {
     tools: Arc<RwLock<HashMap<String, Arc<dyn Tool>>>>,
+    tool_vectors: Arc<RwLock<HashMap<String, Vec<f32>>>>,
 }
 
 impl ToolRegistry {
@@ -82,6 +84,7 @@ impl ToolRegistry {
         map.insert("sendmessage".to_string(), Arc::new(SendMessageCompatTool));
         Self {
             tools: Arc::new(RwLock::new(map)),
+            tool_vectors: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -96,11 +99,23 @@ impl ToolRegistry {
     }
 
     pub async fn register_tool(&self, name: String, tool: Arc<dyn Tool>) {
-        self.tools.write().await.insert(name, tool);
+        let schema = tool.schema();
+        self.tools.write().await.insert(name.clone(), tool);
+        self.index_tool_schema(&schema).await;
+        if name != schema.name {
+            self.index_tool_name(&name, &schema).await;
+        }
     }
 
     pub async fn unregister_tool(&self, name: &str) -> bool {
-        self.tools.write().await.remove(name).is_some()
+        let removed = self.tools.write().await.remove(name);
+        self.tool_vectors.write().await.remove(name);
+        if let Some(tool) = removed {
+            let schema_name = tool.schema().name;
+            self.tool_vectors.write().await.remove(&schema_name);
+            return true;
+        }
+        false
     }
 
     pub async fn unregister_by_prefix(&self, prefix: &str) -> usize {
@@ -111,10 +126,136 @@ impl ToolRegistry {
             .cloned()
             .collect::<Vec<_>>();
         let removed = keys.len();
+        let mut removed_schema_names = Vec::new();
         for key in keys {
-            tools.remove(&key);
+            if let Some(tool) = tools.remove(&key) {
+                removed_schema_names.push(tool.schema().name);
+            }
         }
+        drop(tools);
+        let mut vectors = self.tool_vectors.write().await;
+        vectors.retain(|name, _| {
+            !name.starts_with(prefix) && !removed_schema_names.iter().any(|schema| schema == name)
+        });
         removed
+    }
+
+    pub async fn index_all(&self) {
+        let schemas = self.list().await;
+        if schemas.is_empty() {
+            self.tool_vectors.write().await.clear();
+            return;
+        }
+        let texts = schemas
+            .iter()
+            .map(|schema| format!("{}: {}", schema.name, schema.description))
+            .collect::<Vec<_>>();
+        let service = get_embedding_service().await;
+        let service = service.lock().await;
+        if !service.is_available() {
+            return;
+        }
+        let Ok(vectors) = service.embed_batch(&texts).await else {
+            return;
+        };
+        drop(service);
+        let mut indexed = HashMap::new();
+        for (schema, vector) in schemas.into_iter().zip(vectors) {
+            indexed.insert(schema.name, vector);
+        }
+        *self.tool_vectors.write().await = indexed;
+    }
+
+    async fn index_tool_schema(&self, schema: &ToolSchema) {
+        self.index_tool_name(&schema.name, schema).await;
+    }
+
+    async fn index_tool_name(&self, name: &str, schema: &ToolSchema) {
+        let text = format!("{}: {}", schema.name, schema.description);
+        let service = get_embedding_service().await;
+        let service = service.lock().await;
+        if !service.is_available() {
+            return;
+        }
+        let Ok(vector) = service.embed(&text).await else {
+            return;
+        };
+        drop(service);
+        self.tool_vectors
+            .write()
+            .await
+            .insert(name.to_string(), vector);
+    }
+
+    pub async fn retrieve(&self, query: &str, k: usize) -> Vec<ToolSchema> {
+        if k == 0 {
+            return Vec::new();
+        }
+        let service = get_embedding_service().await;
+        let service = service.lock().await;
+        if !service.is_available() {
+            drop(service);
+            return self.list().await;
+        }
+        let Ok(query_vec) = service.embed(query).await else {
+            drop(service);
+            return self.list().await;
+        };
+        drop(service);
+
+        let vectors = self.tool_vectors.read().await;
+        if vectors.is_empty() {
+            drop(vectors);
+            return self.list().await;
+        }
+        let tools = self.tools.read().await;
+        let mut scored = vectors
+            .iter()
+            .map(|(name, vector)| {
+                (
+                    EmbeddingService::cosine_similarity(&query_vec, vector),
+                    name.clone(),
+                )
+            })
+            .collect::<Vec<_>>();
+        scored.sort_by(|a, b| {
+            b.0.partial_cmp(&a.0)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| a.1.cmp(&b.1))
+        });
+        let mut out = Vec::new();
+        let mut seen = HashSet::new();
+        for (_, name) in scored.into_iter().take(k) {
+            let Some(tool) = tools.get(&name) else {
+                continue;
+            };
+            let schema = tool.schema();
+            if seen.insert(schema.name.clone()) {
+                out.push(schema);
+            }
+        }
+        if out.is_empty() {
+            self.list().await
+        } else {
+            out
+        }
+    }
+
+    pub async fn mcp_server_names(&self) -> Vec<String> {
+        let mut names = HashSet::new();
+        for schema in self.list().await {
+            let mut parts = schema.name.split('.');
+            if parts.next() == Some("mcp") {
+                if let Some(server) = parts.next() {
+                    if !server.trim().is_empty() {
+                        names.insert(server.to_string());
+                    }
+                }
+            }
+        }
+        let mut sorted = names.into_iter().collect::<Vec<_>>();
+        sorted.sort();
+        sorted
     }
 
     pub async fn execute(&self, name: &str, args: Value) -> anyhow::Result<ToolResult> {
@@ -4276,6 +4417,33 @@ mod tests {
     use std::collections::HashSet;
     use std::path::PathBuf;
     use tokio::fs;
+    use tokio_util::sync::CancellationToken;
+
+    struct TestTool {
+        schema: ToolSchema,
+    }
+
+    #[async_trait]
+    impl Tool for TestTool {
+        fn schema(&self) -> ToolSchema {
+            self.schema.clone()
+        }
+
+        async fn execute(&self, _args: Value) -> anyhow::Result<ToolResult> {
+            Ok(ToolResult {
+                output: "ok".to_string(),
+                metadata: json!({}),
+            })
+        }
+
+        async fn execute_with_cancel(
+            &self,
+            args: Value,
+            _cancel: CancellationToken,
+        ) -> anyhow::Result<ToolResult> {
+            self.execute(args).await
+        }
+    }
 
     #[test]
     fn validator_rejects_array_without_items() {
@@ -4306,6 +4474,96 @@ mod tests {
             schemas.len(),
             "tool schemas must be unique by name"
         );
+    }
+
+    #[tokio::test]
+    async fn mcp_server_names_returns_unique_sorted_names() {
+        let registry = ToolRegistry::new();
+        registry
+            .register_tool(
+                "mcp.notion.search_pages".to_string(),
+                Arc::new(TestTool {
+                    schema: ToolSchema {
+                        name: "mcp.notion.search_pages".to_string(),
+                        description: "search".to_string(),
+                        input_schema: json!({}),
+                    },
+                }),
+            )
+            .await;
+        registry
+            .register_tool(
+                "mcp.github.list_prs".to_string(),
+                Arc::new(TestTool {
+                    schema: ToolSchema {
+                        name: "mcp.github.list_prs".to_string(),
+                        description: "list".to_string(),
+                        input_schema: json!({}),
+                    },
+                }),
+            )
+            .await;
+        registry
+            .register_tool(
+                "mcp.github.get_pr".to_string(),
+                Arc::new(TestTool {
+                    schema: ToolSchema {
+                        name: "mcp.github.get_pr".to_string(),
+                        description: "get".to_string(),
+                        input_schema: json!({}),
+                    },
+                }),
+            )
+            .await;
+
+        let servers = registry.mcp_server_names().await;
+        assert_eq!(servers, vec!["github".to_string(), "notion".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn unregister_by_prefix_removes_index_vectors_for_removed_tools() {
+        let registry = ToolRegistry::new();
+        registry
+            .register_tool(
+                "mcp.test.search".to_string(),
+                Arc::new(TestTool {
+                    schema: ToolSchema {
+                        name: "mcp.test.search".to_string(),
+                        description: "search".to_string(),
+                        input_schema: json!({}),
+                    },
+                }),
+            )
+            .await;
+        registry
+            .register_tool(
+                "mcp.test.get".to_string(),
+                Arc::new(TestTool {
+                    schema: ToolSchema {
+                        name: "mcp.test.get".to_string(),
+                        description: "get".to_string(),
+                        input_schema: json!({}),
+                    },
+                }),
+            )
+            .await;
+
+        registry
+            .tool_vectors
+            .write()
+            .await
+            .insert("mcp.test.search".to_string(), vec![1.0, 0.0, 0.0]);
+        registry
+            .tool_vectors
+            .write()
+            .await
+            .insert("mcp.test.get".to_string(), vec![0.0, 1.0, 0.0]);
+
+        let removed = registry.unregister_by_prefix("mcp.test.").await;
+        assert_eq!(removed, 2);
+        let vectors = registry.tool_vectors.read().await;
+        assert!(!vectors.contains_key("mcp.test.search"));
+        assert!(!vectors.contains_key("mcp.test.get"));
     }
 
     #[test]

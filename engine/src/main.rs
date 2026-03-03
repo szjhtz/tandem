@@ -842,6 +842,7 @@ async fn build_runtime(
     let plugins = PluginRegistry::new(".").await?;
     let agents = AgentRegistry::new(".").await?;
     let tools = ToolRegistry::new();
+    tools.index_all().await;
     let permissions = PermissionManager::new(event_bus.clone());
     apply_default_permission_rules(&permissions).await;
     let mcp = McpRegistry::new();
