@@ -262,7 +262,14 @@ async function renderProvidersBlock(ctx, container) {
               </div>`
             : `<div>
                 <label class="mb-1 block text-sm text-slate-300">Model</label>
-                <select id="provider-model" class="tcp-select">${models.map((m) => `<option ${m === selectedModel ? "selected" : ""}>${escapeHtml(m)}</option>`).join("")}</select>
+                <input id="provider-model" class="tcp-input" list="provider-model-list" autocomplete="off" placeholder="Type to search models..." value="${escapeHtml(selectedModel)}" />
+                <datalist id="provider-model-list">
+                  ${models
+                    .slice(0, 200)
+                    .map((m) => `<option value="${escapeHtml(m)}"></option>`)
+                    .join("")}
+                </datalist>
+                <p class="mt-1 text-xs tcp-subtle">${models.length} models available. Type to filter.</p>
               </div>`
         }
       </div>
@@ -314,7 +321,30 @@ async function renderProvidersBlock(ctx, container) {
     });
 
     const modelEl = container.querySelector("#provider-model");
-    if (modelEl) modelEl.addEventListener("change", (e) => (selectedModel = e.target.value));
+    const modelListEl = container.querySelector("#provider-model-list");
+    const refreshModelSuggestions = (rawFilter) => {
+      if (!modelListEl) return;
+      const needle = String(rawFilter || "")
+        .trim()
+        .toLowerCase();
+      const filtered = !needle
+        ? models
+        : models.filter((m) => m.toLowerCase().includes(needle));
+      modelListEl.innerHTML = filtered
+        .slice(0, 200)
+        .map((m) => `<option value="${escapeHtml(m)}"></option>`)
+        .join("");
+    };
+    if (modelEl) {
+      modelEl.addEventListener("input", (e) => {
+        selectedModel = String(e.target.value || "").trim();
+        refreshModelSuggestions(e.target.value);
+      });
+      modelEl.addEventListener("focus", (e) => refreshModelSuggestions(e.target.value));
+      modelEl.addEventListener("change", (e) => {
+        selectedModel = String(e.target.value || "").trim();
+      });
+    }
 
     const customIdEl = container.querySelector("#custom-provider-id");
     if (customIdEl)
@@ -391,6 +421,9 @@ async function renderProvidersBlock(ctx, container) {
       } else {
         if (!selectedProvider) throw new Error("Select a provider first.");
         if (!selectedModel) throw new Error("Select a default model first.");
+        if (models.length > 0 && !models.includes(selectedModel)) {
+          throw new Error("Select an exact model ID from the suggestions before saving.");
+        }
         if (hadStoredKey && replaceStoredKey && !key) {
           throw new Error("Enter a new API key or keep existing key.");
         }
