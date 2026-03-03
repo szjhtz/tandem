@@ -433,15 +433,17 @@ impl PackBuilderTool {
             }
             candidates.sort_by(|a, b| b.score.cmp(&a.score).then_with(|| a.slug.cmp(&b.slug)));
             if let Some(best) = candidates.first() {
-                selected_connector_slugs.insert(best.slug.clone());
-                resolved_needs.insert(need.id.clone());
-                if let Some(server) = all_catalog.iter().find(|s| s.slug == best.slug) {
-                    for tool in server.tool_names.iter().take(3) {
-                        selected_mcp_tools.insert(format!(
-                            "mcp.{}.{}",
-                            namespace_segment(&server.slug),
-                            namespace_segment(tool)
-                        ));
+                if should_auto_select_connector(need, best) {
+                    selected_connector_slugs.insert(best.slug.clone());
+                    resolved_needs.insert(need.id.clone());
+                    if let Some(server) = all_catalog.iter().find(|s| s.slug == best.slug) {
+                        for tool in server.tool_names.iter().take(3) {
+                            selected_mcp_tools.insert(format!(
+                                "mcp.{}.{}",
+                                namespace_segment(&server.slug),
+                                namespace_segment(tool)
+                            ));
+                        }
                     }
                 }
             }
@@ -1989,6 +1991,42 @@ fn score_candidates_for_need(
     out
 }
 
+fn should_auto_select_connector(need: &CapabilityNeed, candidate: &ConnectorCandidate) -> bool {
+    match need.id.as_str() {
+        "email.send" => {
+            if candidate.score < 6 {
+                return false;
+            }
+            let hay = format!(
+                "{} {} {}",
+                candidate.slug.to_ascii_lowercase(),
+                candidate.name.to_ascii_lowercase(),
+                candidate.description.to_ascii_lowercase()
+            );
+            let looks_like_marketing = ["crm", "campaign", "marketing", "sales"]
+                .iter()
+                .any(|term| hay.contains(term));
+            let looks_like_mail_delivery = [
+                "email",
+                "mail",
+                "gmail",
+                "smtp",
+                "sendgrid",
+                "mailgun",
+                "outlook",
+                "office365",
+            ]
+            .iter()
+            .any(|term| hay.contains(term));
+            if looks_like_marketing && !looks_like_mail_delivery {
+                return false;
+            }
+            true
+        }
+        _ => true,
+    }
+}
+
 async fn available_builtin_tools(state: &AppState) -> BTreeSet<String> {
     state
         .tools
@@ -2184,4 +2222,51 @@ fn zip_dir(src_dir: &PathBuf, output_zip: &PathBuf) -> anyhow::Result<()> {
     }
     zip.finish()?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn email_send_does_not_auto_select_low_confidence_connector() {
+        let need = CapabilityNeed {
+            id: "email.send".to_string(),
+            external: true,
+            query_terms: vec!["email".to_string()],
+        };
+        let candidate = ConnectorCandidate {
+            slug: "activecampaign".to_string(),
+            name: "ActiveCampaign".to_string(),
+            description: "Marketing automation and CRM workflows".to_string(),
+            documentation_url: String::new(),
+            transport_url: String::new(),
+            requires_auth: true,
+            requires_setup: false,
+            tool_count: 5,
+            score: 3,
+        };
+        assert!(!should_auto_select_connector(&need, &candidate));
+    }
+
+    #[test]
+    fn email_send_allows_high_confidence_mail_connector() {
+        let need = CapabilityNeed {
+            id: "email.send".to_string(),
+            external: true,
+            query_terms: vec!["email".to_string()],
+        };
+        let candidate = ConnectorCandidate {
+            slug: "gmail".to_string(),
+            name: "Gmail".to_string(),
+            description: "Send and manage email messages".to_string(),
+            documentation_url: String::new(),
+            transport_url: String::new(),
+            requires_auth: true,
+            requires_setup: false,
+            tool_count: 8,
+            score: 9,
+        };
+        assert!(should_auto_select_connector(&need, &candidate));
+    }
 }
