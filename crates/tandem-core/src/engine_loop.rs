@@ -2728,6 +2728,25 @@ fn normalize_tool_args(
             missing_terminal = true;
             missing_terminal_reason = Some("WEBFETCH_URL_MISSING".to_string());
         }
+    } else if normalized_tool == "pack_builder" {
+        if let Some(goal) = extract_pack_builder_goal_arg(&args) {
+            args = set_pack_builder_goal_arg(args, goal);
+        } else if let Some(inferred) = infer_pack_builder_goal_from_text(latest_user_text) {
+            args_source = "inferred_from_user".to_string();
+            args_integrity = "recovered".to_string();
+            args = set_pack_builder_goal_arg(args, inferred);
+        } else if let Some(recovered) = infer_pack_builder_goal_from_text(latest_assistant_context)
+        {
+            args_source = "recovered_from_context".to_string();
+            args_integrity = "recovered".to_string();
+            args = set_pack_builder_goal_arg(args, recovered);
+        } else {
+            args_source = "missing".to_string();
+            args_integrity = "empty".to_string();
+            missing_terminal = true;
+            missing_terminal_reason = Some("PACK_BUILDER_GOAL_MISSING".to_string());
+        }
+        args = ensure_pack_builder_default_mode(args);
     }
 
     NormalizedToolArgs {
@@ -2994,6 +3013,25 @@ fn set_webfetch_url_arg(args: Value, url: String) -> Value {
     Value::Object(obj)
 }
 
+fn set_pack_builder_goal_arg(args: Value, goal: String) -> Value {
+    let mut obj = args.as_object().cloned().unwrap_or_default();
+    obj.insert("goal".to_string(), Value::String(goal));
+    Value::Object(obj)
+}
+
+fn ensure_pack_builder_default_mode(args: Value) -> Value {
+    let mut obj = args.as_object().cloned().unwrap_or_default();
+    let has_mode = obj
+        .get("mode")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .is_some_and(|v| !v.is_empty());
+    if !has_mode {
+        obj.insert("mode".to_string(), Value::String("preview".to_string()));
+    }
+    Value::Object(obj)
+}
+
 fn extract_webfetch_url_arg(args: &Value) -> Option<String> {
     const URL_KEYS: [&str; 5] = ["url", "uri", "link", "href", "target_url"];
     for key in URL_KEYS {
@@ -3015,6 +3053,34 @@ fn extract_webfetch_url_arg(args: &Value) -> Option<String> {
         }
     }
     args.as_str().and_then(sanitize_url_candidate)
+}
+
+fn extract_pack_builder_goal_arg(args: &Value) -> Option<String> {
+    const GOAL_KEYS: [&str; 1] = ["goal"];
+    for key in GOAL_KEYS {
+        if let Some(value) = args.get(key).and_then(|v| v.as_str()) {
+            let trimmed = value.trim();
+            if !trimmed.is_empty() {
+                return Some(trimmed.to_string());
+            }
+        }
+    }
+    for container in ["arguments", "args", "input", "params"] {
+        if let Some(obj) = args.get(container) {
+            for key in GOAL_KEYS {
+                if let Some(value) = obj.get(key).and_then(|v| v.as_str()) {
+                    let trimmed = value.trim();
+                    if !trimmed.is_empty() {
+                        return Some(trimmed.to_string());
+                    }
+                }
+            }
+        }
+    }
+    args.as_str()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(ToString::to_string)
 }
 
 fn extract_websearch_query(args: &Value) -> Option<String> {
@@ -3221,6 +3287,15 @@ fn infer_url_from_text(text: &str) -> Option<String> {
     candidates
         .into_iter()
         .find(|candidate| seen.insert(candidate.clone()))
+}
+
+fn infer_pack_builder_goal_from_text(text: &str) -> Option<String> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
 }
 
 fn sanitize_url_candidate(raw: &str) -> Option<String> {
@@ -5098,6 +5173,45 @@ Call: todowrite(task_id=3, status="in_progress")
             normalized.missing_terminal_reason.as_deref(),
             Some("WEBFETCH_URL_MISSING")
         );
+    }
+
+    #[test]
+    fn normalize_tool_args_pack_builder_infers_goal_from_user_prompt() {
+        let user_text =
+            "Create a pack that checks latest headline news every day at 8 AM and emails me.";
+        let normalized = normalize_tool_args("pack_builder", json!({}), user_text, "");
+        assert!(!normalized.missing_terminal);
+        assert_eq!(
+            normalized.args.get("goal").and_then(|v| v.as_str()),
+            Some(user_text)
+        );
+        assert_eq!(
+            normalized.args.get("mode").and_then(|v| v.as_str()),
+            Some("preview")
+        );
+        assert_eq!(normalized.args_source, "inferred_from_user");
+        assert_eq!(normalized.args_integrity, "recovered");
+    }
+
+    #[test]
+    fn normalize_tool_args_pack_builder_keeps_existing_goal_and_mode() {
+        let normalized = normalize_tool_args(
+            "pack_builder",
+            json!({"mode":"apply","goal":"existing goal","plan_id":"plan-1"}),
+            "new goal should not override",
+            "",
+        );
+        assert!(!normalized.missing_terminal);
+        assert_eq!(
+            normalized.args.get("goal").and_then(|v| v.as_str()),
+            Some("existing goal")
+        );
+        assert_eq!(
+            normalized.args.get("mode").and_then(|v| v.as_str()),
+            Some("apply")
+        );
+        assert_eq!(normalized.args_source, "provider_json");
+        assert_eq!(normalized.args_integrity, "ok");
     }
 
     #[test]
