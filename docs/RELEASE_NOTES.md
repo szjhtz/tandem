@@ -33,6 +33,9 @@
 - **Pack Builder token-burn guardrail**:
   - Engine loop now treats productive `pack_builder` calls as terminal for the iteration and emits tool summary directly, avoiding repeated model follow-up turns for the same request.
   - Duplicate-signature retry limit for `pack_builder` is now `1` to stop repeated identical calls quickly.
+- **OpenAI tool-schema compatibility hardening for MCP connectors**:
+  - Added recursive provider-side schema normalization before tool dispatch so MCP schemas that use tuple `items` or omit nested object `properties` are transformed into OpenAI-compatible function parameter schemas.
+  - Fixes provider 400 `invalid_function_parameters` failures seen on models such as `openai/gpt-5.3-codex` when MCP tools (for example Airtable list-records) are present in the toolset.
 
 ---
 

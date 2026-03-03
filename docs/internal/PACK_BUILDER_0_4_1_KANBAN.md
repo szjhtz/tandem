@@ -17,6 +17,7 @@ Owner: Tandem Engine
 - [x] Add tests for MCP-required external goals and connector invocation
 - [x] Update `CHANGELOG.md` for v0.4.1
 - [x] Update `docs/RELEASE_NOTES.md` for v0.4.1
+- [x] Harden provider tool-schema normalization for MCP tuple `items` / nested object `properties` compatibility
 
 ## Completed
 
@@ -31,3 +32,4 @@ Owner: Tandem Engine
   - `73e0759` (pack builder implementation landed earlier in branch)
   - `08a9c81` (agent routing, preset registry, HTTP coverage, control panel compatibility)
   - `e872c8d` (TUI preset index compatibility for `pack_presets`)
+  - `830cec6` (OpenAI provider schema hardening for MCP tool dispatch)
