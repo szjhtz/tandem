@@ -25,6 +25,10 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
   - Explicit allowlist/policy matches are unioned from the full tool list to prevent required tools from being dropped by top-K retrieval.
   - Runtime system prompt now includes a compact connected-integrations catalog (MCP server names only), gated by `TANDEM_MCP_CATALOG_IN_SYSTEM_PROMPT`.
   - Graceful fallback remains intact: when embeddings are unavailable/disabled, retrieval falls back to full tool listing.
+  - Reliability hardening:
+    - action-heavy prompts now trigger automatic fallback to full tool list when semantic top-K omits required web/email tool families
+    - non-offered tool calls are rejected with available-tool hints instead of silently executing guessed names
+    - assistant cannot claim email delivery succeeded unless a successful email-like tool action was executed in the run
 
 - MCP catalog moved into engine and exposed to frontends
   - Added engine-managed embedded catalog endpoints:

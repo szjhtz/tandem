@@ -8,6 +8,8 @@ Owner: Tandem Engine
 - [x] Add v0.4.1 changelog entry details for semantic retrieval rollout
 - [x] Add v0.4.1 release notes entry for semantic retrieval + MCP context reduction
 - [x] Final validation pass (`tandem-tools`, `tandem-core` targeted tests, engine compile)
+- [x] Add semantic-retrieval reliability hardening for action-heavy prompts (web/email)
+- [x] Add guardrails for non-offered tool calls and false email-send claims
 
 ## In Progress
 
@@ -25,6 +27,9 @@ Owner: Tandem Engine
 - [x] Keep explicit allowlist/policy tools always included by unioning policy matches from full tool list
 - [x] Add compact MCP integration catalog to runtime system prompt (names only)
 - [x] Add/adjust tests for new prompt behavior and tool-registry MCP/vector lifecycle
+- [x] Add retrieval fallback-to-full-tools guard when top-K omits required web/email tool families
+- [x] Add `tool.call.rejected_unoffered` event + available-tool hinting for unsupported per-turn calls
+- [x] Add final-response guard preventing “email sent” claims without successful email tool execution
 
 ## Notes
 
@@ -35,8 +40,13 @@ Owner: Tandem Engine
 - Existing `TANDEM_TOOL_ROUTER_ENABLED` default is unchanged in this phase.
 - `K=24` is intentionally aligned with the existing `max_tools_per_call_expanded()` default.
 - Post-start MCP servers are indexed through updated `register_tool` flows (`connect/refresh/add`).
+- New reliability behavior:
+  - for web-research/email-delivery prompts, if semantic retrieval omits required families, engine falls back to full list for that turn
+  - out-of-offer tool calls are rejected deterministically (no silent unknown-tool execution)
+  - email-send success claims require actual successful email-like tool evidence in-run
 
 ## Delivery Commits
 
 - `ff2a64b` — semantic retrieval runtime integration + MCP catalog prompt + kanban board
 - `e6d564f` — v0.4.1 changelog/release notes updates + kanban completion snapshot
+- `9c5ed20` — reliability hotfix for retrieval fallback, unoffered-tool rejection, and email-claim evidence guard

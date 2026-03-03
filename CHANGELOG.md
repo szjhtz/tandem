@@ -79,6 +79,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **OpenAI-compatible MCP tool schema normalization**:
   - normalized nested MCP function schemas before provider dispatch so tuple-style `items` arrays and object nodes without `properties` are rewritten into OpenAI-valid function parameter schemas
   - fixes `TOOL_SCHEMA_INVALID` 400 failures such as `mcp_airtable_list_records_for_table` when using models like `openai/gpt-5.3-codex` through OpenRouter
+- **Semantic retrieval reliability for action-heavy prompts**:
+  - engine now falls back from semantic top-K tool candidates to the full tool list when prompts indicate web research or email delivery and required tool families are missing from retrieval output
+  - provider call routing telemetry now emits retrieval fallback fields (`retrievalEnabled`, `retrievalK`, `fallbackToFullTools`, `fallbackReason`) to aid diagnosis
+  - tool calls not offered in the current turn are now rejected deterministically with explicit available-tool hints instead of attempting execution against unavailable/guessed tool names
+  - final response guard now blocks false “email sent” claims unless a successful email-like tool action was actually executed in the run
 - **Pack Builder permission friction across chat/channels**:
   - `pack_builder` tool is now allowed by default in baseline engine permission rules to prevent pack-creation requests timing out on first-use approval prompts
   - internal `pack_builder` apply-phase approvals remain required for connector registration, pack install, and routine enablement
