@@ -237,7 +237,7 @@ export async function renderMcp(ctx) {
             <input id="mcp-catalog-search" class="tcp-input" placeholder="Search pack name, slug, or URL" />
             <button id="mcp-catalog-refresh" class="tcp-btn"><i data-lucide="refresh-cw"></i> Refresh</button>
           </div>
-          <div id="mcp-catalog-list" class="grid gap-2 max-h-[420px] overflow-auto pr-1"></div>
+          <div id="mcp-catalog-list" class="grid gap-2 md:grid-cols-2 2xl:grid-cols-3 max-h-[520px] overflow-auto pr-1"></div>
         </div>
 
         <div class="tcp-card">
@@ -505,7 +505,7 @@ export async function renderMcp(ctx) {
             String(row.serverConfigName || row.slug || "").toLowerCase()
           );
           return `
-        <div class="tcp-list-item grid gap-2">
+        <div class="tcp-list-item grid h-full content-start gap-2">
           <div class="flex flex-wrap items-start justify-between gap-2">
             <div>
               <div class="font-semibold">${escapeHtml(row.name)}</div>
@@ -516,9 +516,9 @@ export async function renderMcp(ctx) {
               <span class="${row.requiresAuth ? "tcp-badge-warn" : "tcp-badge-ok"}">${row.requiresAuth ? "Auth" : "Authless"}</span>
             </div>
           </div>
-          <div class="tcp-subtle text-xs break-all">${escapeHtml(row.transportUrl)}</div>
-          ${row.description ? `<div class="text-xs text-slate-200">${escapeHtml(row.description)}</div>` : ""}
-          <div class="flex flex-wrap gap-2">
+          <div class="tcp-subtle text-xs break-all line-clamp-2">${escapeHtml(row.transportUrl)}</div>
+          ${row.description ? `<div class="text-xs text-slate-200 line-clamp-2">${escapeHtml(row.description)}</div>` : ""}
+          <div class="mt-auto flex flex-wrap gap-2">
             <button class="tcp-btn" data-catalog-apply="${escapeHtml(row.slug)}">Apply</button>
             <button class="tcp-btn" data-catalog-add="${escapeHtml(row.slug)}" ${alreadyConfigured ? "disabled" : ""}>${alreadyConfigured ? "Added" : "Add"}</button>
             <button class="tcp-btn-primary" data-catalog-add-connect="${escapeHtml(row.slug)}" ${alreadyConfigured ? "disabled" : ""}>${alreadyConfigured ? "Added" : "Add + Connect"}</button>
