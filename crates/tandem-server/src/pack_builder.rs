@@ -41,6 +41,8 @@ struct PackBuilderInput {
     #[serde(default)]
     goal: Option<String>,
     #[serde(default)]
+    auto_apply: Option<bool>,
+    #[serde(default)]
     selected_connectors: Vec<String>,
     #[serde(default)]
     plan_id: Option<String>,
@@ -87,6 +89,7 @@ struct PreparedPlan {
     capabilities_required: Vec<String>,
     capabilities_optional: Vec<String>,
     recommended_connectors: Vec<ConnectorCandidate>,
+    selected_connector_slugs: Vec<String>,
     selected_mcp_tools: Vec<String>,
     fallback_warnings: Vec<String>,
     required_secrets: Vec<String>,
@@ -157,6 +160,7 @@ impl Tool for PackBuilderTool {
                 "properties": {
                     "mode": {"type": "string", "enum": ["preview", "apply"]},
                     "goal": {"type": "string"},
+                    "auto_apply": {"type": "boolean"},
                     "plan_id": {"type": "string"},
                     "selected_connectors": {"type": "array", "items": {"type": "string"}},
                     "approve_connector_registration": {"type": "boolean"},
@@ -206,10 +210,13 @@ impl PackBuilderTool {
         let all_catalog = catalog_servers();
         let builtin_tools = available_builtin_tools(&self.state).await;
         let mut recommended_connectors = Vec::<ConnectorCandidate>::new();
+        let mut selected_connector_slugs = BTreeSet::<String>::new();
         let mut selected_mcp_tools = BTreeSet::<String>::new();
         let mut required = Vec::<String>::new();
         let mut optional = Vec::<String>::new();
         let mut fallback_warnings = Vec::<String>::new();
+        let mut unresolved_external_needs = Vec::<String>::new();
+        let mut resolved_needs = BTreeSet::<String>::new();
 
         for need in &needs {
             if need.external {
@@ -221,8 +228,10 @@ impl PackBuilderTool {
                 continue;
             }
             if need_satisfied_by_builtin(&builtin_tools, need) {
+                resolved_needs.insert(need.id.clone());
                 continue;
             }
+            unresolved_external_needs.push(need.id.clone());
             let mut candidates = score_candidates_for_need(&all_catalog, need);
             if candidates.is_empty() {
                 fallback_warnings.push(format!(
@@ -233,6 +242,8 @@ impl PackBuilderTool {
             }
             candidates.sort_by(|a, b| b.score.cmp(&a.score).then_with(|| a.slug.cmp(&b.slug)));
             if let Some(best) = candidates.first() {
+                selected_connector_slugs.insert(best.slug.clone());
+                resolved_needs.insert(need.id.clone());
                 if let Some(server) = all_catalog.iter().find(|s| s.slug == best.slug) {
                     for tool in server.tool_names.iter().take(3) {
                         selected_mcp_tools.insert(format!(
@@ -304,7 +315,17 @@ impl PackBuilderTool {
         zip_dir(&pack_root, &zip_path)?;
 
         let plan_id = format!("plan-{}", Uuid::new_v4());
-        let required_secrets = derive_required_secret_refs(&recommended_connectors);
+        let selected_connector_slugs = selected_connector_slugs.into_iter().collect::<Vec<_>>();
+        let required_secrets =
+            derive_required_secret_refs_for_selected(&all_catalog, &selected_connector_slugs);
+        let connector_selection_required = unresolved_external_needs
+            .iter()
+            .any(|need_id| !resolved_needs.contains(need_id));
+        let auto_apply_requested = input.auto_apply.unwrap_or(true);
+        let auto_apply_ready = auto_apply_requested
+            && !connector_selection_required
+            && required_secrets.is_empty()
+            && fallback_warnings.is_empty();
 
         let prepared = PreparedPlan {
             plan_id: plan_id.clone(),
@@ -315,6 +336,7 @@ impl PackBuilderTool {
             capabilities_required: required.clone(),
             capabilities_optional: optional.clone(),
             recommended_connectors: recommended_connectors.clone(),
+            selected_connector_slugs: selected_connector_slugs.clone(),
             selected_mcp_tools: tool_ids.clone(),
             fallback_warnings: fallback_warnings.clone(),
             required_secrets: required_secrets.clone(),
@@ -334,22 +356,48 @@ impl PackBuilderTool {
                 "version": "0.4.1"
             },
             "connector_candidates": recommended_connectors,
-            "connector_selection_required": !needs.iter().filter(|n| n.external).all(|need| {
-                recommended_connectors.iter().any(|c| need.query_terms.iter().any(|q| c.slug.contains(q) || c.name.to_ascii_lowercase().contains(q)))
-            }),
+            "selected_connectors": selected_connector_slugs,
+            "connector_selection_required": connector_selection_required,
             "mcp_mapping": tool_ids,
             "fallback_warnings": fallback_warnings,
             "required_secrets": required_secrets,
             "zip_path": zip_path.to_string_lossy(),
+            "auto_apply_requested": auto_apply_requested,
+            "auto_apply_ready": auto_apply_ready,
             "approval_required": {
-                "register_connectors": true,
+                "register_connectors": !selected_connector_slugs.is_empty(),
                 "install_pack": true,
                 "enable_routines": true
             }
         });
 
+        if auto_apply_ready {
+            let applied = self
+                .apply(PackBuilderInput {
+                    mode: Some("apply".to_string()),
+                    goal: None,
+                    auto_apply: Some(false),
+                    selected_connectors: selected_connector_slugs.clone(),
+                    plan_id: Some(plan_id.clone()),
+                    approve_connector_registration: Some(true),
+                    approve_pack_install: Some(true),
+                    approve_enable_routines: Some(false),
+                    schedule: None,
+                })
+                .await?;
+            let mut metadata = applied.metadata.clone();
+            if let Some(obj) = metadata.as_object_mut() {
+                obj.insert("auto_applied_from_preview".to_string(), json!(true));
+                obj.insert("preview_plan_id".to_string(), json!(plan_id));
+            }
+            return Ok(ToolResult {
+                output: render_pack_builder_apply_output(&metadata),
+                metadata,
+            });
+        }
+
         Ok(ToolResult {
-            output: serde_json::to_string_pretty(&output).unwrap_or_else(|_| output.to_string()),
+            output: render_pack_builder_preview_output(&output),
             metadata: output,
         })
     }
@@ -358,7 +406,7 @@ impl PackBuilderTool {
         let Some(plan_id) = input.plan_id.as_deref() else {
             let output = json!({"error":"plan_id is required for apply"});
             return Ok(ToolResult {
-                output: output.to_string(),
+                output: render_pack_builder_apply_output(&output),
                 metadata: output,
             });
         };
@@ -370,14 +418,31 @@ impl PackBuilderTool {
         let Some(plan) = plan else {
             let output = json!({"error":"unknown plan_id", "plan_id": plan_id});
             return Ok(ToolResult {
-                output: output.to_string(),
+                output: render_pack_builder_apply_output(&output),
                 metadata: output,
             });
         };
 
-        if input.approve_connector_registration != Some(true)
-            || input.approve_pack_install != Some(true)
-        {
+        if input.approve_pack_install != Some(true) {
+            let output = json!({
+                "error": "approval_required",
+                "required": {
+                    "approve_pack_install": true
+                }
+            });
+            return Ok(ToolResult {
+                output: render_pack_builder_apply_output(&output),
+                metadata: output,
+            });
+        }
+
+        let all_catalog = catalog_servers();
+        let selected = if input.selected_connectors.is_empty() {
+            plan.selected_connector_slugs.clone()
+        } else {
+            input.selected_connectors.clone()
+        };
+        if !selected.is_empty() && input.approve_connector_registration != Some(true) {
             let output = json!({
                 "error": "approval_required",
                 "required": {
@@ -386,21 +451,10 @@ impl PackBuilderTool {
                 }
             });
             return Ok(ToolResult {
-                output: output.to_string(),
+                output: render_pack_builder_apply_output(&output),
                 metadata: output,
             });
         }
-
-        let all_catalog = catalog_servers();
-        let selected = if input.selected_connectors.is_empty() {
-            plan.recommended_connectors
-                .iter()
-                .take(1)
-                .map(|c| c.slug.clone())
-                .collect::<Vec<_>>()
-        } else {
-            input.selected_connectors.clone()
-        };
 
         let mut connector_results = Vec::<Value>::new();
         let mut registered_servers = Vec::<String>::new();
@@ -524,10 +578,179 @@ impl PackBuilderTool {
         });
 
         Ok(ToolResult {
-            output: serde_json::to_string_pretty(&output).unwrap_or_else(|_| output.to_string()),
+            output: render_pack_builder_apply_output(&output),
             metadata: output,
         })
     }
+}
+
+fn render_pack_builder_preview_output(meta: &Value) -> String {
+    let goal = meta
+        .get("goal")
+        .and_then(Value::as_str)
+        .unwrap_or("automation goal");
+    let plan_id = meta.get("plan_id").and_then(Value::as_str).unwrap_or("-");
+    let pack_name = meta
+        .get("pack")
+        .and_then(|v| v.get("name"))
+        .and_then(Value::as_str)
+        .unwrap_or("generated-pack");
+    let pack_id = meta
+        .get("pack")
+        .and_then(|v| v.get("pack_id"))
+        .and_then(Value::as_str)
+        .unwrap_or("-");
+    let auto_apply_ready = meta
+        .get("auto_apply_ready")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let connector_selection_required = meta
+        .get("connector_selection_required")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let selected_connectors = meta
+        .get("selected_connectors")
+        .and_then(Value::as_array)
+        .map(|rows| {
+            rows.iter()
+                .filter_map(Value::as_str)
+                .map(|v| format!("- {}", v))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let required_secrets = meta
+        .get("required_secrets")
+        .and_then(Value::as_array)
+        .map(|rows| {
+            rows.iter()
+                .filter_map(Value::as_str)
+                .map(|v| format!("- {}", v))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let fallback_warnings = meta
+        .get("fallback_warnings")
+        .and_then(Value::as_array)
+        .map(|rows| {
+            rows.iter()
+                .filter_map(Value::as_str)
+                .map(|v| format!("- {}", v))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    let mut lines = vec![
+        "Pack Builder Preview".to_string(),
+        format!("- Goal: {}", goal),
+        format!("- Plan ID: {}", plan_id),
+        format!("- Pack: {} ({})", pack_name, pack_id),
+    ];
+
+    if selected_connectors.is_empty() {
+        lines.push("- Selected connectors: none".to_string());
+    } else {
+        lines.push("- Selected connectors:".to_string());
+        lines.extend(selected_connectors);
+    }
+    if required_secrets.is_empty() {
+        lines.push("- Required secrets: none".to_string());
+    } else {
+        lines.push("- Required secrets:".to_string());
+        lines.extend(required_secrets);
+    }
+    if !fallback_warnings.is_empty() {
+        lines.push("- Warnings:".to_string());
+        lines.extend(fallback_warnings);
+    }
+
+    if auto_apply_ready {
+        lines.push("- Status: ready for automatic apply".to_string());
+    } else {
+        lines.push("- Status: waiting for apply confirmation".to_string());
+        if connector_selection_required {
+            lines.push("- Action needed: choose connectors before apply.".to_string());
+        }
+    }
+    lines.join("\n")
+}
+
+fn render_pack_builder_apply_output(meta: &Value) -> String {
+    if let Some(error) = meta.get("error").and_then(Value::as_str) {
+        return match error {
+            "approval_required" => {
+                "Pack Builder Apply Blocked\n- Approval required for this apply step.".to_string()
+            }
+            "unknown plan_id" => "Pack Builder Apply Failed\n- Plan not found.".to_string(),
+            _ => format!("Pack Builder Apply Failed\n- {}", error),
+        };
+    }
+
+    let pack_id = meta
+        .get("pack_installed")
+        .and_then(|v| v.get("pack_id"))
+        .and_then(Value::as_str)
+        .unwrap_or("-");
+    let pack_name = meta
+        .get("pack_installed")
+        .and_then(|v| v.get("name"))
+        .and_then(Value::as_str)
+        .unwrap_or("-");
+    let install_path = meta
+        .get("pack_installed")
+        .and_then(|v| v.get("install_path"))
+        .and_then(Value::as_str)
+        .unwrap_or("-");
+    let routines_enabled = meta
+        .get("routines_enabled")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let registered_servers = meta
+        .get("registered_servers")
+        .and_then(Value::as_array)
+        .map(|rows| {
+            rows.iter()
+                .filter_map(Value::as_str)
+                .map(|v| format!("- {}", v))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let routines = meta
+        .get("routines_registered")
+        .and_then(Value::as_array)
+        .map(|rows| {
+            rows.iter()
+                .filter_map(Value::as_str)
+                .map(|v| format!("- {}", v))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    let mut lines = vec![
+        "Pack Builder Apply Complete".to_string(),
+        format!("- Installed pack: {} ({})", pack_name, pack_id),
+        format!("- Install path: {}", install_path),
+        format!(
+            "- Routines: {}",
+            if routines_enabled {
+                "enabled"
+            } else {
+                "installed paused (recommended)"
+            }
+        ),
+    ];
+
+    if registered_servers.is_empty() {
+        lines.push("- Registered connectors: none".to_string());
+    } else {
+        lines.push("- Registered connectors:".to_string());
+        lines.extend(registered_servers);
+    }
+    if !routines.is_empty() {
+        lines.push("- Registered routines:".to_string());
+        lines.extend(routines);
+    }
+
+    lines.join("\n")
 }
 
 fn build_schedule(input: Option<&PreviewScheduleInput>) -> (RoutineSchedule, String, String) {
@@ -767,7 +990,7 @@ fn infer_capabilities_from_goal(goal: &str) -> Vec<CapabilityNeed> {
     if g.contains("headline") || g.contains("news") {
         push_need("news.latest", true, &["news", "zapier"], &mut out);
     }
-    if g.contains("email") {
+    if g.contains("email") || contains_email_address(goal) {
         push_need("email.send", true, &["gmail", "email", "zapier"], &mut out);
     }
 
@@ -776,6 +999,24 @@ fn infer_capabilities_from_goal(goal: &str) -> Vec<CapabilityNeed> {
         push_need("web.research", false, &["websearch"], &mut out);
     }
     out
+}
+
+fn contains_email_address(text: &str) -> bool {
+    text.split_whitespace().any(|token| {
+        let token = token.trim_matches(|ch: char| {
+            ch.is_ascii_punctuation() && ch != '@' && ch != '.' && ch != '_' && ch != '-'
+        });
+        let mut parts = token.split('@');
+        let local = parts.next().unwrap_or_default();
+        let domain = parts.next().unwrap_or_default();
+        let no_extra = parts.next().is_none();
+        no_extra
+            && !local.is_empty()
+            && domain.contains('.')
+            && domain
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || ch == '.' || ch == '-')
+    })
 }
 
 fn catalog_servers() -> Vec<CatalogServer> {
@@ -901,10 +1142,16 @@ fn need_satisfied_by_builtin(builtin_tools: &BTreeSet<String>, need: &Capability
     }
 }
 
-fn derive_required_secret_refs(connectors: &[ConnectorCandidate]) -> Vec<String> {
+fn derive_required_secret_refs_for_selected(
+    catalog: &[CatalogServer],
+    selected_connectors: &[String],
+) -> Vec<String> {
     let mut refs = BTreeSet::<String>::new();
-    for connector in connectors {
-        if connector.requires_auth {
+    for slug in selected_connectors {
+        if let Some(connector) = catalog.iter().find(|row| &row.slug == slug) {
+            if !connector.requires_auth {
+                continue;
+            }
             refs.insert(format!(
                 "{}_TOKEN",
                 connector.slug.to_ascii_uppercase().replace('-', "_")

@@ -18,6 +18,10 @@ Owner: Tandem Engine
 - [x] Update `CHANGELOG.md` for v0.4.1
 - [x] Update `docs/RELEASE_NOTES.md` for v0.4.1
 - [x] Harden provider tool-schema normalization for MCP tuple `items` / nested object `properties` compatibility
+- [x] Fix pack-builder preview UX to return user-readable summary instead of raw JSON dump
+- [x] Fix connector-selection gating for built-in satisfied external needs
+- [x] Add safe preview auto-apply path (install + paused routine) when no manual setup is required
+- [x] Add regression tests for built-in-only connector gating + safe auto-apply
 
 ## Completed
 
@@ -33,3 +37,4 @@ Owner: Tandem Engine
   - `08a9c81` (agent routing, preset registry, HTTP coverage, control panel compatibility)
   - `e872c8d` (TUI preset index compatibility for `pack_presets`)
   - `830cec6` (OpenAI provider schema hardening for MCP tool dispatch)
+  - `TBD` (pack-builder preview/apply UX hardening + safe auto-apply + tests)

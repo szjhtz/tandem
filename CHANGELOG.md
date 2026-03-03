@@ -43,6 +43,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Pack Builder retry-cost guardrail**:
   - engine now treats successful `pack_builder` execution as terminal for the current loop iteration and returns tool output directly instead of forcing additional model follow-up turns
   - duplicate-signature loop limit for `pack_builder` reduced to `1` to fail fast on repeated identical calls
+- **Pack Builder UX + apply flow reliability**:
+  - preview responses now return a concise human-readable summary (metadata remains structured JSON) instead of dumping raw/truncated JSON into chat output
+  - fixed `connector_selection_required` to only trigger for unresolved external capabilities (built-in-satisfied external needs no longer force connector selection)
+  - improved external email-action inference by detecting email-address targets in goals (even when the word “email” is absent)
+  - apply flow now defaults connector registration to the plan-selected connectors (instead of an arbitrary single candidate)
+  - safe previews now auto-apply by default (install pack + register routine paused) when no connector choice/secrets/manual setup are required
 
 ## [0.4.0] - Unreleased
 

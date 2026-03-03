@@ -12119,6 +12119,101 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn pack_builder_preview_builtin_only_path_does_not_require_connector_selection() {
+        let state = test_state().await;
+        state
+            .tools
+            .register_tool(
+                "pack_builder".to_string(),
+                Arc::new(crate::pack_builder::PackBuilderTool::new(state.clone())),
+            )
+            .await;
+        let app = app_router(state);
+        let req = Request::builder()
+            .method("POST")
+            .uri("/tool/execute")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({
+                    "tool": "pack_builder",
+                    "args": {
+                        "mode": "preview",
+                        "auto_apply": false,
+                        "goal": "Create a pack that checks latest headline news every day at 8 AM"
+                    }
+                })
+                .to_string(),
+            ))
+            .expect("request");
+        let resp = app.oneshot(req).await.expect("response");
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = to_bytes(resp.into_body(), usize::MAX).await.expect("body");
+        let payload: Value = serde_json::from_slice(&body).expect("json");
+        let metadata = payload.get("metadata").cloned().unwrap_or(Value::Null);
+        assert_eq!(
+            metadata
+                .get("connector_selection_required")
+                .and_then(|v| v.as_bool()),
+            Some(false)
+        );
+        assert_eq!(
+            metadata
+                .get("selected_connectors")
+                .and_then(|v| v.as_array())
+                .map(|v| v.len()),
+            Some(0)
+        );
+    }
+
+    #[tokio::test]
+    async fn pack_builder_preview_auto_applies_when_safe() {
+        let state = test_state().await;
+        state
+            .tools
+            .register_tool(
+                "pack_builder".to_string(),
+                Arc::new(crate::pack_builder::PackBuilderTool::new(state.clone())),
+            )
+            .await;
+        let app = app_router(state);
+        let req = Request::builder()
+            .method("POST")
+            .uri("/tool/execute")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({
+                    "tool": "pack_builder",
+                    "args": {
+                        "mode": "preview",
+                        "goal": "Create a pack that checks latest headline news every day at 8 AM"
+                    }
+                })
+                .to_string(),
+            ))
+            .expect("request");
+        let resp = app.oneshot(req).await.expect("response");
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = to_bytes(resp.into_body(), usize::MAX).await.expect("body");
+        let payload: Value = serde_json::from_slice(&body).expect("json");
+        let metadata = payload.get("metadata").cloned().unwrap_or(Value::Null);
+        assert_eq!(
+            metadata
+                .get("auto_applied_from_preview")
+                .and_then(|v| v.as_bool()),
+            Some(true)
+        );
+        assert_eq!(metadata.get("mode").and_then(|v| v.as_str()), Some("apply"));
+        assert!(
+            metadata
+                .get("pack_installed")
+                .and_then(|v| v.get("pack_id"))
+                .and_then(|v| v.as_str())
+                .is_some(),
+            "expected installed pack in auto-apply response"
+        );
+    }
+
+    #[tokio::test]
     async fn pack_builder_apply_requires_explicit_approvals() {
         let state = test_state().await;
         state

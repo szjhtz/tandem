@@ -36,6 +36,12 @@
 - **OpenAI tool-schema compatibility hardening for MCP connectors**:
   - Added recursive provider-side schema normalization before tool dispatch so MCP schemas that use tuple `items` or omit nested object `properties` are transformed into OpenAI-compatible function parameter schemas.
   - Fixes provider 400 `invalid_function_parameters` failures seen on models such as `openai/gpt-5.3-codex` when MCP tools (for example Airtable list-records) are present in the toolset.
+- **Pack Builder preview/apply UX hardening**:
+  - Preview output now renders a concise user-facing summary instead of raw tool JSON blobs.
+  - Fixed connector-selection gating so built-in satisfied external capabilities (for example headline lookup via built-in web tools) no longer incorrectly require connector selection.
+  - Added goal parsing support for email-address targets (e.g. `user@example.com`) so email-send capabilities are inferred even without the literal word “email”.
+  - Apply now uses plan-selected connectors by default (not a single arbitrary candidate).
+  - Safe previews now auto-apply by default when no connector choice, manual auth/setup, or secret input is required; routines are still registered paused unless explicitly enabled.
 
 ---
 
