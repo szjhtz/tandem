@@ -29,6 +29,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - added preset-registry tests for indexing and override lifecycle of `pack_preset`
   - added channel router tests for pack-builder intent detection and default-route fallback
 
+### Fixed
+
+- **Engine startup stability during pre-ready phase**:
+  - background server tasks now wait for runtime readiness before accessing `AppState` runtime-backed fields
+  - fixes startup panic `runtime accessed before startup completion` that could mark control-panel connectivity unhealthy on boot
+
 ## [0.4.0] - Unreleased
 
 ### Added

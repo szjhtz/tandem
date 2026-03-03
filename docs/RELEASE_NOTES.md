@@ -24,6 +24,9 @@
     - generated mission files contain explicit MCP action calls
     - apply mode blocks without explicit approvals
     - preset registry indexes/saves/deletes `pack_preset`
+- **Engine startup health stability fix**:
+  - Fixed a startup race where background workers could access runtime state before startup completion and panic (`runtime accessed before startup completion`).
+  - Startup workers now wait for runtime readiness/failure state before subscribing to runtime-backed event streams.
 
 ---
 
