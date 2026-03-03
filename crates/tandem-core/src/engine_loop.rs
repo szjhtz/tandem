@@ -11,7 +11,7 @@ use tandem_providers::{ChatAttachment, ChatMessage, ProviderRegistry, StreamChun
 use tandem_tools::{validate_tool_schemas, ToolRegistry};
 use tandem_types::{
     ContextMode, EngineEvent, HostOs, HostRuntimeContext, Message, MessagePart, MessagePartInput,
-    MessageRole, ModelSpec, PathStyle, SendMessageRequest, ShellFamily, ToolMode,
+    MessageRole, ModelSpec, PathStyle, SendMessageRequest, ShellFamily, ToolMode, ToolSchema,
 };
 use tandem_wire::WireMessagePart;
 use tokio_util::sync::CancellationToken;
@@ -345,6 +345,10 @@ impl EngineLoop {
             let websearch_duplicate_signature_limit = websearch_duplicate_signature_limit();
             let mut pack_builder_executed = false;
             let mut auto_workspace_probe_attempted = false;
+            let email_delivery_requested = requires_email_delivery_prompt(&text);
+            let web_research_requested = requires_web_research_prompt(&text);
+            let mut email_action_executed = false;
+            let mut latest_email_action_note: Option<String> = None;
             let intent = classify_intent(&text);
             let router_enabled = tool_router_enabled();
             let retrieval_enabled = semantic_tool_retrieval_enabled();
@@ -459,11 +463,30 @@ impl EngineLoop {
                     }
                 }
                 let all_tools = self.tools.list().await;
-                let candidate_tools = if retrieval_enabled {
+                let mut retrieval_fallback_reason: Option<&'static str> = None;
+                let mut candidate_tools = if retrieval_enabled {
                     self.tools.retrieve(&text, retrieval_k).await
                 } else {
                     all_tools.clone()
                 };
+                if retrieval_enabled {
+                    if candidate_tools.is_empty() && !all_tools.is_empty() {
+                        candidate_tools = all_tools.clone();
+                        retrieval_fallback_reason = Some("retrieval_empty_result");
+                    } else if web_research_requested
+                        && has_web_research_tools(&all_tools)
+                        && !has_web_research_tools(&candidate_tools)
+                    {
+                        candidate_tools = all_tools.clone();
+                        retrieval_fallback_reason = Some("missing_web_tools_for_research_prompt");
+                    } else if email_delivery_requested
+                        && has_email_action_tools(&all_tools)
+                        && !has_email_action_tools(&candidate_tools)
+                    {
+                        candidate_tools = all_tools.clone();
+                        retrieval_fallback_reason = Some("missing_email_tools_for_delivery_prompt");
+                    }
+                }
                 let mut tool_schemas = if !router_enabled {
                     candidate_tools
                 } else {
@@ -598,13 +621,23 @@ impl EngineLoop {
                         "intent": format!("{:?}", routing_decision.intent).to_ascii_lowercase(),
                         "selectedToolCount": routing_decision.selected_count,
                         "totalAvailableTools": routing_decision.total_available_count,
-                        "mcpIncluded": routing_decision.mcp_included
+                        "mcpIncluded": routing_decision.mcp_included,
+                        "retrievalEnabled": retrieval_enabled,
+                        "retrievalK": retrieval_k,
+                        "fallbackToFullTools": retrieval_fallback_reason.is_some(),
+                        "fallbackReason": retrieval_fallback_reason
                     }),
                 ));
                 let allowed_tool_names = tool_schemas
                     .iter()
                     .map(|schema| normalize_tool_name(&schema.name))
                     .collect::<HashSet<_>>();
+                let offered_tool_preview = tool_schemas
+                    .iter()
+                    .take(8)
+                    .map(|schema| normalize_tool_name(&schema.name))
+                    .collect::<Vec<_>>()
+                    .join(", ");
                 self.event_bus.publish(EngineEvent::new(
                     "provider.call.iteration.start",
                     json!({
@@ -888,6 +921,34 @@ impl EngineLoop {
                             continue;
                         }
                         let tool_key = normalize_tool_name(&tool);
+                        if !allowed_tool_names.contains(&tool_key) {
+                            let note = if offered_tool_preview.is_empty() {
+                                format!(
+                                    "Tool `{}` call skipped: it is not available in this turn.",
+                                    tool_key
+                                )
+                            } else {
+                                format!(
+                                    "Tool `{}` call skipped: it is not available in this turn. Available tools: {}.",
+                                    tool_key, offered_tool_preview
+                                )
+                            };
+                            self.event_bus.publish(EngineEvent::new(
+                                "tool.call.rejected_unoffered",
+                                json!({
+                                    "sessionID": session_id,
+                                    "messageID": user_message_id,
+                                    "iteration": iteration,
+                                    "tool": tool_key,
+                                    "offeredToolCount": allowed_tool_names.len()
+                                }),
+                            ));
+                            if tool_name_looks_like_email_action(&tool_key) {
+                                latest_email_action_note = Some(note.clone());
+                            }
+                            outputs.push(note);
+                            continue;
+                        }
                         if let Some(server) = mcp_server_from_tool_name(&tool_key) {
                             if blocked_mcp_servers.contains(server) {
                                 outputs.push(format!(
@@ -1061,6 +1122,14 @@ impl EngineLoop {
                                     pack_builder_executed = true;
                                 }
                             }
+                            if tool_name_looks_like_email_action(&tool_key) {
+                                if productive {
+                                    email_action_executed = true;
+                                } else {
+                                    latest_email_action_note =
+                                        Some(truncate_text(&output, 280).replace('\n', " "));
+                                }
+                            }
                             if is_auth_required_tool_output(&output) {
                                 if let Some(server) = mcp_server_from_tool_name(&tool_key) {
                                     blocked_mcp_servers.insert(server.to_string());
@@ -1185,6 +1254,21 @@ impl EngineLoop {
                 completion =
                     "I couldn't produce a final response for that run. Please retry your request."
                         .to_string();
+            }
+            if email_delivery_requested
+                && !email_action_executed
+                && completion_claims_email_sent(&completion)
+            {
+                let mut fallback = "I could not verify that an email was sent in this run. I did not complete the delivery action."
+                    .to_string();
+                if let Some(note) = latest_email_action_note.as_ref() {
+                    fallback.push_str("\n\nLast email tool status: ");
+                    fallback.push_str(note);
+                }
+                fallback.push_str(
+                    "\n\nPlease retry with an explicit available email tool (for example a draft, reply, or send MCP tool in your current connector set).",
+                );
+                completion = fallback;
             }
             completion = strip_model_control_markers(&completion);
             truncate_text(&completion, 16_000)
@@ -2074,6 +2158,64 @@ fn mcp_server_from_tool_name(tool_name: &str) -> Option<&str> {
         return None;
     }
     parts.next().filter(|server| !server.is_empty())
+}
+
+fn requires_web_research_prompt(input: &str) -> bool {
+    let lower = input.to_ascii_lowercase();
+    [
+        "research",
+        "top news",
+        "today's news",
+        "todays news",
+        "with links",
+        "latest headlines",
+        "current events",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle))
+}
+
+fn requires_email_delivery_prompt(input: &str) -> bool {
+    let lower = input.to_ascii_lowercase();
+    (lower.contains("send") && lower.contains("email"))
+        || (lower.contains("send") && lower.contains('@') && lower.contains("to"))
+        || lower.contains("email to")
+}
+
+fn has_web_research_tools(schemas: &[ToolSchema]) -> bool {
+    schemas.iter().any(|schema| {
+        let name = normalize_tool_name(&schema.name);
+        name == "websearch" || name == "webfetch" || name == "webfetch_html"
+    })
+}
+
+fn has_email_action_tools(schemas: &[ToolSchema]) -> bool {
+    schemas
+        .iter()
+        .map(|schema| normalize_tool_name(&schema.name))
+        .any(|name| tool_name_looks_like_email_action(&name))
+}
+
+fn tool_name_looks_like_email_action(name: &str) -> bool {
+    let normalized = normalize_tool_name(name);
+    if normalized.starts_with("mcp.") {
+        return normalized.contains("gmail")
+            || normalized.contains("mail")
+            || normalized.contains("email");
+    }
+    normalized.contains("mail") || normalized.contains("email")
+}
+
+fn completion_claims_email_sent(text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    let has_email_marker = lower.contains("email status")
+        || lower.contains("emailed")
+        || lower.contains("email sent")
+        || lower.contains("sent to");
+    has_email_marker
+        && (lower.contains("sent")
+            || lower.contains("delivered")
+            || lower.contains("has been sent"))
 }
 
 fn extract_tool_candidate_paths(tool: &str, args: &Value) -> Vec<String> {
@@ -5876,6 +6018,51 @@ Call: todowrite(task_id=3, status="in_progress")
         assert!(prompt.contains("[Connected Integrations]"));
         assert!(prompt.contains("- notion"));
         assert!(prompt.contains("- github"));
+    }
+
+    #[test]
+    fn detects_web_research_prompt_keywords() {
+        assert!(requires_web_research_prompt(
+            "research todays top news stories and include links"
+        ));
+        assert!(!requires_web_research_prompt(
+            "say hello and summarize this text"
+        ));
+    }
+
+    #[test]
+    fn detects_email_delivery_prompt_keywords() {
+        assert!(requires_email_delivery_prompt(
+            "send a full report with links to evan@example.com"
+        ));
+        assert!(!requires_email_delivery_prompt("draft a summary for later"));
+    }
+
+    #[test]
+    fn completion_claim_detector_flags_sent_language() {
+        assert!(completion_claims_email_sent(
+            "Email Status: Sent to evan@example.com."
+        ));
+        assert!(!completion_claims_email_sent(
+            "I could not send email in this run."
+        ));
+    }
+
+    #[test]
+    fn email_tool_detector_finds_mcp_gmail_tools() {
+        let schemas = vec![
+            ToolSchema {
+                name: "read".to_string(),
+                description: String::new(),
+                input_schema: json!({}),
+            },
+            ToolSchema {
+                name: "mcp.composio.gmail_send_email".to_string(),
+                description: String::new(),
+                input_schema: json!({}),
+            },
+        ];
+        assert!(has_email_action_tools(&schemas));
     }
 
     #[test]
