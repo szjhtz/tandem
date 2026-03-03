@@ -903,6 +903,15 @@ async fn build_runtime(
 }
 
 async fn apply_default_permission_rules(permissions: &PermissionManager) {
+    // Pack creation is a first-class workflow; allow invoking the builder tool by default.
+    let _ = permissions
+        .add_rule(
+            "pack_builder".to_string(),
+            "*".to_string(),
+            PermissionAction::Allow,
+        )
+        .await;
+
     if !default_permission_rules_enabled() {
         info!("engine.permission.defaults disabled by TANDEM_APPLY_DEFAULT_PERMISSION_RULES");
         return;

@@ -31,6 +31,14 @@ pub fn build_mode_permission_rules(
 ) -> Vec<PermissionRuleTemplate> {
     let mut rules = Vec::new();
 
+    if allows_any(allowed_tools, &["pack_builder"]) {
+        rules.push(PermissionRuleTemplate {
+            permission: "pack_builder".to_string(),
+            pattern: "*".to_string(),
+            action: "allow".to_string(),
+        });
+    }
+
     if allows_any(
         allowed_tools,
         &["ls", "list", "glob", "search", "grep", "codesearch"],
@@ -108,4 +116,28 @@ pub fn build_mode_permission_rules(
 
 pub fn default_tui_permission_rules() -> Vec<PermissionRuleTemplate> {
     build_mode_permission_rules(None)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{build_mode_permission_rules, default_tui_permission_rules};
+
+    #[test]
+    fn defaults_allow_pack_builder() {
+        let rules = default_tui_permission_rules();
+        assert!(rules.iter().any(|rule| {
+            rule.permission == "pack_builder" && rule.pattern == "*" && rule.action == "allow"
+        }));
+    }
+
+    #[test]
+    fn allowlist_controls_pack_builder_rule() {
+        let denied = vec!["read".to_string()];
+        let rules = build_mode_permission_rules(Some(&denied));
+        assert!(!rules.iter().any(|rule| rule.permission == "pack_builder"));
+
+        let allowed = vec!["pack_builder".to_string()];
+        let rules = build_mode_permission_rules(Some(&allowed));
+        assert!(rules.iter().any(|rule| rule.permission == "pack_builder"));
+    }
 }

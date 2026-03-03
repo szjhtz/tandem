@@ -14,6 +14,7 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
   - Added channel intent routing to automatically dispatch pack-creation requests to the `pack_builder` agent.
   - Added MCP-focused regression tests across server HTTP, preset registry, and channel routing.
   - Fixed engine boot race where pre-ready background tasks could panic with `runtime accessed before startup completion`; startup loops now gate on runtime readiness.
+  - `pack_builder` is now baseline-allowed in engine permission defaults so first-run pack creation from chat/channels does not timeout on tool approval prompts.
 
 - MCP catalog moved into engine and exposed to frontends
   - Added engine-managed embedded catalog endpoints:

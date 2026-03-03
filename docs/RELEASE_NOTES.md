@@ -27,6 +27,9 @@
 - **Engine startup health stability fix**:
   - Fixed a startup race where background workers could access runtime state before startup completion and panic (`runtime accessed before startup completion`).
   - Startup workers now wait for runtime readiness/failure state before subscribing to runtime-backed event streams.
+- **Pack Builder first-run approval UX fix**:
+  - Added baseline permission allow for `pack_builder` so pack-generation prompts from control panel and channel integrations do not timeout waiting for initial tool approval.
+  - `pack_builder` still enforces explicit apply-time approvals for connector registration/install/enable actions.
 
 ---
 

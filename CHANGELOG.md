@@ -34,6 +34,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Engine startup stability during pre-ready phase**:
   - background server tasks now wait for runtime readiness before accessing `AppState` runtime-backed fields
   - fixes startup panic `runtime accessed before startup completion` that could mark control-panel connectivity unhealthy on boot
+- **Pack Builder permission friction across chat/channels**:
+  - `pack_builder` tool is now allowed by default in baseline engine permission rules to prevent pack-creation requests timing out on first-use approval prompts
+  - internal `pack_builder` apply-phase approvals remain required for connector registration, pack install, and routine enablement
 
 ## [0.4.0] - Unreleased
 
