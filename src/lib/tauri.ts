@@ -982,7 +982,7 @@ export async function mcpListTools(): Promise<McpRemoteTool[]> {
   return invoke("mcp_list_tools");
 }
 
-export async function mcpCatalog(): Promise<{ catalog: McpCatalogResult }> {
+export async function mcpCatalog(): Promise<McpCatalogResult | { catalog: McpCatalogResult }> {
   return invoke("mcp_catalog");
 }
 

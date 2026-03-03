@@ -166,7 +166,7 @@ export async function renderMcp(ctx) {
 
   const servers = normalizeServers(serversRaw);
   const toolIds = normalizeTools(toolsRaw);
-  const catalog = normalizeCatalog(catalogRaw?.catalog || null);
+  const catalog = normalizeCatalog(catalogRaw?.catalog || catalogRaw || null);
   const parseCsv = (value) =>
     String(value || "")
       .split(",")
@@ -259,7 +259,7 @@ export async function renderMcp(ctx) {
             <input id="mcp-catalog-search" class="tcp-input" placeholder="Search pack name, slug, or URL" />
             <button id="mcp-catalog-refresh" class="tcp-btn"><i data-lucide="refresh-cw"></i> Refresh</button>
           </div>
-          <div id="mcp-catalog-list" class="grid gap-2"></div>
+          <div id="mcp-catalog-list" class="grid gap-2 max-h-[420px] overflow-auto pr-1"></div>
         </div>
       </div>
     </div>
@@ -388,7 +388,7 @@ export async function renderMcp(ctx) {
           row.transportUrl.toLowerCase().includes(query)
         );
       })
-      .slice(0, 80);
+      .slice(0, 50);
 
     if (!visible.length) {
       catalogListEl.innerHTML = '<p class="tcp-subtle">No catalog entries match your search.</p>';

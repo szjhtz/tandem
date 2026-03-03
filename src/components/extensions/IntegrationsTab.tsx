@@ -172,7 +172,8 @@ export function IntegrationsTab({ workspacePath }: IntegrationsTabProps) {
     setCatalogLoading(true);
     try {
       const payload = await mcpCatalog();
-      const catalog = payload?.catalog ?? null;
+      const catalog =
+        payload && typeof payload === "object" && "catalog" in payload ? payload.catalog : payload;
       setCatalogRows(normalizeCatalog(catalog));
       setCatalogGeneratedAt(String(catalog?.generated_at || "").trim());
     } catch (e) {
@@ -406,7 +407,7 @@ export function IntegrationsTab({ workspacePath }: IntegrationsTabProps) {
 
   const visibleCatalogRows = useMemo(() => {
     const query = catalogSearch.trim().toLowerCase();
-    if (!query) return catalogRows.slice(0, 80);
+    if (!query) return catalogRows.slice(0, 50);
     return catalogRows
       .filter((row) => {
         return (
@@ -415,7 +416,7 @@ export function IntegrationsTab({ workspacePath }: IntegrationsTabProps) {
           row.transportUrl.toLowerCase().includes(query)
         );
       })
-      .slice(0, 80);
+      .slice(0, 50);
   }, [catalogRows, catalogSearch]);
 
   return (
