@@ -43,6 +43,7 @@
   - Apply now uses plan-selected connectors by default (not a single arbitrary candidate).
   - Safe previews now auto-apply by default when no connector choice, manual auth/setup, or secret input is required; routines are still registered paused unless explicitly enabled.
   - Added conversational confirmation bridging: a follow-up chat reply like `confirm` after preview now maps to `pack_builder` apply with recovered `plan_id`, avoiding accidental creation of a new pack from the word “confirm”.
+  - Added tool-level session fallback: `pack_builder` tracks last preview plan per session and upgrades short confirmation goals (`ok`, `confirm`, `apply`) to apply for that plan, ensuring consistent behavior across control panel, desktop, and channel adapters.
 
 ---
 

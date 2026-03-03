@@ -23,6 +23,7 @@ Owner: Tandem Engine
 - [x] Add safe preview auto-apply path (install + paused routine) when no manual setup is required
 - [x] Add regression tests for built-in-only connector gating + safe auto-apply
 - [x] Add chat confirmation bridge (`confirm` -> apply last preview plan_id) to support control panel, Tauri, and channel threads
+- [x] Add pack-builder session-local confirmation fallback to prevent accidental `pack-builder-ok` installs when model emits preview+short-goal
 
 ## Completed
 
@@ -39,4 +40,5 @@ Owner: Tandem Engine
   - `e872c8d` (TUI preset index compatibility for `pack_presets`)
   - `830cec6` (OpenAI provider schema hardening for MCP tool dispatch)
   - `da0d07f` (pack-builder preview/apply UX hardening + safe auto-apply + tests)
-  - `TBD` (engine confirmation bridge for apply-by-chat across surfaces)
+  - `62f1442` (engine confirmation bridge for apply-by-chat across surfaces)
+  - `TBD` (pack-builder session-local confirmation fallback + tests)

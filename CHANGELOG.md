@@ -59,6 +59,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - apply flow now defaults connector registration to the plan-selected connectors (instead of an arbitrary single candidate)
   - safe previews now auto-apply by default (install pack + register routine paused) when no connector choice/secrets/manual setup are required
   - chat confirmation bridge: when a user replies with confirmation text after a Pack Builder preview, engine normalizes the next `pack_builder` call to `mode=apply` using the preview `plan_id` recovered from conversation context (prevents accidental new “confirm” packs across control panel, desktop, and channel threads)
+  - pack-builder tool now also keeps last preview `plan_id` per session and interprets short confirmation goals (`ok`, `confirm`, `apply`, etc.) as apply of that session’s pending plan, so accidental `pack-builder-ok` installs are prevented even when model-side tool args are imperfect
 
 ## [0.4.0] - Unreleased
 

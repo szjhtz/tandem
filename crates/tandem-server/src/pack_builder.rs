@@ -23,6 +23,7 @@ use crate::{
 pub struct PackBuilderTool {
     state: AppState,
     plans: Arc<RwLock<HashMap<String, PreparedPlan>>>,
+    last_plan_by_session: Arc<RwLock<HashMap<String, String>>>,
 }
 
 impl PackBuilderTool {
@@ -30,6 +31,7 @@ impl PackBuilderTool {
         Self {
             state,
             plans: Arc::new(RwLock::new(HashMap::new())),
+            last_plan_by_session: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 }
@@ -54,6 +56,8 @@ struct PackBuilderInput {
     approve_enable_routines: Option<bool>,
     #[serde(default)]
     schedule: Option<PreviewScheduleInput>,
+    #[serde(default, rename = "__session_id")]
+    session_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -181,13 +185,49 @@ impl Tool for PackBuilderTool {
     }
 
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
-        let input: PackBuilderInput = serde_json::from_value(args).unwrap_or_default();
-        let mode = input
+        let mut input: PackBuilderInput = serde_json::from_value(args).unwrap_or_default();
+        let mut mode = input
             .mode
             .as_deref()
             .unwrap_or("preview")
             .trim()
             .to_ascii_lowercase();
+
+        if mode == "apply" && input.plan_id.is_none() {
+            if let Some(session_id) = input.session_id.as_deref() {
+                if let Some(last_plan_id) = self
+                    .last_plan_by_session
+                    .read()
+                    .await
+                    .get(session_id)
+                    .cloned()
+                {
+                    input.plan_id = Some(last_plan_id);
+                }
+            }
+        }
+
+        if mode == "preview" {
+            let goal_text = input.goal.as_deref().map(str::trim).unwrap_or("");
+            if is_confirmation_goal_text(goal_text) {
+                if let Some(session_id) = input.session_id.as_deref() {
+                    if let Some(last_plan_id) = self
+                        .last_plan_by_session
+                        .read()
+                        .await
+                        .get(session_id)
+                        .cloned()
+                    {
+                        input.mode = Some("apply".to_string());
+                        input.plan_id = Some(last_plan_id);
+                        input.approve_pack_install = Some(true);
+                        input.approve_connector_registration = Some(true);
+                        input.approve_enable_routines = Some(false);
+                        mode = "apply".to_string();
+                    }
+                }
+            }
+        }
 
         match mode.as_str() {
             "apply" => self.apply(input).await,
@@ -345,6 +385,17 @@ impl PackBuilderTool {
             routine_template,
         };
         self.plans.write().await.insert(plan_id.clone(), prepared);
+        if let Some(session_id) = input
+            .session_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+        {
+            self.last_plan_by_session
+                .write()
+                .await
+                .insert(session_id.to_string(), plan_id.clone());
+        }
 
         let output = json!({
             "mode": "preview",
@@ -383,6 +434,7 @@ impl PackBuilderTool {
                     approve_pack_install: Some(true),
                     approve_enable_routines: Some(false),
                     schedule: None,
+                    session_id: input.session_id.clone(),
                 })
                 .await?;
             let mut metadata = applied.metadata.clone();
@@ -1017,6 +1069,31 @@ fn contains_email_address(text: &str) -> bool {
                 .chars()
                 .all(|ch| ch.is_ascii_alphanumeric() || ch == '.' || ch == '-')
     })
+}
+
+fn is_confirmation_goal_text(text: &str) -> bool {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    let lower = trimmed.to_ascii_lowercase();
+    matches!(
+        lower.as_str(),
+        "ok" | "okay"
+            | "yes"
+            | "y"
+            | "confirm"
+            | "confirmed"
+            | "approve"
+            | "approved"
+            | "go"
+            | "go ahead"
+            | "proceed"
+            | "do it"
+            | "ship it"
+            | "run it"
+            | "apply"
+    )
 }
 
 fn catalog_servers() -> Vec<CatalogServer> {

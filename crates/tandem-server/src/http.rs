@@ -12214,6 +12214,102 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn pack_builder_confirmation_goal_applies_last_session_plan() {
+        let state = test_state().await;
+        state
+            .tools
+            .register_tool(
+                "pack_builder".to_string(),
+                Arc::new(crate::pack_builder::PackBuilderTool::new(state.clone())),
+            )
+            .await;
+        let app = app_router(state);
+        let session_id = "session-confirm-flow";
+
+        let preview_req = Request::builder()
+            .method("POST")
+            .uri("/tool/execute")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({
+                    "tool": "pack_builder",
+                    "args": {
+                        "__session_id": session_id,
+                        "mode": "preview",
+                        "auto_apply": false,
+                        "goal": "Build a daily technology digest automation that sends a summary to evan@frumu.ai at 8 AM"
+                    }
+                })
+                .to_string(),
+            ))
+            .expect("preview request");
+        let preview_resp = app
+            .clone()
+            .oneshot(preview_req)
+            .await
+            .expect("preview response");
+        assert_eq!(preview_resp.status(), StatusCode::OK);
+        let preview_body = to_bytes(preview_resp.into_body(), usize::MAX)
+            .await
+            .expect("preview body");
+        let preview_payload: Value = serde_json::from_slice(&preview_body).expect("preview json");
+        let preview_meta = preview_payload
+            .get("metadata")
+            .cloned()
+            .unwrap_or(Value::Null);
+        let expected_plan_id = preview_meta
+            .get("plan_id")
+            .and_then(|v| v.as_str())
+            .expect("preview plan id")
+            .to_string();
+
+        let confirm_req = Request::builder()
+            .method("POST")
+            .uri("/tool/execute")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({
+                    "tool": "pack_builder",
+                    "args": {
+                        "__session_id": session_id,
+                        "mode": "preview",
+                        "goal": "ok"
+                    }
+                })
+                .to_string(),
+            ))
+            .expect("confirm request");
+        let confirm_resp = app.oneshot(confirm_req).await.expect("confirm response");
+        assert_eq!(confirm_resp.status(), StatusCode::OK);
+        let confirm_body = to_bytes(confirm_resp.into_body(), usize::MAX)
+            .await
+            .expect("confirm body");
+        let confirm_payload: Value = serde_json::from_slice(&confirm_body).expect("confirm json");
+        let confirm_meta = confirm_payload
+            .get("metadata")
+            .cloned()
+            .unwrap_or(Value::Null);
+
+        assert_eq!(
+            confirm_meta.get("mode").and_then(|v| v.as_str()),
+            Some("apply")
+        );
+        assert_eq!(
+            confirm_meta.get("plan_id").and_then(|v| v.as_str()),
+            Some(expected_plan_id.as_str())
+        );
+        let installed_pack = confirm_meta
+            .get("pack_installed")
+            .and_then(|v| v.get("pack_id"))
+            .and_then(|v| v.as_str())
+            .unwrap_or_default();
+        assert!(
+            !installed_pack.ends_with("_ok"),
+            "confirmation should apply previous preview plan, not create *_ok pack IDs"
+        );
+    }
+
+    #[tokio::test]
     async fn pack_builder_apply_requires_explicit_approvals() {
         let state = test_state().await;
         state
