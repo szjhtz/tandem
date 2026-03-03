@@ -293,10 +293,9 @@ async function detectGitAvailable() {
 
 async function isGitRepo(cwd) {
   try {
-    const out = await runGit(["rev-parse", "--show-toplevel"], {
-      cwd,
+    const out = await runGit(["-C", String(cwd || ""), "rev-parse", "--show-toplevel"], {
       stdio: "pipe",
-      safeDirectory: cwd,
+      safeDirectory: "*",
     });
     const root = String(out.stdout || "").trim();
     return root ? { ok: true, root, error: "" } : { ok: false, root: "", error: "" };
@@ -408,6 +407,7 @@ async function preflightSwarmWorkspace(workspaceRoot, options = {}) {
 
   const entries = await readdir(normalized);
   if (entries.length > 0 && !allowInitNonEmpty) {
+    const detail = repoErrorText ? ` Git probe output: ${repoErrorText}` : "";
     return {
       gitAvailable: true,
       repoReady: false,
@@ -415,7 +415,7 @@ async function preflightSwarmWorkspace(workspaceRoot, options = {}) {
       code: "not_repo_non_empty",
       repoRoot: "",
       reason:
-        "Selected directory is not a Git repository and is not empty. Choose an existing repo or an empty directory.",
+        `Selected directory is not a Git repository and is not empty: ${normalized}. Choose an existing repo or an empty directory.${detail}`,
       guidance,
     };
   }

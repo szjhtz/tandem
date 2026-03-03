@@ -167,9 +167,14 @@ function buildTaskCard(task, escapeHtml) {
   </article>`;
 }
 
-export async function renderSwarm(ctx) {
+export async function renderSwarm(ctx, options = {}) {
   const { api, byId, escapeHtml, toast, state, addCleanup, setRoute } = ctx;
   if (state.route !== "swarm") return;
+  const force = options?.force === true;
+  if (!force && state.__swarmRenderedOnce && (swarmFormHasFocus() || swarmRefreshLocked(state))) return;
+  if (state.__swarmRenderInFlight) return;
+  state.__swarmRenderInFlight = true;
+  try {
   const renderRouteSnapshot = state.route;
   if (state.__swarmLiveCleanup && Array.isArray(state.__swarmLiveCleanup)) {
     for (const fn of state.__swarmLiveCleanup) {
@@ -604,5 +609,9 @@ export async function renderSwarm(ctx) {
     addCleanup(stopEvt);
   } catch {
     // ignore
+  }
+  } finally {
+    state.__swarmRenderInFlight = false;
+    state.__swarmRenderedOnce = true;
   }
 }
