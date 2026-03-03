@@ -82,6 +82,31 @@ function parsePackBuilderReplyCommand(content) {
   return null;
 }
 
+function isPackBuilderGoalIntent(content) {
+  const trimmed = String(content || "").trim();
+  if (!trimmed) return false;
+  if (trimmed.startsWith("/pack ")) return true;
+  const lower = trimmed.toLowerCase();
+  const mentionsPackLike =
+    lower.includes("pack") || lower.includes("automation") || lower.includes("workflow");
+  const mentionsCreateLike =
+    lower.includes("create") ||
+    lower.includes("build") ||
+    lower.includes("make") ||
+    lower.includes("generate") ||
+    lower.includes("setup");
+  const mentionsExternalLike =
+    lower.includes("mcp") ||
+    lower.includes("connector") ||
+    lower.includes("slack") ||
+    lower.includes("notion") ||
+    lower.includes("stripe") ||
+    lower.includes("email") ||
+    lower.includes("news") ||
+    lower.includes("@");
+  return mentionsPackLike && mentionsCreateLike && mentionsExternalLike;
+}
+
 export async function renderChat(ctx) {
   const { state, byId, toast, escapeHtml, api, renderIcons, addCleanup, setRoute } = ctx;
   const sessions = await loadSessions();
@@ -1275,6 +1300,26 @@ export async function renderChat(ctx) {
         }
         const summary = String(payload?.output || "").trim() || JSON.stringify(payload || {}, null, 2);
         appendTransientAssistantMessage(summary);
+        if (attached.length > 0) {
+          uploadedFiles.splice(0, uploadedFiles.length);
+          renderUploadedFiles();
+        }
+        return;
+      }
+      if (isPackBuilderGoalIntent(promptRaw)) {
+        const goal = promptRaw.startsWith("/pack ") ? promptRaw.slice(6).trim() : promptRaw;
+        const payload = await api("/api/engine/pack-builder/preview", {
+          method: "POST",
+          body: JSON.stringify({
+            goal,
+            session_id: state.currentSessionId,
+            thread_key: threadKey,
+            auto_apply: false,
+          }),
+        });
+        const summary = String(payload?.output || "").trim() || JSON.stringify(payload || {}, null, 2);
+        appendTransientAssistantMessage(summary);
+        upsertPackBuilderInlineCard(payload);
         if (attached.length > 0) {
           uploadedFiles.splice(0, uploadedFiles.length);
           renderUploadedFiles();
