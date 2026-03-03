@@ -30,6 +30,9 @@
 - **Pack Builder first-run approval UX fix**:
   - Added baseline permission allow for `pack_builder` so pack-generation prompts from control panel and channel integrations do not timeout waiting for initial tool approval.
   - `pack_builder` still enforces explicit apply-time approvals for connector registration/install/enable actions.
+- **Pack Builder token-burn guardrail**:
+  - Engine loop now treats productive `pack_builder` calls as terminal for the iteration and emits tool summary directly, avoiding repeated model follow-up turns for the same request.
+  - Duplicate-signature retry limit for `pack_builder` is now `1` to stop repeated identical calls quickly.
 
 ---
 

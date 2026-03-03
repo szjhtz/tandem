@@ -37,6 +37,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Pack Builder permission friction across chat/channels**:
   - `pack_builder` tool is now allowed by default in baseline engine permission rules to prevent pack-creation requests timing out on first-use approval prompts
   - internal `pack_builder` apply-phase approvals remain required for connector registration, pack install, and routine enablement
+- **Pack Builder retry-cost guardrail**:
+  - engine now treats successful `pack_builder` execution as terminal for the current loop iteration and returns tool output directly instead of forcing additional model follow-up turns
+  - duplicate-signature loop limit for `pack_builder` reduced to `1` to fail fast on repeated identical calls
 
 ## [0.4.0] - Unreleased
 

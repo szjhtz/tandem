@@ -833,6 +833,7 @@ impl EngineLoop {
                 if !tool_calls.is_empty() {
                     let mut outputs = Vec::new();
                     let mut executed_productive_tool = false;
+                    let mut terminal_tool_used_in_cycle = false;
                     let mut auth_required_hit_in_cycle = false;
                     let mut guard_budget_hit_in_cycle = false;
                     let mut duplicate_signature_hit_in_cycle = false;
@@ -998,6 +999,9 @@ impl EngineLoop {
                             }
                             if productive {
                                 executed_productive_tool = true;
+                                if is_terminal_tool_for_followup(&tool_key) {
+                                    terminal_tool_used_in_cycle = true;
+                                }
                             }
                             if is_auth_required_tool_output(&output) {
                                 if let Some(server) = mcp_server_from_tool_name(&tool_key) {
@@ -1019,6 +1023,21 @@ impl EngineLoop {
                         let guard_budget_hit =
                             outputs.iter().any(|o| is_guard_budget_tool_output(o));
                         if executed_productive_tool {
+                            if terminal_tool_used_in_cycle {
+                                completion = summarize_tool_outputs(&outputs);
+                                self.event_bus.publish(EngineEvent::new(
+                                    "provider.call.iteration.finish",
+                                    json!({
+                                        "sessionID": session_id,
+                                        "messageID": user_message_id,
+                                        "iteration": iteration,
+                                        "finishReason": "tool_terminal",
+                                        "acceptedToolCalls": accepted_tool_calls_in_cycle,
+                                        "rejectedToolCalls": 0,
+                                    }),
+                                ));
+                                break;
+                            }
                             followup_context = Some(format!(
                                 "{}\nContinue with a concise final response and avoid repeating identical tool calls.",
                                 summarize_tool_outputs(&outputs)
@@ -2498,11 +2517,18 @@ fn duplicate_signature_limit_for(tool_name: &str) -> usize {
             }
         }
     }
+    if normalize_tool_name(tool_name) == "pack_builder" {
+        return 1;
+    }
     if is_shell_tool_name(tool_name) {
         2
     } else {
         3
     }
+}
+
+fn is_terminal_tool_for_followup(tool_name: &str) -> bool {
+    normalize_tool_name(tool_name) == "pack_builder"
 }
 
 fn env_budget_guards_disabled() -> bool {
@@ -5468,6 +5494,20 @@ Call: todowrite(task_id=3, status="in_progress")
             summarize_duplicate_signature_outputs(&outputs).expect("expected duplicate summary");
         assert!(summary.contains("same tool call kept repeating"));
         assert!(summary.contains("clearer command target"));
+    }
+
+    #[test]
+    fn pack_builder_duplicate_signature_limit_defaults_to_one() {
+        unsafe {
+            std::env::remove_var("TANDEM_TOOL_LOOP_DUPLICATE_SIGNATURE_LIMIT");
+        }
+        assert_eq!(duplicate_signature_limit_for("pack_builder"), 1);
+    }
+
+    #[test]
+    fn terminal_tool_followup_marks_pack_builder_as_terminal() {
+        assert!(is_terminal_tool_for_followup("pack_builder"));
+        assert!(!is_terminal_tool_for_followup("read"));
     }
 
     #[test]
