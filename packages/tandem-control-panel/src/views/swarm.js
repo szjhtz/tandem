@@ -191,12 +191,13 @@ export async function renderSwarm(ctx, options = {}) {
   }
   state.__swarmLiveCleanup = [];
 
-  const [status, snapshot, providerCatalog, providerConfig, mcpRaw] = await Promise.all([
+  const [status, snapshot, providerCatalog, providerConfig, mcpRaw, runsPayload] = await Promise.all([
     api("/api/swarm/status").catch(() => ({ status: "error" })),
     api("/api/swarm/snapshot").catch(() => ({ registry: { value: { tasks: {} } }, logs: [], reasons: [] })),
     state.client?.providers?.catalog?.().catch(() => ({ all: [] })),
     state.client?.providers?.config?.().catch(() => ({ default: "", providers: {} })),
     state.client?.mcp?.list?.().catch(() => ({})),
+    api("/api/swarm/runs").catch(() => ({ active: [], recent: [] })),
   ]);
   if (state.route !== renderRouteSnapshot) return;
 
@@ -212,6 +213,8 @@ export async function renderSwarm(ctx, options = {}) {
         .sort((a, b) => a.id.localeCompare(b.id))
     : [];
   const connectedMcp = normalizeMcpServers(mcpRaw).filter((row) => row.connected && row.enabled);
+  const activeRuns = Array.isArray(runsPayload?.active) ? runsPayload.active : [];
+  const recentRuns = Array.isArray(runsPayload?.recent) ? runsPayload.recent : [];
 
   if (!state.__swarmDraft || typeof state.__swarmDraft !== "object") state.__swarmDraft = {};
   const draft = state.__swarmDraft;
@@ -285,6 +288,48 @@ export async function renderSwarm(ctx, options = {}) {
           : ""
       }
       ${status.repoRoot ? `<p class="mb-3 rounded-xl border border-slate-700/60 bg-slate-900/20 px-3 py-2 text-xs text-slate-300"><strong>Repo root:</strong> ${escapeHtml(status.repoRoot)}</p>` : ""}
+      <div class="mb-3 rounded-xl border border-slate-700/60 bg-slate-900/20 px-3 py-2 text-xs text-slate-300">
+        <div class="mb-2 flex items-center justify-between gap-2">
+          <strong>Recover Swarms</strong>
+          <span>${activeRuns.length} active detected</span>
+        </div>
+        <div class="grid gap-2">
+          ${
+            activeRuns.length
+              ? activeRuns
+                  .slice(0, 8)
+                  .map(
+                    (row) => `<div class="tcp-list-item">
+                      <div class="flex items-center justify-between gap-2">
+                        <span class="tcp-badge-ok">PID ${escapeHtml(String(row.pid || ""))}</span>
+                        <button class="tcp-btn h-7 px-2 text-xs" data-swarm-attach-pid="${escapeHtml(String(row.pid || ""))}" data-swarm-attach-root="${escapeHtml(String(row.workspaceRoot || ""))}" data-swarm-attach-objective="${escapeHtml(String(row.objective || ""))}">Resume Tracking</button>
+                      </div>
+                      <div class="mt-1 text-xs text-slate-300">${escapeHtml(String(row.workspaceRoot || ""))}</div>
+                      <div class="mt-1 text-xs text-slate-500">${escapeHtml(String(row.objective || "objective unavailable"))}</div>
+                    </div>`
+                  )
+                  .join("")
+              : '<div class="tcp-subtle">No active swarm manager process detected.</div>'
+          }
+          ${
+            recentRuns.length
+              ? `<details><summary class="cursor-pointer text-xs text-slate-400">Recent swarm runs</summary>
+                <div class="mt-2 grid gap-2">${recentRuns
+                  .slice(0, 6)
+                  .map(
+                    (row) => `<div class="tcp-list-item">
+                        <div class="flex items-center justify-between gap-2">
+                          <span class="${pickStatusClass(row.status)}">${escapeHtml(String(row.status || "unknown"))}</span>
+                          <span class="text-xs text-slate-500">${escapeHtml(ageText(row.startedAt))}</span>
+                        </div>
+                        <div class="mt-1 text-xs text-slate-300">${escapeHtml(String(row.workspaceRoot || ""))}</div>
+                      </div>`
+                  )
+                  .join("")}</div></details>`
+              : ""
+          }
+        </div>
+      </div>
       <div class="grid gap-3 md:grid-cols-[1fr_160px_auto]">
         <input id="swarm-root" class="tcp-input" value="${escapeHtml(draft.workspaceRoot || "")}" placeholder="workspace root" />
         <input id="swarm-max" class="tcp-input" type="number" min="1" value="${escapeHtml(String(draft.maxTasks || 3))}" />
@@ -588,6 +633,25 @@ export async function renderSwarm(ctx, options = {}) {
       toast("err", e instanceof Error ? e.message : String(e));
     }
   });
+
+  viewEl.querySelectorAll("[data-swarm-attach-pid]").forEach((button) =>
+    button.addEventListener("click", async () => {
+      try {
+        const pid = Number(button.getAttribute("data-swarm-attach-pid") || "0");
+        const workspaceRoot = String(button.getAttribute("data-swarm-attach-root") || "").trim();
+        const objective = String(button.getAttribute("data-swarm-attach-objective") || "").trim();
+        if (!pid) throw new Error("Invalid swarm PID.");
+        await api("/api/swarm/attach", {
+          method: "POST",
+          body: JSON.stringify({ pid, workspaceRoot, objective }),
+        });
+        toast("ok", `Attached swarm tracker to pid ${pid}.`);
+        renderSwarm(ctx, { force: true });
+      } catch (e) {
+        toast("err", e instanceof Error ? e.message : String(e));
+      }
+    })
+  );
 
   const poll = setInterval(() => {
     if (state.route !== "swarm") return;
