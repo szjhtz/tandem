@@ -39,4 +39,4 @@ Owner: Tandem Engine
 ## Delivery Commits
 
 - `ff2a64b` — semantic retrieval runtime integration + MCP catalog prompt + kanban board
-- `TBD` — release docs + kanban completion snapshot
+- `e6d564f` — v0.4.1 changelog/release notes updates + kanban completion snapshot
