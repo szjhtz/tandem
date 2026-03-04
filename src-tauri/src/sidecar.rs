@@ -1617,6 +1617,18 @@ pub struct ContextBlackboardState {
     pub revision: u64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ContextBlackboardPatchRecord {
+    pub patch_id: String,
+    pub run_id: String,
+    pub seq: u64,
+    pub ts_ms: u64,
+    #[serde(default)]
+    pub op: String,
+    #[serde(default)]
+    pub payload: serde_json::Value,
+}
+
 #[derive(Debug, Deserialize)]
 struct ContextRunRecordResponse {
     run: ContextRunState,
@@ -1635,6 +1647,11 @@ struct ContextRunEventsResponse {
 #[derive(Debug, Deserialize)]
 struct ContextBlackboardResponse {
     blackboard: ContextBlackboardState,
+}
+
+#[derive(Debug, Deserialize)]
+struct ContextBlackboardPatchesResponse {
+    patches: Vec<ContextBlackboardPatchRecord>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -4922,6 +4939,35 @@ impl SidecarManager {
         })?;
         let payload: ContextBlackboardResponse = self.handle_response(response).await?;
         Ok(payload.blackboard)
+    }
+
+    pub async fn context_run_blackboard_patches(
+        &self,
+        run_id: &str,
+        since_seq: Option<u64>,
+        tail: Option<usize>,
+    ) -> Result<Vec<ContextBlackboardPatchRecord>> {
+        self.check_circuit_breaker().await?;
+        let url = format!(
+            "{}/context/runs/{}/blackboard/patches",
+            self.base_url().await?,
+            run_id
+        );
+        let mut request = self.http_client.get(&url);
+        if let Some(since) = since_seq {
+            request = request.query(&[("since_seq", since)]);
+        }
+        if let Some(tail_count) = tail {
+            request = request.query(&[("tail", tail_count)]);
+        }
+        let response = request.send().await.map_err(|e| {
+            TandemError::Sidecar(format!(
+                "Failed to load context run blackboard patches: {}",
+                e
+            ))
+        })?;
+        let payload: ContextBlackboardPatchesResponse = self.handle_response(response).await?;
+        Ok(payload.patches)
     }
 
     pub async fn context_run_checkpoint_latest(

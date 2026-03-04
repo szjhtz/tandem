@@ -24,12 +24,13 @@ use crate::sidecar::{
     ActiveRunStatusResponse, AgentTeamApprovals, AgentTeamCancelRequest, AgentTeamDecisionResult,
     AgentTeamInstance, AgentTeamInstancesQuery, AgentTeamMissionSummary, AgentTeamSpawnRequest,
     AgentTeamSpawnResult, AgentTeamTemplate, ChannelsConfigResponse, ChannelsStatusResponse,
-    ContextBlackboardState, ContextCheckpointRecord, ContextReplayResponse,
-    ContextRunCreateRequest, ContextRunEventAppendRequest, ContextRunEventRecord, ContextRunState,
-    ContextRunStatus, ContextStepStatus, CreateSessionRequest, FilePartInput, McpActionResponse,
-    McpAddRequest, McpRemoteTool, McpServerRecord, MissionApplyEventResult, MissionCreateRequest,
-    MissionState, ModelInfo, ModelSpec, Project, ProviderInfo, RoutineCreateRequest,
-    RoutineHistoryEvent, RoutinePatchRequest, RoutineRunArtifact, RoutineRunArtifactAddRequest,
+    ContextBlackboardPatchRecord as ContextPatchRecord, ContextBlackboardState,
+    ContextCheckpointRecord, ContextReplayResponse, ContextRunCreateRequest,
+    ContextRunEventAppendRequest, ContextRunEventRecord, ContextRunState, ContextRunStatus,
+    ContextStepStatus, CreateSessionRequest, FilePartInput, McpActionResponse, McpAddRequest,
+    McpRemoteTool, McpServerRecord, MissionApplyEventResult, MissionCreateRequest, MissionState,
+    ModelInfo, ModelSpec, Project, ProviderInfo, RoutineCreateRequest, RoutineHistoryEvent,
+    RoutinePatchRequest, RoutineRunArtifact, RoutineRunArtifactAddRequest,
     RoutineRunDecisionRequest, RoutineRunNowRequest, RoutineRunNowResponse, RoutineRunRecord,
     RoutineSpec, SendMessageRequest, Session, SessionMessage, SidecarState, StreamEvent, TodoItem,
 };
@@ -8950,6 +8951,31 @@ fn context_blackboard_to_orch(blackboard: ContextBlackboardState) -> Blackboard 
     }
 }
 
+fn context_blackboard_patch_to_orch(
+    patch: ContextPatchRecord,
+) -> Option<crate::orchestrator::types::BlackboardPatchRecord> {
+    let op = match patch.op.trim() {
+        "add_fact" => crate::orchestrator::types::BlackboardPatchOp::AddFact,
+        "add_decision" => crate::orchestrator::types::BlackboardPatchOp::AddDecision,
+        "add_open_question" => crate::orchestrator::types::BlackboardPatchOp::AddOpenQuestion,
+        "add_artifact" => crate::orchestrator::types::BlackboardPatchOp::AddArtifact,
+        "set_rolling_summary" => crate::orchestrator::types::BlackboardPatchOp::SetRollingSummary,
+        "set_latest_context_pack" => {
+            crate::orchestrator::types::BlackboardPatchOp::SetLatestContextPack
+        }
+        // Legacy desktop views currently only handle canonical reasoning patch types.
+        _ => return None,
+    };
+    Some(crate::orchestrator::types::BlackboardPatchRecord {
+        patch_id: patch.patch_id,
+        run_id: patch.run_id,
+        seq: patch.seq,
+        ts_ms: patch.ts_ms,
+        op,
+        payload: patch.payload,
+    })
+}
+
 #[tauri::command]
 pub async fn orchestrator_engine_create_run(
     state: State<'_, AppState>,
@@ -9475,6 +9501,17 @@ pub async fn orchestrator_get_blackboard_patches(
     since_seq: Option<u64>,
     tail: Option<usize>,
 ) -> Result<Vec<BlackboardPatchRecord>> {
+    if let Ok(patches) = state
+        .sidecar
+        .context_run_blackboard_patches(&run_id, since_seq, tail)
+        .await
+    {
+        return Ok(patches
+            .into_iter()
+            .filter_map(context_blackboard_patch_to_orch)
+            .collect::<Vec<_>>());
+    }
+    // Compatibility fallback for legacy local-orchestrator runs.
     let workspace_path = state
         .get_workspace_path()
         .ok_or_else(|| TandemError::NotFound("No workspace configured".to_string()))?;
