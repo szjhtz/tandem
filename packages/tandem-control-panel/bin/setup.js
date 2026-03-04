@@ -1436,8 +1436,8 @@ async function seedContextRunSteps(session, runId, objective) {
 
 async function createExecutionSession(session, run) {
   const workspaceRoot = String(run?.workspace?.canonical_path || REPO_ROOT).trim();
-  const modelProvider = String(run?.model_provider || "").trim();
-  const modelId = String(run?.model_id || "").trim();
+  const modelProvider = String(run?.model_provider || swarmState.modelProvider || "").trim();
+  const modelId = String(run?.model_id || swarmState.modelId || "").trim();
   const payload = await engineRequestJson(session, "/session", {
     method: "POST",
     body: {

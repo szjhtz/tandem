@@ -31,6 +31,7 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
     - if driver returns no `selected_step_id` because a step is already `in_progress`, executor now resumes that step instead of exiting
     - continue/resume API responses now include execution diagnostics (`started`, `requeued`, `selectedStepId`, `whyNextStep`)
     - Swarm page now surfaces `lastError` to make provider/session failures visible without inspecting server logs
+    - execution sessions now fall back to configured swarm provider/model when older runs do not have provider/model fields populated
 
 - Automation creation UX — simplified to "just describe what you want"
   - Replaced the fragmented `Agents`, `Packs`, and `Teams` pages with a single **Automations** hub (`AutomationsPage`).

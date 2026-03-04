@@ -34,6 +34,7 @@
     - executor now runs an existing `in_progress` step when context driver returns no new `selected_step_id`
     - `/api/swarm/continue` and `/api/swarm/resume` now return `started`, `requeued`, `selectedStepId`, and `whyNextStep` for operator visibility
     - Swarm page now renders `lastError` inline for immediate failure diagnosis
+    - execution sessions now fall back to configured swarm provider/model for legacy runs that do not include persisted provider/model fields
 
 - **MCP-first Pack Builder in the engine**:
   - Added built-in `pack_builder` tool with two-phase execution:

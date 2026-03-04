@@ -150,6 +150,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - executor now resumes the active `in_progress` step and drives it through `prompt_sync` instead of silently idling
   - `POST /api/swarm/continue` and `POST /api/swarm/resume` now return execution diagnostics (`started`, `requeued`, `selectedStepId`, `whyNextStep`) to make no-op conditions visible
   - surfaced swarm `lastError` inline in `SwarmPage` to expose provider/session failures immediately
+  - execution session creation now falls back to configured swarm provider/model when older runs lack persisted `model_provider`/`model_id`
 
 - **Engine startup stability during pre-ready phase**:
   - background server tasks now wait for runtime readiness before accessing `AppState` runtime-backed fields
