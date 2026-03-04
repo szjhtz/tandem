@@ -1946,6 +1946,7 @@ async function handleSwarmApi(req, res, session) {
     const runId = String(url.searchParams.get("runId") || swarmState.runId || "").trim();
     let closed = false;
     let sinceSeq = 0;
+    let sincePatchSeq = 0;
     const close = () => {
       closed = true;
     };
@@ -1956,14 +1957,24 @@ async function handleSwarmApi(req, res, session) {
     const tick = async () => {
       if (closed || !runId) return;
       try {
-        const payload = await engineRequestJson(
-          session,
-          `/context/runs/${encodeURIComponent(runId)}/events?since_seq=${sinceSeq}`
-        );
-        const events = Array.isArray(payload?.events) ? payload.events : [];
+        const [eventsPayload, patchesPayload] = await Promise.all([
+          engineRequestJson(session, `/context/runs/${encodeURIComponent(runId)}/events?since_seq=${sinceSeq}`),
+          engineRequestJson(
+            session,
+            `/context/runs/${encodeURIComponent(runId)}/blackboard/patches?since_seq=${sincePatchSeq}`
+          ).catch(() => ({ patches: [] })),
+        ]);
+        const events = Array.isArray(eventsPayload?.events) ? eventsPayload.events : [];
         for (const event of events) {
           sinceSeq = Math.max(sinceSeq, Number(event?.seq || 0));
           res.write(`data: ${JSON.stringify({ kind: "event", ts: Date.now(), runId, event })}\n\n`);
+        }
+        const patches = Array.isArray(patchesPayload?.patches) ? patchesPayload.patches : [];
+        for (const patch of patches) {
+          sincePatchSeq = Math.max(sincePatchSeq, Number(patch?.seq || 0));
+          res.write(
+            `data: ${JSON.stringify({ kind: "blackboard_patch", ts: Date.now(), runId, patch })}\n\n`
+          );
         }
       } catch {
         // ignore transient poll failures
