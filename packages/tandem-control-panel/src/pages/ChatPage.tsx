@@ -13,7 +13,15 @@ function toArray(input: any, key: string) {
   return [];
 }
 
-export function ChatPage({ client, toast }: AppPageProps) {
+function sessionIdOf(session: any) {
+  return String(session?.id || session?.session_id || session?.sessionID || "").trim();
+}
+
+function sessionTitleOf(session: any) {
+  return String(session?.title || session?.name || sessionIdOf(session) || "Session");
+}
+
+export function ChatPage({ client, api, toast }: AppPageProps) {
   const queryClient = useQueryClient();
   const [selectedSessionId, setSelectedSessionId] = useState("");
   const [prompt, setPrompt] = useState("");
@@ -21,17 +29,37 @@ export function ChatPage({ client, toast }: AppPageProps) {
 
   const sessionsQuery = useQuery({
     queryKey: ["chat", "sessions"],
-    queryFn: () => client.sessions.list({ pageSize: 50 }).catch(() => []),
+    queryFn: async () => {
+      const isInternalProviderTestSession = (session: any) =>
+        String(session?.title || "")
+          .trim()
+          .toLowerCase()
+          .startsWith("__provider_test__");
+
+      try {
+        const list = await client.sessions.list({ pageSize: 50 });
+        const rows = toArray(list, "sessions");
+        if (rows.length) return rows.filter((row: any) => !isInternalProviderTestSession(row));
+      } catch {
+        // fall through to raw endpoint
+      }
+
+      try {
+        const raw = await api("/api/engine/session?page_size=50");
+        const rows = toArray(raw, "sessions");
+        return rows.filter((row: any) => !isInternalProviderTestSession(row));
+      } catch {
+        return [];
+      }
+    },
     refetchInterval: 8000,
   });
 
-  const sessions = toArray(sessionsQuery.data, "sessions").filter(
-    (row: any) => !String(row?.title || "").startsWith("__provider_test__")
-  );
+  const sessions = toArray(sessionsQuery.data, "sessions");
 
   useEffect(() => {
     const saved = localStorage.getItem(CHAT_SESSION_KEY) || "";
-    const fallback = String(sessions[0]?.id || sessions[0]?.session_id || "");
+    const fallback = sessionIdOf(sessions[0]);
     if (!selectedSessionId) setSelectedSessionId(saved || fallback);
   }, [selectedSessionId, sessions]);
 
@@ -131,10 +159,8 @@ export function ChatPage({ client, toast }: AppPageProps) {
   );
 
   const selectedSessionTitle = useMemo(() => {
-    const row = sessions.find(
-      (s: any) => String(s?.id || s?.session_id || "") === selectedSessionId
-    );
-    return String(row?.title || "Chat");
+    const row = sessions.find((s: any) => sessionIdOf(s) === selectedSessionId);
+    return String(row ? sessionTitleOf(row) : "Chat");
   }, [selectedSessionId, sessions]);
 
   return (
@@ -146,16 +172,18 @@ export function ChatPage({ client, toast }: AppPageProps) {
             onClick={() => createSession.mutate()}
             disabled={createSession.isPending}
           >
+            <i data-lucide="plus"></i>
             New Session
           </button>
           <button className="tcp-btn" onClick={() => sessionsQuery.refetch()}>
+            <i data-lucide="refresh-cw"></i>
             Refresh
           </button>
         </div>
         <div className="grid max-h-[58vh] gap-2 overflow-auto pr-1">
           <AnimatePresence initial={false}>
             {sessions.map((session: any) => {
-              const id = String(session?.id || session?.session_id || "");
+              const id = sessionIdOf(session);
               const active = id === selectedSessionId;
               return (
                 <motion.button
@@ -167,9 +195,7 @@ export function ChatPage({ client, toast }: AppPageProps) {
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, y: -6 }}
                 >
-                  <div className="truncate font-medium">
-                    {String(session?.title || id || "Session")}
-                  </div>
+                  <div className="truncate font-medium">{sessionTitleOf(session)}</div>
                   <div className="tcp-subtle text-xs">{id}</div>
                 </motion.button>
               );
@@ -209,6 +235,7 @@ export function ChatPage({ client, toast }: AppPageProps) {
 
         <div className="mb-2 flex items-center gap-2">
           <label className="tcp-btn cursor-pointer">
+            <i data-lucide="paperclip"></i>
             Attach files
             <input
               className="hidden"
@@ -222,6 +249,7 @@ export function ChatPage({ client, toast }: AppPageProps) {
             onClick={() => messagesQuery.refetch()}
             disabled={!selectedSessionId}
           >
+            <i data-lucide="refresh-cw"></i>
             Refresh
           </button>
           {!!uploads.length ? (
@@ -235,10 +263,10 @@ export function ChatPage({ client, toast }: AppPageProps) {
               <span key={`${file.path}-${index}`} className="tcp-badge-info">
                 {file.path}
                 <button
-                  className="ml-1 text-slate-200"
+                  className="ml-1 inline-flex text-slate-200"
                   onClick={() => setUploads((prev) => prev.filter((_, i) => i !== index))}
                 >
-                  x
+                  <i data-lucide="x"></i>
                 </button>
               </span>
             ))}
@@ -251,12 +279,19 @@ export function ChatPage({ client, toast }: AppPageProps) {
             placeholder="Ask anything..."
             value={prompt}
             onInput={(e) => setPrompt((e.target as HTMLTextAreaElement).value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                if (!sendPrompt.isPending) sendPrompt.mutate();
+              }
+            }}
           />
           <button
             className="tcp-btn-primary"
             onClick={() => sendPrompt.mutate()}
             disabled={sendPrompt.isPending}
           >
+            <i data-lucide="send"></i>
             {sendPrompt.isPending ? "Sending..." : "Send"}
           </button>
         </div>
