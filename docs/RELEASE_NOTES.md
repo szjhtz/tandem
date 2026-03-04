@@ -13,6 +13,7 @@
     - `POST /context/runs/{run_id}/tasks/claim`
     - `POST /context/runs/{run_id}/tasks/{task_id}/transition`
     - `GET /context/runs/{run_id}/blackboard/patches`
+  - Added optional `context_run_id` on pack-builder API endpoints (`preview`/`apply`/`cancel`/`pending`) so pack-builder lifecycle changes can be projected into context-run blackboard tasks.
   - Task lifecycle transitions now emit context-run events (`context.task.created`, `context.task.claimed`, `context.task.started`, `context.task.completed`, `context.task.failed`, etc.) carrying `patch_seq` + `task_rev`.
   - Replay now reports blackboard drift for task parity (revision/count/status) and returns replayed and persisted blackboard payloads for debug comparison.
   - Control panel swarm API shim now forwards blackboard patches and task state from engine context runs.

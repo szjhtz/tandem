@@ -20,6 +20,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - `POST /context/runs/{run_id}/tasks/claim`
     - `POST /context/runs/{run_id}/tasks/{task_id}/transition`
     - `GET /context/runs/{run_id}/blackboard/patches`
+  - added Pack Builder -> blackboard bridge via optional `context_run_id` on:
+    - `POST /pack-builder/preview`
+    - `POST /pack-builder/apply`
+    - `POST /pack-builder/cancel`
+    - `GET /pack-builder/pending`
+  - when `context_run_id` is provided, pack-builder lifecycle updates are materialized as blackboard task patches/events in that context run
   - task lifecycle now emits run events (`context.task.created`, `context.task.claimed`, `context.task.started`, `context.task.completed`, `context.task.failed`, etc.) with `patch_seq` and `task_rev` for UI projections
   - replay/drift responses now include blackboard task parity checks (revision/count/status) and replay-vs-persisted blackboard payloads for debugging
   - control panel swarm route now forwards blackboard patch streams (`blackboardPatches`) and blackboard-aware task state
