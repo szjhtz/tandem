@@ -20,6 +20,7 @@
   - Desktop legacy read path convergence: `orchestrator_get_events`, `orchestrator_list_runs`, and `orchestrator_load_run` now prefer engine context-run APIs first, retaining local fallback for older orchestrator snapshots.
   - Added backward compatibility coverage for legacy blackboard payloads that do not include `tasks`.
   - Control-panel Swarm SSE stream now includes `blackboard_patch` deltas in addition to run events for live blackboard parity.
+  - Swarm task card rendering now clamps/wraps large prompt-backed titles with `More/Less` expand controls to avoid horizontal overflow.
   - Task lifecycle transitions now emit context-run events (`context.task.created`, `context.task.claimed`, `context.task.started`, `context.task.completed`, `context.task.failed`, etc.) carrying `patch_seq` + `task_rev`.
   - Replay now reports blackboard drift for task parity (revision/count/status) and returns replayed and persisted blackboard payloads for debug comparison.
   - Control panel swarm API shim now forwards blackboard patches and task state from engine context runs.
@@ -29,6 +30,10 @@
     - Fullscreen debug
   - Blackboard UI now renders run status/current step/why-next-step, decision lineage, agent activity lanes, workflow progress, artifact lineage, drift alerts, and patch feed.
   - Added regression tests covering claim race single-winner behavior, `command_id` idempotency, task revision conflicts, monotonic patch sequence, and replay/task compatibility.
+  - Fixed Swarm continue/resume executor no-op in control panel:
+    - executor now runs an existing `in_progress` step when context driver returns no new `selected_step_id`
+    - `/api/swarm/continue` and `/api/swarm/resume` now return `started`, `requeued`, `selectedStepId`, and `whyNextStep` for operator visibility
+    - Swarm page now renders `lastError` inline for immediate failure diagnosis
 
 - **MCP-first Pack Builder in the engine**:
   - Added built-in `pack_builder` tool with two-phase execution:

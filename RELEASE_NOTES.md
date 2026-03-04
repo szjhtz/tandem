@@ -23,9 +23,14 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
   - Additional desktop convergence: legacy read commands (`orchestrator_get_events`, `orchestrator_list_runs`, `orchestrator_load_run`) now use engine context-run APIs first, with local fallback only for legacy run data.
   - Added compatibility guard for legacy persisted blackboards that predate `tasks`; engine now loads them with safe defaults.
   - Control panel SSE parity: `/api/swarm/events` now emits incremental `blackboard_patch` events alongside run events so blackboard-only updates refresh live.
+  - Swarm task board UI hardening: very long task/prompt titles now clamp and wrap by default with `More/Less` expansion, preventing layout blowout.
   - Replay now includes blackboard parity checks for task revision/count/status and returns replayed/persisted blackboard payloads for drift diagnostics.
   - Control panel swarm shim now forwards blackboard patch streams, and `SwarmPage` now supports blackboard docked, expanded, and fullscreen debug views with decision lineage, agent lanes, workflow progress, artifact lineage, and drift indicators.
   - Added contract/regression tests for claim races, command-id idempotency, optimistic revision mismatch, monotonic patch sequence, and replay parity.
+  - Fixed Swarm Continue/Resume no-op path in control panel executor:
+    - if driver returns no `selected_step_id` because a step is already `in_progress`, executor now resumes that step instead of exiting
+    - continue/resume API responses now include execution diagnostics (`started`, `requeued`, `selectedStepId`, `whyNextStep`)
+    - Swarm page now surfaces `lastError` to make provider/session failures visible without inspecting server logs
 
 - Automation creation UX — simplified to "just describe what you want"
   - Replaced the fragmented `Agents`, `Packs`, and `Teams` pages with a single **Automations** hub (`AutomationsPage`).

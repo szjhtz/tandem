@@ -38,6 +38,7 @@ export function SwarmPage({ api, toast, navigate }: AppPageProps) {
   const [maxTasks, setMaxTasks] = useState("3");
   const [selectedRunId, setSelectedRunId] = useState("");
   const [blackboardMode, setBlackboardMode] = useState<BlackboardMode>("docked");
+  const [expandedTaskTitles, setExpandedTaskTitles] = useState<Record<string, boolean>>({});
 
   const statusQuery = useQuery({
     queryKey: ["swarm", "status"],
@@ -102,7 +103,16 @@ export function SwarmPage({ api, toast, navigate }: AppPageProps) {
   const actionMutation = useMutation({
     mutationFn: ({ path, body }: { path: string; body: any }) =>
       api(path, { method: "POST", body: JSON.stringify(body) }),
-    onSuccess: async () => {
+    onSuccess: async (payload: any, vars) => {
+      if (vars?.path === "/api/swarm/continue" || vars?.path === "/api/swarm/resume") {
+        const why = String(payload?.whyNextStep || "").trim();
+        const selected = String(payload?.selectedStepId || "").trim();
+        const started = payload?.started === true ? "executor started" : "executor already active";
+        toast(
+          "ok",
+          selected ? `${started}; next step ${selected}` : why ? `${started}; ${why}` : started
+        );
+      }
       await queryClient.invalidateQueries({ queryKey: ["swarm"] });
     },
     onError: (error) => toast("err", error instanceof Error ? error.message : String(error)),
@@ -162,6 +172,10 @@ export function SwarmPage({ api, toast, navigate }: AppPageProps) {
         .map(([key]) => key),
     [replayDrift]
   );
+
+  const toggleTaskTitle = (taskId: string) => {
+    setExpandedTaskTitles((prev) => ({ ...prev, [taskId]: !prev[taskId] }));
+  };
 
   const renderBlackboardPanel = (fullscreen = false) => (
     <div
@@ -349,7 +363,7 @@ export function SwarmPage({ api, toast, navigate }: AppPageProps) {
 
   return (
     <>
-      <div className="grid gap-4 xl:grid-cols-[1.05fr_1fr]">
+      <div className="grid min-w-0 gap-4 overflow-x-hidden xl:grid-cols-[1.05fr_1fr]">
         <PageCard title="Swarm Context Runs" subtitle="Create, monitor, and control live runs">
           <div className="mb-3 grid gap-2 md:grid-cols-[1fr_140px_auto]">
             <input
@@ -390,6 +404,15 @@ export function SwarmPage({ api, toast, navigate }: AppPageProps) {
             <button
               className="tcp-btn"
               disabled={!runId}
+              onClick={() =>
+                actionMutation.mutate({ path: "/api/swarm/continue", body: { runId } })
+              }
+            >
+              Continue
+            </button>
+            <button
+              className="tcp-btn"
+              disabled={!runId}
               onClick={() => actionMutation.mutate({ path: "/api/swarm/pause", body: { runId } })}
             >
               Pause
@@ -409,6 +432,11 @@ export function SwarmPage({ api, toast, navigate }: AppPageProps) {
               Cancel
             </button>
           </div>
+          {String(statusQuery.data?.lastError || "").trim() ? (
+            <div className="mb-3 rounded-lg border border-rose-400/40 bg-rose-950/25 p-2 text-xs text-rose-200">
+              last error: {String(statusQuery.data?.lastError || "")}
+            </div>
+          ) : null}
 
           <div className="grid max-h-[46vh] gap-2 overflow-auto">
             <AnimatePresence initial={false}>
@@ -418,17 +446,27 @@ export function SwarmPage({ api, toast, navigate }: AppPageProps) {
                 return (
                   <motion.button
                     key={id}
-                    className={`tcp-list-item text-left ${active ? "border-amber-400/60" : ""}`}
+                    className={`tcp-list-item min-w-0 overflow-hidden text-left ${active ? "border-amber-400/60" : ""}`}
                     onClick={() => setSelectedRunId(id)}
                     initial={{ opacity: 0, y: 6 }}
                     animate={{ opacity: 1, y: 0 }}
                     exit={{ opacity: 0, y: -6 }}
                   >
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="truncate font-medium">{String(run?.objective || id)}</span>
-                      <span className="tcp-badge-info">{String(run?.status || "unknown")}</span>
+                    <div className="flex min-w-0 items-start justify-between gap-2">
+                      <span
+                        className="block min-w-0 flex-1 text-sm font-medium leading-snug"
+                        style={{ overflowWrap: "anywhere", wordBreak: "break-word" }}
+                        title={String(run?.objective || id)}
+                      >
+                        {String(run?.objective || id)}
+                      </span>
+                      <span className="tcp-badge-info shrink-0">
+                        {String(run?.status || "unknown")}
+                      </span>
                     </div>
-                    <div className="tcp-subtle text-xs">{id}</div>
+                    <div className="tcp-subtle text-xs" style={{ overflowWrap: "anywhere" }}>
+                      {id}
+                    </div>
                   </motion.button>
                 );
               })}
@@ -484,15 +522,36 @@ export function SwarmPage({ api, toast, navigate }: AppPageProps) {
               tasks.map((task: any, index: number) => {
                 const stepId = String(task?.taskId || task?.step_id || `step-${index}`);
                 const sessionId = String(task?.sessionId || task?.session_id || "");
+                const rawTitle = String(task?.title || stepId);
+                const isExpanded = Boolean(expandedTaskTitles[stepId]);
+                const shouldClamp = rawTitle.length > 180;
+                const displayTitle =
+                  shouldClamp && !isExpanded ? `${rawTitle.slice(0, 180).trimEnd()}...` : rawTitle;
                 return (
                   <div key={stepId} className="tcp-list-item">
-                    <div className="mb-1 flex items-center justify-between gap-2">
-                      <strong>{String(task?.title || stepId)}</strong>
+                    <div className="mb-1 flex items-start justify-between gap-2">
+                      <strong
+                        className="min-w-0 flex-1 text-sm leading-snug"
+                        style={{ overflowWrap: "anywhere", wordBreak: "break-word" }}
+                        title={rawTitle}
+                      >
+                        {displayTitle}
+                      </strong>
                       <span className="tcp-badge-warn">
                         {String(task?.stepStatus || task?.status || "pending")}
                       </span>
                     </div>
-                    <div className="tcp-subtle text-xs">{stepId}</div>
+                    {shouldClamp ? (
+                      <button
+                        className="tcp-btn mb-1 h-6 px-2 text-[11px]"
+                        onClick={() => toggleTaskTitle(stepId)}
+                      >
+                        {isExpanded ? "Less" : "More"}
+                      </button>
+                    ) : null}
+                    <div className="tcp-subtle text-xs" style={{ overflowWrap: "anywhere" }}>
+                      {stepId}
+                    </div>
                     {task?.workflowId ? (
                       <div className="tcp-subtle text-xs">workflow: {String(task.workflowId)}</div>
                     ) : null}

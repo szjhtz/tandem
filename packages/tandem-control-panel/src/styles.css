@@ -150,7 +150,7 @@
   }
 
   .tcp-list-item {
-    @apply rounded-xl p-3;
+    @apply min-w-0 overflow-hidden rounded-xl p-3;
     border: 1px solid color-mix(in srgb, var(--color-border) 90%, transparent);
     background: color-mix(in srgb, var(--color-surface-elevated) 86%, #000 14%);
   }

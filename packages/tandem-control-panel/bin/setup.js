@@ -1488,8 +1488,14 @@ async function runStepWithLLM(session, run, step, stepIndex, totalSteps) {
 
 const swarmExecutors = new Map();
 
+function findStepByStatus(steps, status) {
+  return (Array.isArray(steps) ? steps : []).find(
+    (step) => String(step?.status || "").trim().toLowerCase() === status
+  );
+}
+
 async function driveContextRunExecution(session, runId) {
-  if (swarmExecutors.has(runId)) return;
+  if (swarmExecutors.has(runId)) return false;
   const runner = (async () => {
     for (let cycle = 0; cycle < 24; cycle += 1) {
       const runPayload = await engineRequestJson(session, `/context/runs/${encodeURIComponent(runId)}`);
@@ -1503,18 +1509,21 @@ async function driveContextRunExecution(session, runId) {
       const selectedStepId = String(nextPayload?.selected_step_id || "").trim();
       const latestRun = nextPayload?.run || run;
       const steps = Array.isArray(latestRun?.steps) ? latestRun.steps : [];
+      const inProgressStep = findStepByStatus(steps, "in_progress");
+      const executionStepId = selectedStepId || String(inProgressStep?.step_id || "").trim();
 
-      if (!selectedStepId) {
+      if (!executionStepId) {
         if (steps.length && steps.every((step) => String(step?.status || "").toLowerCase() === "done")) {
           await appendContextRunEvent(session, runId, "run_completed", "completed", {
             why_next_step: "all steps completed",
           });
         }
+        swarmState.lastError = String(nextPayload?.why_next_step || latestRun?.why_next_step || "No actionable step selected.");
         return;
       }
 
-      const stepIndex = steps.findIndex((step) => String(step?.step_id || "") === selectedStepId);
-      const step = stepIndex >= 0 ? steps[stepIndex] : { step_id: selectedStepId, title: selectedStepId };
+      const stepIndex = steps.findIndex((step) => String(step?.step_id || "") === executionStepId);
+      const step = stepIndex >= 0 ? steps[stepIndex] : { step_id: executionStepId, title: executionStepId };
 
       try {
         await appendContextRunEvent(
@@ -1524,10 +1533,12 @@ async function driveContextRunExecution(session, runId) {
           "running",
           {
             step_status: "in_progress",
-            step_title: String(step?.title || selectedStepId),
-            why_next_step: `executing ${selectedStepId}`,
+            step_title: String(step?.title || executionStepId),
+            why_next_step: selectedStepId
+              ? `executing ${executionStepId}`
+              : `resuming in_progress step ${executionStepId}`,
           },
-          selectedStepId
+          executionStepId
         );
         const sessionId = await runStepWithLLM(session, latestRun, step, Math.max(stepIndex, 0), Math.max(steps.length, 1));
         await appendContextRunEvent(
@@ -1537,14 +1548,16 @@ async function driveContextRunExecution(session, runId) {
           "running",
           {
             step_status: "done",
-            step_title: String(step?.title || selectedStepId),
+            step_title: String(step?.title || executionStepId),
             session_id: sessionId,
-            why_next_step: `completed ${selectedStepId}`,
+            why_next_step: `completed ${executionStepId}`,
           },
-          selectedStepId
+          executionStepId
         );
+        swarmState.lastError = "";
       } catch (error) {
         const message = String(error?.message || error || "Unknown step failure");
+        swarmState.lastError = message;
         await appendContextRunEvent(
           session,
           runId,
@@ -1553,9 +1566,9 @@ async function driveContextRunExecution(session, runId) {
           {
             step_status: "failed",
             error: message,
-            why_next_step: `step failed: ${selectedStepId}`,
+            why_next_step: `step failed: ${executionStepId}`,
           },
-          selectedStepId
+          executionStepId
         );
         return;
       }
@@ -1568,6 +1581,24 @@ async function driveContextRunExecution(session, runId) {
       swarmExecutors.delete(runId);
     });
   swarmExecutors.set(runId, runner);
+  return true;
+}
+
+async function requeueInProgressSteps(session, runId) {
+  const payload = await engineRequestJson(session, `/context/runs/${encodeURIComponent(runId)}`).catch(() => null);
+  const run = payload?.run;
+  const steps = Array.isArray(run?.steps) ? run.steps : [];
+  const inProgress = steps.filter(
+    (step) => String(step?.status || "").trim().toLowerCase() === "in_progress"
+  );
+  for (const step of inProgress) {
+    const stepId = String(step?.step_id || "").trim();
+    if (!stepId) continue;
+    await appendContextRunEvent(session, runId, "task_retry_requested", "running", {
+      why_next_step: `requeued stale in_progress step \`${stepId}\` before continue`,
+    }, stepId);
+  }
+  return inProgress.length;
 }
 
 async function startSwarm(session, config = {}) {
@@ -1752,7 +1783,50 @@ async function handleSwarmApi(req, res, session) {
       const runId = String(body?.runId || swarmState.runId || "").trim();
       if (!runId) throw new Error("Missing runId");
       await appendContextRunEvent(session, runId, "run_resumed", "running", {});
-      sendJson(res, 200, { ok: true, runId });
+      const requeued = await requeueInProgressSteps(session, runId);
+      const started = await driveContextRunExecution(session, runId);
+      const preview = await engineRequestJson(
+        session,
+        `/context/runs/${encodeURIComponent(runId)}/driver/next`,
+        { method: "POST", body: { dry_run: true } }
+      ).catch(() => null);
+      sendJson(res, 200, {
+        ok: true,
+        runId,
+        started,
+        requeued,
+        selectedStepId: preview?.selected_step_id || null,
+        whyNextStep: preview?.why_next_step || null,
+      });
+    } catch (e) {
+      sendJson(res, 400, { ok: false, error: e instanceof Error ? e.message : String(e) });
+    }
+    return true;
+  }
+
+  if (pathname === "/api/swarm/continue" && req.method === "POST") {
+    try {
+      const body = await readJsonBody(req);
+      const runId = String(body?.runId || swarmState.runId || "").trim();
+      if (!runId) throw new Error("Missing runId");
+      await appendContextRunEvent(session, runId, "run_resumed", "running", {
+        why_next_step: "manual continue requested",
+      });
+      const requeued = await requeueInProgressSteps(session, runId);
+      const started = await driveContextRunExecution(session, runId);
+      const preview = await engineRequestJson(
+        session,
+        `/context/runs/${encodeURIComponent(runId)}/driver/next`,
+        { method: "POST", body: { dry_run: true } }
+      ).catch(() => null);
+      sendJson(res, 200, {
+        ok: true,
+        runId,
+        started,
+        requeued,
+        selectedStepId: preview?.selected_step_id || null,
+        whyNextStep: preview?.why_next_step || null,
+      });
     } catch (e) {
       sendJson(res, 400, { ok: false, error: e instanceof Error ? e.message : String(e) });
     }

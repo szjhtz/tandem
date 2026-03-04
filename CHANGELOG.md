@@ -39,6 +39,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - legacy Tauri read commands (`orchestrator_get_events`, `orchestrator_list_runs`, `orchestrator_load_run`) now prefer engine context-run APIs first, with local store fallback only for legacy runs
   - control-panel swarm SSE parity:
     - `/api/swarm/events` now streams both context run events and incremental blackboard patch events (`kind: "blackboard_patch"`) so UI refresh remains live even when only blackboard state changes
+  - control-panel swarm task board overflow hardening:
+    - long task/prompt titles are now clamped with explicit `More/Less` expansion and forced wrapping
+    - prevents single oversized task prompts from stretching/swallowing the board layout
   - task lifecycle now emits run events (`context.task.created`, `context.task.claimed`, `context.task.started`, `context.task.completed`, `context.task.failed`, etc.) with `patch_seq` and `task_rev` for UI projections
   - validated backward compatibility for legacy persisted blackboards (payloads without `tasks` now deserialize with safe defaults)
   - replay/drift responses now include blackboard task parity checks (revision/count/status) and replay-vs-persisted blackboard payloads for debugging
@@ -141,6 +144,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - added channel router tests for pack-builder intent detection and default-route fallback
 
 ### Fixed
+
+- **Swarm continue/resume execution no-op in control panel**:
+  - fixed executor behavior so runs with an already `in_progress` step no longer exit early when `/context/runs/{run_id}/driver/next` returns no `selected_step_id`
+  - executor now resumes the active `in_progress` step and drives it through `prompt_sync` instead of silently idling
+  - `POST /api/swarm/continue` and `POST /api/swarm/resume` now return execution diagnostics (`started`, `requeued`, `selectedStepId`, `whyNextStep`) to make no-op conditions visible
+  - surfaced swarm `lastError` inline in `SwarmPage` to expose provider/session failures immediately
 
 - **Engine startup stability during pre-ready phase**:
   - background server tasks now wait for runtime readiness before accessing `AppState` runtime-backed fields
