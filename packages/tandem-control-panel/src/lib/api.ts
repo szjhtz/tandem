@@ -1,4 +1,4 @@
-export async function api(path, init = {}) {
+export async function api(path: string, init: RequestInit = {}) {
   const res = await fetch(path, {
     ...init,
     credentials: "include",
