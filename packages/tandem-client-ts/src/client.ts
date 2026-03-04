@@ -48,6 +48,8 @@ import type {
   SkillCatalogRecord,
   SkillValidationResponse,
   SkillRouterMatchResponse,
+  SkillsBenchmarkEvalResponse,
+  SkillsTriggerEvalResponse,
   ResourceRecord,
   ResourceListResponse,
   ResourceWriteOptions,
@@ -1048,6 +1050,42 @@ class Skills {
       threshold: options.threshold,
     };
     return this.req<SkillRouterMatchResponse>("/skills/router/match", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  }
+
+  /** Evaluate routing against benchmark cases. */
+  async evalBenchmark(options: {
+    cases: Array<{ prompt: string; expectedSkill?: string; expected_skill?: string }>;
+    threshold?: number;
+  }): Promise<SkillsBenchmarkEvalResponse> {
+    const payload = {
+      threshold: options.threshold,
+      cases: options.cases.map((row) => ({
+        prompt: row.prompt,
+        expected_skill: row.expected_skill ?? row.expectedSkill,
+      })),
+    };
+    return this.req<SkillsBenchmarkEvalResponse>("/skills/evals/benchmark", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  }
+
+  /** Evaluate trigger quality for a single target skill. */
+  async evalTriggers(options: {
+    skillName?: string;
+    skill_name?: string;
+    prompts: string[];
+    threshold?: number;
+  }): Promise<SkillsTriggerEvalResponse> {
+    const payload = {
+      skill_name: options.skill_name ?? options.skillName,
+      prompts: options.prompts,
+      threshold: options.threshold,
+    };
+    return this.req<SkillsTriggerEvalResponse>("/skills/evals/triggers", {
       method: "POST",
       body: JSON.stringify(payload),
     });

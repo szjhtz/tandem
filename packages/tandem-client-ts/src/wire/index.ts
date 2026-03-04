@@ -463,6 +463,32 @@ export interface SkillRouterMatchResponse {
   top_matches?: SkillRouterMatch[];
 }
 
+export interface SkillsEvalCaseInput {
+  prompt: string;
+  expected_skill?: string;
+}
+
+export interface SkillsBenchmarkEvalResponse {
+  status: string;
+  total: number;
+  passed: number;
+  failed: number;
+  accuracy: number;
+  threshold: number;
+  cases: Array<Record<string, unknown>>;
+}
+
+export interface SkillsTriggerEvalResponse {
+  status: string;
+  skill_name: string;
+  threshold: number;
+  total: number;
+  true_positive: number;
+  false_negative: number;
+  recall: number;
+  cases: Array<Record<string, unknown>>;
+}
+
 // ─── Resources (key-value store) ─────────────────────────────────────────────
 
 export interface ResourceRecord {

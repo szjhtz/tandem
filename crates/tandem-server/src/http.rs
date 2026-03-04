@@ -599,6 +599,25 @@ struct SkillsRouterMatchRequest {
     threshold: Option<f64>,
 }
 
+#[derive(Debug, Deserialize, Default)]
+struct SkillEvalCaseInput {
+    prompt: Option<String>,
+    expected_skill: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct SkillsEvalBenchmarkRequest {
+    cases: Option<Vec<SkillEvalCaseInput>>,
+    threshold: Option<f64>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct SkillsEvalTriggersRequest {
+    skill_name: Option<String>,
+    prompts: Option<Vec<String>>,
+    threshold: Option<f64>,
+}
+
 #[derive(Debug, Deserialize)]
 struct MemoryPutInput {
     #[serde(flatten)]
@@ -2133,6 +2152,8 @@ fn app_router(state: AppState) -> Router {
         .route("/skills/import/preview", post(skills_import_preview))
         .route("/skills/validate", post(skills_validate))
         .route("/skills/router/match", post(skills_router_match))
+        .route("/skills/evals/benchmark", post(skills_eval_benchmark))
+        .route("/skills/evals/triggers", post(skills_eval_triggers))
         .route("/skills/templates", get(skills_templates_list))
         .route(
             "/skills/templates/{id}/install",
@@ -5866,6 +5887,137 @@ async fn skills_router_match(
         .route_skill_match(&goal, max_matches, threshold)
         .map_err(|e| skill_error(StatusCode::BAD_REQUEST, e))?;
     Ok(Json(json!(result)))
+}
+
+async fn skills_eval_benchmark(
+    Json(input): Json<SkillsEvalBenchmarkRequest>,
+) -> Result<Json<Value>, (StatusCode, Json<ErrorEnvelope>)> {
+    let threshold = input.threshold.unwrap_or(0.35).clamp(0.0, 1.0);
+    let cases = input.cases.unwrap_or_default();
+    if cases.is_empty() {
+        return Err(skill_error(
+            StatusCode::BAD_REQUEST,
+            "At least one eval case is required",
+        ));
+    }
+    let service = skills_service();
+    let mut evaluated = Vec::<Value>::new();
+    let mut pass_count = 0usize;
+    for (idx, case) in cases.iter().enumerate() {
+        let prompt = case.prompt.clone().unwrap_or_default();
+        if prompt.trim().is_empty() {
+            evaluated.push(json!({
+                "index": idx,
+                "prompt": prompt,
+                "passed": false,
+                "error": "empty_prompt"
+            }));
+            continue;
+        }
+        let routed = service
+            .route_skill_match(&prompt, 1, threshold)
+            .map_err(|e| skill_error(StatusCode::BAD_REQUEST, e))?;
+        let matched_skill = routed.skill_name.clone();
+        let expected = case.expected_skill.clone();
+        let passed = match (expected.as_deref(), matched_skill.as_deref()) {
+            (Some(exp), Some(actual)) => exp == actual,
+            (Some(_), None) => false,
+            (None, Some(_)) => true,
+            (None, None) => routed.decision == "no_match",
+        };
+        if passed {
+            pass_count += 1;
+        }
+        evaluated.push(json!({
+            "index": idx,
+            "prompt": prompt,
+            "expected_skill": expected,
+            "matched_skill": matched_skill,
+            "decision": routed.decision,
+            "confidence": routed.confidence,
+            "passed": passed,
+            "reason": routed.reason
+        }));
+    }
+    let total = evaluated.len();
+    let accuracy = if total == 0 {
+        0.0
+    } else {
+        pass_count as f64 / total as f64
+    };
+    Ok(Json(json!({
+        "status": "scaffold",
+        "total": total,
+        "passed": pass_count,
+        "failed": total.saturating_sub(pass_count),
+        "accuracy": accuracy,
+        "threshold": threshold,
+        "cases": evaluated,
+    })))
+}
+
+async fn skills_eval_triggers(
+    Json(input): Json<SkillsEvalTriggersRequest>,
+) -> Result<Json<Value>, (StatusCode, Json<ErrorEnvelope>)> {
+    let skill_name = input.skill_name.unwrap_or_default();
+    if skill_name.trim().is_empty() {
+        return Err(skill_error(
+            StatusCode::BAD_REQUEST,
+            "Missing skill_name for trigger evaluation",
+        ));
+    }
+    let prompts = input.prompts.unwrap_or_default();
+    if prompts.is_empty() {
+        return Err(skill_error(
+            StatusCode::BAD_REQUEST,
+            "At least one prompt is required for trigger evaluation",
+        ));
+    }
+    let threshold = input.threshold.unwrap_or(0.35).clamp(0.0, 1.0);
+    let service = skills_service();
+    let mut true_positive = 0usize;
+    let mut false_negative = 0usize;
+    let mut rows = Vec::<Value>::new();
+    for (idx, prompt) in prompts.iter().enumerate() {
+        let routed = service
+            .route_skill_match(prompt, 1, threshold)
+            .map_err(|e| skill_error(StatusCode::BAD_REQUEST, e))?;
+        let matched = routed
+            .skill_name
+            .as_deref()
+            .map(|v| v == skill_name)
+            .unwrap_or(false);
+        if matched {
+            true_positive += 1;
+        } else {
+            false_negative += 1;
+        }
+        rows.push(json!({
+            "index": idx,
+            "prompt": prompt,
+            "decision": routed.decision,
+            "matched_skill": routed.skill_name,
+            "confidence": routed.confidence,
+            "reason": routed.reason,
+            "is_expected_skill": matched
+        }));
+    }
+    let total = prompts.len();
+    let recall = if total == 0 {
+        0.0
+    } else {
+        true_positive as f64 / total as f64
+    };
+    Ok(Json(json!({
+        "status": "scaffold",
+        "skill_name": skill_name,
+        "threshold": threshold,
+        "total": total,
+        "true_positive": true_positive,
+        "false_negative": false_negative,
+        "recall": recall,
+        "cases": rows,
+    })))
 }
 
 async fn skills_delete(
