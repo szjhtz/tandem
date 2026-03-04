@@ -151,7 +151,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `POST /api/swarm/continue` and `POST /api/swarm/resume` now return execution diagnostics (`started`, `requeued`, `selectedStepId`, `whyNextStep`) to make no-op conditions visible
   - surfaced swarm `lastError` inline in `SwarmPage` to expose provider/session failures immediately
   - execution session creation now falls back to configured swarm provider/model when older runs lack persisted `model_provider`/`model_id`
-
+- **Swarm fail-closed execution + model resolution hardening**:
+  - added deterministic execution-model resolution precedence for swarm steps: context-run model -> swarm state model -> engine default provider/model
+  - swarm start now fails fast when no provider/model can be resolved, instead of creating no-model runs that silently dispatch no LLM calls
+  - `prompt_sync` dispatch now fails closed in control-panel swarm executor when no assistant output is produced (empty/no-op response), with explicit `PROMPT_DISPATCH_EMPTY_RESPONSE` diagnostics
+  - added loop guard that stops swarm execution when a step remains non-`done` after completion (`STEP_STATE_NOT_ADVANCING`) to avoid hidden infinite replays on stale step state
+  - `/api/swarm/status` now surfaces resolved model source + executor state/reason for immediate diagnosis
 - **Engine startup stability during pre-ready phase**:
   - background server tasks now wait for runtime readiness before accessing `AppState` runtime-backed fields
   - fixes startup panic `runtime accessed before startup completion` that could mark control-panel connectivity unhealthy on boot

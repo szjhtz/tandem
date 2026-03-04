@@ -35,7 +35,11 @@
     - `/api/swarm/continue` and `/api/swarm/resume` now return `started`, `requeued`, `selectedStepId`, and `whyNextStep` for operator visibility
     - Swarm page now renders `lastError` inline for immediate failure diagnosis
     - execution sessions now fall back to configured swarm provider/model for legacy runs that do not include persisted provider/model fields
-
+  - Added swarm fail-closed execution safeguards:
+    - model resolution now uses strict precedence (`run -> swarm state -> engine default`) and hard-fails when no model is resolvable
+    - empty/no-op `prompt_sync` responses now fail step execution with explicit diagnostics instead of silently passing
+    - added executor loop guard that stops repeated same-step replay when step state does not advance after completion
+    - `/api/swarm/status` now includes resolved model metadata and executor state/reason for diagnostics
 - **MCP-first Pack Builder in the engine**:
   - Added built-in `pack_builder` tool with two-phase execution:
     - `preview`: parse goal, resolve external capabilities to MCP catalog servers, generate pack artifacts, and return approval summary

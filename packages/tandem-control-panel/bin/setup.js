@@ -204,6 +204,11 @@ const swarmState = {
     guidance: "",
   },
   lastError: "",
+  executorState: "idle",
+  executorReason: "",
+  resolvedModelProvider: "",
+  resolvedModelId: "",
+  modelResolutionSource: "none",
   runId: "",
   attachedPid: null,
 };
@@ -1436,8 +1441,14 @@ async function seedContextRunSteps(session, runId, objective) {
 
 async function createExecutionSession(session, run) {
   const workspaceRoot = String(run?.workspace?.canonical_path || REPO_ROOT).trim();
-  const modelProvider = String(run?.model_provider || swarmState.modelProvider || "").trim();
-  const modelId = String(run?.model_id || swarmState.modelId || "").trim();
+  const resolved = await resolveExecutionModel(session, run);
+  const modelProvider = resolved.provider;
+  const modelId = resolved.model;
+  swarmState.resolvedModelProvider = modelProvider;
+  swarmState.resolvedModelId = modelId;
+  swarmState.modelResolutionSource = resolved.source;
+  if (swarmState.modelProvider !== modelProvider) swarmState.modelProvider = modelProvider;
+  if (swarmState.modelId !== modelId) swarmState.modelId = modelId;
   const payload = await engineRequestJson(session, "/session", {
     method: "POST",
     body: {
@@ -1455,6 +1466,50 @@ async function createExecutionSession(session, run) {
     },
   });
   return String(payload?.id || "").trim();
+}
+
+let cachedEngineDefaultModel = {
+  provider: "",
+  model: "",
+  fetchedAtMs: 0,
+};
+
+async function fetchEngineDefaultModel(session) {
+  const now = Date.now();
+  if (cachedEngineDefaultModel.fetchedAtMs && now - cachedEngineDefaultModel.fetchedAtMs < 15000) {
+    return { provider: cachedEngineDefaultModel.provider, model: cachedEngineDefaultModel.model };
+  }
+  const payload = await engineRequestJson(session, "/config/providers").catch(() => ({}));
+  const defaultProvider = String(payload?.default || "").trim();
+  const providers = payload?.providers && typeof payload.providers === "object" ? payload.providers : {};
+  const defaultModel = String(providers?.[defaultProvider]?.default_model || "").trim();
+  cachedEngineDefaultModel = {
+    provider: defaultProvider,
+    model: defaultModel,
+    fetchedAtMs: now,
+  };
+  return { provider: defaultProvider, model: defaultModel };
+}
+
+async function resolveExecutionModel(session, run) {
+  const runProvider = String(run?.model_provider || "").trim();
+  const runModel = String(run?.model_id || "").trim();
+  if (runProvider && runModel) {
+    return { provider: runProvider, model: runModel, source: "run" };
+  }
+
+  const swarmProvider = String(swarmState.modelProvider || "").trim();
+  const swarmModel = String(swarmState.modelId || "").trim();
+  if (swarmProvider && swarmModel) {
+    return { provider: swarmProvider, model: swarmModel, source: "swarm_state" };
+  }
+
+  const defaults = await fetchEngineDefaultModel(session);
+  if (defaults.provider && defaults.model) {
+    return { provider: defaults.provider, model: defaults.model, source: "engine_default" };
+  }
+
+  throw new Error("MODEL_SELECTION_REQUIRED: no provider/model configured for swarm execution.");
 }
 
 function stepPromptText(run, step, stepIndex, totalSteps) {
@@ -1476,13 +1531,29 @@ async function runStepWithLLM(session, run, step, stepIndex, totalSteps) {
   const sessionId = await createExecutionSession(session, run);
   if (!sessionId) throw new Error("Failed to create execution session.");
   const prompt = stepPromptText(run, step, stepIndex, totalSteps);
-  await engineRequestJson(session, `/session/${encodeURIComponent(sessionId)}/prompt_sync`, {
+  const promptResponse = await engineRequestJson(session, `/session/${encodeURIComponent(sessionId)}/prompt_sync`, {
     method: "POST",
     timeoutMs: 10 * 60 * 1000,
     body: {
       parts: [{ type: "text", text: prompt }],
     },
   });
+  const syncRows = Array.isArray(promptResponse) ? promptResponse : [];
+  const hasAssistant = syncRows.some((row) => String(row?.info?.role || "").toLowerCase() === "assistant");
+  if (!hasAssistant) {
+    const sessionSnapshot = await engineRequestJson(session, `/session/${encodeURIComponent(sessionId)}`).catch(
+      () => null
+    );
+    const messages = Array.isArray(sessionSnapshot?.messages) ? sessionSnapshot.messages : [];
+    const persistedAssistant = messages.some(
+      (message) => String(message?.info?.role || "").toLowerCase() === "assistant"
+    );
+    if (!persistedAssistant) {
+      throw new Error(
+        "PROMPT_DISPATCH_EMPTY_RESPONSE: prompt_sync returned no assistant output. Model route may be unresolved."
+      );
+    }
+  }
   return sessionId;
 }
 
@@ -1496,7 +1567,11 @@ function findStepByStatus(steps, status) {
 
 async function driveContextRunExecution(session, runId) {
   if (swarmExecutors.has(runId)) return false;
+  swarmState.executorState = "running";
+  swarmState.executorReason = "";
   const runner = (async () => {
+    let completionStreak = 0;
+    let lastCompletedStepId = "";
     for (let cycle = 0; cycle < 24; cycle += 1) {
       const runPayload = await engineRequestJson(session, `/context/runs/${encodeURIComponent(runId)}`);
       const run = runPayload?.run || {};
@@ -1519,6 +1594,8 @@ async function driveContextRunExecution(session, runId) {
           });
         }
         swarmState.lastError = String(nextPayload?.why_next_step || latestRun?.why_next_step || "No actionable step selected.");
+        swarmState.executorState = "blocked";
+        swarmState.executorReason = swarmState.lastError;
         return;
       }
 
@@ -1554,10 +1631,31 @@ async function driveContextRunExecution(session, runId) {
           },
           executionStepId
         );
+        const refresh = await engineRequestJson(session, `/context/runs/${encodeURIComponent(runId)}`).catch(() => null);
+        const refreshedSteps = Array.isArray(refresh?.run?.steps) ? refresh.run.steps : [];
+        const refreshedStep = refreshedSteps.find((item) => String(item?.step_id || "") === executionStepId);
+        const refreshedStatus = String(refreshedStep?.status || "").toLowerCase();
+        if (refreshedStatus !== "done") {
+          throw new Error(
+            `STEP_STATE_NOT_ADVANCING: step \`${executionStepId}\` remained \`${refreshedStatus || "unknown"}\` after completion`
+          );
+        }
+        if (executionStepId === lastCompletedStepId) completionStreak += 1;
+        else {
+          lastCompletedStepId = executionStepId;
+          completionStreak = 1;
+        }
+        if (completionStreak > 2) {
+          throw new Error(`STEP_LOOP_GUARD: repeated completion on step \`${executionStepId}\``);
+        }
         swarmState.lastError = "";
+        swarmState.executorState = "running";
+        swarmState.executorReason = "";
       } catch (error) {
         const message = String(error?.message || error || "Unknown step failure");
         swarmState.lastError = message;
+        swarmState.executorState = "error";
+        swarmState.executorReason = message;
         await appendContextRunEvent(
           session,
           runId,
@@ -1576,9 +1674,15 @@ async function driveContextRunExecution(session, runId) {
   })()
     .catch((error) => {
       swarmState.lastError = String(error?.message || error || "Run executor failed");
+      swarmState.executorState = "error";
+      swarmState.executorReason = swarmState.lastError;
     })
     .finally(() => {
       swarmExecutors.delete(runId);
+      if (swarmState.executorState === "running") {
+        swarmState.executorState = "idle";
+        swarmState.executorReason = "";
+      }
     });
   swarmExecutors.set(runId, runner);
   return true;
@@ -1609,8 +1713,16 @@ async function startSwarm(session, config = {}) {
     throw new Error(`Workspace root does not exist or is not a directory: ${resolve(workspaceRootRaw)}`);
   }
   const maxTasks = Math.max(1, Number.parseInt(String(config.maxTasks || 3), 10) || 3);
-  const modelProvider = String(config.modelProvider || "").trim();
-  const modelId = String(config.modelId || "").trim();
+  let modelProvider = String(config.modelProvider || "").trim();
+  let modelId = String(config.modelId || "").trim();
+  if (!modelProvider || !modelId) {
+    const defaults = await fetchEngineDefaultModel(session);
+    modelProvider = modelProvider || defaults.provider;
+    modelId = modelId || defaults.model;
+  }
+  if (!modelProvider || !modelId) {
+    throw new Error("MODEL_SELECTION_REQUIRED: configure a default provider/model before starting swarm runs.");
+  }
   const mcpServers = (Array.isArray(config.mcpServers) ? config.mcpServers : [])
     .map((entry) => String(entry || "").trim())
     .filter(Boolean)
@@ -1657,6 +1769,9 @@ async function startSwarm(session, config = {}) {
   swarmState.maxTasks = maxTasks;
   swarmState.modelProvider = modelProvider;
   swarmState.modelId = modelId;
+  swarmState.resolvedModelProvider = modelProvider;
+  swarmState.resolvedModelId = modelId;
+  swarmState.modelResolutionSource = "start";
   swarmState.mcpServers = mcpServers;
   swarmState.repoRoot = workspaceRoot;
   swarmState.lastError = "";
@@ -1707,6 +1822,9 @@ async function handleSwarmApi(req, res, session) {
       maxTasks: swarmState.maxTasks,
       modelProvider: swarmState.modelProvider || "",
       modelId: swarmState.modelId || "",
+      resolvedModelProvider: swarmState.resolvedModelProvider || "",
+      resolvedModelId: swarmState.resolvedModelId || "",
+      modelResolutionSource: swarmState.modelResolutionSource || "none",
       mcpServers: Array.isArray(swarmState.mcpServers) ? swarmState.mcpServers : [],
       repoRoot: swarmState.repoRoot || "",
       preflight: swarmState.preflight || null,
@@ -1716,6 +1834,8 @@ async function handleSwarmApi(req, res, session) {
       attachedPid: swarmState.attachedPid || null,
       localEngine: isLocalEngineUrl(ENGINE_URL),
       lastError: swarmState.lastError || null,
+      executorState: swarmState.executorState || "idle",
+      executorReason: swarmState.executorReason || null,
       currentRunId: swarmState.runId || "",
     });
     return true;
@@ -1795,8 +1915,11 @@ async function handleSwarmApi(req, res, session) {
         runId,
         started,
         requeued,
+        sessionDispatchOutcome: started ? "started" : "already_running",
         selectedStepId: preview?.selected_step_id || null,
         whyNextStep: preview?.why_next_step || null,
+        executorState: swarmState.executorState || "idle",
+        executorReason: swarmState.executorReason || null,
       });
     } catch (e) {
       sendJson(res, 400, { ok: false, error: e instanceof Error ? e.message : String(e) });
@@ -1824,8 +1947,11 @@ async function handleSwarmApi(req, res, session) {
         runId,
         started,
         requeued,
+        sessionDispatchOutcome: started ? "started" : "already_running",
         selectedStepId: preview?.selected_step_id || null,
         whyNextStep: preview?.why_next_step || null,
+        executorState: swarmState.executorState || "idle",
+        executorReason: swarmState.executorReason || null,
       });
     } catch (e) {
       sendJson(res, 400, { ok: false, error: e instanceof Error ? e.message : String(e) });

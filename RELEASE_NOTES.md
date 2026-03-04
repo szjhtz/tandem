@@ -32,7 +32,11 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
     - continue/resume API responses now include execution diagnostics (`started`, `requeued`, `selectedStepId`, `whyNextStep`)
     - Swarm page now surfaces `lastError` to make provider/session failures visible without inspecting server logs
     - execution sessions now fall back to configured swarm provider/model when older runs do not have provider/model fields populated
-
+  - Added swarm fail-closed model resolution and dispatch guards:
+    - execution model resolution now follows `run model -> swarm state model -> engine default provider/model` and fails fast if unresolved
+    - `prompt_sync` empty/no-op responses now fail the step with explicit diagnostics instead of reporting false completion
+    - loop guard stops repeated same-step execution when step state does not advance after completion (`STEP_STATE_NOT_ADVANCING`)
+    - `/api/swarm/status` now returns resolved model + executor state/reason for faster diagnosis
 - Automation creation UX — simplified to "just describe what you want"
   - Replaced the fragmented `Agents`, `Packs`, and `Teams` pages with a single **Automations** hub (`AutomationsPage`).
   - New **4-step creation wizard**: describe your goal in plain English → pick a recurring schedule → choose how agents run → review & deploy. No YAML, no route navigation between pages.

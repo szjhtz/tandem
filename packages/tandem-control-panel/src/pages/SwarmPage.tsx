@@ -108,10 +108,15 @@ export function SwarmPage({ api, toast, navigate }: AppPageProps) {
         const why = String(payload?.whyNextStep || "").trim();
         const selected = String(payload?.selectedStepId || "").trim();
         const started = payload?.started === true ? "executor started" : "executor already active";
+        const executorState = String(payload?.executorState || "").trim();
+        const executorReason = String(payload?.executorReason || "").trim();
         toast(
           "ok",
           selected ? `${started}; next step ${selected}` : why ? `${started}; ${why}` : started
         );
+        if (executorState === "error" && executorReason) {
+          toast("err", executorReason);
+        }
       }
       await queryClient.invalidateQueries({ queryKey: ["swarm"] });
     },
@@ -431,6 +436,30 @@ export function SwarmPage({ api, toast, navigate }: AppPageProps) {
             >
               Cancel
             </button>
+          </div>
+          <div className="mb-3 grid gap-2 md:grid-cols-3">
+            <div className="rounded-lg border border-slate-700/60 bg-slate-900/20 p-2 text-xs">
+              <div className="font-medium">Resolved model</div>
+              <div className="tcp-subtle">
+                {String(statusQuery.data?.resolvedModelProvider || "n/a")} /{" "}
+                {String(statusQuery.data?.resolvedModelId || "n/a")}
+              </div>
+            </div>
+            <div className="rounded-lg border border-slate-700/60 bg-slate-900/20 p-2 text-xs">
+              <div className="font-medium">Model source</div>
+              <div className="tcp-subtle">
+                {String(statusQuery.data?.modelResolutionSource || "none")}
+              </div>
+            </div>
+            <div className="rounded-lg border border-slate-700/60 bg-slate-900/20 p-2 text-xs">
+              <div className="font-medium">Executor</div>
+              <div className="tcp-subtle">
+                {String(statusQuery.data?.executorState || "idle")}
+                {String(statusQuery.data?.executorReason || "").trim()
+                  ? `: ${String(statusQuery.data?.executorReason || "")}`
+                  : ""}
+              </div>
+            </div>
           </div>
           {String(statusQuery.data?.lastError || "").trim() ? (
             <div className="mb-3 rounded-lg border border-rose-400/40 bg-rose-950/25 p-2 text-xs text-rose-200">
