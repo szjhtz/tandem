@@ -39,6 +39,7 @@
     - model resolution now uses strict precedence (`run -> swarm state -> engine default`) and hard-fails when no model is resolvable
     - empty/no-op `prompt_sync` responses now fail step execution with explicit diagnostics instead of silently passing
     - added executor loop guard that stops repeated same-step replay when step state does not advance after completion
+    - added compatibility reconcile path that marks stale completed steps as `done` via engine API when transition events do not materialize immediately
     - `/api/swarm/status` now includes resolved model metadata and executor state/reason for diagnostics
 - **MCP-first Pack Builder in the engine**:
   - Added built-in `pack_builder` tool with two-phase execution:

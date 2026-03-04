@@ -156,6 +156,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - swarm start now fails fast when no provider/model can be resolved, instead of creating no-model runs that silently dispatch no LLM calls
   - `prompt_sync` dispatch now fails closed in control-panel swarm executor when no assistant output is produced (empty/no-op response), with explicit `PROMPT_DISPATCH_EMPTY_RESPONSE` diagnostics
   - added loop guard that stops swarm execution when a step remains non-`done` after completion (`STEP_STATE_NOT_ADVANCING`) to avoid hidden infinite replays on stale step state
+  - added engine-compat reconciliation path: when step completion events do not materialize `done` immediately, control panel now patches run step state to `done` via engine API and emits `step_completion_reconciled`
   - `/api/swarm/status` now surfaces resolved model source + executor state/reason for immediate diagnosis
 - **Engine startup stability during pre-ready phase**:
   - background server tasks now wait for runtime readiness before accessing `AppState` runtime-backed fields

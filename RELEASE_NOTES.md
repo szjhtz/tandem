@@ -36,6 +36,7 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
     - execution model resolution now follows `run model -> swarm state model -> engine default provider/model` and fails fast if unresolved
     - `prompt_sync` empty/no-op responses now fail the step with explicit diagnostics instead of reporting false completion
     - loop guard stops repeated same-step execution when step state does not advance after completion (`STEP_STATE_NOT_ADVANCING`)
+    - compatibility reconcile path now marks stale completed steps as `done` via engine API when run-state transitions lag, and emits `step_completion_reconciled`
     - `/api/swarm/status` now returns resolved model + executor state/reason for faster diagnosis
 - Automation creation UX — simplified to "just describe what you want"
   - Replaced the fragmented `Agents`, `Packs`, and `Teams` pages with a single **Automations** hub (`AutomationsPage`).

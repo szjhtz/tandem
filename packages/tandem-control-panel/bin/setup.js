@@ -1565,6 +1565,39 @@ function findStepByStatus(steps, status) {
   );
 }
 
+async function ensureStepMarkedDone(session, runId, stepId) {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const payload = await engineRequestJson(session, `/context/runs/${encodeURIComponent(runId)}`).catch(
+      () => null
+    );
+    const run = payload?.run;
+    const steps = Array.isArray(run?.steps) ? run.steps : [];
+    const idx = steps.findIndex((step) => String(step?.step_id || "") === stepId);
+    if (idx < 0) return true;
+    const current = String(steps[idx]?.status || "").toLowerCase();
+    if (current === "done") return true;
+    if (attempt < 2) {
+      await sleep(120);
+      continue;
+    }
+    const patched = {
+      ...run,
+      status: "running",
+      why_next_step: `reconciled completion for ${stepId}`,
+      steps: steps.map((step, i) => (i === idx ? { ...step, status: "done" } : step)),
+    };
+    await engineRequestJson(session, `/context/runs/${encodeURIComponent(runId)}`, {
+      method: "PUT",
+      body: patched,
+    });
+    const verify = await engineRequestJson(session, `/context/runs/${encodeURIComponent(runId)}`).catch(() => null);
+    const verifySteps = Array.isArray(verify?.run?.steps) ? verify.run.steps : [];
+    const verifyStep = verifySteps.find((step) => String(step?.step_id || "") === stepId);
+    return String(verifyStep?.status || "").toLowerCase() === "done";
+  }
+  return false;
+}
+
 async function driveContextRunExecution(session, runId) {
   if (swarmExecutors.has(runId)) return false;
   swarmState.executorState = "running";
@@ -1636,9 +1669,24 @@ async function driveContextRunExecution(session, runId) {
         const refreshedStep = refreshedSteps.find((item) => String(item?.step_id || "") === executionStepId);
         const refreshedStatus = String(refreshedStep?.status || "").toLowerCase();
         if (refreshedStatus !== "done") {
+          const reconciled = await ensureStepMarkedDone(session, runId, executionStepId);
+          if (reconciled) {
+            await appendContextRunEvent(
+              session,
+              runId,
+              "step_completion_reconciled",
+              "running",
+              {
+                step_status: "done",
+                why_next_step: `reconciled stale step state for ${executionStepId}`,
+              },
+              executionStepId
+            );
+          } else {
           throw new Error(
             `STEP_STATE_NOT_ADVANCING: step \`${executionStepId}\` remained \`${refreshedStatus || "unknown"}\` after completion`
           );
+          }
         }
         if (executionStepId === lastCompletedStepId) completionStreak += 1;
         else {
