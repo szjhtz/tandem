@@ -375,7 +375,7 @@ export interface MemoryAuditResponse {
 
 // ─── Skills ──────────────────────────────────────────────────────────────────
 
-export type SkillLocation = "user" | "workspace" | "builtin";
+export type SkillLocation = "project" | "global";
 
 export interface SkillRecord {
   name: string;
@@ -395,7 +395,7 @@ export interface SkillImportOptions {
   file_or_path?: string;
   location: SkillLocation;
   namespace?: string;
-  conflict_policy?: "skip" | "overwrite" | "error";
+  conflict_policy?: "skip" | "overwrite" | "rename";
 }
 
 export interface SkillImportResponse {
@@ -413,6 +413,54 @@ export interface SkillTemplate {
 export interface SkillTemplatesResponse {
   templates: SkillTemplate[];
   count: number;
+}
+
+export interface SkillCatalogRecord {
+  info: SkillRecord;
+  sections?: string[];
+  missing_sections?: string[];
+  schedule_compatibility?: string[];
+  has_manifest?: boolean;
+  has_workflow?: boolean;
+}
+
+export interface SkillValidationIssue {
+  code: string;
+  level: "error" | "warning" | string;
+  message: string;
+}
+
+export interface SkillValidationItem {
+  source: string;
+  valid: boolean;
+  name?: string;
+  issues?: SkillValidationIssue[];
+  sections?: string[];
+  missing_sections?: string[];
+  schedule_compatibility?: string[];
+  has_manifest?: boolean;
+  has_workflow?: boolean;
+}
+
+export interface SkillValidationResponse {
+  items: SkillValidationItem[];
+  total: number;
+  valid: number;
+  invalid: number;
+}
+
+export interface SkillRouterMatch {
+  skill_name: string;
+  confidence: number;
+  reason: string;
+}
+
+export interface SkillRouterMatchResponse {
+  decision: "match" | "no_match" | string;
+  skill_name?: string;
+  confidence: number;
+  reason: string;
+  top_matches?: SkillRouterMatch[];
 }
 
 // ─── Resources (key-value store) ─────────────────────────────────────────────

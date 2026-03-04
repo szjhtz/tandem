@@ -19,18 +19,18 @@ Ship a control-panel-first Skill System with:
 - [ ] Keep this board updated per commit
 
 ## Phase 1 - Backend Skill API Foundations
-- [~] Add `GET /skills/catalog` (enriched metadata)
-- [ ] Add `POST /skills/validate` (SKILL.md + optional bundle validation)
-- [ ] Add `POST /skills/router/match` (goal -> skill match)
+- [x] Add `GET /skills/catalog` (enriched metadata)
+- [x] Add `POST /skills/validate` (SKILL.md + optional bundle validation)
+- [x] Add `POST /skills/router/match` (goal -> skill match)
 - [ ] Emit/update registry events where needed
-- [ ] Add unit tests for parsing/validation/router scoring
+- [x] Add unit tests for parsing/validation/router scoring
 
 ## Phase 2 - SDK / Client Contract Parity
-- [ ] Fix TypeScript `SkillLocation` parity with engine (`project|global`)
-- [ ] Add types for catalog/validate/router responses
-- [ ] Add `client.skills.catalog()`
-- [ ] Add `client.skills.validate()`
-- [ ] Add `client.skills.match()`
+- [x] Fix TypeScript `SkillLocation` parity with engine (`project|global`)
+- [x] Add types for catalog/validate/router responses
+- [x] Add `client.skills.catalog()`
+- [x] Add `client.skills.validate()`
+- [x] Add `client.skills.match()`
 
 ## Phase 3 - Control Panel Wizard Integration (Simple Mode)
 - [ ] In `AutomationsPage` Step 1, call router for top skill suggestion
@@ -51,3 +51,4 @@ Ship a control-panel-first Skill System with:
 
 ## Commit Log
 - [x] 2026-03-04: Add initial kanban board (`docs/internal/SKILL_SYSTEM_AUTOMATION_KANBAN.md`)
+- [x] 2026-03-04: Add backend skill catalog/validate/router endpoints + SDK updates + tests

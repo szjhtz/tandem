@@ -92,6 +92,73 @@ pub struct SkillsImportResult {
     pub errors: Vec<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SkillCatalogRecord {
+    pub info: SkillInfo,
+    #[serde(default)]
+    pub sections: Vec<String>,
+    #[serde(default)]
+    pub missing_sections: Vec<String>,
+    #[serde(default)]
+    pub schedule_compatibility: Vec<String>,
+    #[serde(default)]
+    pub has_manifest: bool,
+    #[serde(default)]
+    pub has_workflow: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SkillValidationIssue {
+    pub code: String,
+    pub level: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SkillValidationItem {
+    pub source: String,
+    pub valid: bool,
+    pub name: Option<String>,
+    #[serde(default)]
+    pub issues: Vec<SkillValidationIssue>,
+    #[serde(default)]
+    pub sections: Vec<String>,
+    #[serde(default)]
+    pub missing_sections: Vec<String>,
+    #[serde(default)]
+    pub schedule_compatibility: Vec<String>,
+    #[serde(default)]
+    pub has_manifest: bool,
+    #[serde(default)]
+    pub has_workflow: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SkillValidationReport {
+    pub items: Vec<SkillValidationItem>,
+    pub total: usize,
+    pub valid: usize,
+    pub invalid: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SkillRouterMatch {
+    pub skill_name: String,
+    pub confidence: f64,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SkillRouterResult {
+    pub decision: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub skill_name: Option<String>,
+    pub confidence: f64,
+    pub reason: String,
+    #[serde(default)]
+    pub top_matches: Vec<SkillRouterMatch>,
+}
+
 #[derive(Debug, Clone)]
 struct SkillFrontmatter {
     name: String,
@@ -238,6 +305,35 @@ impl SkillService {
             };
             loc_a.cmp(&loc_b).then(a.name.cmp(&b.name))
         });
+        Ok(out)
+    }
+
+    pub fn list_catalog(&self) -> Result<Vec<SkillCatalogRecord>, String> {
+        let list = self.list_skills()?;
+        let mut out = Vec::new();
+        for info in list {
+            let skill_dir = PathBuf::from(&info.path);
+            let skill_path = skill_dir.join("SKILL.md");
+            let content = match fs::read_to_string(&skill_path) {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+            let parsed = match parse_skill_content_with_metadata(&content) {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+            let (_name, _description, body, _fm) = parsed;
+            let analysis = analyze_skill_markdown(&body);
+            out.push(SkillCatalogRecord {
+                info,
+                sections: analysis.sections,
+                missing_sections: analysis.missing_sections,
+                schedule_compatibility: analysis.schedule_compatibility,
+                has_manifest: skill_dir.join("skill.yaml").exists()
+                    || skill_dir.join("manifest.yaml").exists(),
+                has_workflow: skill_dir.join("workflow.yaml").exists(),
+            });
+        }
         Ok(out)
     }
 
@@ -548,6 +644,186 @@ impl SkillService {
         })
     }
 
+    pub fn validate_skill_source(
+        &self,
+        content: Option<&str>,
+        file_or_path: Option<&str>,
+    ) -> Result<SkillValidationReport, String> {
+        let candidates = if let Some(path_or_inline) = file_or_path {
+            load_skill_candidates(path_or_inline)?
+        } else if let Some(raw) = content {
+            load_skill_candidates(raw)?
+        } else {
+            return Err("Missing content or file_or_path for validation".to_string());
+        };
+        let mut items = Vec::new();
+        let mut valid_count = 0usize;
+        let mut invalid_count = 0usize;
+
+        for candidate in candidates {
+            let mut issues = Vec::<SkillValidationIssue>::new();
+            let mut sections = Vec::<String>::new();
+            let mut missing_sections = Vec::<String>::new();
+            let mut schedule_compatibility = Vec::<String>::new();
+            let mut name = None;
+            let mut valid = true;
+            let (has_manifest, has_workflow) = companion_flags_from_candidate(&candidate.source);
+
+            match parse_skill_content_with_metadata(&candidate.content) {
+                Ok((parsed_name, _description, body, _fm)) => {
+                    name = Some(parsed_name);
+                    let analysis = analyze_skill_markdown(&body);
+                    sections = analysis.sections;
+                    missing_sections = analysis.missing_sections;
+                    schedule_compatibility = analysis.schedule_compatibility;
+                    if !missing_sections.is_empty() {
+                        valid = false;
+                        issues.push(SkillValidationIssue {
+                            code: "missing_required_sections".to_string(),
+                            level: "error".to_string(),
+                            message: format!(
+                                "Missing required sections: {}",
+                                missing_sections.join(", ")
+                            ),
+                        });
+                    }
+                    if schedule_compatibility.is_empty() {
+                        issues.push(SkillValidationIssue {
+                            code: "missing_schedule_compatibility_values".to_string(),
+                            level: "warning".to_string(),
+                            message: "Schedule compatibility section is present but no values were parsed."
+                                .to_string(),
+                        });
+                    }
+                }
+                Err(error) => {
+                    valid = false;
+                    issues.push(SkillValidationIssue {
+                        code: "invalid_skill_frontmatter".to_string(),
+                        level: "error".to_string(),
+                        message: error,
+                    });
+                }
+            }
+            if valid {
+                valid_count += 1;
+            } else {
+                invalid_count += 1;
+            }
+            items.push(SkillValidationItem {
+                source: candidate.source,
+                valid,
+                name,
+                issues,
+                sections,
+                missing_sections,
+                schedule_compatibility,
+                has_manifest,
+                has_workflow,
+            });
+        }
+
+        Ok(SkillValidationReport {
+            total: items.len(),
+            valid: valid_count,
+            invalid: invalid_count,
+            items,
+        })
+    }
+
+    pub fn route_skill_match(
+        &self,
+        goal: &str,
+        max_matches: usize,
+        threshold: f64,
+    ) -> Result<SkillRouterResult, String> {
+        let normalized_goal = normalize_text(goal);
+        if normalized_goal.is_empty() {
+            return Ok(SkillRouterResult {
+                decision: "no_match".to_string(),
+                skill_name: None,
+                confidence: 0.0,
+                reason: "goal is empty".to_string(),
+                top_matches: Vec::new(),
+            });
+        }
+
+        let catalog = self.list_catalog()?;
+        let mut scored = Vec::<SkillRouterMatch>::new();
+        for row in catalog {
+            let mut best = 0.0f64;
+            let mut reason = "name/description overlap".to_string();
+
+            for trigger in &row.info.triggers {
+                let normalized_trigger = normalize_text(trigger);
+                if normalized_trigger.is_empty() {
+                    continue;
+                }
+                if normalized_goal.contains(&normalized_trigger) {
+                    best = best.max(0.98);
+                    reason = format!("goal contains trigger '{}'", trigger);
+                    continue;
+                }
+                let overlap = token_overlap_score(&normalized_goal, &normalized_trigger);
+                if overlap > best {
+                    best = overlap;
+                    reason = format!("trigger overlap '{}'", trigger);
+                }
+            }
+
+            let fallback = format!("{} {}", row.info.name, row.info.description);
+            let fallback_score = token_overlap_score(&normalized_goal, &normalize_text(&fallback));
+            if fallback_score > best {
+                best = fallback_score;
+                reason = "name/description overlap".to_string();
+            }
+
+            if best > 0.0 {
+                scored.push(SkillRouterMatch {
+                    skill_name: row.info.name,
+                    confidence: best.min(1.0),
+                    reason,
+                });
+            }
+        }
+
+        scored.sort_by(|a, b| {
+            b.confidence
+                .partial_cmp(&a.confidence)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then(a.skill_name.cmp(&b.skill_name))
+        });
+        let limited = scored
+            .iter()
+            .take(max_matches.max(1))
+            .cloned()
+            .collect::<Vec<_>>();
+        let top = limited.first().cloned();
+        let matched = top.clone().filter(|m| m.confidence >= threshold);
+        if let Some(m) = matched {
+            return Ok(SkillRouterResult {
+                decision: "match".to_string(),
+                skill_name: Some(m.skill_name),
+                confidence: m.confidence,
+                reason: m.reason,
+                top_matches: limited,
+            });
+        }
+
+        let top_conf = top.map(|m| m.confidence).unwrap_or(0.0);
+        Ok(SkillRouterResult {
+            decision: "no_match".to_string(),
+            skill_name: None,
+            confidence: top_conf,
+            reason: if limited.is_empty() {
+                "no installed skills available for routing".to_string()
+            } else {
+                format!("top match confidence below threshold ({:.2})", threshold)
+            },
+            top_matches: limited,
+        })
+    }
+
     fn skill_roots(&self) -> Vec<(PathBuf, SkillLocation)> {
         let mut roots = Vec::new();
         let mut seen = HashSet::new();
@@ -754,6 +1030,159 @@ fn parse_skill_content_with_metadata(
     ))
 }
 
+#[derive(Debug, Default)]
+struct SkillMarkdownAnalysis {
+    sections: Vec<String>,
+    missing_sections: Vec<String>,
+    schedule_compatibility: Vec<String>,
+}
+
+fn analyze_skill_markdown(body: &str) -> SkillMarkdownAnalysis {
+    let sections_map = parse_markdown_sections(body);
+    let mut sections = sections_map
+        .keys()
+        .map(|v| canonical_section_name(v))
+        .collect::<Vec<_>>();
+    sections.sort();
+    sections.dedup();
+    let required = required_section_names();
+    let missing_sections = required
+        .iter()
+        .filter(|req| !sections_map.contains_key(&req.to_ascii_lowercase()))
+        .cloned()
+        .collect::<Vec<_>>();
+    let schedule_compatibility = sections_map
+        .get("schedule compatibility")
+        .map(|lines| parse_schedule_compatibility(lines))
+        .unwrap_or_default();
+    SkillMarkdownAnalysis {
+        sections,
+        missing_sections,
+        schedule_compatibility,
+    }
+}
+
+fn required_section_names() -> Vec<String> {
+    vec![
+        "Purpose".to_string(),
+        "Inputs".to_string(),
+        "Agents".to_string(),
+        "Tools".to_string(),
+        "Workflow".to_string(),
+        "Outputs".to_string(),
+        "Schedule compatibility".to_string(),
+    ]
+}
+
+fn canonical_section_name(raw: &str) -> String {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "purpose" => "Purpose".to_string(),
+        "inputs" => "Inputs".to_string(),
+        "agents" => "Agents".to_string(),
+        "tools" => "Tools".to_string(),
+        "workflow" => "Workflow".to_string(),
+        "outputs" => "Outputs".to_string(),
+        "schedule compatibility" => "Schedule compatibility".to_string(),
+        other => {
+            let mut chars = other.chars();
+            if let Some(first) = chars.next() {
+                let mut out = first.to_ascii_uppercase().to_string();
+                out.push_str(chars.as_str());
+                out
+            } else {
+                String::new()
+            }
+        }
+    }
+}
+
+fn parse_markdown_sections(body: &str) -> HashMap<String, Vec<String>> {
+    let mut sections = HashMap::<String, Vec<String>>::new();
+    let mut current = String::new();
+    for line in body.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('#') {
+            let heading = trimmed.trim_start_matches('#').trim().to_ascii_lowercase();
+            if !heading.is_empty() {
+                current = heading.clone();
+                sections.entry(heading).or_default();
+            }
+            continue;
+        }
+        if current.is_empty() {
+            continue;
+        }
+        sections
+            .entry(current.clone())
+            .or_default()
+            .push(trimmed.to_string());
+    }
+    sections
+}
+
+fn parse_schedule_compatibility(lines: &[String]) -> Vec<String> {
+    let allowed = ["manual", "cron", "interval"];
+    let mut found = Vec::<String>::new();
+    for line in lines {
+        let cleaned = line
+            .trim()
+            .trim_start_matches('-')
+            .trim_start_matches('*')
+            .trim()
+            .to_ascii_lowercase();
+        if cleaned.is_empty() {
+            continue;
+        }
+        for item in cleaned.split(',').map(str::trim) {
+            if allowed.contains(&item) && !found.iter().any(|v| v == item) {
+                found.push(item.to_string());
+            }
+        }
+    }
+    found
+}
+
+fn companion_flags_from_candidate(source: &str) -> (bool, bool) {
+    let path = PathBuf::from(source);
+    if !path.exists() || path.extension().and_then(|v| v.to_str()) == Some("zip") {
+        return (false, false);
+    }
+    let Some(parent) = path.parent() else {
+        return (false, false);
+    };
+    (
+        parent.join("skill.yaml").exists() || parent.join("manifest.yaml").exists(),
+        parent.join("workflow.yaml").exists(),
+    )
+}
+
+fn normalize_text(input: &str) -> String {
+    input
+        .to_ascii_lowercase()
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == ' ' || c == '-' || c == '_' {
+                c
+            } else {
+                ' '
+            }
+        })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn token_overlap_score(a: &str, b: &str) -> f64 {
+    let a_tokens = a.split_whitespace().collect::<HashSet<_>>();
+    let b_tokens = b.split_whitespace().collect::<HashSet<_>>();
+    if a_tokens.is_empty() || b_tokens.is_empty() {
+        return 0.0;
+    }
+    let common = a_tokens.intersection(&b_tokens).count() as f64;
+    common / (b_tokens.len() as f64)
+}
+
 fn split_frontmatter(content: &str) -> Result<(SkillFrontmatter, String), String> {
     let lines: Vec<&str> = content.lines().collect();
     let mut start = None;
@@ -875,6 +1304,44 @@ description: {}
 # {}
 
 workflow
+"#,
+            name, description, name
+        )
+    }
+
+    fn sample_skill_full(name: &str, description: &str) -> String {
+        format!(
+            r#"---
+name: {}
+description: {}
+triggers:
+  - check my email every morning
+---
+
+# Skill: {}
+
+## Purpose
+Summarize important information.
+
+## Inputs
+- inbox
+
+## Agents
+- reader
+
+## Tools
+- webfetch
+
+## Workflow
+1. fetch
+2. summarize
+
+## Outputs
+- daily summary
+
+## Schedule compatibility
+- cron
+- manual
 "#,
             name, description, name
         )
@@ -1056,5 +1523,77 @@ workflow
         assert!(names.iter().any(|n| n == "tandem-skill"));
         assert!(names.iter().any(|n| n == "agents-skill"));
         assert!(names.iter().any(|n| n == "claude-skill"));
+    }
+
+    #[test]
+    fn validate_skill_checks_required_sections() {
+        let tmp = TempDir::new().expect("tempdir");
+        let workspace = tmp.path().join("workspace");
+        let svc = SkillService::with_roots(
+            Some(workspace),
+            tmp.path().join("global").join("skills"),
+            vec![],
+        );
+        let report = svc
+            .validate_skill_source(Some(&sample_skill("incomplete", "desc")), None)
+            .expect("validate");
+        assert_eq!(report.total, 1);
+        assert_eq!(report.invalid, 1);
+        assert_eq!(report.items[0].valid, false);
+        assert!(report.items[0]
+            .issues
+            .iter()
+            .any(|i| i.code == "missing_required_sections"));
+    }
+
+    #[test]
+    fn catalog_reports_sections_and_workflow_flags() {
+        let tmp = TempDir::new().expect("tempdir");
+        let workspace = tmp.path().join("workspace");
+        let skill_dir = workspace.join(".tandem").join("skill").join("email-digest");
+        fs::create_dir_all(&skill_dir).expect("mkdir");
+        fs::write(
+            skill_dir.join("SKILL.md"),
+            sample_skill_full("email-digest", "digest emails"),
+        )
+        .expect("write");
+        fs::write(skill_dir.join("workflow.yaml"), "kind: pack_builder_recipe").expect("write");
+        let svc = SkillService::with_roots(
+            Some(workspace),
+            tmp.path().join("global").join("skills"),
+            vec![],
+        );
+        let catalog = svc.list_catalog().expect("catalog");
+        assert_eq!(catalog.len(), 1);
+        assert_eq!(catalog[0].info.name, "email-digest");
+        assert_eq!(catalog[0].has_workflow, true);
+        assert!(catalog[0]
+            .schedule_compatibility
+            .iter()
+            .any(|v| v == "cron"));
+    }
+
+    #[test]
+    fn router_matches_trigger_phrase() {
+        let tmp = TempDir::new().expect("tempdir");
+        let workspace = tmp.path().join("workspace");
+        let skill_dir = workspace.join(".tandem").join("skill").join("email-digest");
+        fs::create_dir_all(&skill_dir).expect("mkdir");
+        fs::write(
+            skill_dir.join("SKILL.md"),
+            sample_skill_full("email-digest", "digest emails"),
+        )
+        .expect("write");
+        let svc = SkillService::with_roots(
+            Some(workspace),
+            tmp.path().join("global").join("skills"),
+            vec![],
+        );
+        let matched = svc
+            .route_skill_match("Check my email every morning and summarize it", 3, 0.35)
+            .expect("match");
+        assert_eq!(matched.decision, "match");
+        assert_eq!(matched.skill_name.as_deref(), Some("email-digest"));
+        assert!(matched.confidence >= 0.35);
     }
 }

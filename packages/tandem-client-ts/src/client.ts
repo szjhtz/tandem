@@ -45,6 +45,9 @@ import type {
   SkillImportOptions,
   SkillImportResponse,
   SkillTemplatesResponse,
+  SkillCatalogRecord,
+  SkillValidationResponse,
+  SkillRouterMatchResponse,
   ResourceRecord,
   ResourceListResponse,
   ResourceWriteOptions,
@@ -970,17 +973,35 @@ class Skills {
 
   /** Import a skill from YAML content or a file path. */
   async import(options: SkillImportOptions): Promise<SkillImportResponse> {
+    const payload = {
+      content: options.content,
+      file_or_path: (options as { file_or_path?: string }).file_or_path ?? options.fileOrPath,
+      location: options.location,
+      namespace: options.namespace,
+      conflict_policy:
+        (options as { conflict_policy?: "skip" | "overwrite" | "rename" }).conflict_policy ??
+        options.conflictPolicy,
+    };
     return this.req<SkillImportResponse>("/skills/import", {
       method: "POST",
-      body: JSON.stringify(options),
+      body: JSON.stringify(payload),
     });
   }
 
   /** Preview a skill import (dry run). */
   async preview(options: SkillImportOptions): Promise<SkillImportResponse> {
+    const payload = {
+      content: options.content,
+      file_or_path: (options as { file_or_path?: string }).file_or_path ?? options.fileOrPath,
+      location: options.location,
+      namespace: options.namespace,
+      conflict_policy:
+        (options as { conflict_policy?: "skip" | "overwrite" | "rename" }).conflict_policy ??
+        options.conflictPolicy,
+    };
     return this.req<SkillImportResponse>("/skills/import/preview", {
       method: "POST",
-      body: JSON.stringify(options),
+      body: JSON.stringify(payload),
     });
   }
 
@@ -989,6 +1010,47 @@ class Skills {
     const raw = await this.req<unknown>("/skills/templates");
     if (Array.isArray(raw)) return { templates: raw as SkillTemplate[], count: raw.length };
     return raw as SkillTemplatesResponse;
+  }
+
+  /** List enriched skill catalog records. */
+  async catalog(): Promise<{ skills: SkillCatalogRecord[]; count: number }> {
+    const raw = await this.req<unknown>("/skills/catalog");
+    const rows = Array.isArray(raw) ? (raw as SkillCatalogRecord[]) : [];
+    return { skills: rows, count: rows.length };
+  }
+
+  /** Validate SKILL.md content or a local path/zip. */
+  async validate(options: {
+    content?: string;
+    fileOrPath?: string;
+    file_or_path?: string;
+  }): Promise<SkillValidationResponse> {
+    const payload = {
+      content: options.content,
+      file_or_path: options.file_or_path ?? options.fileOrPath,
+    };
+    return this.req<SkillValidationResponse>("/skills/validate", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  }
+
+  /** Match a user goal to the best skill candidate. */
+  async match(options: {
+    goal: string;
+    maxMatches?: number;
+    threshold?: number;
+    max_matches?: number;
+  }): Promise<SkillRouterMatchResponse> {
+    const payload = {
+      goal: options.goal,
+      max_matches: options.max_matches ?? options.maxMatches,
+      threshold: options.threshold,
+    };
+    return this.req<SkillRouterMatchResponse>("/skills/router/match", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
   }
 }
 

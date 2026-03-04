@@ -587,6 +587,19 @@ struct SkillsTemplateInstallRequest {
 }
 
 #[derive(Debug, Deserialize)]
+struct SkillsValidateRequest {
+    content: Option<String>,
+    file_or_path: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SkillsRouterMatchRequest {
+    goal: Option<String>,
+    max_matches: Option<usize>,
+    threshold: Option<f64>,
+}
+
+#[derive(Debug, Deserialize)]
 struct MemoryPutInput {
     #[serde(flatten)]
     request: MemoryPutRequest,
@@ -2115,8 +2128,11 @@ fn app_router(state: AppState) -> Router {
         .route("/path", get(path_info))
         .route("/agent", get(agent_list))
         .route("/skills", get(skills_list).post(skills_import))
+        .route("/skills/catalog", get(skills_catalog))
         .route("/skills/import", post(skills_import))
         .route("/skills/import/preview", post(skills_import_preview))
+        .route("/skills/validate", post(skills_validate))
+        .route("/skills/router/match", post(skills_router_match))
         .route("/skills/templates", get(skills_templates_list))
         .route(
             "/skills/templates/{id}/install",
@@ -5751,6 +5767,14 @@ async fn skills_list() -> Result<Json<Value>, (StatusCode, Json<ErrorEnvelope>)>
     Ok(Json(json!(skills)))
 }
 
+async fn skills_catalog() -> Result<Json<Value>, (StatusCode, Json<ErrorEnvelope>)> {
+    let service = skills_service();
+    let skills = service
+        .list_catalog()
+        .map_err(|e| skill_error(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    Ok(Json(json!(skills)))
+}
+
 async fn skills_get(
     Path(name): Path<String>,
 ) -> Result<Json<Value>, (StatusCode, Json<ErrorEnvelope>)> {
@@ -5811,6 +5835,35 @@ async fn skills_import(
             input.namespace,
             input.conflict_policy.unwrap_or(SkillsConflictPolicy::Skip),
         )
+        .map_err(|e| skill_error(StatusCode::BAD_REQUEST, e))?;
+    Ok(Json(json!(result)))
+}
+
+async fn skills_validate(
+    Json(input): Json<SkillsValidateRequest>,
+) -> Result<Json<Value>, (StatusCode, Json<ErrorEnvelope>)> {
+    let service = skills_service();
+    let report = service
+        .validate_skill_source(input.content.as_deref(), input.file_or_path.as_deref())
+        .map_err(|e| skill_error(StatusCode::BAD_REQUEST, e))?;
+    Ok(Json(json!(report)))
+}
+
+async fn skills_router_match(
+    Json(input): Json<SkillsRouterMatchRequest>,
+) -> Result<Json<Value>, (StatusCode, Json<ErrorEnvelope>)> {
+    let goal = input.goal.unwrap_or_default();
+    if goal.trim().is_empty() {
+        return Err(skill_error(
+            StatusCode::BAD_REQUEST,
+            "Missing non-empty goal for /skills/router/match",
+        ));
+    }
+    let max_matches = input.max_matches.unwrap_or(3).clamp(1, 10);
+    let threshold = input.threshold.unwrap_or(0.35).clamp(0.0, 1.0);
+    let service = skills_service();
+    let result = service
+        .route_skill_match(&goal, max_matches, threshold)
         .map_err(|e| skill_error(StatusCode::BAD_REQUEST, e))?;
     Ok(Json(json!(result)))
 }
