@@ -45,7 +45,7 @@ Ship a control-panel-first Skill System with:
 - [ ] Add UI placeholder badges (`Validated` / `Not validated`)
 
 ## Phase 5 - Built-in Skill Templates and Advanced Mode
-- [ ] Land 10 default skills with `SKILL.md` + `workflow.yaml` + `automation.example.yaml`
+- [x] Land 10 default skills with `SKILL.md` + `workflow.yaml` + `automation.example.yaml`
 - [ ] Add advanced skill builder form + YAML toggle
 - [ ] Add "Generate Skill from Prompt" flow (gated by validation)
 
@@ -53,4 +53,5 @@ Ship a control-panel-first Skill System with:
 - [x] 2026-03-04: Add initial kanban board (`docs/internal/SKILL_SYSTEM_AUTOMATION_KANBAN.md`)
 - [x] 2026-03-04: Add backend skill catalog/validate/router endpoints + SDK updates + tests
 - [x] 2026-03-04: Integrate control-panel wizard skill routing (non-blocking fallback to pack builder)
-- [ ] 2026-03-04: Add skill evaluation scaffold endpoints + SDK methods + spec doc (pending commit)
+- [x] 2026-03-04: Add skill evaluation scaffold endpoints + SDK methods + spec doc
+- [ ] 2026-03-04: Add 10 built-in skill templates (pending commit)
