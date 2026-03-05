@@ -1088,7 +1088,7 @@ export function ChatPage({ client, api, toast, providerStatus, identity, navigat
       >
         <div className="chat-sessions-header">
           <h3 className="chat-sessions-title">
-            <i data-lucide="clock-3"></i>
+            <i data-lucide="history"></i>
             Sessions
           </h3>
           <div className="flex items-center gap-1">
@@ -1173,7 +1173,7 @@ export function ChatPage({ client, api, toast, providerStatus, identity, navigat
               title="Sessions"
               onClick={() => setSessionsOpen((prev) => !prev)}
             >
-              <i data-lucide="clock-3"></i>
+              <i data-lucide="history"></i>
             </button>
             <div className="chat-main-dot"></div>
             <h3 className="tcp-title chat-main-title">{sessionTitle}</h3>

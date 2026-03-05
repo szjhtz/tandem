@@ -2,6 +2,7 @@ import {
   createIcons,
   Activity,
   Archive,
+  ArrowLeftToLine,
   ArrowUpCircle,
   BadgeCheck,
   Binary,
@@ -16,6 +17,7 @@ import {
   FileUp,
   FlaskConical,
   FolderOpen,
+  History,
   Home,
   KeyRound,
   Link,
@@ -24,6 +26,7 @@ import {
   MessageCircle,
   MessageSquare,
   MessagesSquare,
+  Menu,
   Paperclip,
   Package,
   Pencil,
@@ -53,6 +56,7 @@ import {
 const icons = {
   Activity,
   Archive,
+  ArrowLeftToLine,
   ArrowUpCircle,
   BadgeCheck,
   Binary,
@@ -67,6 +71,7 @@ const icons = {
   FileUp,
   FlaskConical,
   FolderOpen,
+  History,
   Home,
   KeyRound,
   Link,
@@ -75,6 +80,7 @@ const icons = {
   MessageCircle,
   MessageSquare,
   MessagesSquare,
+  Menu,
   Paperclip,
   Package,
   Pencil,
@@ -101,14 +107,28 @@ const icons = {
   Workflow,
 };
 
+const queuedRoots = new Set();
+let iconRaf = 0;
+
+function flushIconRender() {
+  iconRaf = 0;
+  const targets = [...queuedRoots];
+  queuedRoots.clear();
+  for (const target of targets) {
+    createIcons({
+      icons,
+      attrs: {
+        width: "16",
+        height: "16",
+        "stroke-width": "1.8",
+      },
+      ...(target ? { root: target } : {}),
+    });
+  }
+}
+
 export function renderIcons(root) {
-  createIcons({
-    icons,
-    attrs: {
-      width: "16",
-      height: "16",
-      "stroke-width": "1.8",
-    },
-    ...(root ? { root } : {}),
-  });
+  queuedRoots.add(root || null);
+  if (iconRaf) return;
+  iconRaf = window.requestAnimationFrame(flushIconRender);
 }

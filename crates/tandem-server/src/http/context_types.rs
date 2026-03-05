@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::HashMap;
 
 #[derive(Debug, Deserialize, Default, Clone, Copy)]
 pub(super) struct ContextRunReplayQuery {
@@ -257,6 +258,32 @@ pub(super) struct ContextBlackboardPatchInput {
 pub(super) struct ContextBlackboardPatchesQuery {
     pub(super) since_seq: Option<u64>,
     pub(super) tail: Option<usize>,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+pub(super) struct ContextRunsEventsStreamQuery {
+    pub(super) workspace: Option<String>,
+    pub(super) run_ids: Option<String>,
+    pub(super) cursor: Option<String>,
+    pub(super) tail: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub(super) struct ContextRunsStreamCursor {
+    #[serde(default)]
+    pub(super) events: HashMap<String, u64>,
+    #[serde(default)]
+    pub(super) patches: HashMap<String, u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(super) struct ContextRunsStreamEnvelope {
+    pub(super) kind: String,
+    pub(super) run_id: String,
+    pub(super) workspace: String,
+    pub(super) seq: u64,
+    pub(super) ts_ms: u64,
+    pub(super) payload: Value,
 }
 
 #[derive(Debug, Clone, Deserialize)]

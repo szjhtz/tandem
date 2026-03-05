@@ -7,6 +7,7 @@ export type RouteId =
   | "dashboard"
   | "chat"
   | "automations"
+  | "orchestrator"
   | "agents"
   | "channels"
   | "mcp"

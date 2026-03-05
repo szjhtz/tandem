@@ -462,6 +462,7 @@ pub(super) async fn openapi_doc() -> Json<Value> {
             "/event":{"get":{"summary":"SSE event stream"}},
             "/run/{id}/events":{"get":{"summary":"SSE stream for sequenced run events"}},
             "/context/runs":{"get":{"summary":"List context runs"},"post":{"summary":"Create context run"}},
+            "/context/runs/events/stream":{"get":{"summary":"Multiplex SSE stream for context run events and blackboard patches"}},
             "/context/runs/{run_id}":{"get":{"summary":"Get context run state"},"put":{"summary":"Update context run state"}},
             "/context/runs/{run_id}/events":{"get":{"summary":"List context run events"},"post":{"summary":"Append context run event"}},
             "/context/runs/{run_id}/todos/sync":{"post":{"summary":"Sync todo list into context run steps"}},

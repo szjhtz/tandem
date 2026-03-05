@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useState } from "react";
 import { PageCard, EmptyState } from "./ui";
 import type { AppPageProps } from "./pageTypes";
 
@@ -12,6 +13,7 @@ export function SettingsPage({
   refreshIdentityStatus,
 }: AppPageProps) {
   const queryClient = useQueryClient();
+  const [modelSearchByProvider, setModelSearchByProvider] = useState<Record<string, string>>({});
   const providersCatalog = useQuery({
     queryKey: ["settings", "providers", "catalog"],
     queryFn: () => client.providers.catalog().catch(() => ({ all: [], connected: [] })),
@@ -50,6 +52,12 @@ export function SettingsPage({
 
   const providers = Array.isArray(providersCatalog.data?.all) ? providersCatalog.data.all : [];
 
+  const applyDefaultModel = (providerId: string, modelId: string) => {
+    const next = String(modelId || "").trim();
+    if (!next) return;
+    setDefaultsMutation.mutate({ providerId, modelId: next });
+  };
+
   return (
     <div className="grid gap-4 xl:grid-cols-2">
       <PageCard title="Provider Setup" subtitle="Default provider/model and API keys">
@@ -61,26 +69,65 @@ export function SettingsPage({
               const defaultModel = String(
                 providersConfig.data?.providers?.[providerId]?.default_model || models[0] || ""
               );
+              const typedModel = String(modelSearchByProvider[providerId] ?? defaultModel).trim();
+              const normalizedTyped = typedModel.toLowerCase();
+              const filteredModels = models
+                .filter((modelId) =>
+                  normalizedTyped ? modelId.toLowerCase().includes(normalizedTyped) : true
+                )
+                .slice(0, 80);
               return (
                 <details key={providerId} className="tcp-list-item">
                   <summary className="cursor-pointer font-medium">{providerId}</summary>
                   <div className="mt-2 grid gap-2">
-                    <select
-                      className="tcp-select"
-                      defaultValue={defaultModel}
-                      onChange={(e) =>
-                        setDefaultsMutation.mutate({
-                          providerId,
-                          modelId: (e.target as HTMLSelectElement).value,
-                        })
-                      }
+                    <form
+                      className="grid gap-2"
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        applyDefaultModel(providerId, typedModel);
+                      }}
                     >
-                      {models.map((modelId) => (
-                        <option key={modelId} value={modelId}>
-                          {modelId}
-                        </option>
-                      ))}
-                    </select>
+                      <div className="flex gap-2">
+                        <input
+                          className="tcp-input"
+                          value={typedModel}
+                          placeholder={`Type model id for ${providerId}`}
+                          onInput={(e) =>
+                            setModelSearchByProvider((prev) => ({
+                              ...prev,
+                              [providerId]: (e.target as HTMLInputElement).value,
+                            }))
+                          }
+                        />
+                        <button className="tcp-btn" type="submit">
+                          Apply
+                        </button>
+                      </div>
+                      <div className="max-h-48 overflow-auto rounded-lg border border-slate-700/60 bg-slate-900/20 p-1">
+                        {filteredModels.length ? (
+                          filteredModels.map((modelId) => (
+                            <button
+                              key={modelId}
+                              type="button"
+                              className={`block w-full rounded px-2 py-1 text-left text-sm hover:bg-slate-700/30 ${
+                                modelId === defaultModel ? "bg-slate-700/40" : ""
+                              }`}
+                              onClick={() => {
+                                setModelSearchByProvider((prev) => ({
+                                  ...prev,
+                                  [providerId]: modelId,
+                                }));
+                                applyDefaultModel(providerId, modelId);
+                              }}
+                            >
+                              {modelId}
+                            </button>
+                          ))
+                        ) : (
+                          <div className="tcp-subtle px-2 py-1 text-xs">No matching models.</div>
+                        )}
+                      </div>
+                    </form>
                     <form
                       onSubmit={(e) => {
                         e.preventDefault();

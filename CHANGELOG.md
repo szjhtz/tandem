@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Orchestrator multi-run event fan-in and run registry (engine + control panel)**:
+  - tandem-engine now exposes multiplex context-run SSE fan-in via `GET /context/runs/events/stream`, supporting one stream for many run IDs with cursor resume support.
+  - context-run stream payloads now include a normalized envelope (run-scoped event metadata + cursor state) for deterministic client reconciliation.
+  - control panel adds `/api/orchestrator/events` routing that prefers engine multiplex SSE and falls back to legacy per-run bridging when needed.
+  - control panel adds `/api/orchestrator/events/health` for live stream health checks (mode, run count, cursor, and fallback status).
+  - orchestration UI now uses a run registry store so multiple active/completed runs can coexist in one workspace instead of single-run overwrite behavior.
+  - new dedicated Orchestrator page flow starts in prompt/workspace mode, then supports run switching and resume across existing runs.
+  - orchestration and chat session history affordances now use a shared history icon treatment for consistency.
+
 - **Blackboard promoted as run coordination backbone (engine + control panel)**:
   - extended context blackboard state with first-class task rows (`tasks`) including workflow/lineage fields, lease metadata, retries, and optimistic `task_rev`
   - added task patch ops to append-only blackboard log:

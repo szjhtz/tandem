@@ -4,6 +4,15 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
 
 ## v0.4.1 (Unreleased)
 
+- Orchestrator multi-run fan-in + run workspace parity
+  - tandem-engine now provides multiplex orchestration event fan-in at `GET /context/runs/events/stream` so one SSE connection can track multiple run IDs concurrently.
+  - stream cursor decode/encode support was added so reconnects can resume from the last acknowledged event window.
+  - control panel now exposes `/api/orchestrator/events` backed by multiplex stream proxying with legacy fallback logic for older engine behavior.
+  - added `/api/orchestrator/events/health` to quickly verify orchestrator streaming status and fallback mode.
+  - control panel orchestration state now tracks a run registry (active + historical runs) instead of single-run replacement.
+  - added a dedicated Orchestrator workspace view with run selection and start-state behavior aligned to desktop orchestration UX.
+  - orchestration and chat history UI now use a consistent history icon style for session/run lists.
+
 - Blackboard as central coordination layer + control panel parity
   - Engine blackboard now includes first-class task coordination state (`blackboard.tasks`) with workflow references, task lineage fields, lease metadata, retries, and optimistic task revision (`task_rev`).
   - Added append-only task patch operations:

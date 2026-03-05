@@ -3,6 +3,7 @@ export const ROUTES = [
   ["dashboard", "Dashboard", "home"],
   ["chat", "Chat", "message-square"],
   ["automations", "Automations", "bot"],
+  ["orchestrator", "Orchestrator", "sparkles"],
   ["swarm", "Swarm (Live)", "share-2"],
   ["memory", "Memory", "database"],
   ["feed", "Live Feed", "radio"],
@@ -18,7 +19,7 @@ export const ROUTES = [
 
 // Primary nav — 7 items your grandma can understand
 export const NAV_ROUTES = ROUTES.filter(([id]) =>
-  ["dashboard", "chat", "automations", "swarm", "memory", "feed", "settings"].includes(id)
+  ["dashboard", "chat", "automations", "orchestrator", "swarm", "memory", "feed", "settings"].includes(id)
 );
 
 export const providerHints = {

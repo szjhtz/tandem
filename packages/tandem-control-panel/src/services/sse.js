@@ -36,6 +36,10 @@ function ensureChannel(url, withCredentials = true) {
         // ignore callback failures
       }
     }
+    if (source.readyState === EventSource.CLOSED) {
+      channel.closed = true;
+      channels.delete(key);
+    }
   };
 
   channels.set(key, channel);

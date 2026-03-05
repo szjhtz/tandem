@@ -42,6 +42,15 @@ Options:
 
 - `--service-mode=both|engine|panel` (default `both`)
 - `--service-user=<linux-user>` (default: `SUDO_USER`/current user)
+- `--service-op=status|start|stop|restart|enable|disable|logs` (operate existing services)
+
+Example operations:
+
+```bash
+tandem-control-panel --service-op=status --service-mode=both
+sudo tandem-control-panel --service-op=restart --service-mode=panel
+sudo tandem-control-panel --service-op=logs --service-mode=both
+```
 
 ## Features
 
@@ -128,4 +137,21 @@ cd packages/tandem-control-panel
 npm install
 npm run dev
 npm run build
+```
+
+### Repo Source Workflow (No Global npm Install)
+
+If you run from this repo directly, use:
+
+```bash
+node packages/tandem-control-panel/bin/setup.js --init
+node packages/tandem-control-panel/bin/setup.js
+```
+
+Service install/ops from source:
+
+```bash
+sudo node packages/tandem-control-panel/bin/setup.js --install-services --service-mode=both
+node packages/tandem-control-panel/bin/setup.js --service-op=status --service-mode=both
+sudo node packages/tandem-control-panel/bin/setup.js --service-op=restart --service-mode=panel
 ```

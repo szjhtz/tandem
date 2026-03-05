@@ -5,15 +5,17 @@ export function PageCard({
   subtitle,
   children,
   actions,
+  className,
 }: {
-  title: string;
+  title: any;
   subtitle?: string;
   children: any;
   actions?: any;
+  className?: string;
 }) {
   return (
     <motion.section
-      className="tcp-card"
+      className={`tcp-card ${String(className || "").trim()}`}
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.14, ease: "easeOut" }}

@@ -17,6 +17,14 @@ use tandem_wire::WireMessagePart;
 use tokio_util::sync::CancellationToken;
 use tracing::Level;
 
+mod loop_guards;
+
+#[cfg(test)]
+use loop_guards::parse_budget_override;
+use loop_guards::{
+    duplicate_signature_limit_for, tool_budget_for, websearch_duplicate_signature_limit,
+};
+
 use crate::tool_router::{
     classify_intent, default_mode_name, is_short_simple_prompt, max_tools_per_call_expanded,
     select_tool_subset, should_escalate_auto_tools, tool_router_enabled, ToolIntent,
@@ -2629,25 +2637,6 @@ fn find_first_url(text: &str) -> Option<String> {
     })
 }
 
-fn tool_budget_for(tool_name: &str) -> usize {
-    if env_budget_guards_disabled() {
-        return usize::MAX;
-    }
-    let normalized = normalize_tool_name(tool_name);
-    let (default_budget, env_key) = match normalized.as_str() {
-        "glob" => (4usize, "TANDEM_TOOL_BUDGET_GLOB"),
-        "read" => (8usize, "TANDEM_TOOL_BUDGET_READ"),
-        "websearch" => (8usize, "TANDEM_TOOL_BUDGET_WEBSEARCH"),
-        "batch" => (10usize, "TANDEM_TOOL_BUDGET_BATCH"),
-        "grep" | "search" | "codesearch" => (6usize, "TANDEM_TOOL_BUDGET_SEARCH"),
-        _ => (10usize, "TANDEM_TOOL_BUDGET_DEFAULT"),
-    };
-    if let Some(override_budget) = parse_budget_override(env_key) {
-        return override_budget;
-    }
-    default_budget
-}
-
 fn max_tool_iterations() -> usize {
     let default_iterations = 25usize;
     std::env::var("TANDEM_MAX_TOOL_ITERATIONS")
@@ -2695,65 +2684,6 @@ fn tool_exec_timeout_ms() -> usize {
         .and_then(|raw| raw.trim().parse::<usize>().ok())
         .filter(|value| *value > 0)
         .unwrap_or(45_000)
-}
-
-fn duplicate_signature_limit_for(tool_name: &str) -> usize {
-    let normalized = normalize_tool_name(tool_name);
-    if let Ok(raw) = std::env::var("TANDEM_TOOL_LOOP_DUPLICATE_SIGNATURE_LIMIT") {
-        if let Ok(parsed) = raw.trim().parse::<usize>() {
-            if parsed > 0 {
-                return parsed;
-            }
-        }
-    }
-    if normalized == "pack_builder" {
-        return 1;
-    }
-    if matches!(
-        normalized.as_str(),
-        "write" | "edit" | "multi_edit" | "apply_patch"
-    ) {
-        return 200;
-    }
-    if is_shell_tool_name(&normalized) {
-        2
-    } else {
-        3
-    }
-}
-
-fn websearch_duplicate_signature_limit() -> Option<usize> {
-    std::env::var("TANDEM_WEBSEARCH_DUPLICATE_SIGNATURE_LIMIT")
-        .ok()
-        .and_then(|raw| raw.trim().parse::<usize>().ok())
-        .filter(|value| *value > 0)
-}
-
-fn env_budget_guards_disabled() -> bool {
-    std::env::var("TANDEM_DISABLE_TOOL_GUARD_BUDGETS")
-        .ok()
-        .map(|raw| {
-            matches!(
-                raw.trim().to_ascii_lowercase().as_str(),
-                "1" | "true" | "yes" | "on"
-            )
-        })
-        .unwrap_or(false)
-}
-
-fn parse_budget_override(env_key: &str) -> Option<usize> {
-    let raw = std::env::var(env_key).ok()?;
-    let trimmed = raw.trim().to_ascii_lowercase();
-    if matches!(
-        trimmed.as_str(),
-        "0" | "inf" | "infinite" | "unlimited" | "none"
-    ) {
-        return Some(usize::MAX);
-    }
-    trimmed
-        .parse::<usize>()
-        .ok()
-        .and_then(|value| if value > 0 { Some(value) } else { None })
 }
 
 fn is_guard_budget_tool_output(output: &str) -> bool {
@@ -6162,32 +6092,28 @@ Call: todowrite(task_id=3, status="in_progress")
     }
 
     #[test]
-    fn pack_builder_duplicate_signature_limit_defaults_to_one() {
+    fn duplicate_signature_limit_defaults_to_200_for_all_tools() {
         let _guard = env_test_lock();
         unsafe {
             std::env::remove_var("TANDEM_TOOL_LOOP_DUPLICATE_SIGNATURE_LIMIT");
         }
-        assert_eq!(duplicate_signature_limit_for("pack_builder"), 1);
-    }
-
-    #[test]
-    fn write_duplicate_signature_limit_defaults_to_200() {
-        let _guard = env_test_lock();
-        unsafe {
-            std::env::remove_var("TANDEM_TOOL_LOOP_DUPLICATE_SIGNATURE_LIMIT");
-        }
+        assert_eq!(duplicate_signature_limit_for("pack_builder"), 200);
+        assert_eq!(duplicate_signature_limit_for("bash"), 200);
         assert_eq!(duplicate_signature_limit_for("write"), 200);
-        assert_eq!(duplicate_signature_limit_for("edit"), 200);
     }
 
     #[test]
-    fn duplicate_signature_limit_env_override_still_wins() {
+    fn duplicate_signature_limit_env_override_respects_minimum_floor() {
         let _guard = env_test_lock();
         unsafe {
             std::env::set_var("TANDEM_TOOL_LOOP_DUPLICATE_SIGNATURE_LIMIT", "9");
         }
-        assert_eq!(duplicate_signature_limit_for("write"), 9);
-        assert_eq!(duplicate_signature_limit_for("bash"), 9);
+        assert_eq!(duplicate_signature_limit_for("write"), 200);
+        assert_eq!(duplicate_signature_limit_for("bash"), 200);
+        unsafe {
+            std::env::set_var("TANDEM_TOOL_LOOP_DUPLICATE_SIGNATURE_LIMIT", "250");
+        }
+        assert_eq!(duplicate_signature_limit_for("bash"), 250);
         unsafe {
             std::env::remove_var("TANDEM_TOOL_LOOP_DUPLICATE_SIGNATURE_LIMIT");
         }
@@ -6208,7 +6134,11 @@ Call: todowrite(task_id=3, status="in_progress")
         unsafe {
             std::env::set_var("TANDEM_WEBSEARCH_DUPLICATE_SIGNATURE_LIMIT", "5");
         }
-        assert_eq!(websearch_duplicate_signature_limit(), Some(5));
+        assert_eq!(websearch_duplicate_signature_limit(), Some(200));
+        unsafe {
+            std::env::set_var("TANDEM_WEBSEARCH_DUPLICATE_SIGNATURE_LIMIT", "300");
+        }
+        assert_eq!(websearch_duplicate_signature_limit(), Some(300));
         unsafe {
             std::env::remove_var("TANDEM_WEBSEARCH_DUPLICATE_SIGNATURE_LIMIT");
         }
@@ -6258,6 +6188,36 @@ Call: todowrite(task_id=3, status="in_progress")
         assert_eq!(tool_budget_for("websearch"), usize::MAX);
         unsafe {
             std::env::remove_var("TANDEM_DISABLE_TOOL_GUARD_BUDGETS");
+        }
+    }
+
+    #[test]
+    fn tool_budget_defaults_to_200_calls() {
+        let _guard = env_test_lock();
+        unsafe {
+            std::env::remove_var("TANDEM_DISABLE_TOOL_GUARD_BUDGETS");
+            std::env::remove_var("TANDEM_TOOL_BUDGET_DEFAULT");
+            std::env::remove_var("TANDEM_TOOL_BUDGET_WEBSEARCH");
+            std::env::remove_var("TANDEM_TOOL_BUDGET_READ");
+        }
+        assert_eq!(tool_budget_for("bash"), 200);
+        assert_eq!(tool_budget_for("websearch"), 200);
+        assert_eq!(tool_budget_for("read"), 200);
+    }
+
+    #[test]
+    fn tool_budget_env_override_respects_minimum_floor() {
+        let _guard = env_test_lock();
+        unsafe {
+            std::env::remove_var("TANDEM_DISABLE_TOOL_GUARD_BUDGETS");
+            std::env::set_var("TANDEM_TOOL_BUDGET_DEFAULT", "17");
+            std::env::set_var("TANDEM_TOOL_BUDGET_WEBSEARCH", "250");
+        }
+        assert_eq!(tool_budget_for("bash"), 200);
+        assert_eq!(tool_budget_for("websearch"), 250);
+        unsafe {
+            std::env::remove_var("TANDEM_TOOL_BUDGET_DEFAULT");
+            std::env::remove_var("TANDEM_TOOL_BUDGET_WEBSEARCH");
         }
     }
 }

@@ -1,4 +1,5 @@
 import { AnimatePresence, motion } from "motion/react";
+import { useEffect, useState } from "react";
 
 export function AppShell({
   identity,
@@ -32,68 +33,116 @@ export function AppShell({
   children: any;
   providerGate?: any;
 }) {
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+
+  useEffect(() => {
+    if (!mobileNavOpen) return;
+    setMobileNavOpen(false);
+  }, [currentRoute]);
+
+  const renderNavItems = (onDone?: () => void) =>
+    navRoutes.map(([id, label, icon]) => {
+      const active = currentRoute === id;
+      const locked = providerLocked && id !== "settings";
+      return (
+        <button
+          key={id}
+          type="button"
+          data-route={id}
+          disabled={locked}
+          onClick={() => {
+            onNavigate(id);
+            onDone?.();
+          }}
+          className={`nav-item ${active ? "active" : ""} ${locked ? "locked" : ""} relative`}
+        >
+          {active ? (
+            <motion.span
+              layoutId="nav-active-indicator"
+              className="absolute inset-0 rounded-lg border border-amber-400/40 bg-amber-400/10"
+              transition={{ type: "spring", stiffness: 500, damping: 38 }}
+            />
+          ) : null}
+          <span className="relative z-10 inline-flex items-center gap-2">
+            <i data-lucide={icon}></i>
+            <span>{label}</span>
+          </span>
+        </button>
+      );
+    });
+
+  const renderSidebarBody = (mobile = false) => (
+    <>
+      <div className="tcp-brand-tile mb-4 flex items-center gap-3 rounded-xl p-3">
+        <div className="tcp-brand-avatar grid h-10 w-10 place-items-center overflow-hidden rounded-xl">
+          {identity.botAvatarUrl ? (
+            <img
+              src={identity.botAvatarUrl}
+              alt={identity.botName}
+              className="h-full w-full object-cover"
+            />
+          ) : (
+            <i data-lucide="cpu"></i>
+          )}
+        </div>
+        <div>
+          <div className="text-base font-semibold">{identity.botName}</div>
+          <div className="tcp-subtle text-xs uppercase tracking-wider">Control Center</div>
+        </div>
+      </div>
+      <nav id="nav" className="grid gap-1">
+        {renderNavItems(mobile ? () => setMobileNavOpen(false) : undefined)}
+      </nav>
+      <div className="mt-3 grid gap-2">
+        <button
+          type="button"
+          className="tcp-btn"
+          onClick={() => {
+            onPaletteOpen();
+            if (mobile) setMobileNavOpen(false);
+          }}
+        >
+          <span>Command Palette</span>
+          <kbd className="text-[10px] text-slate-400">Ctrl/Cmd+K</kbd>
+        </button>
+        <button
+          type="button"
+          className="tcp-btn"
+          onClick={() => {
+            onThemeCycle();
+            if (mobile) setMobileNavOpen(false);
+          }}
+        >
+          Cycle Theme
+        </button>
+        <button
+          type="button"
+          className="tcp-btn"
+          onClick={() => {
+            onLogout();
+            if (mobile) setMobileNavOpen(false);
+          }}
+        >
+          Logout
+        </button>
+      </div>
+    </>
+  );
+
   return (
     <div className="grid min-h-screen grid-cols-1 lg:grid-cols-[270px_1fr]">
-      <aside className="tcp-sidebar p-4">
-        <div className="tcp-brand-tile mb-4 flex items-center gap-3 rounded-xl p-3">
-          <div className="tcp-brand-avatar grid h-10 w-10 place-items-center overflow-hidden rounded-xl">
-            {identity.botAvatarUrl ? (
-              <img
-                src={identity.botAvatarUrl}
-                alt={identity.botName}
-                className="h-full w-full object-cover"
-              />
-            ) : (
-              <i data-lucide="cpu"></i>
-            )}
-          </div>
-          <div>
-            <div className="text-base font-semibold">{identity.botName}</div>
-            <div className="tcp-subtle text-xs uppercase tracking-wider">Control Center</div>
-          </div>
-        </div>
-        <nav id="nav" className="grid gap-1">
-          {navRoutes.map(([id, label, icon]) => {
-            const active = currentRoute === id;
-            const locked = providerLocked && id !== "settings";
-            return (
-              <button
-                key={id}
-                type="button"
-                data-route={id}
-                disabled={locked}
-                onClick={() => onNavigate(id)}
-                className={`nav-item ${active ? "active" : ""} ${locked ? "locked" : ""} relative`}
-              >
-                {active ? (
-                  <motion.span
-                    layoutId="nav-active-indicator"
-                    className="absolute inset-0 rounded-lg border border-amber-400/40 bg-amber-400/10"
-                    transition={{ type: "spring", stiffness: 500, damping: 38 }}
-                  />
-                ) : null}
-                <span className="relative z-10 inline-flex items-center gap-2">
-                  <i data-lucide={icon}></i>
-                  <span>{label}</span>
-                </span>
-              </button>
-            );
-          })}
-        </nav>
-        <div className="mt-3 grid gap-2">
-          <button type="button" className="tcp-btn" onClick={onPaletteOpen}>
-            <span>Command Palette</span>
-            <kbd className="text-[10px] text-slate-400">Ctrl/Cmd+K</kbd>
-          </button>
-          <button type="button" className="tcp-btn" onClick={onThemeCycle}>
-            Cycle Theme
-          </button>
-          <button type="button" className="tcp-btn" onClick={onLogout}>
-            Logout
-          </button>
-        </div>
-      </aside>
+      <aside className="tcp-sidebar hidden p-4 lg:block">{renderSidebarBody(false)}</aside>
       <main className="flex h-screen min-w-0 flex-col p-3 md:p-5">
+        <section className="mb-3 flex items-center justify-between gap-3 rounded-xl border border-slate-700/40 bg-slate-950/30 p-3 lg:hidden">
+          <div className="min-w-0">
+            <div className="truncate text-sm font-semibold">{identity.botName}</div>
+            <div className="tcp-subtle text-[11px] uppercase tracking-wider">Control Center</div>
+          </div>
+          <button type="button" className="tcp-btn h-9 px-3" onClick={() => setMobileNavOpen(true)}>
+            <i data-lucide="menu"></i>
+            Menu
+          </button>
+        </section>
         <section className="mb-3 grid shrink-0 gap-3 rounded-xl border border-slate-700/40 bg-slate-950/30 p-3 md:grid-cols-3">
           <div className="flex items-center justify-between rounded-lg border border-slate-700/50 bg-black/20 p-2">
             <span className="tcp-subtle text-xs">Engine</span>
@@ -120,6 +169,43 @@ export function AppShell({
           </motion.section>
         </AnimatePresence>
       </main>
+
+      <AnimatePresence>
+        {mobileNavOpen ? (
+          <motion.div
+            className="fixed inset-0 z-50 lg:hidden"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+          >
+            <button
+              type="button"
+              className="absolute inset-0 bg-black/45"
+              aria-label="Close menu"
+              onClick={() => setMobileNavOpen(false)}
+            />
+            <motion.aside
+              className="tcp-sidebar absolute inset-y-0 left-0 w-[min(84vw,320px)] overflow-auto p-4"
+              initial={{ x: "-100%" }}
+              animate={{ x: 0 }}
+              exit={{ x: "-100%" }}
+              transition={{ type: "spring", stiffness: 320, damping: 34 }}
+            >
+              <div className="mb-3 flex items-center justify-between">
+                <div className="text-sm font-semibold">Menu</div>
+                <button
+                  type="button"
+                  className="tcp-btn h-8 px-2"
+                  onClick={() => setMobileNavOpen(false)}
+                >
+                  <i data-lucide="x"></i>
+                </button>
+              </div>
+              {renderSidebarBody(true)}
+            </motion.aside>
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
 
       <AnimatePresence>{providerGate || null}</AnimatePresence>
     </div>

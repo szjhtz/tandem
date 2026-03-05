@@ -188,10 +188,6 @@ function AppBody() {
     applyTheme(themeId);
   }, [themeId]);
 
-  useEffect(() => {
-    renderIcons();
-  });
-
   const authQuery = useQuery({
     queryKey: ["auth", "me"],
     retry: false,
@@ -200,6 +196,11 @@ function AppBody() {
   });
 
   const authed = authQuery.isSuccess;
+  useEffect(() => {
+    try {
+      renderIcons();
+    } catch {}
+  }, [authed, route]);
   const client = useMemo(
     () => (authed ? new TandemClient({ baseUrl: "/api/engine", token: "session" }) : null),
     [authed]
@@ -249,7 +250,10 @@ function AppBody() {
     toast("info", "Logged out.");
   }, [queryClient, toast]);
 
-  const lockedRoutes = useMemo(() => new Set(["chat", "agents", "swarm", "teams"]), []);
+  const lockedRoutes = useMemo(
+    () => new Set(["chat", "agents", "orchestrator", "swarm", "teams"]),
+    []
+  );
   const needsProviderOnboarding = !!providerQuery.data?.needsOnboarding;
   const providerLocked = authed && needsProviderOnboarding;
 
@@ -411,7 +415,7 @@ function AppBody() {
         }}
         routeKey={currentRoute}
         providerGate={
-          providerLocked ? (
+          providerLocked && currentRoute !== "settings" ? (
             <motion.div
               className="tcp-confirm-overlay"
               initial={{ opacity: 0 }}

@@ -11,6 +11,10 @@ pub(super) fn apply(router: Router<AppState>) -> Router<AppState> {
             post(context_run_create).get(context_run_list),
         )
         .route(
+            "/context/runs/events/stream",
+            get(context_runs_events_stream),
+        )
+        .route(
             "/context/runs/{run_id}",
             get(context_run_get).put(context_run_put),
         )

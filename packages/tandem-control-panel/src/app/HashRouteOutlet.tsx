@@ -6,6 +6,7 @@ import { ChannelsPage } from "../pages/ChannelsPage";
 import { McpPage } from "../pages/McpPage";
 import { PacksPage } from "../pages/PacksPage";
 import { SwarmPage } from "../pages/SwarmPage";
+import { OrchestratorPage } from "../pages/OrchestratorPage";
 import { FilesPage } from "../pages/FilesPage";
 import { MemoryPage } from "../pages/MemoryPage";
 import { TeamsPage } from "../pages/TeamsPage";
@@ -26,6 +27,7 @@ export function HashRouteOutlet({ routeId, pageProps }: { routeId: string; pageP
       <McpPage path="/mcp" {...pageProps} />
       <PacksPage path="/packs-detail" {...pageProps} />
       <SwarmPage path="/swarm" {...pageProps} />
+      <OrchestratorPage path="/orchestrator" {...pageProps} />
       <FilesPage path="/files" {...pageProps} />
       <MemoryPage path="/memory" {...pageProps} />
       <TeamsPage path="/teams-detail" {...pageProps} />

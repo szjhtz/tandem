@@ -643,6 +643,8 @@ html[data-theme="porcelain"] .tcp-markdown-ai {
     @apply min-h-0 flex-1 overflow-y-auto pr-1;
     display: grid;
     gap: 0.35rem;
+    align-content: start;
+    grid-auto-rows: max-content;
   }
 
   .chat-session-row {

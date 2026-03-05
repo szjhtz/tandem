@@ -12,6 +12,7 @@ import { fileURLToPath } from "url";
 import { createRequire } from "module";
 import { homedir } from "os";
 import { ensureEnv } from "./init-env.js";
+import { createSwarmApiHandler } from "../server/routes/swarm.js";
 
 function parseDotEnv(content) {
   const out = {};
@@ -80,6 +81,12 @@ const rawArgs = process.argv.slice(2);
 const initRequested = cli.has("init");
 const resetTokenRequested = cli.has("reset-token");
 const installServicesRequested = cli.has("install-services");
+const serviceOpRaw = String(cli.value("service-op") || "")
+  .trim()
+  .toLowerCase();
+const serviceOp = ["status", "start", "stop", "restart", "enable", "disable", "logs"].includes(serviceOpRaw)
+  ? serviceOpRaw
+  : "";
 const serviceModeRaw = String(cli.value("service-mode") || "both")
   .trim()
   .toLowerCase();
@@ -87,6 +94,7 @@ const serviceMode = ["both", "engine", "panel"].includes(serviceModeRaw) ? servi
 const serviceUserArg = String(cli.value("service-user") || "").trim();
 const serviceSetupOnly = rawArgs.length > 0 && rawArgs.every((arg) => {
   if (arg === "--install-services") return true;
+  if (arg.startsWith("--service-op")) return true;
   if (arg.startsWith("--service-mode")) return true;
   if (arg.startsWith("--service-user")) return true;
   return false;
@@ -192,6 +200,8 @@ const swarmState = {
   objective: "",
   workspaceRoot: REPO_ROOT,
   maxTasks: 3,
+  maxAgents: 3,
+  workflowId: "swarm.blackboard.default",
   modelProvider: "",
   modelId: "",
   mcpServers: [],
@@ -207,6 +217,7 @@ const swarmState = {
   lastError: "",
   executorState: "idle",
   executorReason: "",
+  executorMode: "context_steps",
   resolvedModelProvider: "",
   resolvedModelId: "",
   modelResolutionSource: "none",
@@ -675,6 +686,43 @@ WantedBy=multi-user.target
   if (installEngine) log(`Engine service: ${engineServiceName}.service`);
   if (installPanel) log(`Panel service:  ${panelServiceName}.service`);
   log(`Token: ${token}`);
+}
+
+function selectedServiceUnits(mode) {
+  const normalized = String(mode || "both")
+    .trim()
+    .toLowerCase();
+  if (normalized === "engine") return ["tandem-engine.service"];
+  if (normalized === "panel") return ["tandem-control-panel.service"];
+  return ["tandem-engine.service", "tandem-control-panel.service"];
+}
+
+async function operateServices(operation, mode) {
+  const op = String(operation || "")
+    .trim()
+    .toLowerCase();
+  if (!op) return;
+  if (process.platform !== "linux") {
+    throw new Error("--service-op currently supports Linux/systemd only.");
+  }
+  const units = selectedServiceUnits(mode);
+  if (op === "logs") {
+    const args = units.flatMap((unit) => ["-u", unit]).concat(["-n", "120", "-f", "-o", "short-iso"]);
+    await runCmd("journalctl", args, { stdio: "inherit" });
+    return;
+  }
+  if (op === "status") {
+    await runCmd("systemctl", ["--no-pager", "--full", "status", ...units], { stdio: "inherit" });
+    return;
+  }
+  if (!["start", "stop", "restart", "enable", "disable"].includes(op)) {
+    throw new Error(
+      "Invalid --service-op. Expected one of: status,start,stop,restart,enable,disable,logs"
+    );
+  }
+  for (const unit of units) {
+    await runCmd("systemctl", [op, unit], { stdio: "inherit" });
+  }
 }
 
 function isLocalEngineUrl(url) {
@@ -1586,6 +1634,30 @@ async function seedContextRunSteps(session, runId, objective) {
   });
 }
 
+async function seedContextRunStepsFromTitles(session, runId, titles = []) {
+  const todoRows = (Array.isArray(titles) ? titles : [])
+    .map((row) => String(row || "").trim())
+    .filter((row) => row.length >= 3)
+    .map((content, idx) => ({
+      id: `step-${idx + 1}`,
+      content,
+      status: "pending",
+    }));
+  if (!todoRows.length) {
+    throw new Error("No valid todo rows for context step seeding.");
+  }
+  await engineRequestJson(session, `/context/runs/${encodeURIComponent(runId)}/todos/sync`, {
+    method: "POST",
+    body: {
+      replace: true,
+      todos: todoRows,
+      source_session_id: null,
+      source_run_id: runId,
+    },
+  });
+  return todoRows.length;
+}
+
 async function createExecutionSession(session, run) {
   const workspaceCandidates = [
     run?.workspace?.canonical_path,
@@ -1718,6 +1790,172 @@ async function runStepWithLLM(session, run, step, stepIndex, totalSteps) {
     }
   }
   return sessionId;
+}
+
+function extractBlackboardTasks(blackboardPayload) {
+  const board =
+    blackboardPayload?.blackboard && typeof blackboardPayload.blackboard === "object"
+      ? blackboardPayload.blackboard
+      : {};
+  return Array.isArray(board?.tasks) ? board.tasks : [];
+}
+
+function isTerminalTaskStatus(status) {
+  const normalized = String(status || "")
+    .trim()
+    .toLowerCase();
+  return ["done", "completed", "failed", "cancelled", "canceled"].includes(normalized);
+}
+
+function isCompletedTaskStatus(status) {
+  const normalized = String(status || "")
+    .trim()
+    .toLowerCase();
+  return ["done", "completed"].includes(normalized);
+}
+
+function extractClaimedTask(payload) {
+  if (payload?.task && typeof payload.task === "object") return payload.task;
+  if (Array.isArray(payload?.tasks) && payload.tasks[0] && typeof payload.tasks[0] === "object") {
+    return payload.tasks[0];
+  }
+  if (payload && typeof payload === "object" && String(payload.id || "").trim()) {
+    return payload;
+  }
+  return null;
+}
+
+function taskTitleFromRecord(task) {
+  const payload = task?.payload && typeof task.payload === "object" ? task.payload : {};
+  return String(payload?.title || task?.title || task?.task_type || task?.id || "task").trim();
+}
+
+function taskPromptText(run, task, workerId, workflowId) {
+  return [
+    "Execute this swarm blackboard task.",
+    "",
+    `Objective: ${String(run?.objective || "").trim()}`,
+    `Workspace: ${String(run?.workspace?.canonical_path || "").trim()}`,
+    `Task: ${taskTitleFromRecord(task)}`,
+    `Task ID: ${String(task?.id || "").trim()}`,
+    `Workflow: ${String(workflowId || task?.workflow_id || "swarm.blackboard.default").trim()}`,
+    `Agent: ${workerId}`,
+    "",
+    "Requirements:",
+    "- Implement this task in the workspace.",
+    "- Keep scope limited to this task.",
+    "- Return a concise summary of changes and blockers.",
+  ].join("\n");
+}
+
+async function runTaskWithLLM(session, run, task, workerId, workflowId) {
+  const sessionId = await createExecutionSession(session, run);
+  if (!sessionId) throw new Error("Failed to create execution session.");
+  const prompt = taskPromptText(run, task, workerId, workflowId);
+  const promptResponse = await engineRequestJson(session, `/session/${encodeURIComponent(sessionId)}/prompt_sync`, {
+    method: "POST",
+    timeoutMs: 10 * 60 * 1000,
+    body: {
+      parts: [{ type: "text", text: prompt }],
+    },
+  });
+  const syncRows = Array.isArray(promptResponse) ? promptResponse : [];
+  const hasAssistant = syncRows.some((row) => String(row?.info?.role || "").toLowerCase() === "assistant");
+  if (!hasAssistant) {
+    const sessionSnapshot = await engineRequestJson(session, `/session/${encodeURIComponent(sessionId)}`).catch(
+      () => null
+    );
+    const messages = Array.isArray(sessionSnapshot?.messages) ? sessionSnapshot.messages : [];
+    const persistedAssistant = messages.some(
+      (message) => String(message?.info?.role || "").toLowerCase() === "assistant"
+    );
+    if (!persistedAssistant) {
+      throw new Error(
+        "PROMPT_DISPATCH_EMPTY_RESPONSE: prompt_sync returned no assistant output. Model route may be unresolved."
+      );
+    }
+  }
+  return sessionId;
+}
+
+async function fetchBlackboardTasks(session, runId) {
+  const payload = await engineRequestJson(session, `/context/runs/${encodeURIComponent(runId)}/blackboard`).catch(
+    () => ({})
+  );
+  return extractBlackboardTasks(payload);
+}
+
+async function seedBlackboardTasks(session, runId, objective, titles, workflowId) {
+  const prepared = (Array.isArray(titles) ? titles : [])
+    .map((title) => String(title || "").trim())
+    .filter((title) => title.length >= 6)
+    .map((title, idx, list) => ({
+      task_type: "implementation",
+      workflow_id: workflowId,
+      payload: {
+        title,
+        objective,
+        step_index: idx + 1,
+        total_steps: list.length,
+      },
+    }));
+  if (!prepared.length) {
+    throw new Error("No valid tasks to seed.");
+  }
+  try {
+    await engineRequestJson(session, `/context/runs/${encodeURIComponent(runId)}/tasks`, {
+      method: "POST",
+      body: { tasks: prepared },
+    });
+  } catch (error) {
+    const detail = String(error?.message || error || "").toLowerCase();
+    const endpointMissing = detail.includes("404") || detail.includes("not found");
+    if (!endpointMissing) throw error;
+    const todoCount = await seedContextRunStepsFromTitles(
+      session,
+      runId,
+      prepared.map((row) => String(row?.payload?.title || "").trim())
+    );
+    return { mode: "steps_compat", count: todoCount };
+  }
+  const seeded = await fetchBlackboardTasks(session, runId);
+  if (!seeded.length) {
+    throw new Error("Task seeding returned no blackboard tasks.");
+  }
+  return { mode: "blackboard", count: seeded.length };
+}
+
+async function transitionBlackboardTask(session, runId, task, update = {}) {
+  const taskId = String(task?.id || update.taskId || "").trim();
+  if (!taskId) throw new Error("Missing task id for transition.");
+  const expectedTaskRev = task?.task_rev ?? update.expectedTaskRev;
+  const leaseToken = task?.lease_token || task?.leaseToken || update.leaseToken;
+  const agentId = update.agentId || task?.assigned_agent || task?.lease_owner || undefined;
+  return engineRequestJson(
+    session,
+    `/context/runs/${encodeURIComponent(runId)}/tasks/${encodeURIComponent(taskId)}/transition`,
+    {
+      method: "POST",
+      body: {
+        action: "status",
+        status: update.status || undefined,
+        error: update.error || undefined,
+        command_id: update.commandId || undefined,
+        expected_task_rev: expectedTaskRev ?? undefined,
+        lease_token: leaseToken || undefined,
+        agent_id: agentId || undefined,
+      },
+    }
+  );
+}
+
+async function detectExecutorMode(session, runId) {
+  const blackboardTasks = await fetchBlackboardTasks(session, runId);
+  if (blackboardTasks.length) return "blackboard";
+  const payload = await engineRequestJson(session, `/context/runs/${encodeURIComponent(runId)}`).catch(() => null);
+  const steps = Array.isArray(payload?.run?.steps) ? payload.run.steps : [];
+  if (steps.length) return "context_steps";
+  return String(swarmState.executorMode || "context_steps");
 }
 
 const swarmExecutors = new Map();
@@ -1903,6 +2141,173 @@ async function driveContextRunExecution(session, runId) {
   return true;
 }
 
+async function driveBlackboardRunExecution(session, runId, options = {}) {
+  if (swarmExecutors.has(runId)) return false;
+  const workflowId = String(options.workflowId || swarmState.workflowId || "swarm.blackboard.default").trim();
+  const maxAgents = Math.max(1, Math.min(16, Number.parseInt(String(options.maxAgents || swarmState.maxAgents || 3), 10) || 3));
+  swarmState.executorState = "running";
+  swarmState.executorReason = "";
+  swarmState.executorMode = "blackboard";
+
+  const runner = (async () => {
+    let completionAnnounced = false;
+    const markRunComplete = async (reason) => {
+      if (completionAnnounced) return;
+      completionAnnounced = true;
+      await appendContextRunEvent(session, runId, "run_completed", "completed", {
+        why_next_step: String(reason || "all tasks completed"),
+      });
+      swarmState.lastError = "";
+      swarmState.executorState = "idle";
+      swarmState.executorReason = "run completed";
+    };
+
+    const workers = Array.from({ length: maxAgents }).map((_, index) => {
+      const agentId = `swarm-agent-${index + 1}`;
+      return (async () => {
+        let idleSpins = 0;
+        for (let cycle = 0; cycle < 96; cycle += 1) {
+          const runPayload = await engineRequestJson(session, `/context/runs/${encodeURIComponent(runId)}`).catch(
+            () => null
+          );
+          const run = runPayload?.run || {};
+          if (isRunTerminal(run.status)) return;
+
+          const boardTasks = await fetchBlackboardTasks(session, runId);
+          const openTasks = boardTasks.filter((task) => !isTerminalTaskStatus(task?.status));
+          if (!openTasks.length && boardTasks.length) {
+            await markRunComplete("all blackboard tasks completed");
+            return;
+          }
+
+          const claimedPayload = await engineRequestJson(
+            session,
+            `/context/runs/${encodeURIComponent(runId)}/tasks/claim`,
+            {
+              method: "POST",
+              body: {
+                agent_id: agentId,
+                workflow_id: workflowId || undefined,
+                lease_ms: 45000,
+              },
+            }
+          ).catch(() => null);
+          const task = extractClaimedTask(claimedPayload);
+          if (!task) {
+            idleSpins += 1;
+            if (idleSpins > 6) {
+              const refreshedBoard = await fetchBlackboardTasks(session, runId);
+              if (refreshedBoard.length && refreshedBoard.every((row) => isCompletedTaskStatus(row?.status))) {
+                await markRunComplete("all blackboard tasks completed");
+                return;
+              }
+              idleSpins = 0;
+            }
+            await sleep(500);
+            continue;
+          }
+          idleSpins = 0;
+          const taskId = String(task?.id || "").trim();
+          const title = taskTitleFromRecord(task);
+          try {
+            await appendContextRunEvent(
+              session,
+              runId,
+              "task_started",
+              "running",
+              {
+                step_status: "in_progress",
+                step_title: title,
+                workflow_id: String(task?.workflow_id || workflowId || "").trim(),
+                assigned_agent: agentId,
+                why_next_step: `executing ${taskId || title}`,
+              },
+              taskId || null
+            );
+            const runSnapshot = await engineRequestJson(session, `/context/runs/${encodeURIComponent(runId)}`).catch(
+              () => ({ run: {} })
+            );
+            const sessionId = await runTaskWithLLM(session, runSnapshot?.run || run, task, agentId, workflowId);
+            await transitionBlackboardTask(session, runId, task, {
+              status: "done",
+              agentId,
+              commandId: sessionId,
+            }).catch(() => null);
+            await appendContextRunEvent(
+              session,
+              runId,
+              "task_completed",
+              "running",
+              {
+                step_status: "done",
+                step_title: title,
+                session_id: sessionId,
+                workflow_id: String(task?.workflow_id || workflowId || "").trim(),
+                assigned_agent: agentId,
+                why_next_step: `completed ${taskId || title}`,
+              },
+              taskId || null
+            );
+            swarmState.lastError = "";
+            swarmState.executorState = "running";
+            swarmState.executorReason = "";
+          } catch (error) {
+            const message = String(error?.message || error || "Unknown task failure");
+            await transitionBlackboardTask(session, runId, task, {
+              status: "failed",
+              error: message,
+              agentId,
+            }).catch(() => null);
+            swarmState.lastError = message;
+            swarmState.executorState = "error";
+            swarmState.executorReason = message;
+            await appendContextRunEvent(
+              session,
+              runId,
+              "task_failed",
+              "failed",
+              {
+                step_status: "failed",
+                step_title: title,
+                workflow_id: String(task?.workflow_id || workflowId || "").trim(),
+                assigned_agent: agentId,
+                error: message,
+                why_next_step: `task failed: ${taskId || title}`,
+              },
+              taskId || null
+            );
+            return;
+          }
+        }
+      })();
+    });
+    await Promise.all(workers);
+  })()
+    .catch((error) => {
+      swarmState.lastError = String(error?.message || error || "Run executor failed");
+      swarmState.executorState = "error";
+      swarmState.executorReason = swarmState.lastError;
+    })
+    .finally(() => {
+      swarmExecutors.delete(runId);
+      if (swarmState.executorState === "running") {
+        swarmState.executorState = "idle";
+        swarmState.executorReason = "";
+      }
+    });
+  swarmExecutors.set(runId, runner);
+  return true;
+}
+
+async function startRunExecutor(session, runId, options = {}) {
+  const mode = String(options.mode || "").trim() || (await detectExecutorMode(session, runId));
+  swarmState.executorMode = mode;
+  if (mode === "blackboard") {
+    return driveBlackboardRunExecution(session, runId, options);
+  }
+  return driveContextRunExecution(session, runId);
+}
+
 async function requeueInProgressSteps(session, runId) {
   const payload = await engineRequestJson(session, `/context/runs/${encodeURIComponent(runId)}`).catch(() => null);
   const run = payload?.run;
@@ -1929,12 +2334,13 @@ async function startSwarm(session, config = {}) {
     config.workspace?.workspace_root,
     config.repoRoot,
     config.repo_root,
-    swarmState.workspaceRoot,
-    REPO_ROOT,
   ];
   const workspaceRootRaw = workspaceCandidates
     .map((value) => String(value || "").trim())
     .find((value) => value.length > 0);
+  if (!workspaceRootRaw) {
+    throw new Error("WORKSPACE_SELECTION_REQUIRED: select a workspace folder before starting a swarm run.");
+  }
   const workspaceRoot = await workspaceExistsAsDirectory(workspaceRootRaw);
   if (!workspaceRoot) {
     throw new Error(
@@ -1942,6 +2348,9 @@ async function startSwarm(session, config = {}) {
     );
   }
   const maxTasks = Math.max(1, Number.parseInt(String(config.maxTasks || 3), 10) || 3);
+  const maxAgents = Math.max(1, Math.min(16, Number.parseInt(String(config.maxAgents || 3), 10) || 3));
+  const workflowId = String(config.workflowId || "swarm.blackboard.default").trim() || "swarm.blackboard.default";
+  const requireLlmPlan = config?.requireLlmPlan === true || config?.require_llm_plan === true;
   let modelProvider = String(config.modelProvider || "").trim();
   let modelId = String(config.modelId || "").trim();
   const mcpServers = (Array.isArray(config.mcpServers) ? config.mcpServers : [])
@@ -1972,6 +2381,8 @@ async function startSwarm(session, config = {}) {
   await appendContextRunEvent(session, runId, "planning_started", "planning", {
     source_client: "control_panel",
     max_tasks: maxTasks,
+    max_agents: maxAgents,
+    workflow_id: workflowId,
     model_provider: modelProvider || undefined,
     model_id: modelId || undefined,
     mcp_servers: mcpServers,
@@ -1986,50 +2397,71 @@ async function startSwarm(session, config = {}) {
     },
   }))();
   await synced;
+  let plannerTitles = [];
+  let planSeedMode = "fallback_local";
   try {
     const llmPlan = await generatePlanTodosWithLLM(session, run, maxTasks);
-    const todoRows = (Array.isArray(llmPlan.tasks) ? llmPlan.tasks : [])
-      .map((content, idx) => ({
-        id: `step-${idx + 1}`,
-        content: String(content || "").trim(),
-        status: "pending",
-      }))
-      .filter((row) => row.content.length >= 6)
+    plannerTitles = (Array.isArray(llmPlan.tasks) ? llmPlan.tasks : [])
+      .map((row) => String(row || "").trim())
+      .filter((row) => row.length >= 6)
       .slice(0, Math.max(1, maxTasks));
-    if (!todoRows.length) throw new Error("LLM planner returned no valid tasks.");
-    await engineRequestJson(session, `/context/runs/${encodeURIComponent(runId)}/todos/sync`, {
-      method: "POST",
-      body: {
-        replace: true,
-        todos: todoRows,
-        source_session_id: llmPlan.sessionId || null,
-        source_run_id: runId,
-      },
-    });
+    if (!plannerTitles.length) throw new Error("LLM planner returned no valid tasks.");
+    const seeded = await seedBlackboardTasks(session, runId, objective, plannerTitles, workflowId);
+    planSeedMode = seeded?.mode === "steps_compat" ? "steps_llm_compat" : "blackboard_llm";
     await appendContextRunEvent(session, runId, "plan_seeded_llm", "planning", {
       source: "llm_objective_planner",
       session_id: llmPlan.sessionId || null,
-      task_count: todoRows.length,
+      task_count: Number(seeded?.count || 0),
+      workflow_id: workflowId,
+      planner_target: planSeedMode,
     });
   } catch (planningError) {
-    await seedContextRunSteps(session, runId, objective);
-    await appendContextRunEvent(session, runId, "plan_seeded_local", "planning", {
-      source: "local_objective_parser",
-      note: `Fallback planner used: ${String(planningError?.message || planningError || "unknown planning failure")}`,
-    });
+    if (requireLlmPlan) {
+      await appendContextRunEvent(session, runId, "plan_failed_llm_required", "failed", {
+        reason: String(planningError?.message || planningError || "unknown planning failure"),
+      }).catch(() => null);
+      throw new Error(
+        `LLM planning failed and fallback is disabled: ${String(planningError?.message || planningError || "unknown planning failure")}`
+      );
+    }
+    plannerTitles = parseObjectiveTodos(objective, maxTasks)
+      .map((row) => String(row || "").trim())
+      .filter((row) => row.length >= 6)
+      .slice(0, Math.max(1, maxTasks));
+    if (!plannerTitles.length) plannerTitles = ["Execute requested objective"];
+    try {
+      const seeded = await seedBlackboardTasks(session, runId, objective, plannerTitles, workflowId);
+      planSeedMode = seeded?.mode === "steps_compat" ? "steps_local_compat" : "blackboard_local";
+      await appendContextRunEvent(session, runId, "plan_seeded_local", "planning", {
+        source: "local_objective_parser",
+        task_count: Number(seeded?.count || 0),
+        workflow_id: workflowId,
+        planner_target: planSeedMode,
+        note: `Fallback planner used: ${String(planningError?.message || planningError || "unknown planning failure")}`,
+      });
+    } catch (blackboardError) {
+      await seedContextRunSteps(session, runId, objective);
+      planSeedMode = "steps_fallback";
+      await appendContextRunEvent(session, runId, "plan_seeded_local", "planning", {
+        source: "local_objective_parser",
+        note: `Fallback planner used: ${String(blackboardError?.message || blackboardError || "unknown planning failure")}`,
+      });
+    }
   }
-  await appendContextRunEvent(session, runId, "plan_approved", "running", {
+  await appendContextRunEvent(session, runId, "plan_ready_for_approval", "awaiting_approval", {
     source_client: "control_panel",
-    approval_mode: "auto",
+    workflow_id: workflowId,
+    max_agents: maxAgents,
+    planner_mode: planSeedMode,
   });
-  const started = await driveContextRunExecution(session, runId);
-
-  swarmState.status = started ? "running" : "planning";
+  swarmState.status = "awaiting_approval";
   swarmState.startedAt = Date.now();
   swarmState.stoppedAt = null;
   swarmState.objective = objective;
   swarmState.workspaceRoot = workspaceRoot;
   swarmState.maxTasks = maxTasks;
+  swarmState.maxAgents = maxAgents;
+  swarmState.workflowId = workflowId;
   swarmState.modelProvider = modelProvider;
   swarmState.modelId = modelId;
   swarmState.resolvedModelProvider = "";
@@ -2038,6 +2470,9 @@ async function startSwarm(session, config = {}) {
   swarmState.mcpServers = mcpServers;
   swarmState.repoRoot = workspaceRoot;
   swarmState.lastError = "";
+  swarmState.executorMode = planSeedMode.startsWith("blackboard") ? "blackboard" : "context_steps";
+  swarmState.executorState = "idle";
+  swarmState.executorReason = "";
   swarmState.runId = runId;
   swarmState.attachedPid = null;
   swarmState.registryCache = null;
@@ -2053,503 +2488,28 @@ async function startSwarm(session, config = {}) {
   return runId;
 }
 
-async function handleSwarmApi(req, res, session) {
-  const url = new URL(req.url, `http://127.0.0.1:${PORTAL_PORT}`);
-  const pathname = url.pathname;
-  const statusFromRun = async (runId) => {
-    if (!runId) return null;
-    try {
-      const payload = await engineRequestJson(session, `/context/runs/${encodeURIComponent(runId)}`);
-      return payload?.run || null;
-    } catch {
-      return null;
-    }
-  };
-
-  if (pathname === "/api/swarm/status" && req.method === "GET") {
-    const run = await statusFromRun(swarmState.runId);
-    if (run) {
-      swarmState.status = contextRunStatusToSwarmStatus(run.status);
-      swarmState.objective = String(run.objective || swarmState.objective || "");
-      swarmState.workspaceRoot = String(run.workspace?.canonical_path || swarmState.workspaceRoot || REPO_ROOT);
-      swarmState.repoRoot = swarmState.workspaceRoot;
-    } else if (swarmState.runId) {
-      swarmState.status = "idle";
-      swarmState.stoppedAt = Date.now();
-    }
-    sendJson(res, 200, {
-      ok: true,
-      status: swarmState.status,
-      objective: swarmState.objective,
-      workspaceRoot: swarmState.workspaceRoot,
-      maxTasks: swarmState.maxTasks,
-      modelProvider: swarmState.modelProvider || "",
-      modelId: swarmState.modelId || "",
-      resolvedModelProvider: swarmState.resolvedModelProvider || "",
-      resolvedModelId: swarmState.resolvedModelId || "",
-      modelResolutionSource: swarmState.modelResolutionSource || "none",
-      mcpServers: Array.isArray(swarmState.mcpServers) ? swarmState.mcpServers : [],
-      repoRoot: swarmState.repoRoot || "",
-      preflight: swarmState.preflight || null,
-      startedAt: swarmState.startedAt,
-      stoppedAt: swarmState.stoppedAt,
-      runId: swarmState.runId || "",
-      attachedPid: swarmState.attachedPid || null,
-      localEngine: isLocalEngineUrl(ENGINE_URL),
-      lastError: swarmState.lastError || null,
-      executorState: swarmState.executorState || "idle",
-      executorReason: swarmState.executorReason || null,
-      currentRunId: swarmState.runId || "",
-    });
-    return true;
-  }
-
-  if (pathname === "/api/swarm/runs" && req.method === "GET") {
-    const workspace = String(url.searchParams.get("workspace") || "").trim();
-    const query = workspace ? `?workspace=${encodeURIComponent(resolve(workspace))}&limit=100` : "?limit=100";
-    const payload = await engineRequestJson(session, `/context/runs${query}`).catch(() => ({ runs: [] }));
-    const includeHidden = String(url.searchParams.get("include_hidden") || "").trim() === "1";
-    const hiddenRunIds = await loadHiddenSwarmRunIds();
-    const allRuns = Array.isArray(payload?.runs) ? payload.runs : [];
-    const runs = includeHidden
-      ? allRuns
-      : allRuns.filter((run) => !hiddenRunIds.has(String(run?.run_id || "").trim()));
-    const active = runs.filter((run) => {
-      const status = String(run?.status || "").toLowerCase();
-      return !["completed", "failed", "cancelled"].includes(status);
-    });
-    sendJson(res, 200, {
-      ok: true,
-      runs,
-      active,
-      recent: runs.slice(0, 30),
-      hiddenCount: hiddenRunIds.size,
-    });
-    return true;
-  }
-
-  if (pathname === "/api/swarm/workspaces/list" && req.method === "GET") {
-    try {
-      const requestedDir = String(url.searchParams.get("dir") || swarmState.workspaceRoot || REPO_ROOT).trim();
-      const currentDir = await workspaceExistsAsDirectory(requestedDir);
-      if (!currentDir) throw new Error(`Directory not found: ${resolve(requestedDir || REPO_ROOT)}`);
-      const entries = await readdir(currentDir, { withFileTypes: true });
-      const directories = entries
-        .filter((entry) => entry.isDirectory())
-        .map((entry) => ({
-          name: entry.name,
-          path: resolve(currentDir, entry.name),
-        }))
-        .sort((a, b) => a.name.localeCompare(b.name))
-        .slice(0, 500);
-      const parent = resolve(currentDir, "..");
-      sendJson(res, 200, {
-        ok: true,
-        dir: currentDir,
-        parent: parent === currentDir ? null : parent,
-        directories,
-      });
-    } catch (e) {
-      sendJson(res, 400, { ok: false, error: e instanceof Error ? e.message : String(e) });
-    }
-    return true;
-  }
-
-  if (pathname === "/api/swarm/runs/hide" && req.method === "POST") {
-    try {
-      const body = await readJsonBody(req);
-      const runIds = (Array.isArray(body?.runIds) ? body.runIds : [])
-        .map((id) => String(id || "").trim())
-        .filter(Boolean)
-        .slice(0, 500);
-      if (!runIds.length) throw new Error("Missing runIds");
-      const hidden = await loadHiddenSwarmRunIds();
-      for (const runId of runIds) hidden.add(runId);
-      await saveHiddenSwarmRunIds(hidden);
-      if (runIds.includes(String(swarmState.runId || "").trim())) {
-        swarmState.runId = "";
-      }
-      sendJson(res, 200, { ok: true, hiddenCount: hidden.size, hiddenRunIds: runIds });
-    } catch (e) {
-      sendJson(res, 400, { ok: false, error: e instanceof Error ? e.message : String(e) });
-    }
-    return true;
-  }
-
-  if (pathname === "/api/swarm/runs/unhide" && req.method === "POST") {
-    try {
-      const body = await readJsonBody(req);
-      const runIds = (Array.isArray(body?.runIds) ? body.runIds : [])
-        .map((id) => String(id || "").trim())
-        .filter(Boolean)
-        .slice(0, 500);
-      if (!runIds.length) throw new Error("Missing runIds");
-      const hidden = await loadHiddenSwarmRunIds();
-      for (const runId of runIds) hidden.delete(runId);
-      await saveHiddenSwarmRunIds(hidden);
-      sendJson(res, 200, { ok: true, hiddenCount: hidden.size, unhiddenRunIds: runIds });
-    } catch (e) {
-      sendJson(res, 400, { ok: false, error: e instanceof Error ? e.message : String(e) });
-    }
-    return true;
-  }
-
-  if (pathname === "/api/swarm/runs/hide_completed" && req.method === "POST") {
-    try {
-      const body = await readJsonBody(req);
-      const workspace = String(body?.workspace || "").trim();
-      const query = workspace ? `?workspace=${encodeURIComponent(resolve(workspace))}&limit=1000` : "?limit=1000";
-      const payload = await engineRequestJson(session, `/context/runs${query}`).catch(() => ({ runs: [] }));
-      const allRuns = Array.isArray(payload?.runs) ? payload.runs : [];
-      const completedRunIds = allRuns
-        .filter((run) => {
-          const status = String(run?.status || "").toLowerCase();
-          return ["completed", "failed", "cancelled"].includes(status);
-        })
-        .map((run) => String(run?.run_id || "").trim())
-        .filter(Boolean);
-      const hidden = await loadHiddenSwarmRunIds();
-      for (const runId of completedRunIds) hidden.add(runId);
-      await saveHiddenSwarmRunIds(hidden);
-      if (completedRunIds.includes(String(swarmState.runId || "").trim())) {
-        swarmState.runId = "";
-      }
-      sendJson(res, 200, { ok: true, hiddenCount: hidden.size, hiddenNow: completedRunIds.length });
-    } catch (e) {
-      sendJson(res, 400, { ok: false, error: e instanceof Error ? e.message : String(e) });
-    }
-    return true;
-  }
-
-  if (pathname === "/api/swarm/start" && req.method === "POST") {
-    try {
-      const body = await readJsonBody(req);
-      const runId = await startSwarm(session, body || {});
-      sendJson(res, 200, { ok: true, runId });
-    } catch (e) {
-      sendJson(res, 400, { ok: false, error: e instanceof Error ? e.message : String(e) });
-    }
-    return true;
-  }
-
-  if (pathname === "/api/swarm/approve" && req.method === "POST") {
-    try {
-      const body = await readJsonBody(req);
-      const runId = String(body?.runId || swarmState.runId || "").trim();
-      if (!runId) throw new Error("Missing runId");
-      await appendContextRunEvent(session, runId, "plan_approved", "running", {});
-      void driveContextRunExecution(session, runId);
-      sendJson(res, 200, { ok: true, runId });
-    } catch (e) {
-      sendJson(res, 400, { ok: false, error: e instanceof Error ? e.message : String(e) });
-    }
-    return true;
-  }
-
-  if (pathname === "/api/swarm/pause" && req.method === "POST") {
-    try {
-      const body = await readJsonBody(req);
-      const runId = String(body?.runId || swarmState.runId || "").trim();
-      if (!runId) throw new Error("Missing runId");
-      await appendContextRunEvent(session, runId, "run_paused", "paused", {});
-      sendJson(res, 200, { ok: true, runId });
-    } catch (e) {
-      sendJson(res, 400, { ok: false, error: e instanceof Error ? e.message : String(e) });
-    }
-    return true;
-  }
-
-  if (pathname === "/api/swarm/resume" && req.method === "POST") {
-    try {
-      const body = await readJsonBody(req);
-      const runId = String(body?.runId || swarmState.runId || "").trim();
-      if (!runId) throw new Error("Missing runId");
-      await appendContextRunEvent(session, runId, "run_resumed", "running", {});
-      const requeued = await requeueInProgressSteps(session, runId);
-      const started = await driveContextRunExecution(session, runId);
-      const preview = await engineRequestJson(
-        session,
-        `/context/runs/${encodeURIComponent(runId)}/driver/next`,
-        { method: "POST", body: { dry_run: true } }
-      ).catch(() => null);
-      sendJson(res, 200, {
-        ok: true,
-        runId,
-        started,
-        requeued,
-        sessionDispatchOutcome: started ? "started" : "already_running",
-        selectedStepId: preview?.selected_step_id || null,
-        whyNextStep: preview?.why_next_step || null,
-        executorState: swarmState.executorState || "idle",
-        executorReason: swarmState.executorReason || null,
-      });
-    } catch (e) {
-      sendJson(res, 400, { ok: false, error: e instanceof Error ? e.message : String(e) });
-    }
-    return true;
-  }
-
-  if (pathname === "/api/swarm/continue" && req.method === "POST") {
-    try {
-      const body = await readJsonBody(req);
-      const runId = String(body?.runId || swarmState.runId || "").trim();
-      if (!runId) throw new Error("Missing runId");
-      await appendContextRunEvent(session, runId, "run_resumed", "running", {
-        why_next_step: "manual continue requested",
-      });
-      const requeued = await requeueInProgressSteps(session, runId);
-      const started = await driveContextRunExecution(session, runId);
-      const preview = await engineRequestJson(
-        session,
-        `/context/runs/${encodeURIComponent(runId)}/driver/next`,
-        { method: "POST", body: { dry_run: true } }
-      ).catch(() => null);
-      sendJson(res, 200, {
-        ok: true,
-        runId,
-        started,
-        requeued,
-        sessionDispatchOutcome: started ? "started" : "already_running",
-        selectedStepId: preview?.selected_step_id || null,
-        whyNextStep: preview?.why_next_step || null,
-        executorState: swarmState.executorState || "idle",
-        executorReason: swarmState.executorReason || null,
-      });
-    } catch (e) {
-      sendJson(res, 400, { ok: false, error: e instanceof Error ? e.message : String(e) });
-    }
-    return true;
-  }
-
-  if ((pathname === "/api/swarm/cancel" || pathname === "/api/swarm/stop") && req.method === "POST") {
-    try {
-      const body = await readJsonBody(req);
-      const runId = String(body?.runId || swarmState.runId || "").trim();
-      if (!runId) throw new Error("Missing runId");
-      await appendContextRunEvent(session, runId, "run_cancelled", "cancelled", {});
-      if (swarmState.runId === runId) {
-        swarmState.status = "cancelled";
-        swarmState.stoppedAt = Date.now();
-      }
-      sendJson(res, 200, { ok: true, runId });
-    } catch (e) {
-      sendJson(res, 400, { ok: false, error: e instanceof Error ? e.message : String(e) });
-    }
-    return true;
-  }
-
-  if (pathname === "/api/swarm/retry" && req.method === "POST") {
-    try {
-      const body = await readJsonBody(req);
-      const runId = String(body?.runId || swarmState.runId || "").trim();
-      const stepId = String(body?.stepId || "").trim();
-      if (!runId || !stepId) throw new Error("Missing runId or stepId");
-      await appendContextRunEvent(session, runId, "task_retry_requested", "running", {}, stepId);
-      sendJson(res, 200, { ok: true, runId, stepId });
-    } catch (e) {
-      sendJson(res, 400, { ok: false, error: e instanceof Error ? e.message : String(e) });
-    }
-    return true;
-  }
-
-  if (pathname === "/api/swarm/tasks/create" && req.method === "POST") {
-    try {
-      const body = await readJsonBody(req);
-      const runId = String(body?.runId || swarmState.runId || "").trim();
-      const tasks = Array.isArray(body?.tasks) ? body.tasks : [];
-      if (!runId || !tasks.length) throw new Error("Missing runId or tasks");
-      const payload = await engineRequestJson(
-        session,
-        `/context/runs/${encodeURIComponent(runId)}/tasks`,
-        {
-          method: "POST",
-          body: { tasks },
-        }
-      );
-      sendJson(res, 200, payload);
-    } catch (e) {
-      sendJson(res, 400, { ok: false, error: e instanceof Error ? e.message : String(e) });
-    }
-    return true;
-  }
-
-  if (pathname === "/api/swarm/tasks/claim" && req.method === "POST") {
-    try {
-      const body = await readJsonBody(req);
-      const runId = String(body?.runId || swarmState.runId || "").trim();
-      if (!runId) throw new Error("Missing runId");
-      const claimBody = {
-        agent_id: String(body?.agentId || "control_panel").trim(),
-        command_id: body?.commandId || undefined,
-        task_type: body?.taskType || undefined,
-        workflow_id: body?.workflowId || undefined,
-        lease_ms: Number(body?.leaseMs || 30000),
-      };
-      const payload = await engineRequestJson(
-        session,
-        `/context/runs/${encodeURIComponent(runId)}/tasks/claim`,
-        {
-          method: "POST",
-          body: claimBody,
-        }
-      );
-      sendJson(res, 200, payload);
-    } catch (e) {
-      sendJson(res, 400, { ok: false, error: e instanceof Error ? e.message : String(e) });
-    }
-    return true;
-  }
-
-  if (pathname === "/api/swarm/tasks/transition" && req.method === "POST") {
-    try {
-      const body = await readJsonBody(req);
-      const runId = String(body?.runId || swarmState.runId || "").trim();
-      const taskId = String(body?.taskId || "").trim();
-      if (!runId || !taskId) throw new Error("Missing runId or taskId");
-      const transitionBody = {
-        action: body?.action || "status",
-        command_id: body?.commandId || undefined,
-        expected_task_rev: body?.expectedTaskRev ?? undefined,
-        lease_token: body?.leaseToken || undefined,
-        agent_id: body?.agentId || undefined,
-        status: body?.status || undefined,
-        error: body?.error || undefined,
-        lease_ms: body?.leaseMs || undefined,
-      };
-      const payload = await engineRequestJson(
-        session,
-        `/context/runs/${encodeURIComponent(runId)}/tasks/${encodeURIComponent(taskId)}/transition`,
-        {
-          method: "POST",
-          body: transitionBody,
-        }
-      );
-      sendJson(res, 200, payload);
-    } catch (e) {
-      sendJson(res, 400, { ok: false, error: e instanceof Error ? e.message : String(e) });
-    }
-    return true;
-  }
-
-  if (pathname.startsWith("/api/swarm/run/") && req.method === "GET") {
-    const runId = decodeURIComponent(pathname.replace("/api/swarm/run/", "").trim());
-    if (!runId) {
-      sendJson(res, 400, { ok: false, error: "Missing run id." });
-      return true;
-    }
-    try {
-      const snapshot = await contextRunSnapshot(session, runId);
-      swarmState.runId = runId;
-      swarmState.status = contextRunStatusToSwarmStatus(snapshot.run?.status);
-      sendJson(res, 200, {
-        ok: true,
-        run: snapshot.run,
-        events: snapshot.events,
-        blackboard: snapshot.blackboard,
-        blackboardPatches: snapshot.blackboardPatches,
-        replay: snapshot.replay,
-        tasks: contextRunToTasks(snapshot.run),
-      });
-    } catch (e) {
-      sendJson(res, 400, { ok: false, error: e instanceof Error ? e.message : String(e) });
-    }
-    return true;
-  }
-
-  if (pathname === "/api/swarm/snapshot" && req.method === "GET") {
-    const runId = String(url.searchParams.get("runId") || swarmState.runId || "").trim();
-    if (!runId) {
-      sendJson(res, 200, {
-        ok: true,
-        status: "idle",
-        registry: { key: "context.run.steps", value: { version: 1, updatedAtMs: Date.now(), tasks: {} } },
-        logs: [],
-        reasons: [],
-        startedAt: swarmState.startedAt,
-        stoppedAt: swarmState.stoppedAt,
-        lastError: swarmState.lastError || null,
-        localEngine: isLocalEngineUrl(ENGINE_URL),
-        runId: "",
-      });
-      return true;
-    }
-    try {
-      const snapshot = await contextRunSnapshot(session, runId);
-      swarmState.registryCache = snapshot.registry;
-      swarmState.logs = snapshot.logs;
-      swarmState.reasons = snapshot.reasons;
-      swarmState.status = contextRunStatusToSwarmStatus(snapshot.run?.status);
-      sendJson(res, 200, {
-        ok: true,
-        status: swarmState.status,
-        runId,
-        registry: snapshot.registry,
-        logs: snapshot.logs,
-        reasons: snapshot.reasons,
-        startedAt: Number(snapshot.run?.started_at_ms || swarmState.startedAt || Date.now()),
-        stoppedAt: ["completed", "failed", "cancelled"].includes(String(snapshot.run?.status || ""))
-          ? Number(snapshot.run?.ended_at_ms || Date.now())
-          : null,
-        lastError: String(snapshot.run?.last_error || ""),
-        localEngine: isLocalEngineUrl(ENGINE_URL),
-      });
-    } catch (e) {
-      sendJson(res, 400, { ok: false, error: e instanceof Error ? e.message : String(e) });
-    }
-    return true;
-  }
-
-  if (pathname === "/api/swarm/events" && req.method === "GET") {
-    res.writeHead(200, {
-      "content-type": "text/event-stream",
-      "cache-control": "no-cache",
-      connection: "keep-alive",
-    });
-    const runId = String(url.searchParams.get("runId") || swarmState.runId || "").trim();
-    let closed = false;
-    let sinceSeq = 0;
-    let sincePatchSeq = 0;
-    const close = () => {
-      closed = true;
-    };
-    req.on("close", close);
-    res.write(
-      `data: ${JSON.stringify({ kind: "hello", ts: Date.now(), status: swarmState.status, runId })}\n\n`
-    );
-    const tick = async () => {
-      if (closed || !runId) return;
-      try {
-        const [eventsPayload, patchesPayload] = await Promise.all([
-          engineRequestJson(session, `/context/runs/${encodeURIComponent(runId)}/events?since_seq=${sinceSeq}`),
-          engineRequestJson(
-            session,
-            `/context/runs/${encodeURIComponent(runId)}/blackboard/patches?since_seq=${sincePatchSeq}`
-          ).catch(() => ({ patches: [] })),
-        ]);
-        const events = Array.isArray(eventsPayload?.events) ? eventsPayload.events : [];
-        for (const event of events) {
-          sinceSeq = Math.max(sinceSeq, Number(event?.seq || 0));
-          res.write(`data: ${JSON.stringify({ kind: "event", ts: Date.now(), runId, event })}\n\n`);
-        }
-        const patches = Array.isArray(patchesPayload?.patches) ? patchesPayload.patches : [];
-        for (const patch of patches) {
-          sincePatchSeq = Math.max(sincePatchSeq, Number(patch?.seq || 0));
-          res.write(
-            `data: ${JSON.stringify({ kind: "blackboard_patch", ts: Date.now(), runId, patch })}\n\n`
-          );
-        }
-      } catch {
-        // ignore transient poll failures
-      }
-    };
-    const interval = setInterval(tick, 1500);
-    tick();
-    req.on("close", () => clearInterval(interval));
-    return true;
-  }
-
-  return false;
-}
+const handleSwarmApi = createSwarmApiHandler({
+  PORTAL_PORT,
+  REPO_ROOT,
+  ENGINE_URL,
+  swarmState,
+  isLocalEngineUrl,
+  sendJson,
+  readJsonBody,
+  workspaceExistsAsDirectory,
+  loadHiddenSwarmRunIds,
+  saveHiddenSwarmRunIds,
+  engineRequestJson,
+  appendContextRunEvent,
+  contextRunStatusToSwarmStatus,
+  startSwarm,
+  detectExecutorMode,
+  startRunExecutor,
+  requeueInProgressSteps,
+  transitionBlackboardTask,
+  contextRunSnapshot,
+  contextRunToTasks,
+});
 
 async function handleApi(req, res) {
   const pathname = new URL(req.url, `http://127.0.0.1:${PORTAL_PORT}`).pathname;
@@ -2598,7 +2558,7 @@ async function handleApi(req, res) {
     return true;
   }
 
-  if (pathname.startsWith("/api/swarm")) {
+  if (pathname.startsWith("/api/swarm") || pathname.startsWith("/api/orchestrator")) {
     const session = requireSession(req, res);
     if (!session) return true;
     return handleSwarmApi(req, res, session);
@@ -2668,6 +2628,13 @@ process.on("SIGINT", () => shutdown("SIGINT"));
 process.on("SIGTERM", () => shutdown("SIGTERM"));
 
 async function main() {
+  if (serviceOp) {
+    await operateServices(serviceOp, serviceMode);
+    if (serviceSetupOnly && !installServicesRequested) {
+      return;
+    }
+  }
+
   if (installServicesRequested) {
     await installServices();
     if (serviceSetupOnly) {

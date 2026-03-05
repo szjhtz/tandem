@@ -6,7 +6,7 @@ use axum::{
 };
 use futures::Stream;
 use serde_json::{json, Value};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::{Path as FsPath, PathBuf};
@@ -18,6 +18,8 @@ use uuid::Uuid;
 
 use crate::http::context_types::*;
 use crate::AppState;
+use base64::Engine;
+use tandem_types::EngineEvent;
 
 pub(super) fn context_runs_root(state: &AppState) -> PathBuf {
     state
@@ -132,6 +134,94 @@ pub(super) fn append_jsonl_line(path: &FsPath, value: &Value) -> Result<(), Stat
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let line = serde_json::to_string(value).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     writeln!(file, "{}", line).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+pub(super) fn parse_context_run_ids_csv(raw: Option<&str>) -> Vec<String> {
+    raw.map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(|v| {
+            v.split(',')
+                .map(str::trim)
+                .filter(|id| !id.is_empty())
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default()
+}
+
+pub(super) fn decode_context_stream_cursor(raw: Option<&str>) -> ContextRunsStreamCursor {
+    let Some(token) = raw.map(str::trim).filter(|v| !v.is_empty()) else {
+        return ContextRunsStreamCursor::default();
+    };
+    let decoded = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(token)
+        .or_else(|_| base64::engine::general_purpose::URL_SAFE.decode(token));
+    let Ok(bytes) = decoded else {
+        return ContextRunsStreamCursor::default();
+    };
+    serde_json::from_slice::<ContextRunsStreamCursor>(&bytes).unwrap_or_default()
+}
+
+pub(super) fn load_context_run_workspace_sync(state: &AppState, run_id: &str) -> Option<String> {
+    let path = context_run_state_path(state, run_id);
+    let raw = std::fs::read_to_string(path).ok()?;
+    let value = serde_json::from_str::<Value>(&raw).ok()?;
+    value
+        .get("workspace")
+        .and_then(|workspace| workspace.get("canonical_path"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(ToString::to_string)
+}
+
+pub(super) fn publish_context_run_stream_envelope(
+    state: &AppState,
+    envelope: &ContextRunsStreamEnvelope,
+) {
+    if envelope.run_id.trim().is_empty() {
+        return;
+    }
+    let payload = serde_json::to_value(envelope).unwrap_or_else(|_| json!({}));
+    state
+        .event_bus
+        .publish(EngineEvent::new("context.run.stream", payload));
+}
+
+pub(super) async fn list_context_runs_for_workspace(
+    state: &AppState,
+    workspace: &str,
+    limit: usize,
+) -> Result<Vec<ContextRunState>, StatusCode> {
+    let root = context_runs_root(state);
+    if !root.exists() {
+        return Ok(Vec::new());
+    }
+    let normalized_workspace =
+        tandem_core::normalize_workspace_path(workspace).ok_or(StatusCode::BAD_REQUEST)?;
+    let mut rows = Vec::<ContextRunState>::new();
+    let mut dir = tokio::fs::read_dir(root)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    while let Ok(Some(entry)) = dir.next_entry().await {
+        if !entry
+            .file_type()
+            .await
+            .map(|kind| kind.is_dir())
+            .unwrap_or(false)
+        {
+            continue;
+        }
+        let run_id = entry.file_name().to_string_lossy().to_string();
+        if let Ok(run) = load_context_run_state(state, &run_id).await {
+            if run.workspace.canonical_path.trim() == normalized_workspace {
+                rows.push(run);
+            }
+        }
+    }
+    rows.sort_by(|a, b| b.updated_at_ms.cmp(&a.updated_at_ms));
+    rows.truncate(limit.clamp(1, 1000));
+    Ok(rows)
 }
 
 pub(super) fn load_context_blackboard(state: &AppState, run_id: &str) -> ContextBlackboardState {
@@ -412,6 +502,17 @@ pub(super) fn append_context_blackboard_patch(
     let mut blackboard = load_context_blackboard(state, run_id);
     apply_context_blackboard_patch(&mut blackboard, &patch)?;
     save_context_blackboard(state, run_id, &blackboard)?;
+    if let Some(workspace) = load_context_run_workspace_sync(state, run_id) {
+        let envelope = ContextRunsStreamEnvelope {
+            kind: "blackboard_patch".to_string(),
+            run_id: run_id.to_string(),
+            workspace,
+            seq: patch.seq,
+            ts_ms: patch.ts_ms,
+            payload: serde_json::to_value(&patch).unwrap_or_else(|_| json!({})),
+        };
+        publish_context_run_stream_envelope(state, &envelope);
+    }
     Ok((patch, blackboard))
 }
 
@@ -1080,11 +1181,25 @@ pub(super) async fn context_run_event_append(
         &serde_json::to_value(&record).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
     )?;
 
+    let mut workspace_for_stream = String::new();
     if let Ok(mut run) = load_context_run_state(&state, &run_id).await {
+        workspace_for_stream = run.workspace.canonical_path.clone();
         apply_context_event_transition(&mut run, &input);
         run.revision = run.revision.saturating_add(1);
         run.updated_at_ms = crate::now_ms();
         save_context_run_state(&state, &run).await?;
+    }
+
+    if !workspace_for_stream.trim().is_empty() {
+        let envelope = ContextRunsStreamEnvelope {
+            kind: "context_run_event".to_string(),
+            run_id: run_id.clone(),
+            workspace: workspace_for_stream,
+            seq: record.seq,
+            ts_ms: record.ts_ms,
+            payload: serde_json::to_value(&record).unwrap_or_else(|_| json!({})),
+        };
+        publish_context_run_stream_envelope(&state, &envelope);
     }
 
     Ok(Json(json!({ "ok": true, "event": record })))
@@ -1165,6 +1280,164 @@ pub(super) async fn context_run_events_stream(
 ) -> Sse<impl Stream<Item = Result<Event, std::convert::Infallible>>> {
     Sse::new(context_run_events_sse_stream(state, run_id, query))
         .keep_alive(axum::response::sse::KeepAlive::new().interval(Duration::from_secs(10)))
+}
+
+pub(super) fn context_runs_events_multiplex_sse_stream(
+    state: AppState,
+    workspace: String,
+    subscribed_run_ids: Vec<String>,
+    cursor: ContextRunsStreamCursor,
+    tail: Option<usize>,
+) -> impl Stream<Item = Result<Event, std::convert::Infallible>> {
+    let (tx, rx) = tokio::sync::mpsc::channel::<String>(512);
+    tokio::spawn(async move {
+        let subscribed_set: HashSet<String> = subscribed_run_ids.iter().cloned().collect();
+        let ready = serde_json::to_string(&json!({
+            "kind":"ready",
+            "workspace": workspace,
+            "subscribed_run_ids": subscribed_run_ids,
+            "timestamp_ms": crate::now_ms(),
+        }))
+        .unwrap_or_default();
+        if tx.send(ready).await.is_err() {
+            return;
+        }
+
+        let mut replay = Vec::<ContextRunsStreamEnvelope>::new();
+        for run_id in &subscribed_set {
+            let run_events = load_context_run_events_jsonl(
+                &context_run_events_path(&state, run_id),
+                cursor.events.get(run_id).copied(),
+                if cursor.events.get(run_id).is_some() {
+                    None
+                } else {
+                    tail
+                },
+            );
+            for row in run_events {
+                replay.push(ContextRunsStreamEnvelope {
+                    kind: "context_run_event".to_string(),
+                    run_id: run_id.clone(),
+                    workspace: workspace.clone(),
+                    seq: row.seq,
+                    ts_ms: row.ts_ms,
+                    payload: serde_json::to_value(row).unwrap_or_else(|_| json!({})),
+                });
+            }
+            let run_patches = load_context_blackboard_patches(
+                &state,
+                run_id,
+                cursor.patches.get(run_id).copied(),
+                if cursor.patches.get(run_id).is_some() {
+                    None
+                } else {
+                    tail
+                },
+            );
+            for patch in run_patches {
+                replay.push(ContextRunsStreamEnvelope {
+                    kind: "blackboard_patch".to_string(),
+                    run_id: run_id.clone(),
+                    workspace: workspace.clone(),
+                    seq: patch.seq,
+                    ts_ms: patch.ts_ms,
+                    payload: serde_json::to_value(patch).unwrap_or_else(|_| json!({})),
+                });
+            }
+        }
+        replay.sort_by(|a, b| {
+            a.ts_ms
+                .cmp(&b.ts_ms)
+                .then_with(|| a.run_id.cmp(&b.run_id))
+                .then_with(|| a.kind.cmp(&b.kind))
+                .then_with(|| a.seq.cmp(&b.seq))
+        });
+        for row in replay {
+            let payload = serde_json::to_string(&row).unwrap_or_default();
+            if tx.send(payload).await.is_err() {
+                return;
+            }
+        }
+
+        let mut live = state.event_bus.subscribe();
+        loop {
+            match live.recv().await {
+                Ok(event) => {
+                    if event.event_type != "context.run.stream" {
+                        continue;
+                    }
+                    let run_id = event
+                        .properties
+                        .get("run_id")
+                        .and_then(Value::as_str)
+                        .map(str::trim)
+                        .unwrap_or_default();
+                    if run_id.is_empty() || !subscribed_set.contains(run_id) {
+                        continue;
+                    }
+                    let event_workspace = event
+                        .properties
+                        .get("workspace")
+                        .and_then(Value::as_str)
+                        .map(str::trim)
+                        .unwrap_or_default();
+                    if event_workspace != workspace {
+                        continue;
+                    }
+                    let payload = serde_json::to_string(&event.properties).unwrap_or_default();
+                    if tx.send(payload).await.is_err() {
+                        return;
+                    }
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => return,
+            }
+        }
+    });
+    ReceiverStream::new(rx).map(|payload| Ok(Event::default().data(payload)))
+}
+
+pub(super) async fn context_runs_events_stream(
+    State(state): State<AppState>,
+    Query(query): Query<ContextRunsEventsStreamQuery>,
+) -> Result<Sse<impl Stream<Item = Result<Event, std::convert::Infallible>>>, StatusCode> {
+    let workspace = query
+        .workspace
+        .as_deref()
+        .and_then(tandem_core::normalize_workspace_path)
+        .ok_or(StatusCode::BAD_REQUEST)?;
+    let requested = parse_context_run_ids_csv(query.run_ids.as_deref());
+    let subscribed_run_ids = if requested.is_empty() {
+        list_context_runs_for_workspace(&state, &workspace, 1000)
+            .await?
+            .into_iter()
+            .map(|run| run.run_id)
+            .collect::<Vec<_>>()
+    } else {
+        let mut accepted = Vec::<String>::new();
+        for run_id in requested {
+            let run = load_context_run_state(&state, &run_id)
+                .await
+                .map_err(|_| StatusCode::BAD_REQUEST)?;
+            if run.workspace.canonical_path.trim() != workspace {
+                return Err(StatusCode::BAD_REQUEST);
+            }
+            accepted.push(run_id);
+        }
+        accepted.sort();
+        accepted.dedup();
+        accepted
+    };
+    let cursor = decode_context_stream_cursor(query.cursor.as_deref());
+    let tail = query.tail.map(|value| value.clamp(1, 2000));
+    Ok(Sse::new(context_runs_events_multiplex_sse_stream(
+        state,
+        workspace,
+        subscribed_run_ids,
+        cursor,
+        tail,
+    ))
+    .keep_alive(axum::response::sse::KeepAlive::new().interval(Duration::from_secs(10))))
 }
 
 pub(super) async fn context_run_lease_validate(
