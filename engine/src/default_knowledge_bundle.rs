@@ -1,4 +1,5 @@
 use anyhow::Context;
+use chrono::{DateTime, TimeZone, Utc};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
@@ -69,6 +70,26 @@ pub fn compute_corpus_hash(docs: &[EmbeddedKnowledgeDoc]) -> String {
     bytes_to_hex(&digest)
 }
 
+pub fn deterministic_generated_at(corpus_hash: &str) -> String {
+    const HASH_PREFIX_LEN: usize = 12;
+    const BASE_YEAR: i32 = 2020;
+    const WINDOW_SECONDS: u64 = 10 * 365 * 24 * 60 * 60;
+
+    let seed = corpus_hash
+        .get(..HASH_PREFIX_LEN)
+        .and_then(|prefix| u64::from_str_radix(prefix, 16).ok())
+        .unwrap_or(0);
+    let base_ms = Utc
+        .with_ymd_and_hms(BASE_YEAR, 1, 1, 0, 0, 0)
+        .single()
+        .expect("valid fixed base timestamp")
+        .timestamp_millis();
+    let offset_ms = (seed % WINDOW_SECONDS) * 1_000;
+    DateTime::from_timestamp_millis(base_ms + offset_ms as i64)
+        .expect("timestamp within supported range")
+        .to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+}
+
 fn bytes_to_hex(bytes: &[u8]) -> String {
     let mut out = String::with_capacity(bytes.len() * 2);
     for b in bytes {
@@ -130,5 +151,20 @@ mod tests {
             docs_url_for_relative_path("desktop/overview.md"),
             "https://tandem.docs.frumu.ai/desktop/overview"
         );
+    }
+
+    #[test]
+    fn deterministic_generated_at_is_stable_and_matches_fixture() {
+        let corpus_hash = "731f31438b0a23a8da6815bf6d19e6828cdf4ec0692d161e1738e024a7cca8a6";
+        let first = deterministic_generated_at(corpus_hash);
+        let second = deterministic_generated_at(corpus_hash);
+        let different = deterministic_generated_at(
+            "fa9dc6b3e548bcb7c2da95359d4e0f88eebf3cc477f299e50c9ecac28ddbcc01",
+        );
+
+        assert_eq!(first, "2025-12-12T08:15:06.000Z");
+        assert_eq!(first, second);
+        assert_ne!(first, different);
+        assert!(DateTime::parse_from_rfc3339(&first).is_ok());
     }
 }

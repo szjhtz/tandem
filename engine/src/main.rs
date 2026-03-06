@@ -1305,7 +1305,7 @@ fn load_default_knowledge_override_from_env() -> anyhow::Result<
         schema_version: 1,
         source_root: "guide/src/content/docs".to_string(),
         docs_site_base_url: DEFAULT_KNOWLEDGE_DOCS_SITE_BASE_URL.to_string(),
-        generated_at: chrono::Utc::now().to_rfc3339(),
+        generated_at: default_knowledge_bundle::deterministic_generated_at(&corpus_hash),
         docs,
     };
     let manifest = default_knowledge_bundle::EmbeddedKnowledgeManifest {
