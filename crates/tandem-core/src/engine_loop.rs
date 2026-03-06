@@ -948,6 +948,7 @@ impl EngineLoop {
                     let saw_tool_call_candidate = true;
                     let mut outputs = Vec::new();
                     let mut executed_productive_tool = false;
+                    let mut write_tool_attempted_in_cycle = false;
                     let mut auth_required_hit_in_cycle = false;
                     let mut guard_budget_hit_in_cycle = false;
                     let mut duplicate_signature_hit_in_cycle = false;
@@ -958,6 +959,9 @@ impl EngineLoop {
                             continue;
                         }
                         let tool_key = normalize_tool_name(&tool);
+                        if is_workspace_write_tool(&tool_key) {
+                            write_tool_attempted_in_cycle = true;
+                        }
                         if !allowed_tool_names.contains(&tool_key) {
                             rejected_tool_call_in_cycle = true;
                             let note = if offered_tool_preview.is_empty() {
@@ -1208,6 +1212,36 @@ impl EngineLoop {
                                 provider_tool_parse_failed,
                                 rejected_tool_call_in_cycle,
                             );
+                            if requested_write_required
+                                && write_tool_attempted_in_cycle
+                                && productive_write_tool_calls_total == 0
+                                && latest_required_tool_failure_kind
+                                    == RequiredToolFailureKind::ToolCallInvalidArgs
+                            {
+                                latest_required_tool_failure_kind =
+                                    RequiredToolFailureKind::WriteRequiredNotSatisfied;
+                                if !required_write_retry_used {
+                                    required_write_retry_used = true;
+                                    required_tool_retry_used = true;
+                                    followup_context = Some(build_required_tool_retry_context(
+                                        &offered_tool_preview,
+                                        RequiredToolFailureKind::ToolCallInvalidArgs,
+                                    ));
+                                    self.event_bus.publish(EngineEvent::new(
+                                        "provider.call.iteration.finish",
+                                        json!({
+                                            "sessionID": session_id,
+                                            "messageID": user_message_id,
+                                            "iteration": iteration,
+                                            "finishReason": "required_write_invalid_retry",
+                                            "acceptedToolCalls": accepted_tool_calls_in_cycle,
+                                            "rejectedToolCalls": 0,
+                                            "requiredToolFailureReason": "WRITE_CONTENT_MISSING",
+                                        }),
+                                    ));
+                                    continue;
+                                }
+                            }
                             if !required_tool_retry_used {
                                 required_tool_retry_used = true;
                                 followup_context = Some(build_required_tool_retry_context(
@@ -1390,6 +1424,13 @@ impl EngineLoop {
                 if matches!(requested_tool_mode, ToolMode::Required)
                     && productive_tool_calls_total == 0
                 {
+                    if requested_write_required
+                        && required_write_retry_used
+                        && productive_write_tool_calls_total == 0
+                    {
+                        latest_required_tool_failure_kind =
+                            RequiredToolFailureKind::WriteRequiredNotSatisfied;
+                    }
                     if !required_tool_retry_used {
                         required_tool_retry_used = true;
                         followup_context = Some(build_required_tool_retry_context(
@@ -2970,6 +3011,8 @@ fn build_required_tool_retry_context(
         == RequiredToolFailureKind::WriteRequiredNotSatisfied
     {
         "Inspection is complete; now create or modify workspace files with write, edit, or apply_patch.".to_string()
+    } else if previous_reason == RequiredToolFailureKind::ToolCallInvalidArgs {
+        "Previous tool call arguments were invalid. If you use write, include both `path` and the full `content`. If inspection is already complete, use write, edit, or apply_patch now.".to_string()
     } else {
         available_tools
     };
@@ -6579,9 +6622,10 @@ Call: todowrite(task_id=3, status="in_progress")
             "read, write, apply_patch",
             RequiredToolFailureKind::ToolCallInvalidArgs,
         );
-        assert!(prompt.contains("Execute at least one offered tool call"));
+        assert!(prompt.contains("Tool access is mandatory"));
         assert!(prompt.contains("TOOL_CALL_INVALID_ARGS"));
-        assert!(prompt.contains("read, write, apply_patch"));
+        assert!(prompt.contains("full `content`"));
+        assert!(prompt.contains("write, edit, or apply_patch"));
     }
 
     #[test]
