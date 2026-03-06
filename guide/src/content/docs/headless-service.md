@@ -46,6 +46,9 @@ tandem-engine serve --hostname 127.0.0.1 --port 39731
 ## Common Headless Admin Endpoints
 
 - `GET /global/health`
+- `GET /browser/status`
+- `POST /browser/install`
+- `POST /browser/smoke-test`
 - `GET /channels/status`
 - `PUT /channels/{name}`
 - `DELETE /channels/{name}`
@@ -69,6 +72,19 @@ curl -s http://127.0.0.1:39731/global/health \
 
 ```bash
 curl -s http://127.0.0.1:39731/channels/status \
+  -H "X-Agent-Token: tk_your_token"
+```
+
+## Example: Browser Readiness + Install
+
+```bash
+curl -s http://127.0.0.1:39731/browser/status \
+  -H "X-Agent-Token: tk_your_token"
+
+curl -s -X POST http://127.0.0.1:39731/browser/install \
+  -H "X-Agent-Token: tk_your_token"
+
+curl -s -X POST http://127.0.0.1:39731/browser/smoke-test \
   -H "X-Agent-Token: tk_your_token"
 ```
 
@@ -102,5 +118,5 @@ If provider/model cannot use a given media type, the run should still complete w
 - [Engine Commands](./reference/engine-commands/)
 - [MCP Automated Agents](./mcp-automated-agents/)
 - [Configuration](./configuration/)
-- [Running Tandem](./usage/)
+- [Start Here](./start-here/)
 - [Headless Deployment (Docker/systemd)](./desktop/headless-deployment/)

@@ -18,7 +18,10 @@ use tokio::task::JoinHandle;
 use tracing::{debug, error, warn};
 
 use crate::config::{is_user_allowed, TelegramConfig, TelegramStyleProfile};
-use crate::traits::{Channel, ChannelMessage, SendMessage};
+use crate::traits::{
+    should_accept_message, Channel, ChannelMessage, ConversationScope, ConversationScopeKind,
+    MessageTriggerContext, SendMessage, TriggerSource,
+};
 
 const MAX_MESSAGE_LEN: usize = 4096;
 const TELEGRAM_API: &str = "https://api.telegram.org/bot";
@@ -745,6 +748,33 @@ impl TelegramChannel {
         text.replace(&format!("bot{}", self.bot_token), "bot<redacted>")
     }
 
+    async fn bot_identity(&self) -> (Option<String>, Option<String>) {
+        let resp = match self.client.get(self.api_url("getMe")).send().await {
+            Ok(resp) => resp,
+            Err(err) => {
+                warn!("telegram getMe failed: {err}");
+                return (None, None);
+            }
+        };
+        let json: Value = match resp.json().await {
+            Ok(json) => json,
+            Err(err) => {
+                warn!("telegram getMe parse failed: {err}");
+                return (None, None);
+            }
+        };
+        let result = json.get("result").cloned().unwrap_or_default();
+        let username = result
+            .get("username")
+            .and_then(Value::as_str)
+            .map(ToString::to_string);
+        let id = result
+            .get("id")
+            .and_then(Value::as_i64)
+            .map(|id| id.to_string());
+        (username, id)
+    }
+
     async fn download_telegram_attachment(
         &self,
         candidate: &TelegramAttachmentCandidate,
@@ -820,6 +850,21 @@ impl TelegramChannel {
         tokio::fs::write(&path, &bytes).await.ok()?;
         Some(path.to_string_lossy().to_string())
     }
+}
+
+fn strip_telegram_bot_mention(raw_text: &str, bot_username: Option<&str>) -> (String, bool) {
+    let trimmed = raw_text.trim();
+    let Some(bot_username) = bot_username.map(str::trim).filter(|s| !s.is_empty()) else {
+        return (trimmed.to_string(), false);
+    };
+    let mention = format!("@{}", bot_username.trim_start_matches('@'));
+    let mut parts = trimmed.splitn(2, char::is_whitespace);
+    let first = parts.next().unwrap_or("");
+    if first.eq_ignore_ascii_case(&mention) {
+        let rest = parts.next().unwrap_or("").trim().to_string();
+        return (rest, true);
+    }
+    (trimmed.to_string(), false)
 }
 
 #[async_trait]
@@ -900,6 +945,7 @@ impl Channel for TelegramChannel {
 
     async fn listen(&self, tx: mpsc::Sender<ChannelMessage>) -> anyhow::Result<()> {
         let mut offset: i64 = 0;
+        let (bot_username, bot_id) = self.bot_identity().await;
         loop {
             let resp = self
                 .client
@@ -969,6 +1015,11 @@ impl Channel for TelegramChannel {
                     .unwrap_or("");
 
                 let chat_id = msg["chat"]["id"].as_i64().unwrap_or(0).to_string();
+                let chat_type = msg["chat"]["type"].as_str().unwrap_or("");
+                let message_thread_id = msg
+                    .get("message_thread_id")
+                    .and_then(Value::as_i64)
+                    .map(|id| id.to_string());
                 let attachment_candidate = telegram_attachment_candidate(msg);
                 let (attachment, attachment_path, attachment_mime, attachment_filename) =
                     if let Some(candidate) = attachment_candidate {
@@ -1025,22 +1076,66 @@ impl Channel for TelegramChannel {
                     continue;
                 }
 
-                // Strip bot-mention prefix if present
-                let content = if self.mention_only {
-                    // Bot mention looks like "@botname text"
-                    raw_text
-                        .split_once(' ')
-                        .map(|x| x.1)
-                        .unwrap_or(raw_text)
-                        .trim()
-                        .to_string()
-                } else {
-                    raw_text.to_string()
+                let is_direct_message = chat_type == "private";
+                let (content, was_explicitly_mentioned) =
+                    strip_telegram_bot_mention(raw_text, bot_username.as_deref());
+                let reply_from = msg
+                    .get("reply_to_message")
+                    .and_then(|reply| reply.get("from"));
+                let reply_from_id = reply_from
+                    .and_then(|from| from.get("id"))
+                    .and_then(Value::as_i64)
+                    .map(|id| id.to_string());
+                let reply_from_username = reply_from
+                    .and_then(|from| from.get("username"))
+                    .and_then(Value::as_str);
+                let is_reply_to_bot = reply_from
+                    .and_then(|from| from.get("is_bot"))
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false)
+                    && (reply_from_id.as_deref() == bot_id.as_deref()
+                        || reply_from_username
+                            .zip(bot_username.as_deref())
+                            .map(|(reply, bot)| reply.eq_ignore_ascii_case(bot))
+                            .unwrap_or(false));
+                let trigger = MessageTriggerContext {
+                    source: if is_direct_message {
+                        TriggerSource::DirectMessage
+                    } else if was_explicitly_mentioned {
+                        TriggerSource::Mention
+                    } else if is_reply_to_bot {
+                        TriggerSource::ReplyToBot
+                    } else {
+                        TriggerSource::Ambient
+                    },
+                    is_direct_message,
+                    was_explicitly_mentioned,
+                    is_reply_to_bot,
                 };
-
-                if content.is_empty() && attachment.is_none() {
+                if !should_accept_message(
+                    self.mention_only,
+                    &trigger,
+                    !content.is_empty(),
+                    attachment.is_some(),
+                ) {
                     continue;
                 }
+                let scope = if is_direct_message {
+                    ConversationScope {
+                        kind: ConversationScopeKind::Direct,
+                        id: format!("dm:{chat_id}"),
+                    }
+                } else if let Some(thread_id) = message_thread_id {
+                    ConversationScope {
+                        kind: ConversationScopeKind::Topic,
+                        id: format!("topic:{chat_id}:{thread_id}"),
+                    }
+                } else {
+                    ConversationScope {
+                        kind: ConversationScopeKind::Room,
+                        id: format!("chat:{chat_id}"),
+                    }
+                };
 
                 let channel_msg = ChannelMessage {
                     id: update_id.to_string(),
@@ -1054,6 +1149,8 @@ impl Channel for TelegramChannel {
                     attachment_path,
                     attachment_mime,
                     attachment_filename,
+                    trigger,
+                    scope,
                 };
 
                 if tx.send(channel_msg).await.is_err() {

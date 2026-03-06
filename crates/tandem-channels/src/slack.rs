@@ -13,7 +13,10 @@ use tokio::sync::mpsc;
 use tracing::{info, warn};
 
 use crate::config::{is_user_allowed, SlackConfig};
-use crate::traits::{Channel, ChannelMessage, SendMessage};
+use crate::traits::{
+    should_accept_message, Channel, ChannelMessage, ConversationScope, ConversationScopeKind,
+    MessageTriggerContext, SendMessage, TriggerSource,
+};
 
 const SLACK_API: &str = "https://slack.com/api";
 const POLL_INTERVAL_SECS: u64 = 3;
@@ -104,6 +107,7 @@ pub struct SlackChannel {
     bot_token: String,
     channel_id: String,
     allowed_users: Vec<String>,
+    mention_only: bool,
 }
 
 impl SlackChannel {
@@ -112,6 +116,7 @@ impl SlackChannel {
             bot_token: config.bot_token,
             channel_id: config.channel_id,
             allowed_users: config.allowed_users,
+            mention_only: config.mention_only,
         }
     }
 
@@ -182,6 +187,26 @@ impl SlackChannel {
         tokio::fs::write(&path, &bytes).await.ok()?;
         Some(path.to_string_lossy().to_string())
     }
+}
+
+fn normalize_slack_content(text: &str, bot_user_id: &str) -> (Option<String>, bool) {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return (None, false);
+    }
+    if bot_user_id.is_empty() {
+        return (Some(trimmed.to_string()), false);
+    }
+    let mention = format!("<@{bot_user_id}>");
+    let was_explicitly_mentioned = trimmed.contains(&mention);
+    let normalized = trimmed.replace(&mention, " ");
+    let normalized = normalized.trim().to_string();
+    let normalized = if normalized.is_empty() {
+        None
+    } else {
+        Some(normalized)
+    };
+    (normalized, was_explicitly_mentioned)
 }
 
 #[async_trait]
@@ -286,6 +311,7 @@ impl Channel for SlackChannel {
                     .and_then(|u| u.as_str())
                     .unwrap_or("unknown");
                 let text = msg.get("text").and_then(|t| t.as_str()).unwrap_or("");
+                let thread_ts = msg.get("thread_ts").and_then(|v| v.as_str());
 
                 // Skip bot's own messages
                 if !bot_user_id.is_empty() && user == bot_user_id {
@@ -313,6 +339,18 @@ impl Channel for SlackChannel {
                 let attachment_url = slack_attachment_url(msg);
                 let attachment_filename = slack_attachment_filename(msg);
                 let attachment_mime = slack_attachment_mime(msg);
+                let (normalized_content, was_explicitly_mentioned) =
+                    normalize_slack_content(text, &bot_user_id);
+                let trigger = MessageTriggerContext {
+                    source: if was_explicitly_mentioned {
+                        TriggerSource::Mention
+                    } else {
+                        TriggerSource::Ambient
+                    },
+                    is_direct_message: false,
+                    was_explicitly_mentioned,
+                    is_reply_to_bot: false,
+                };
                 let attachment_path = if let Some(url) = attachment_url.as_deref() {
                     self.download_slack_attachment(url, attachment_filename.as_deref())
                         .await
@@ -324,14 +362,33 @@ impl Channel for SlackChannel {
                 if (text.is_empty() && attachment.is_none()) || ts <= last_ts.as_str() {
                     continue;
                 }
+                if !should_accept_message(
+                    self.mention_only,
+                    &trigger,
+                    normalized_content.is_some(),
+                    attachment.is_some(),
+                ) {
+                    continue;
+                }
 
                 last_ts = ts.to_string();
+                let scope = if let Some(thread_ts) = thread_ts {
+                    ConversationScope {
+                        kind: ConversationScopeKind::Thread,
+                        id: format!("thread:{}:{}", self.channel_id, thread_ts),
+                    }
+                } else {
+                    ConversationScope {
+                        kind: ConversationScopeKind::Room,
+                        id: format!("channel:{}", self.channel_id),
+                    }
+                };
 
                 let channel_msg = ChannelMessage {
                     id: format!("slack_{}_{ts}", self.channel_id),
                     sender: user.to_string(),
                     reply_target: self.channel_id.clone(),
-                    content: text.to_string(),
+                    content: normalized_content.unwrap_or_default(),
                     channel: "slack".to_string(),
                     timestamp: chrono::Utc::now(),
                     attachment,
@@ -339,6 +396,8 @@ impl Channel for SlackChannel {
                     attachment_path,
                     attachment_mime,
                     attachment_filename,
+                    trigger,
+                    scope,
                 };
 
                 if tx.send(channel_msg).await.is_err() {
@@ -368,6 +427,7 @@ mod tests {
             bot_token: "xoxb-fake".into(),
             channel_id: "C0FAKE".into(),
             allowed_users: vec![],
+            mention_only: false,
         }
     }
 
@@ -399,6 +459,20 @@ mod tests {
         };
         assert!(is_user_allowed("U111", &ch.allowed_users));
         assert!(!is_user_allowed("U333", &ch.allowed_users));
+    }
+
+    #[test]
+    fn normalize_slack_content_strips_bot_mention() {
+        let (normalized, mentioned) = normalize_slack_content("  <@Ubot> status please ", "Ubot");
+        assert_eq!(normalized.as_deref(), Some("status please"));
+        assert!(mentioned);
+    }
+
+    #[test]
+    fn normalize_slack_content_keeps_plain_text() {
+        let (normalized, mentioned) = normalize_slack_content("hello there", "Ubot");
+        assert_eq!(normalized.as_deref(), Some("hello there"));
+        assert!(!mentioned);
     }
 
     #[test]

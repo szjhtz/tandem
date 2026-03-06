@@ -4,6 +4,77 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TriggerSource {
+    SlashCommand,
+    DirectMessage,
+    Mention,
+    ReplyToBot,
+    Ambient,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MessageTriggerContext {
+    pub source: TriggerSource,
+    pub is_direct_message: bool,
+    pub was_explicitly_mentioned: bool,
+    pub is_reply_to_bot: bool,
+}
+
+impl Default for MessageTriggerContext {
+    fn default() -> Self {
+        Self {
+            source: TriggerSource::Ambient,
+            is_direct_message: false,
+            was_explicitly_mentioned: false,
+            is_reply_to_bot: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ConversationScopeKind {
+    Direct,
+    Room,
+    Thread,
+    Topic,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ConversationScope {
+    pub kind: ConversationScopeKind,
+    pub id: String,
+}
+
+impl Default for ConversationScope {
+    fn default() -> Self {
+        Self {
+            kind: ConversationScopeKind::Room,
+            id: "room:unknown".to_string(),
+        }
+    }
+}
+
+pub fn should_accept_message(
+    mention_only: bool,
+    trigger: &MessageTriggerContext,
+    has_text: bool,
+    has_attachment: bool,
+) -> bool {
+    if !has_text && !has_attachment {
+        return false;
+    }
+    if !mention_only {
+        return true;
+    }
+    trigger.is_direct_message
+        || trigger.was_explicitly_mentioned
+        || trigger.is_reply_to_bot
+        || matches!(trigger.source, TriggerSource::SlashCommand)
+}
+
 /// A message received from an external channel.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChannelMessage {
@@ -29,6 +100,12 @@ pub struct ChannelMessage {
     pub attachment_mime: Option<String>,
     /// Optional attachment filename.
     pub attachment_filename: Option<String>,
+    /// Structured information about how this message targeted the bot.
+    #[serde(default)]
+    pub trigger: MessageTriggerContext,
+    /// Stable conversation scope used for session identity.
+    #[serde(default)]
+    pub scope: ConversationScope,
 }
 
 /// A message to send back to the external channel.

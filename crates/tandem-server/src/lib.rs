@@ -124,6 +124,8 @@ pub struct SlackConfigFile {
     pub channel_id: String,
     #[serde(default = "default_allow_all")]
     pub allowed_users: Vec<String>,
+    #[serde(default)]
+    pub mention_only: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -2294,6 +2296,7 @@ async fn build_channels_config(
             bot_token: cfg.bot_token,
             channel_id: cfg.channel_id,
             allowed_users: cfg.allowed_users,
+            mention_only: cfg.mention_only,
         }),
         server_base_url: state.server_base_url(),
         api_token: state.api_token().await.unwrap_or_default(),

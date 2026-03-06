@@ -68,6 +68,8 @@ pub struct SlackConfig {
     pub channel_id: String,
     /// `["*"]` = allow everyone.
     pub allowed_users: Vec<String>,
+    /// Only respond to messages that @-mention the bot.
+    pub mention_only: bool,
 }
 
 /// Parse a comma-separated allowed_users string into a Vec.
@@ -184,10 +186,14 @@ impl ChannelsConfig {
         let allowed_users = std::env::var("TANDEM_SLACK_ALLOWED_USERS")
             .map(|s| parse_allowed_users(&s))
             .unwrap_or_else(|_| vec!["*".to_string()]);
+        let mention_only = std::env::var("TANDEM_SLACK_MENTION_ONLY")
+            .map(|v| v == "1" || v.to_lowercase() == "true")
+            .unwrap_or(false);
         Some(SlackConfig {
             bot_token,
             channel_id,
             allowed_users,
+            mention_only,
         })
     }
 }
@@ -256,5 +262,15 @@ mod tests {
             Some(TelegramStyleProfile::Friendly)
         );
         std::env::remove_var("TANDEM_TELEGRAM_STYLE_PROFILE");
+    }
+
+    #[test]
+    fn slack_mention_only_from_env() {
+        std::env::set_var("TANDEM_SLACK_BOT_TOKEN", "test");
+        std::env::set_var("TANDEM_SLACK_CHANNEL_ID", "C123");
+        std::env::set_var("TANDEM_SLACK_MENTION_ONLY", "true");
+        let config = ChannelsConfig::from_env().expect("channels");
+        assert_eq!(config.slack.as_ref().map(|s| s.mention_only), Some(true));
+        std::env::remove_var("TANDEM_SLACK_MENTION_ONLY");
     }
 }

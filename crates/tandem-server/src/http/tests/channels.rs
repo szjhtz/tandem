@@ -21,7 +21,8 @@ async fn channels_config_returns_non_secret_shape() {
                 "slack": {
                     "bot_token": "sl-secret",
                     "channel_id": "C123",
-                    "allowed_users": ["U1"]
+                    "allowed_users": ["U1"],
+                    "mention_only": true
                 }
             }
         }))
@@ -60,6 +61,13 @@ async fn channels_config_returns_non_secret_shape() {
         .get("slack")
         .and_then(Value::as_object)
         .is_some_and(|obj| !obj.contains_key("bot_token")));
+    assert_eq!(
+        payload
+            .get("slack")
+            .and_then(|v| v.get("mention_only"))
+            .and_then(Value::as_bool),
+        Some(true)
+    );
 }
 
 #[tokio::test]

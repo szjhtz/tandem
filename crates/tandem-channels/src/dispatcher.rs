@@ -66,10 +66,35 @@ pub struct SessionRecord {
     pub last_seen_at_ms: u64,
     pub channel: String,
     pub sender: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope_kind: Option<String>,
 }
 
 /// `{channel_name}:{sender_id}` → Tandem `SessionRecord`
 pub type SessionMap = Arc<Mutex<HashMap<String, SessionRecord>>>;
+
+fn session_scope_kind_label(msg: &ChannelMessage) -> &'static str {
+    match msg.scope.kind {
+        crate::traits::ConversationScopeKind::Direct => "direct",
+        crate::traits::ConversationScopeKind::Room => "room",
+        crate::traits::ConversationScopeKind::Thread => "thread",
+        crate::traits::ConversationScopeKind::Topic => "topic",
+    }
+}
+
+fn session_map_key(msg: &ChannelMessage) -> String {
+    format!("{}:{}:{}", msg.channel, msg.scope.id, msg.sender)
+}
+
+fn legacy_session_map_key(msg: &ChannelMessage) -> String {
+    format!("{}:{}", msg.channel, msg.sender)
+}
+
+fn session_title_prefix(msg: &ChannelMessage) -> String {
+    format!("{} — {} — {}", msg.channel, msg.sender, msg.scope.id)
+}
 
 fn persistence_path() -> PathBuf {
     let base = std::env::var("TANDEM_STATE_DIR")
@@ -116,6 +141,8 @@ async fn load_session_map() -> HashMap<String, SessionRecord> {
                     last_seen_at_ms: now,
                     channel,
                     sender,
+                    scope_id: None,
+                    scope_kind: None,
                 },
             );
         }
@@ -375,8 +402,8 @@ async fn process_channel_message(
     }
 
     // --- Normal message → Tandem session ---
-    let map_key = format!("{}:{}", msg.channel, msg.sender);
-    let session_id = get_or_create_session(&map_key, &msg, base_url, api_token, session_map).await;
+    let map_key = session_map_key(&msg);
+    let session_id = get_or_create_session(&msg, base_url, api_token, session_map).await;
 
     let session_id = match session_id {
         Some(id) => id,
@@ -1193,15 +1220,16 @@ fn build_channel_session_create_body(title: &str) -> serde_json::Value {
 
 /// Look up an existing session or create a new one via `POST /session`.
 async fn get_or_create_session(
-    map_key: &str,
     msg: &ChannelMessage,
     base_url: &str,
     api_token: &str,
     session_map: &SessionMap,
 ) -> Option<String> {
+    let map_key = session_map_key(msg);
+    let legacy_key = legacy_session_map_key(msg);
     {
         let mut guard = session_map.lock().await;
-        if let Some(record) = guard.get_mut(map_key) {
+        if let Some(record) = guard.get_mut(&map_key) {
             record.last_seen_at_ms = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
@@ -1211,10 +1239,22 @@ async fn get_or_create_session(
             save_session_map(&guard).await;
             return Some(sid);
         }
+        if let Some(mut legacy_record) = guard.remove(&legacy_key) {
+            legacy_record.last_seen_at_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_millis() as u64;
+            legacy_record.scope_id = Some(msg.scope.id.clone());
+            legacy_record.scope_kind = Some(session_scope_kind_label(msg).to_string());
+            let sid = legacy_record.session_id.clone();
+            guard.insert(map_key.clone(), legacy_record);
+            save_session_map(&guard).await;
+            return Some(sid);
+        }
     }
 
     let client = reqwest::Client::new();
-    let title = format!("{} — {}", msg.channel, msg.sender);
+    let title = session_title_prefix(msg);
     let body = build_channel_session_create_body(&title);
 
     let resp = add_auth(client.post(format!("{base_url}/session")), api_token)
@@ -1249,13 +1289,15 @@ async fn get_or_create_session(
         .unwrap()
         .as_millis() as u64;
     guard.insert(
-        map_key.to_string(),
+        map_key,
         SessionRecord {
             session_id: session_id.clone(),
             created_at_ms: now,
             last_seen_at_ms: now,
             channel: msg.channel.clone(),
             sender: msg.sender.clone(),
+            scope_id: Some(msg.scope.id.clone()),
+            scope_kind: Some(session_scope_kind_label(msg).to_string()),
         },
     );
     save_session_map(&guard).await;
@@ -1672,9 +1714,7 @@ async fn handle_slash_command(
 ) -> String {
     match cmd {
         SlashCommand::Help => help_text(),
-        SlashCommand::ListSessions => {
-            list_sessions_text(base_url, api_token, &msg.channel, &msg.sender).await
-        }
+        SlashCommand::ListSessions => list_sessions_text(msg, base_url, api_token).await,
         SlashCommand::New { name } => {
             new_session_text(name, msg, base_url, api_token, session_map).await
         }
@@ -1697,11 +1737,7 @@ async fn handle_slash_command(
             rename_session_text(name, msg, base_url, api_token, session_map).await
         }
         SlashCommand::Approve { tool_call_id } => {
-            let map_key = format!("{}:{}", msg.channel, msg.sender);
-            let session_id = {
-                let guard = session_map.lock().await;
-                guard.get(&map_key).map(|r| r.session_id.clone())
-            };
+            let session_id = active_session_id(msg, session_map).await;
             match session_id {
                 None => "⚠️ No active session — nothing to approve.".to_string(),
                 Some(sid) => {
@@ -1714,11 +1750,7 @@ async fn handle_slash_command(
             }
         }
         SlashCommand::Deny { tool_call_id } => {
-            let map_key = format!("{}:{}", msg.channel, msg.sender);
-            let session_id = {
-                let guard = session_map.lock().await;
-                guard.get(&map_key).map(|r| r.session_id.clone())
-            };
+            let session_id = active_session_id(msg, session_map).await;
             match session_id {
                 None => "⚠️ No active session — nothing to deny.".to_string(),
                 Some(sid) => {
@@ -1759,22 +1791,26 @@ fn help_text() -> String {
 }
 
 async fn active_session_id(msg: &ChannelMessage, session_map: &SessionMap) -> Option<String> {
-    let map_key = format!("{}:{}", msg.channel, msg.sender);
-    session_map
-        .lock()
-        .await
-        .get(&map_key)
-        .map(|r| r.session_id.clone())
+    let map_key = session_map_key(msg);
+    let legacy_key = legacy_session_map_key(msg);
+    let mut guard = session_map.lock().await;
+    if let Some(record) = guard.get(&map_key) {
+        return Some(record.session_id.clone());
+    }
+    if let Some(mut record) = guard.remove(&legacy_key) {
+        record.scope_id = Some(msg.scope.id.clone());
+        record.scope_kind = Some(session_scope_kind_label(msg).to_string());
+        let session_id = record.session_id.clone();
+        guard.insert(map_key, record);
+        save_session_map(&guard).await;
+        return Some(session_id);
+    }
+    None
 }
 
-async fn list_sessions_text(
-    base_url: &str,
-    api_token: &str,
-    channel: &str,
-    sender: &str,
-) -> String {
+async fn list_sessions_text(msg: &ChannelMessage, base_url: &str, api_token: &str) -> String {
     let client = reqwest::Client::new();
-    let source_title_prefix = format!("{channel} — {sender}");
+    let source_title_prefix = session_title_prefix(msg);
 
     let Ok(resp) = add_auth(client.get(format!("{base_url}/session")), api_token)
         .send()
@@ -1787,7 +1823,7 @@ async fn list_sessions_text(
     };
 
     let sessions = json.as_array().cloned().unwrap_or_default();
-    // Filter to sessions whose title starts with "{channel} — {sender}"
+    // Filter to sessions whose title starts with the scoped channel prefix.
     let matching: Vec<_> = sessions
         .iter()
         .filter(|s| {
@@ -1833,10 +1869,8 @@ async fn new_session_text(
     api_token: &str,
     session_map: &SessionMap,
 ) -> String {
-    let map_key = format!("{}:{}", msg.channel, msg.sender);
-    let display_name = name
-        .clone()
-        .unwrap_or_else(|| format!("{} — {}", msg.channel, msg.sender));
+    let map_key = session_map_key(msg);
+    let display_name = name.clone().unwrap_or_else(|| session_title_prefix(msg));
     let client = reqwest::Client::new();
     let body = build_channel_session_create_body(&display_name);
 
@@ -1869,6 +1903,8 @@ async fn new_session_text(
             last_seen_at_ms: now,
             channel: msg.channel.clone(),
             sender: msg.sender.clone(),
+            scope_id: Some(msg.scope.id.clone()),
+            scope_kind: Some(session_scope_kind_label(msg).to_string()),
         },
     );
     save_session_map(&guard).await;
@@ -1887,8 +1923,8 @@ async fn resume_session_text(
     api_token: &str,
     session_map: &SessionMap,
 ) -> String {
-    let map_key = format!("{}:{}", msg.channel, msg.sender);
-    let source_prefix = format!("{} — {}", msg.channel, msg.sender);
+    let map_key = session_map_key(msg);
+    let source_prefix = session_title_prefix(msg);
     let client = reqwest::Client::new();
 
     let Ok(resp) = add_auth(client.get(format!("{base_url}/session")), api_token)
@@ -1942,6 +1978,8 @@ async fn resume_session_text(
                     last_seen_at_ms: now,
                     channel: msg.channel.clone(),
                     sender: msg.sender.clone(),
+                    scope_id: Some(msg.scope.id.clone()),
+                    scope_kind: Some(session_scope_kind_label(msg).to_string()),
                 },
             );
             save_session_map(&guard).await;
@@ -1965,12 +2003,7 @@ async fn status_text(
     api_token: &str,
     session_map: &SessionMap,
 ) -> String {
-    let map_key = format!("{}:{}", msg.channel, msg.sender);
-    let session_id = session_map
-        .lock()
-        .await
-        .get(&map_key)
-        .map(|r| r.session_id.clone());
+    let session_id = active_session_id(msg, session_map).await;
     let Some(sid) = session_id else {
         return "ℹ️ No active session. Send a message to start one, or use /new.".to_string();
     };
@@ -2011,12 +2044,7 @@ async fn rename_session_text(
     api_token: &str,
     session_map: &SessionMap,
 ) -> String {
-    let map_key = format!("{}:{}", msg.channel, msg.sender);
-    let session_id = session_map
-        .lock()
-        .await
-        .get(&map_key)
-        .map(|r| r.session_id.clone());
+    let session_id = active_session_id(msg, session_map).await;
     let Some(sid) = session_id else {
         return "⚠️ No active session to rename. Send a message first.".to_string();
     };
@@ -2712,6 +2740,8 @@ mod tests {
             last_seen_at_ms: 2000,
             channel: "telegram".to_string(),
             sender: "user1".to_string(),
+            scope_id: Some("chat:42".to_string()),
+            scope_kind: Some("room".to_string()),
         };
         let serialized = serde_json::to_string(&record).unwrap();
         let deserialized: SessionRecord = serde_json::from_str(&serialized).unwrap();
@@ -2720,6 +2750,62 @@ mod tests {
         assert_eq!(deserialized.last_seen_at_ms, 2000);
         assert_eq!(deserialized.channel, "telegram");
         assert_eq!(deserialized.sender, "user1");
+    }
+
+    fn test_channel_message(scope_id: &str) -> ChannelMessage {
+        ChannelMessage {
+            id: "m1".to_string(),
+            sender: "user1".to_string(),
+            reply_target: "room1".to_string(),
+            content: "hello".to_string(),
+            channel: "discord".to_string(),
+            timestamp: chrono::Utc::now(),
+            attachment: None,
+            attachment_url: None,
+            attachment_path: None,
+            attachment_mime: None,
+            attachment_filename: None,
+            trigger: crate::traits::MessageTriggerContext::default(),
+            scope: crate::traits::ConversationScope {
+                kind: crate::traits::ConversationScopeKind::Room,
+                id: scope_id.to_string(),
+            },
+        }
+    }
+
+    #[test]
+    fn session_map_key_includes_scope() {
+        let room_a = test_channel_message("channel:room-a");
+        let room_b = test_channel_message("channel:room-b");
+        assert_ne!(session_map_key(&room_a), session_map_key(&room_b));
+    }
+
+    #[tokio::test]
+    async fn active_session_id_migrates_legacy_key_to_scoped_key() {
+        let msg = test_channel_message("channel:room-a");
+        let legacy_key = legacy_session_map_key(&msg);
+        let scoped_key = session_map_key(&msg);
+        let mut map = std::collections::HashMap::new();
+        map.insert(
+            legacy_key,
+            SessionRecord {
+                session_id: "s-legacy".to_string(),
+                created_at_ms: 1,
+                last_seen_at_ms: 2,
+                channel: msg.channel.clone(),
+                sender: msg.sender.clone(),
+                scope_id: None,
+                scope_kind: None,
+            },
+        );
+        let session_map = std::sync::Arc::new(tokio::sync::Mutex::new(map));
+
+        let active = active_session_id(&msg, &session_map).await;
+
+        assert_eq!(active.as_deref(), Some("s-legacy"));
+        let guard = session_map.lock().await;
+        assert!(guard.get(&scoped_key).is_some());
+        assert!(guard.get(&legacy_session_map_key(&msg)).is_none());
     }
 
     #[test]
@@ -2780,6 +2866,11 @@ mod tests {
             attachment_path: None,
             attachment_mime: None,
             attachment_filename: Some("pack.zip".to_string()),
+            trigger: crate::traits::MessageTriggerContext::default(),
+            scope: crate::traits::ConversationScope {
+                kind: crate::traits::ConversationScopeKind::Room,
+                id: "channel:c1".to_string(),
+            },
         };
         assert!(is_zip_attachment(&msg));
         msg.attachment_filename = None;
@@ -2804,6 +2895,11 @@ mod tests {
             attachment_path: None,
             attachment_mime: None,
             attachment_filename: None,
+            trigger: crate::traits::MessageTriggerContext::default(),
+            scope: crate::traits::ConversationScope {
+                kind: crate::traits::ConversationScopeKind::Room,
+                id: "channel:room1".to_string(),
+            },
         };
         assert!(source_is_trusted_for_auto_install(
             &msg,

@@ -97,6 +97,48 @@ Deep-link query state is supported on `#/automations`:
 - `flow` (`routine` or `advanced`)
 - `step`
 
+## Workflow Operations (Packs)
+
+The Packs area includes workflow operations so operators can validate workflow packs without leaving the control panel.
+
+From the workflow operations view you can:
+
+- inspect loaded workflows and hooks
+- toggle workflow hooks on or off
+- run workflow validation/reload
+- simulate workflow events
+- run workflows directly
+- stream workflow events live while testing
+
+This UI maps to engine workflow endpoints including:
+
+- `GET /workflows`
+- `GET /workflows/{id}`
+- `POST /workflows/validate`
+- `POST /workflows/simulate`
+- `POST /workflows/{id}/run`
+- `GET /workflows/events`
+- `GET /workflow-hooks`
+- `PATCH /workflow-hooks/{id}`
+
+## Orchestrator Event Streaming
+
+The orchestrator UI supports multiplex run event streaming so multiple run timelines can stay live at once.
+
+- prefers `GET /context/runs/events/stream` when available on the connected engine
+- exposes control-panel stream health via `/api/orchestrator/events/health`
+- falls back to per-run event bridging if multiplex streaming is unavailable
+
+## Browser Diagnostics in Settings
+
+Settings includes a Browser Diagnostics panel for operator checks.
+
+You can use it to:
+
+- read current readiness from `GET /browser/status`
+- trigger sidecar install with `POST /browser/install`
+- run an end-to-end browser check with `POST /browser/smoke-test`
+
 ## Verify Engine + Panel
 
 ```bash

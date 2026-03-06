@@ -19,7 +19,10 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use crate::config::DiscordConfig;
-use crate::traits::{Channel, ChannelMessage, SendMessage};
+use crate::traits::{
+    should_accept_message, Channel, ChannelMessage, ConversationScope, ConversationScopeKind,
+    MessageTriggerContext, SendMessage, TriggerSource,
+};
 
 /// Discord's maximum message length for regular messages.
 const DISCORD_MAX_MESSAGE_LENGTH: usize = 2000;
@@ -77,34 +80,27 @@ fn mention_tags(bot_user_id: &str) -> [String; 2] {
     [format!("<@{bot_user_id}>"), format!("<@!{bot_user_id}>")]
 }
 
-fn normalize_incoming_content(
-    content: &str,
-    mention_only: bool,
-    bot_user_id: &str,
-) -> Option<String> {
+fn normalize_incoming_content(content: &str, bot_user_id: &str) -> (Option<String>, bool) {
     if content.is_empty() {
-        return None;
+        return (None, false);
     }
     let tags = mention_tags(bot_user_id);
     let is_mentioned = tags.iter().any(|t| content.contains(t.as_str()));
 
-    if mention_only && !is_mentioned {
-        return None;
-    }
-
     let mut normalized = content.to_string();
-    if mention_only {
+    if is_mentioned {
         for tag in &tags {
             normalized = normalized.replace(tag.as_str(), " ");
         }
     }
 
     let normalized = normalized.trim().to_string();
-    if normalized.is_empty() {
+    let normalized = if normalized.is_empty() {
         None
     } else {
         Some(normalized)
-    }
+    };
+    (normalized, is_mentioned)
 }
 
 fn normalize_discord_identity(raw: &str) -> String {
@@ -576,16 +572,53 @@ impl Channel for DiscordChannel {
                     let attachment_url = discord_attachment_url(d);
                     let attachment_filename = discord_attachment_filename(d);
                     let attachment_mime = discord_attachment_mime(d);
-                    let clean_content =
-                        normalize_incoming_content(content, self.mention_only, &bot_user_id);
-                    let clean_content = match (clean_content, attachment.is_some()) {
-                        (Some(c), _) => c,
-                        (None, true) => String::new(),
-                        (None, false) => continue,
+                    let (normalized_content, was_explicitly_mentioned) =
+                        normalize_incoming_content(content, &bot_user_id);
+                    let is_direct_message = d.get("guild_id").is_none();
+                    let is_reply_to_bot = d
+                        .get("referenced_message")
+                        .and_then(|msg| msg.get("author"))
+                        .and_then(|author| author.get("id"))
+                        .and_then(serde_json::Value::as_str)
+                        .map(|id| id == bot_user_id)
+                        .unwrap_or(false);
+                    let trigger = MessageTriggerContext {
+                        source: if is_direct_message {
+                            TriggerSource::DirectMessage
+                        } else if was_explicitly_mentioned {
+                            TriggerSource::Mention
+                        } else if is_reply_to_bot {
+                            TriggerSource::ReplyToBot
+                        } else {
+                            TriggerSource::Ambient
+                        },
+                        is_direct_message,
+                        was_explicitly_mentioned,
+                        is_reply_to_bot,
                     };
+                    if !should_accept_message(
+                        self.mention_only,
+                        &trigger,
+                        normalized_content.is_some(),
+                        attachment.is_some(),
+                    ) {
+                        continue;
+                    }
+                    let clean_content = normalized_content.unwrap_or_default();
 
                     let message_id = d["id"].as_str().unwrap_or("");
                     let channel_id = d["channel_id"].as_str().unwrap_or("").to_string();
+                    let scope = if is_direct_message {
+                        ConversationScope {
+                            kind: ConversationScopeKind::Direct,
+                            id: format!("dm:{}", author_id),
+                        }
+                    } else {
+                        ConversationScope {
+                            kind: ConversationScopeKind::Room,
+                            id: format!("channel:{}", channel_id),
+                        }
+                    };
                     let attachment_path = if let Some(url) = attachment_url.as_deref() {
                         self.download_discord_attachment(
                             url,
@@ -617,6 +650,8 @@ impl Channel for DiscordChannel {
                         attachment_path,
                         attachment_mime,
                         attachment_filename,
+                        trigger,
+                        scope,
                     };
 
                     if tx.send(channel_msg).await.is_err() {
@@ -803,26 +838,30 @@ mod tests {
 
     #[test]
     fn normalize_strips_bot_mention() {
-        let cleaned = normalize_incoming_content("  <@!12345> run status  ", true, "12345");
+        let (cleaned, mentioned) = normalize_incoming_content("  <@!12345> run status  ", "12345");
         assert_eq!(cleaned.as_deref(), Some("run status"));
+        assert!(mentioned);
     }
 
     #[test]
     fn normalize_requires_mention_when_enabled() {
-        let cleaned = normalize_incoming_content("hello there", true, "12345");
-        assert!(cleaned.is_none());
+        let (cleaned, mentioned) = normalize_incoming_content("hello there", "12345");
+        assert_eq!(cleaned.as_deref(), Some("hello there"));
+        assert!(!mentioned);
     }
 
     #[test]
     fn normalize_rejects_empty_after_strip() {
-        let cleaned = normalize_incoming_content("<@12345>", true, "12345");
+        let (cleaned, mentioned) = normalize_incoming_content("<@12345>", "12345");
         assert!(cleaned.is_none());
+        assert!(mentioned);
     }
 
     #[test]
     fn normalize_no_mention_filter_passes_all() {
-        let cleaned = normalize_incoming_content("hello", false, "12345");
+        let (cleaned, mentioned) = normalize_incoming_content("hello", "12345");
         assert_eq!(cleaned.as_deref(), Some("hello"));
+        assert!(!mentioned);
     }
 
     // ── Message splitting ─────────────────────────────────────────────

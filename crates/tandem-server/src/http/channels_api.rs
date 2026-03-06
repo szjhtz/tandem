@@ -74,6 +74,10 @@ pub(super) async fn channels_config(State(state): State<AppState>) -> Json<Value
         "slack": {
             "has_token": slack_has_token,
             "allowed_users": parse_allowed_users(slack.and_then(|cfg| cfg.get("allowed_users"))),
+            "mention_only": slack
+                .and_then(|cfg| cfg.get("mention_only"))
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
             "channel_id": slack
                 .and_then(|cfg| cfg.get("channel_id"))
                 .and_then(Value::as_str),

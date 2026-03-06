@@ -103,6 +103,14 @@ tandem-engine browser install [OPTIONS]
 - `--config <PATH>`: Override config file path.
 - `--json`: Print the install result as JSON.
 
+### Browser HTTP Endpoints
+
+The browser command group pairs with runtime HTTP endpoints:
+
+- `GET /browser/status`
+- `POST /browser/install`
+- `POST /browser/smoke-test`
+
 ### Headless Hosts
 
 Browser automation does not require a visible desktop session. On Linux VPS hosts the engine only needs:
