@@ -3018,6 +3018,12 @@ fn normalize_tool_args(
         if !missing_terminal && normalized_tool == "write" {
             if let Some(content) = extract_write_content_arg(&args) {
                 args = set_write_content_arg(args, content);
+            } else if let Some(recovered) =
+                infer_write_content_from_assistant_context(latest_assistant_context)
+            {
+                args_source = "recovered_from_context".to_string();
+                args_integrity = "recovered".to_string();
+                args = set_write_content_arg(args, recovered);
             } else {
                 args_source = "missing".to_string();
                 args_integrity = "empty".to_string();
@@ -3219,6 +3225,14 @@ fn extract_write_content_arg_internal(args: &Value, depth: usize) -> Option<Stri
         }
         _ => None,
     }
+}
+
+fn infer_write_content_from_assistant_context(latest_assistant_context: &str) -> Option<String> {
+    let text = latest_assistant_context.trim();
+    if text.len() < 32 {
+        return None;
+    }
+    Some(text.to_string())
 }
 
 fn set_shell_command(args: Value, command: String) -> Value {
@@ -5916,6 +5930,27 @@ Call: todowrite(task_id=3, status="in_progress")
             normalized.missing_terminal_reason.as_deref(),
             Some("WRITE_CONTENT_MISSING")
         );
+    }
+
+    #[test]
+    fn normalize_tool_args_write_recovers_content_from_assistant_context() {
+        let normalized = normalize_tool_args(
+            "write",
+            json!({"path":"docs/FEATURES.md"}),
+            "",
+            "## Features\n\n- Neon arcade gameplay\n- Single-file HTML structure\n",
+        );
+        assert!(!normalized.missing_terminal);
+        assert_eq!(
+            normalized.args.get("path").and_then(|v| v.as_str()),
+            Some("docs/FEATURES.md")
+        );
+        assert_eq!(
+            normalized.args.get("content").and_then(|v| v.as_str()),
+            Some("## Features\n\n- Neon arcade gameplay\n- Single-file HTML structure")
+        );
+        assert_eq!(normalized.args_source, "recovered_from_context");
+        assert_eq!(normalized.args_integrity, "recovered");
     }
 
     #[test]
