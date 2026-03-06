@@ -15,10 +15,9 @@ use uuid::Uuid;
 use crate::{
     evaluate_routine_execution_policy, AppState, AutomationAgentMcpPolicy, AutomationAgentProfile,
     AutomationAgentToolPolicy, AutomationExecutionPolicy, AutomationFlowSpec, AutomationRunStatus,
-    AutomationV2RunRecord, AutomationV2Schedule, AutomationV2Spec, AutomationV2Status,
-    RoutineExecutionDecision, RoutineHistoryEvent, RoutineMisfirePolicy, RoutineRunArtifact,
-    RoutineRunRecord, RoutineRunStatus, RoutineSchedule, RoutineSpec, RoutineStatus,
-    RoutineStoreError,
+    AutomationV2Schedule, AutomationV2Spec, AutomationV2Status, RoutineExecutionDecision,
+    RoutineHistoryEvent, RoutineMisfirePolicy, RoutineRunArtifact, RoutineRunRecord,
+    RoutineRunStatus, RoutineSchedule, RoutineSpec, RoutineStatus, RoutineStoreError,
 };
 use tandem_types::EngineEvent;
 
@@ -1728,68 +1727,6 @@ pub(super) fn normalize_automation_v2_agent(
         };
     }
     agent
-}
-
-pub(super) fn automation_v2_context_run_id(run_id: &str) -> String {
-    format!("automation-v2-{run_id}")
-}
-
-pub(super) fn automation_run_status_to_context(
-    status: &AutomationRunStatus,
-) -> super::context_types::ContextRunStatus {
-    use super::context_types::ContextRunStatus;
-    match status {
-        AutomationRunStatus::Queued => ContextRunStatus::Queued,
-        AutomationRunStatus::Running
-        | AutomationRunStatus::Pausing
-        | AutomationRunStatus::Paused => ContextRunStatus::Running,
-        AutomationRunStatus::Completed => ContextRunStatus::Completed,
-        AutomationRunStatus::Failed => ContextRunStatus::Failed,
-        AutomationRunStatus::Cancelled => ContextRunStatus::Cancelled,
-    }
-}
-
-pub(super) fn automation_node_task_status(
-    run: &AutomationV2RunRecord,
-    node_id: &str,
-    depends_on: &[String],
-) -> super::context_types::ContextBlackboardTaskStatus {
-    use super::context_types::ContextBlackboardTaskStatus;
-    let completed = run
-        .checkpoint
-        .completed_nodes
-        .iter()
-        .any(|row| row == node_id);
-    if completed {
-        return ContextBlackboardTaskStatus::Done;
-    }
-    if matches!(
-        run.status,
-        AutomationRunStatus::Cancelled | AutomationRunStatus::Failed
-    ) {
-        return ContextBlackboardTaskStatus::Failed;
-    }
-    let deps_done = depends_on
-        .iter()
-        .all(|dep| run.checkpoint.completed_nodes.iter().any(|row| row == dep));
-    if !deps_done {
-        return ContextBlackboardTaskStatus::Blocked;
-    }
-    if matches!(
-        run.status,
-        AutomationRunStatus::Paused | AutomationRunStatus::Pausing
-    ) {
-        return ContextBlackboardTaskStatus::Blocked;
-    }
-    if run
-        .checkpoint
-        .pending_nodes
-        .iter()
-        .any(|row| row == node_id)
-    {
-        return ContextBlackboardTaskStatus::Runnable;
-    }
-    ContextBlackboardTaskStatus::Pending
 }
 
 pub(super) async fn automations_v2_create(

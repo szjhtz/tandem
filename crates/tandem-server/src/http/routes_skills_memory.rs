@@ -5,6 +5,7 @@ use super::*;
 
 pub(super) fn apply(router: Router<AppState>) -> Router<AppState> {
     router
+        .route("/skill", get(skill_list))
         .route("/skills", get(skills_list).post(skills_import))
         .route("/skills/catalog", get(skills_catalog))
         .route("/skills/import", post(skills_import))
