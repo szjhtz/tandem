@@ -1442,7 +1442,9 @@ export function OrchestratorPage({ api, toast, navigate }: AppPageProps) {
                     <div className="max-h-[420px] overflow-auto rounded-lg border border-slate-700/60 bg-black">
                       <iframe
                         className="h-[420px] w-full bg-black"
-                        sandbox="allow-scripts allow-forms allow-pointer-lock"
+                        sandbox="allow-scripts allow-forms allow-pointer-lock allow-modals allow-downloads"
+                        allow="fullscreen; autoplay; clipboard-write"
+                        allowFullScreen
                         srcDoc={selectedWorkspaceText}
                         title={selectedWorkspaceFile}
                         scrolling="yes"
@@ -2193,7 +2195,7 @@ export function OrchestratorPage({ api, toast, navigate }: AppPageProps) {
             onClick={() => setWorkspacePreviewFullscreen(false)}
           >
             <motion.div
-              className="tcp-confirm-dialog max-h-[94vh] w-[min(118rem,98vw)] overflow-hidden p-0"
+              className="relative h-[calc(100dvh-1rem)] w-[calc(100vw-1rem)] overflow-hidden rounded-[1.4rem] border border-slate-700/70 bg-slate-950 shadow-[0_28px_64px_rgba(0,0,0,0.55)]"
               initial={{ opacity: 0, y: 8, scale: 0.98 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, y: 6, scale: 0.98 }}
@@ -2226,11 +2228,13 @@ export function OrchestratorPage({ api, toast, navigate }: AppPageProps) {
                   </button>
                 </div>
               </div>
-              <div className="overflow-auto p-4">
-                <div className="h-[82vh] overflow-auto rounded-xl border border-slate-700/60 bg-black">
+              <div className="h-[calc(100%-4.5rem)] p-3">
+                <div className="h-full overflow-auto rounded-xl border border-slate-700/60 bg-black">
                   <iframe
-                    className="h-[82vh] w-full bg-black"
-                    sandbox="allow-scripts allow-forms allow-pointer-lock"
+                    className="h-full w-full bg-black"
+                    sandbox="allow-scripts allow-forms allow-pointer-lock allow-modals allow-downloads"
+                    allow="fullscreen; autoplay; clipboard-write"
+                    allowFullScreen
                     srcDoc={selectedWorkspaceText}
                     title={`${selectedWorkspaceFile} fullscreen preview`}
                     scrolling="yes"
