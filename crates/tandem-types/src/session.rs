@@ -90,6 +90,8 @@ pub struct SendMessageRequest {
     pub tool_allowlist: Option<Vec<String>>,
     #[serde(default, alias = "contextMode", alias = "context_mode")]
     pub context_mode: Option<ContextMode>,
+    #[serde(default, alias = "writeRequired", alias = "write_required")]
+    pub write_required: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

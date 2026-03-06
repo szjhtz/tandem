@@ -3551,6 +3551,7 @@ pub async fn run_routine_executor(state: AppState) {
             tool_mode: None,
             tool_allowlist: None,
             context_mode: None,
+            write_required: None,
         };
 
         let run_result = state
@@ -3701,6 +3702,7 @@ async fn execute_automation_v2_node(
         tool_mode: None,
         tool_allowlist: None,
         context_mode: None,
+        write_required: None,
     };
     let result = state
         .engine_loop

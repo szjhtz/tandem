@@ -249,6 +249,7 @@ impl EngineLoop {
         let request_parts = req.parts.clone();
         let requested_tool_mode = req.tool_mode.clone().unwrap_or(ToolMode::Auto);
         let requested_context_mode = req.context_mode.clone().unwrap_or(ContextMode::Auto);
+        let requested_write_required = req.write_required.unwrap_or(false);
         let request_tool_allowlist = req
             .tool_allowlist
             .clone()
@@ -354,7 +355,9 @@ impl EngineLoop {
             let mut pack_builder_executed = false;
             let mut auto_workspace_probe_attempted = false;
             let mut productive_tool_calls_total = 0usize;
+            let mut productive_write_tool_calls_total = 0usize;
             let mut required_tool_retry_used = false;
+            let mut required_write_retry_used = false;
             let mut required_tool_unsatisfied_emitted = false;
             let mut latest_required_tool_failure_kind = RequiredToolFailureKind::NoToolCallEmitted;
             let email_delivery_requested = requires_email_delivery_prompt(&text);
@@ -561,6 +564,9 @@ impl EngineLoop {
                             .iter()
                             .any(|pattern| tool_name_matches_policy(pattern, &tool))
                     });
+                }
+                if requested_write_required && required_write_retry_used {
+                    tool_schemas.retain(|schema| is_workspace_write_tool(&schema.name));
                 }
                 if active_agent.tools.is_some() {
                     tool_schemas.retain(|schema| agent_can_use_tool(&active_agent, &schema.name));
@@ -1158,6 +1164,10 @@ impl EngineLoop {
                             if productive {
                                 productive_tool_calls_total =
                                     productive_tool_calls_total.saturating_add(1);
+                                if is_workspace_write_tool(&tool_key) {
+                                    productive_write_tool_calls_total =
+                                        productive_write_tool_calls_total.saturating_add(1);
+                                }
                                 executed_productive_tool = true;
                                 if tool_key == "pack_builder" {
                                     pack_builder_executed = true;
@@ -1242,6 +1252,63 @@ impl EngineLoop {
                                     "messageID": user_message_id,
                                     "iteration": iteration,
                                     "finishReason": "required_tool_unsatisfied",
+                                    "acceptedToolCalls": accepted_tool_calls_in_cycle,
+                                    "rejectedToolCalls": 0,
+                                    "requiredToolFailureReason": latest_required_tool_failure_kind.code(),
+                                }),
+                            ));
+                            break;
+                        }
+                        if requested_write_required
+                            && productive_tool_calls_total > 0
+                            && productive_write_tool_calls_total == 0
+                        {
+                            latest_required_tool_failure_kind =
+                                RequiredToolFailureKind::WriteRequiredNotSatisfied;
+                            if !required_write_retry_used {
+                                required_write_retry_used = true;
+                                followup_context = Some(build_required_tool_retry_context(
+                                    &offered_tool_preview,
+                                    latest_required_tool_failure_kind,
+                                ));
+                                self.event_bus.publish(EngineEvent::new(
+                                    "provider.call.iteration.finish",
+                                    json!({
+                                        "sessionID": session_id,
+                                        "messageID": user_message_id,
+                                        "iteration": iteration,
+                                        "finishReason": "required_write_retry",
+                                        "acceptedToolCalls": accepted_tool_calls_in_cycle,
+                                        "rejectedToolCalls": 0,
+                                        "requiredToolFailureReason": latest_required_tool_failure_kind.code(),
+                                    }),
+                                ));
+                                continue;
+                            }
+                            completion = required_tool_mode_unsatisfied_completion(
+                                latest_required_tool_failure_kind,
+                            );
+                            if !required_tool_unsatisfied_emitted {
+                                required_tool_unsatisfied_emitted = true;
+                                self.event_bus.publish(EngineEvent::new(
+                                    "tool.mode.required.unsatisfied",
+                                    json!({
+                                        "sessionID": session_id,
+                                        "messageID": user_message_id,
+                                        "iteration": iteration,
+                                        "selectedToolCount": allowed_tool_names.len(),
+                                        "offeredToolsPreview": offered_tool_preview,
+                                        "reason": latest_required_tool_failure_kind.code(),
+                                    }),
+                                ));
+                            }
+                            self.event_bus.publish(EngineEvent::new(
+                                "provider.call.iteration.finish",
+                                json!({
+                                    "sessionID": session_id,
+                                    "messageID": user_message_id,
+                                    "iteration": iteration,
+                                    "finishReason": "required_write_unsatisfied",
                                     "acceptedToolCalls": accepted_tool_calls_in_cycle,
                                     "rejectedToolCalls": 0,
                                     "requiredToolFailureReason": latest_required_tool_failure_kind.code(),
@@ -2497,6 +2564,13 @@ fn is_read_only_tool(tool_name: &str) -> bool {
     )
 }
 
+fn is_workspace_write_tool(tool_name: &str) -> bool {
+    matches!(
+        normalize_tool_name(tool_name).as_str(),
+        "write" | "edit" | "apply_patch"
+    )
+}
+
 fn is_batch_wrapper_tool_name(name: &str) -> bool {
     matches!(
         normalize_tool_name(name).as_str(),
@@ -2859,6 +2933,7 @@ enum RequiredToolFailureKind {
     ToolCallInvalidArgs,
     ToolCallRejectedByPolicy,
     ToolCallExecutedNonProductive,
+    WriteRequiredNotSatisfied,
 }
 
 impl RequiredToolFailureKind {
@@ -2869,6 +2944,7 @@ impl RequiredToolFailureKind {
             Self::ToolCallInvalidArgs => "TOOL_CALL_INVALID_ARGS",
             Self::ToolCallRejectedByPolicy => "TOOL_CALL_REJECTED_BY_POLICY",
             Self::ToolCallExecutedNonProductive => "TOOL_CALL_EXECUTED_NON_PRODUCTIVE",
+            Self::WriteRequiredNotSatisfied => "WRITE_REQUIRED_NOT_SATISFIED",
         }
     }
 }
@@ -2890,9 +2966,17 @@ fn build_required_tool_retry_context(
     } else {
         format!("Use one of these offered tools before you produce final text: {offered}.")
     };
+    let execution_instruction = if previous_reason
+        == RequiredToolFailureKind::WriteRequiredNotSatisfied
+    {
+        "Inspection is complete; now create or modify workspace files with write, edit, or apply_patch.".to_string()
+    } else {
+        available_tools
+    };
     format!(
-        "Tool access is mandatory for this request. Previous attempt failed with {}. Execute at least one valid offered tool call before any final text. {available_tools}",
-        previous_reason.code()
+        "Tool access is mandatory for this request. Previous attempt failed with {}. Execute at least one valid offered tool call before any final text. {}",
+        previous_reason.code(),
+        execution_instruction
     )
 }
 
@@ -6501,6 +6585,17 @@ Call: todowrite(task_id=3, status="in_progress")
     }
 
     #[test]
+    fn required_tool_retry_context_requires_write_after_read_only_pass() {
+        let prompt = build_required_tool_retry_context(
+            "glob, read, write, edit, apply_patch",
+            RequiredToolFailureKind::WriteRequiredNotSatisfied,
+        );
+        assert!(prompt.contains("WRITE_REQUIRED_NOT_SATISFIED"));
+        assert!(prompt.contains("Inspection is complete"));
+        assert!(prompt.contains("write, edit, or apply_patch"));
+    }
+
+    #[test]
     fn classify_required_tool_failure_detects_invalid_args() {
         let reason = classify_required_tool_failure(
             &[String::from("WRITE_CONTENT_MISSING")],
@@ -6518,6 +6613,15 @@ Call: todowrite(task_id=3, status="in_progress")
             r#"{"content":[{"type":"tool_call","name":"write"}]}"#
         ));
         assert!(!looks_like_unparsed_tool_payload("Updated README.md"));
+    }
+
+    #[test]
+    fn workspace_write_tool_detection_is_limited_to_mutations() {
+        assert!(is_workspace_write_tool("write"));
+        assert!(is_workspace_write_tool("edit"));
+        assert!(is_workspace_write_tool("apply_patch"));
+        assert!(!is_workspace_write_tool("read"));
+        assert!(!is_workspace_write_tool("glob"));
     }
 
     #[test]

@@ -2819,6 +2819,7 @@ async function runExecutionPromptWithVerification(session, run, prompt, sessionI
     parts: [{ type: "text", text: prompt }],
     tool_mode: "required",
     tool_allowlist: workerExecutionToolAllowlist(),
+    write_required: true,
   };
   let initialAttemptRows = [];
   let retryAttemptRows = [];
@@ -2888,6 +2889,7 @@ async function runExecutionPromptWithVerification(session, run, prompt, sessionI
       tool_allowlist: retryNeedsInitialInspection
         ? workerExecutionToolAllowlist()
         : workerWriteRetryToolAllowlist(),
+      write_required: true,
     };
     promptResponse = await engineRequestJson(
       session,
