@@ -266,7 +266,108 @@ const swarmState = {
   buildFingerprint: CONTROL_PANEL_BUILD_FINGERPRINT,
   buildStartedAt: Date.now(),
 };
+const swarmRunControllers = new Map();
 const swarmSseClients = new Set();
+
+function createSwarmRunController(runId = "", overrides = {}) {
+  return {
+    status: "idle",
+    startedAt: null,
+    stoppedAt: null,
+    objective: "",
+    workspaceRoot: REPO_ROOT,
+    maxTasks: 3,
+    maxAgents: 3,
+    workflowId: "swarm.blackboard.default",
+    modelProvider: "",
+    modelId: "",
+    mcpServers: [],
+    repoRoot: "",
+    lastError: "",
+    executorState: "idle",
+    executorReason: "",
+    executorMode: "context_steps",
+    resolvedModelProvider: "",
+    resolvedModelId: "",
+    modelResolutionSource: "none",
+    verificationMode: "strict",
+    runId: String(runId || "").trim(),
+    attachedPid: null,
+    registryCache: null,
+    reasons: [],
+    logs: [],
+    ...overrides,
+  };
+}
+
+function syncLegacySwarmState(controller) {
+  if (!controller || typeof controller !== "object") return;
+  swarmState.status = controller.status || swarmState.status;
+  swarmState.startedAt = controller.startedAt ?? swarmState.startedAt;
+  swarmState.stoppedAt = controller.stoppedAt ?? swarmState.stoppedAt;
+  swarmState.objective = controller.objective || swarmState.objective;
+  swarmState.workspaceRoot = controller.workspaceRoot || swarmState.workspaceRoot;
+  swarmState.maxTasks = controller.maxTasks ?? swarmState.maxTasks;
+  swarmState.maxAgents = controller.maxAgents ?? swarmState.maxAgents;
+  swarmState.workflowId = controller.workflowId || swarmState.workflowId;
+  swarmState.modelProvider = controller.modelProvider || swarmState.modelProvider;
+  swarmState.modelId = controller.modelId || swarmState.modelId;
+  swarmState.mcpServers = Array.isArray(controller.mcpServers)
+    ? controller.mcpServers
+    : swarmState.mcpServers;
+  swarmState.repoRoot = controller.repoRoot || swarmState.repoRoot;
+  swarmState.lastError = controller.lastError || "";
+  swarmState.executorState = controller.executorState || swarmState.executorState;
+  swarmState.executorReason = controller.executorReason || "";
+  swarmState.executorMode = controller.executorMode || swarmState.executorMode;
+  swarmState.resolvedModelProvider =
+    controller.resolvedModelProvider || swarmState.resolvedModelProvider;
+  swarmState.resolvedModelId = controller.resolvedModelId || swarmState.resolvedModelId;
+  swarmState.modelResolutionSource =
+    controller.modelResolutionSource || swarmState.modelResolutionSource;
+  swarmState.verificationMode = controller.verificationMode || swarmState.verificationMode;
+  swarmState.runId = controller.runId || swarmState.runId;
+  swarmState.attachedPid = controller.attachedPid || null;
+  swarmState.registryCache = controller.registryCache || null;
+}
+
+function getSwarmRunController(runId = "") {
+  const key = String(runId || "").trim();
+  if (!key) return null;
+  return swarmRunControllers.get(key) || null;
+}
+
+function upsertSwarmRunController(runId = "", patch = {}) {
+  const key = String(runId || "").trim();
+  if (!key) return null;
+  const current = getSwarmRunController(key) || createSwarmRunController(key);
+  const next = {
+    ...current,
+    ...patch,
+    runId: key,
+  };
+  swarmRunControllers.set(key, next);
+  if (String(swarmState.runId || "").trim() === key) {
+    syncLegacySwarmState(next);
+  }
+  return next;
+}
+
+function setActiveSwarmRunId(runId = "") {
+  const key = String(runId || "").trim();
+  swarmState.runId = key;
+  if (!key) {
+    swarmState.status = "idle";
+    swarmState.executorState = "idle";
+    swarmState.executorReason = "";
+    swarmState.lastError = "";
+    swarmState.attachedPid = null;
+    swarmState.registryCache = null;
+    return;
+  }
+  const controller = getSwarmRunController(key);
+  if (controller) syncLegacySwarmState(controller);
+}
 
 const sleep = (ms) => new Promise((resolveFn) => setTimeout(resolveFn, ms));
 
@@ -1832,10 +1933,14 @@ async function seedContextRunStepsFromTitles(session, runId, titles = []) {
 }
 
 async function createExecutionSession(session, run) {
+  const runId = String(run?.run_id || "").trim();
+  const controller = getSwarmRunController(runId);
   const workspaceCandidates = [
     run?.workspace?.canonical_path,
     run?.workspace?.workspace_root,
     run?.workspace_root,
+    controller?.workspaceRoot,
+    controller?.repoRoot,
     swarmState.workspaceRoot,
     swarmState.repoRoot,
     REPO_ROOT,
@@ -1852,11 +1957,13 @@ async function createExecutionSession(session, run) {
   const resolved = await resolveExecutionModel(session, run);
   const modelProvider = resolved.provider;
   const modelId = resolved.model;
-  swarmState.resolvedModelProvider = modelProvider;
-  swarmState.resolvedModelId = modelId;
-  swarmState.modelResolutionSource = resolved.source;
-  if (swarmState.modelProvider !== modelProvider) swarmState.modelProvider = modelProvider;
-  if (swarmState.modelId !== modelId) swarmState.modelId = modelId;
+  upsertSwarmRunController(runId, {
+    resolvedModelProvider: modelProvider,
+    resolvedModelId: modelId,
+    modelResolutionSource: resolved.source,
+    modelProvider,
+    modelId,
+  });
   const payload = await engineRequestJson(session, "/session", {
     method: "POST",
     body: {
@@ -1911,6 +2018,10 @@ function workerExecutionToolAllowlist() {
     "edit",
     "apply_patch",
   ];
+}
+
+function workerWriteRetryToolAllowlist() {
+  return ["write", "edit", "apply_patch"];
 }
 
 const WRITE_TOOL_NAMES = new Set(["write", "edit", "apply_patch"]);
@@ -2256,12 +2367,65 @@ function mergeToolActivityAudits(...audits) {
   };
 }
 
-function buildVerificationSummary(syncRows, messages, workspaceChanges, sessionId) {
+function summarizeExecutionRows(rows, limit = 12) {
+  const list = Array.isArray(rows) ? rows : [];
+  const out = [];
+  for (const row of list) {
+    if (out.length >= limit) break;
+    const role = roleOfMessage(row);
+    const type = String(row?.type || "").trim().toLowerCase();
+    const text = textOfMessage(row).trim();
+    const parts = Array.isArray(row?.parts) ? row.parts : [];
+    const tools = [];
+    for (const part of parts) {
+      const tool = String(part?.tool || part?.name || "").trim();
+      if (tool) tools.push(normalizeToolName(tool) || tool);
+    }
+    const rowTool = String(row?.tool || row?.name || "").trim();
+    if (rowTool) tools.push(normalizeToolName(rowTool) || rowTool);
+    out.push({
+      role,
+      type: type || null,
+      tools: Array.from(new Set(tools)).slice(0, 8),
+      excerpt: text.slice(0, 240),
+    });
+  }
+  return out;
+}
+
+function buildAttemptTelemetry(name, request, rows, messages, startedAtMs, error = null) {
+  const syncAudit = collectToolActivity(rows, `${name}_prompt_sync`);
+  const sessionAudit = collectToolActivity(messages, `${name}_session_snapshot`);
+  const merged = mergeToolActivityAudits(syncAudit, sessionAudit);
+  const assistantText = extractAssistantText(rows) || extractAssistantText(messages);
+  return {
+    name,
+    started_at_ms: Number(startedAtMs || Date.now()),
+    tool_mode: String(request?.tool_mode || "").trim() || null,
+    tool_allowlist: Array.isArray(request?.tool_allowlist) ? request.tool_allowlist.slice() : [],
+    prompt_excerpt: String(request?.parts?.[0]?.text || "")
+      .trim()
+      .slice(0, 600),
+    assistant_present: !!assistantText.trim(),
+    assistant_excerpt: assistantText.trim().slice(0, 400),
+    total_tool_calls: merged.totalToolCalls,
+    write_tool_calls: merged.writeToolCalls,
+    tool_names: merged.toolNames,
+    detection_sources: merged.sources,
+    sync_row_count: Array.isArray(rows) ? rows.length : 0,
+    session_message_count: Array.isArray(messages) ? messages.length : 0,
+    sync_rows: summarizeExecutionRows(rows),
+    session_rows: summarizeExecutionRows(messages),
+    error: error ? String(error?.message || error || "").trim() : "",
+  };
+}
+
+function buildVerificationSummary(syncRows, messages, workspaceChanges, sessionId, options = {}) {
   const syncAudit = collectToolActivity(syncRows, "prompt_sync");
   const sessionAudit = collectToolActivity(messages, "session_snapshot");
   const toolAudit = mergeToolActivityAudits(syncAudit, sessionAudit);
   const assistantText = extractAssistantText(syncRows) || extractAssistantText(messages);
-  const mode = normalizeVerificationMode(swarmState.verificationMode);
+  const mode = normalizeVerificationMode(options.verificationMode || swarmState.verificationMode);
   const requiredToolModeUnsatisfied = assistantText.includes(REQUIRED_TOOL_MODE_REASON);
   const workspaceChanged = workspaceChanges?.hasChanges === true;
   const strictMode = mode === "strict";
@@ -2293,6 +2457,10 @@ function buildVerificationSummary(syncRows, messages, workspaceChanges, sessionI
       ? workspaceChanges.paths.slice(0, 80)
       : [],
     workspace_change_summary: String(workspaceChanges?.summary || "").trim(),
+    execution_trace:
+      options?.executionTrace && typeof options.executionTrace === "object"
+        ? options.executionTrace
+        : undefined,
   };
 }
 
@@ -2349,8 +2517,9 @@ async function resolveExecutionModel(session, run) {
     return { provider: runProvider, model: runModel, source: "run" };
   }
 
-  const swarmProvider = String(swarmState.modelProvider || "").trim();
-  const swarmModel = String(swarmState.modelId || "").trim();
+  const controller = getSwarmRunController(String(run?.run_id || "").trim());
+  const swarmProvider = String(controller?.modelProvider || swarmState.modelProvider || "").trim();
+  const swarmModel = String(controller?.modelId || swarmState.modelId || "").trim();
   if (swarmProvider && swarmModel) {
     return { provider: swarmProvider, model: swarmModel, source: "swarm_state" };
   }
@@ -2367,24 +2536,46 @@ function stepPromptText(run, step, stepIndex, totalSteps) {
   return [
     "Execute this swarm step.",
     "",
-    `Objective: ${String(run?.objective || "").trim()}`,
-    `Workspace: ${String(run?.workspace?.canonical_path || "").trim()}`,
     `Step (${stepIndex + 1}/${totalSteps}): ${String(step?.title || step?.step_id || "").trim()}`,
+    `Workspace: ${String(run?.workspace?.canonical_path || "").trim()}`,
+    "",
+    "This step is already planned and assigned.",
+    "Treat the original objective below as background context only.",
+    "Ignore any orchestration, delegation, planning, or task-graph instructions in that objective.",
+    "Do not create a plan, do not restate the task graph, and do not describe future work.",
+    "Use workspace tools to implement this step now.",
+    "",
+    `Original objective: ${String(run?.objective || "").trim()}`,
     "",
     "Requirements:",
-    "- Make the required code/project changes for this step.",
+    "- Make the required code/project changes for this step right now.",
+    "- Create or edit files as needed for this step only.",
+    "- Use write/edit/apply_patch instead of a prose-only response.",
     "- Keep scope limited to this step.",
-    "- Return a concise summary of changes and blockers.",
+    "- Return a concise summary of the concrete file changes and blockers.",
   ].join("\n");
+}
+
+function rowsSinceAttemptStart(rows, startIndex = 0) {
+  const list = Array.isArray(rows) ? rows : [];
+  const offset = Math.max(0, Number(startIndex) || 0);
+  if (!offset) return list;
+  return list.length > offset ? list.slice(offset) : list;
 }
 
 async function runExecutionPromptWithVerification(session, run, prompt, sessionId = "") {
   const activeSessionId =
     String(sessionId || "").trim() || (await createExecutionSession(session, run));
   if (!activeSessionId) throw new Error("Failed to create execution session.");
+  const runId = String(run?.run_id || "").trim();
+  const controller = getSwarmRunController(runId);
   const workspaceRoot = await workspaceExistsAsDirectory(
     String(
-      run?.workspace?.canonical_path || run?.workspace_root || swarmState.workspaceRoot || REPO_ROOT
+      run?.workspace?.canonical_path ||
+        run?.workspace_root ||
+        controller?.workspaceRoot ||
+        swarmState.workspaceRoot ||
+        REPO_ROOT
     ).trim()
   );
   let workspaceBefore = null;
@@ -2395,6 +2586,16 @@ async function runExecutionPromptWithVerification(session, run, prompt, sessionI
     paths: [],
     summary: "",
   };
+  const resolvedModel = await resolveExecutionModel(session, run);
+  const initialRequestBody = {
+    parts: [{ type: "text", text: prompt }],
+    tool_mode: "required",
+    tool_allowlist: workerExecutionToolAllowlist(),
+  };
+  let initialAttemptRows = [];
+  let retryAttemptRows = [];
+  let retryAttemptMessages = [];
+  let retryRequestBody = null;
   const workspaceSeedPaths = () => [
     ...Object.keys(workspaceBefore?.files || {}),
     ...Object.keys(workspaceBefore?.statusByPath || {}),
@@ -2414,47 +2615,56 @@ async function runExecutionPromptWithVerification(session, run, prompt, sessionI
     {
       method: "POST",
       timeoutMs: 10 * 60 * 1000,
-      body: {
-        parts: [{ type: "text", text: prompt }],
-        tool_mode: "required",
-        tool_allowlist: workerExecutionToolAllowlist(),
-      },
+      body: initialRequestBody,
     }
   );
   let syncRows = Array.isArray(promptResponse) ? promptResponse : [];
+  initialAttemptRows = syncRows.slice();
+  let verificationStartIndex = 0;
+  let retryError = null;
   let hasAssistant = syncRows.some((row) => roleOfMessage(row) === "assistant");
   let hasToolSignal = hasToolActivity(syncRows);
   if (!hasAssistant || !hasToolSignal) {
+    verificationStartIndex = syncRows.length;
     const retryPrompt = [
       prompt,
       "",
       "Mandatory execution rule:",
       "- Before final text, execute at least one tool call.",
       "- Use write/edit/apply_patch to make workspace changes.",
+      "- On this retry, do not inspect further with read/search/glob/ls/list.",
+      "- Create or modify the target file directly with write/edit/apply_patch.",
       "- Do not use bash.",
     ].join("\n");
+    retryRequestBody = {
+      parts: [{ type: "text", text: retryPrompt }],
+      tool_mode: "required",
+      tool_allowlist: workerWriteRetryToolAllowlist(),
+    };
     promptResponse = await engineRequestJson(
       session,
       `/session/${encodeURIComponent(activeSessionId)}/prompt_sync`,
       {
         method: "POST",
         timeoutMs: 10 * 60 * 1000,
-        body: {
-          parts: [{ type: "text", text: retryPrompt }],
-          tool_mode: "required",
-          tool_allowlist: workerExecutionToolAllowlist(),
-        },
+        body: retryRequestBody,
       }
-    ).catch(() => promptResponse);
-    syncRows = Array.isArray(promptResponse) ? promptResponse : syncRows;
-    hasAssistant = hasAssistant || syncRows.some((row) => roleOfMessage(row) === "assistant");
-    hasToolSignal = hasToolSignal || hasToolActivity(syncRows);
+    ).catch((error) => {
+      retryError = error;
+      return null;
+    });
+    syncRows = rowsSinceAttemptStart(promptResponse, verificationStartIndex);
+    retryAttemptRows = syncRows.slice();
+    hasAssistant = syncRows.some((row) => roleOfMessage(row) === "assistant");
+    hasToolSignal = hasToolActivity(syncRows);
   }
   const sessionSnapshot = await engineRequestJson(
     session,
     `/session/${encodeURIComponent(activeSessionId)}`
   ).catch(() => null);
-  const messages = Array.isArray(sessionSnapshot?.messages) ? sessionSnapshot.messages : [];
+  const sessionMessages = Array.isArray(sessionSnapshot?.messages) ? sessionSnapshot.messages : [];
+  const messages = rowsSinceAttemptStart(sessionMessages, verificationStartIndex);
+  retryAttemptMessages = messages.slice();
   const persistedAssistant = messages.some((message) => roleOfMessage(message) === "assistant");
   if (workspaceRoot) {
     workspaceAfter = await captureWorkspaceSnapshot(workspaceRoot, {
@@ -2479,12 +2689,55 @@ async function runExecutionPromptWithVerification(session, run, prompt, sessionI
         .join("\n");
     }
   }
+  const executionTrace = {
+    session_id: activeSessionId,
+    model: {
+      provider: String(resolvedModel?.provider || "").trim(),
+      model_id: String(resolvedModel?.model || "").trim(),
+      source: String(resolvedModel?.source || "").trim(),
+    },
+    attempts: [
+      buildAttemptTelemetry(
+        "initial",
+        initialRequestBody,
+        initialAttemptRows,
+        retryRequestBody ? [] : messages,
+        Date.now()
+      ),
+      retryRequestBody
+        ? buildAttemptTelemetry(
+            "retry",
+            retryRequestBody,
+            retryAttemptRows,
+            retryAttemptMessages,
+            Date.now(),
+            retryError
+          )
+        : null,
+    ].filter(Boolean),
+  };
   const verification = buildVerificationSummary(
     syncRows,
     messages,
     workspaceChanges,
-    activeSessionId
+    activeSessionId,
+    {
+      verificationMode: controller?.verificationMode || swarmState.verificationMode,
+      executionTrace,
+    }
   );
+  if (retryError && !hasAssistant && !persistedAssistant) {
+    throw createExecutionError(`PROMPT_RETRY_FAILED: ${retryError.message}`, {
+      sessionId: activeSessionId,
+      verification: {
+        ...verification,
+        reason: "PROMPT_RETRY_FAILED",
+        passed: false,
+        assistant_present: false,
+        retry_error: String(retryError?.message || retryError || "").trim(),
+      },
+    });
+  }
   if (!hasAssistant && !persistedAssistant) {
     throw createExecutionError(
       "PROMPT_DISPATCH_EMPTY_RESPONSE: prompt_sync returned no assistant output. Model route may be unresolved.",
@@ -2555,17 +2808,26 @@ function taskPromptText(run, task, workerId, workflowId) {
   return [
     "Execute this swarm blackboard task.",
     "",
-    `Objective: ${String(run?.objective || "").trim()}`,
-    `Workspace: ${String(run?.workspace?.canonical_path || "").trim()}`,
     `Task: ${taskTitleFromRecord(task)}`,
     `Task ID: ${String(task?.id || "").trim()}`,
     `Workflow: ${String(workflowId || task?.workflow_id || "swarm.blackboard.default").trim()}`,
     `Agent: ${workerId}`,
+    `Workspace: ${String(run?.workspace?.canonical_path || "").trim()}`,
+    "",
+    "This task is already planned and assigned.",
+    "Treat the original objective below as background context only.",
+    "Ignore any orchestration, delegation, planning, or task-graph instructions in that objective.",
+    "Do not create a plan, do not restate the task graph, and do not describe future work.",
+    "Use workspace tools to implement this task now.",
+    "",
+    `Original objective: ${String(run?.objective || "").trim()}`,
     "",
     "Requirements:",
-    "- Implement this task in the workspace.",
+    "- Implement this task in the workspace right now.",
+    "- Create or edit files as needed for this task only.",
+    "- Use write/edit/apply_patch instead of a prose-only response.",
     "- Keep scope limited to this task.",
-    "- Return a concise summary of changes and blockers.",
+    "- Return a concise summary of the concrete file changes and blockers.",
   ].join("\n");
 }
 
@@ -2639,7 +2901,7 @@ async function transitionBlackboardTask(session, runId, task, update = {}) {
     {
       method: "POST",
       body: {
-        action: "status",
+        action: String(update.action || "status").trim() || "status",
         status: update.status || undefined,
         error: update.error || undefined,
         command_id: update.commandId || undefined,
@@ -2660,7 +2922,9 @@ async function detectExecutorMode(session, runId) {
   ).catch(() => null);
   const steps = Array.isArray(payload?.run?.steps) ? payload.run.steps : [];
   if (steps.length) return "context_steps";
-  return String(swarmState.executorMode || "context_steps");
+  return String(
+    getSwarmRunController(runId)?.executorMode || swarmState.executorMode || "context_steps"
+  );
 }
 
 const swarmExecutors = new Map();
@@ -2713,8 +2977,10 @@ async function ensureStepMarkedDone(session, runId, stepId) {
 
 async function driveContextRunExecution(session, runId) {
   if (swarmExecutors.has(runId)) return false;
-  swarmState.executorState = "running";
-  swarmState.executorReason = "";
+  upsertSwarmRunController(runId, {
+    executorState: "running",
+    executorReason: "",
+  });
   const runner = (async () => {
     let completionStreak = 0;
     let lastCompletedStepId = "";
@@ -2748,16 +3014,24 @@ async function driveContextRunExecution(session, runId) {
           await appendContextRunEvent(session, runId, "run_completed", "completed", {
             why_next_step: "all steps completed",
           });
-          swarmState.lastError = "";
-          swarmState.executorState = "idle";
-          swarmState.executorReason = "run completed";
+          upsertSwarmRunController(runId, {
+            lastError: "",
+            status: "completed",
+            stoppedAt: Date.now(),
+            executorState: "idle",
+            executorReason: "run completed",
+          });
           return;
         }
-        swarmState.lastError = String(
+        const blockedReason = String(
           nextPayload?.why_next_step || latestRun?.why_next_step || "No actionable step selected."
         );
-        swarmState.executorState = "blocked";
-        swarmState.executorReason = swarmState.lastError;
+        upsertSwarmRunController(runId, {
+          lastError: blockedReason,
+          status: "blocked",
+          executorState: "blocked",
+          executorReason: blockedReason,
+        });
         return;
       }
 
@@ -2842,9 +3116,12 @@ async function driveContextRunExecution(session, runId) {
         if (completionStreak > 2) {
           throw new Error(`STEP_LOOP_GUARD: repeated completion on step \`${executionStepId}\``);
         }
-        swarmState.lastError = "";
-        swarmState.executorState = "running";
-        swarmState.executorReason = "";
+        upsertSwarmRunController(runId, {
+          lastError: "",
+          status: "running",
+          executorState: "running",
+          executorReason: "",
+        });
       } catch (error) {
         const message = String(error?.message || error || "Unknown step failure");
         const failureSessionId = String(error?.sessionId || stepSessionId || "").trim();
@@ -2852,9 +3129,12 @@ async function driveContextRunExecution(session, runId) {
           error?.verification && typeof error.verification === "object"
             ? error.verification
             : undefined;
-        swarmState.lastError = message;
-        swarmState.executorState = "error";
-        swarmState.executorReason = message;
+        upsertSwarmRunController(runId, {
+          lastError: message,
+          status: "failed",
+          executorState: "error",
+          executorReason: message,
+        });
         await appendContextRunEvent(
           session,
           runId,
@@ -2874,15 +3154,22 @@ async function driveContextRunExecution(session, runId) {
     }
   })()
     .catch((error) => {
-      swarmState.lastError = String(error?.message || error || "Run executor failed");
-      swarmState.executorState = "error";
-      swarmState.executorReason = swarmState.lastError;
+      const message = String(error?.message || error || "Run executor failed");
+      upsertSwarmRunController(runId, {
+        lastError: message,
+        status: "failed",
+        executorState: "error",
+        executorReason: message,
+      });
     })
     .finally(() => {
       swarmExecutors.delete(runId);
-      if (swarmState.executorState === "running") {
-        swarmState.executorState = "idle";
-        swarmState.executorReason = "";
+      const controller = getSwarmRunController(runId);
+      if (String(controller?.executorState || "") === "running") {
+        upsertSwarmRunController(runId, {
+          executorState: "idle",
+          executorReason: "",
+        });
       }
     });
   swarmExecutors.set(runId, runner);
@@ -2891,16 +3178,22 @@ async function driveContextRunExecution(session, runId) {
 
 async function driveBlackboardRunExecution(session, runId, options = {}) {
   if (swarmExecutors.has(runId)) return false;
+  const controller = getSwarmRunController(runId);
   const workflowId = String(
-    options.workflowId || swarmState.workflowId || "swarm.blackboard.default"
+    options.workflowId || controller?.workflowId || swarmState.workflowId || "swarm.blackboard.default"
   ).trim();
   const maxAgents = Math.max(
     1,
-    Math.min(16, Number.parseInt(String(options.maxAgents || swarmState.maxAgents || 3), 10) || 3)
+    Math.min(
+      16,
+      Number.parseInt(String(options.maxAgents || controller?.maxAgents || swarmState.maxAgents || 3), 10) || 3
+    )
   );
-  swarmState.executorState = "running";
-  swarmState.executorReason = "";
-  swarmState.executorMode = "blackboard";
+  upsertSwarmRunController(runId, {
+    executorState: "running",
+    executorReason: "",
+    executorMode: "blackboard",
+  });
 
   const runner = (async () => {
     let completionAnnounced = false;
@@ -2910,9 +3203,13 @@ async function driveBlackboardRunExecution(session, runId, options = {}) {
       await appendContextRunEvent(session, runId, "run_completed", "completed", {
         why_next_step: String(reason || "all tasks completed"),
       });
-      swarmState.lastError = "";
-      swarmState.executorState = "idle";
-      swarmState.executorReason = "run completed";
+      upsertSwarmRunController(runId, {
+        lastError: "",
+        status: "completed",
+        stoppedAt: Date.now(),
+        executorState: "idle",
+        executorReason: "run completed",
+      });
     };
 
     const workers = Array.from({ length: maxAgents }).map((_, index) => {
@@ -3017,9 +3314,12 @@ async function driveBlackboardRunExecution(session, runId, options = {}) {
               },
               taskId || null
             );
-            swarmState.lastError = "";
-            swarmState.executorState = "running";
-            swarmState.executorReason = "";
+            upsertSwarmRunController(runId, {
+              lastError: "",
+              status: "running",
+              executorState: "running",
+              executorReason: "",
+            });
           } catch (error) {
             const message = String(error?.message || error || "Unknown task failure");
             const failureSessionId = String(error?.sessionId || taskSessionId || "").trim();
@@ -3032,9 +3332,12 @@ async function driveBlackboardRunExecution(session, runId, options = {}) {
               error: message,
               agentId,
             }).catch(() => null);
-            swarmState.lastError = message;
-            swarmState.executorState = "error";
-            swarmState.executorReason = message;
+            upsertSwarmRunController(runId, {
+              lastError: message,
+              status: "failed",
+              executorState: "error",
+              executorReason: message,
+            });
             await appendContextRunEvent(
               session,
               runId,
@@ -3060,15 +3363,22 @@ async function driveBlackboardRunExecution(session, runId, options = {}) {
     await Promise.all(workers);
   })()
     .catch((error) => {
-      swarmState.lastError = String(error?.message || error || "Run executor failed");
-      swarmState.executorState = "error";
-      swarmState.executorReason = swarmState.lastError;
+      const message = String(error?.message || error || "Run executor failed");
+      upsertSwarmRunController(runId, {
+        lastError: message,
+        status: "failed",
+        executorState: "error",
+        executorReason: message,
+      });
     })
     .finally(() => {
       swarmExecutors.delete(runId);
-      if (swarmState.executorState === "running") {
-        swarmState.executorState = "idle";
-        swarmState.executorReason = "";
+      const current = getSwarmRunController(runId);
+      if (String(current?.executorState || "") === "running") {
+        upsertSwarmRunController(runId, {
+          executorState: "idle",
+          executorReason: "",
+        });
       }
     });
   swarmExecutors.set(runId, runner);
@@ -3077,7 +3387,7 @@ async function driveBlackboardRunExecution(session, runId, options = {}) {
 
 async function startRunExecutor(session, runId, options = {}) {
   const mode = String(options.mode || "").trim() || (await detectExecutorMode(session, runId));
-  swarmState.executorMode = mode;
+  upsertSwarmRunController(runId, { executorMode: mode });
   if (mode === "blackboard") {
     return driveBlackboardRunExecution(session, runId, options);
   }
@@ -3266,29 +3576,31 @@ async function startSwarm(session, config = {}) {
     verification_mode: verificationMode,
     planner_mode: planSeedMode,
   });
-  swarmState.status = "awaiting_approval";
-  swarmState.startedAt = Date.now();
-  swarmState.stoppedAt = null;
-  swarmState.objective = objective;
-  swarmState.workspaceRoot = workspaceRoot;
-  swarmState.maxTasks = maxTasks;
-  swarmState.maxAgents = maxAgents;
-  swarmState.workflowId = workflowId;
-  swarmState.modelProvider = modelProvider;
-  swarmState.modelId = modelId;
-  swarmState.resolvedModelProvider = "";
-  swarmState.resolvedModelId = "";
-  swarmState.modelResolutionSource = "deferred";
-  swarmState.mcpServers = mcpServers;
-  swarmState.repoRoot = workspaceRoot;
-  swarmState.verificationMode = verificationMode;
-  swarmState.lastError = "";
-  swarmState.executorMode = planSeedMode.startsWith("blackboard") ? "blackboard" : "context_steps";
-  swarmState.executorState = "idle";
-  swarmState.executorReason = "";
-  swarmState.runId = runId;
-  swarmState.attachedPid = null;
-  swarmState.registryCache = null;
+  upsertSwarmRunController(runId, {
+    status: "awaiting_approval",
+    startedAt: Date.now(),
+    stoppedAt: null,
+    objective,
+    workspaceRoot,
+    maxTasks,
+    maxAgents,
+    workflowId,
+    modelProvider,
+    modelId,
+    resolvedModelProvider: "",
+    resolvedModelId: "",
+    modelResolutionSource: "deferred",
+    mcpServers,
+    repoRoot: workspaceRoot,
+    verificationMode,
+    lastError: "",
+    executorMode: planSeedMode.startsWith("blackboard") ? "blackboard" : "context_steps",
+    executorState: "idle",
+    executorReason: "",
+    attachedPid: null,
+    registryCache: null,
+  });
+  setActiveSwarmRunId(runId);
   setSwarmPreflight({
     gitAvailable: null,
     repoReady: true,
@@ -3322,6 +3634,9 @@ const handleSwarmApi = createSwarmApiHandler({
   transitionBlackboardTask,
   contextRunSnapshot,
   contextRunToTasks,
+  getSwarmRunController,
+  upsertSwarmRunController,
+  setActiveSwarmRunId,
 });
 
 async function handleApi(req, res) {
