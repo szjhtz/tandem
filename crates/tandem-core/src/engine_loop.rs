@@ -43,6 +43,29 @@ struct StreamedToolCall {
     args: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RawToolArgsState {
+    Present,
+    Empty,
+    Unparseable,
+}
+
+impl RawToolArgsState {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Present => "present",
+            Self::Empty => "empty",
+            Self::Unparseable => "unparseable",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WritePathRecoveryMode {
+    Heuristic,
+    OutputTargetOnly,
+}
+
 #[derive(Debug, Clone)]
 pub struct SpawnAgentToolContext {
     pub session_id: String,
@@ -333,6 +356,7 @@ impl EngineLoop {
                     args,
                     active_agent.skills.as_deref(),
                     &text,
+                    requested_write_required,
                     None,
                     cancel.clone(),
                 )
@@ -356,8 +380,9 @@ impl EngineLoop {
             let mut auto_workspace_probe_attempted = false;
             let mut productive_tool_calls_total = 0usize;
             let mut productive_write_tool_calls_total = 0usize;
-            let mut required_tool_retry_used = false;
-            let mut required_write_retry_used = false;
+            let mut required_tool_retry_count = 0usize;
+            let mut required_write_retry_count = 0usize;
+            let strict_write_retry_max_attempts = strict_write_retry_max_attempts();
             let mut required_tool_unsatisfied_emitted = false;
             let mut latest_required_tool_failure_kind = RequiredToolFailureKind::NoToolCallEmitted;
             let email_delivery_requested = requires_email_delivery_prompt(&text);
@@ -565,7 +590,7 @@ impl EngineLoop {
                             .any(|pattern| tool_name_matches_policy(pattern, &tool))
                     });
                 }
-                if requested_write_required && required_write_retry_used {
+                if requested_write_required && required_write_retry_count > 0 {
                     tool_schemas.retain(|schema| is_workspace_write_tool(&schema.name));
                 }
                 if active_agent.tools.is_some() {
@@ -860,9 +885,25 @@ impl EngineLoop {
                                 &session_id,
                                 &user_message_id,
                                 tool_name.clone(),
-                                json!({}),
+                                parsed_preview.clone(),
                             );
                             tool_part.id = Some(id.clone());
+                            if tool_name == "write" {
+                                tracing::info!(
+                                    session_id = %session_id,
+                                    message_id = %user_message_id,
+                                    tool_call_id = %id,
+                                    args_delta_len = args_delta.len(),
+                                    accumulated_args_len = entry.args.len(),
+                                    parsed_preview_empty = parsed_preview.is_null()
+                                        || parsed_preview.as_object().is_some_and(|value| value.is_empty())
+                                        || parsed_preview
+                                            .as_str()
+                                            .map(|value| value.trim().is_empty())
+                                            .unwrap_or(false),
+                                    "streamed write tool args delta received"
+                                );
+                            }
                             self.event_bus.publish(EngineEvent::new(
                                 "message.part.updated",
                                 json!({
@@ -1135,6 +1176,17 @@ impl EngineLoop {
                             guard_budget_hit_in_cycle = true;
                             continue;
                         }
+                        let mut finalized_part = WireMessagePart::tool_invocation(
+                            &session_id,
+                            &user_message_id,
+                            tool.clone(),
+                            effective_args.clone(),
+                        );
+                        finalized_part.state = Some("pending".to_string());
+                        self.event_bus.publish(EngineEvent::new(
+                            "message.part.updated",
+                            json!({"part": finalized_part}),
+                        ));
                         *entry += 1;
                         accepted_tool_calls_in_cycle =
                             accepted_tool_calls_in_cycle.saturating_add(1);
@@ -1146,6 +1198,7 @@ impl EngineLoop {
                                 effective_args,
                                 active_agent.skills.as_deref(),
                                 &text,
+                                requested_write_required,
                                 Some(&completion),
                                 cancel.clone(),
                             )
@@ -1215,17 +1268,18 @@ impl EngineLoop {
                             if requested_write_required
                                 && write_tool_attempted_in_cycle
                                 && productive_write_tool_calls_total == 0
-                                && latest_required_tool_failure_kind
-                                    == RequiredToolFailureKind::ToolCallInvalidArgs
+                                && is_write_invalid_args_failure_kind(
+                                    latest_required_tool_failure_kind,
+                                )
                             {
-                                latest_required_tool_failure_kind =
-                                    RequiredToolFailureKind::WriteRequiredNotSatisfied;
-                                if !required_write_retry_used {
-                                    required_write_retry_used = true;
-                                    required_tool_retry_used = true;
-                                    followup_context = Some(build_required_tool_retry_context(
+                                if required_write_retry_count + 1 < strict_write_retry_max_attempts
+                                {
+                                    required_write_retry_count += 1;
+                                    required_tool_retry_count += 1;
+                                    followup_context = Some(build_write_required_retry_context(
                                         &offered_tool_preview,
-                                        RequiredToolFailureKind::ToolCallInvalidArgs,
+                                        latest_required_tool_failure_kind,
+                                        &text,
                                     ));
                                     self.event_bus.publish(EngineEvent::new(
                                         "provider.call.iteration.finish",
@@ -1236,14 +1290,14 @@ impl EngineLoop {
                                             "finishReason": "required_write_invalid_retry",
                                             "acceptedToolCalls": accepted_tool_calls_in_cycle,
                                             "rejectedToolCalls": 0,
-                                            "requiredToolFailureReason": "WRITE_CONTENT_MISSING",
+                                            "requiredToolFailureReason": latest_required_tool_failure_kind.code(),
                                         }),
                                     ));
                                     continue;
                                 }
                             }
-                            if !required_tool_retry_used {
-                                required_tool_retry_used = true;
+                            if !requested_write_required && required_tool_retry_count == 0 {
+                                required_tool_retry_count += 1;
                                 followup_context = Some(build_required_tool_retry_context(
                                     &offered_tool_preview,
                                     latest_required_tool_failure_kind,
@@ -1299,11 +1353,12 @@ impl EngineLoop {
                         {
                             latest_required_tool_failure_kind =
                                 RequiredToolFailureKind::WriteRequiredNotSatisfied;
-                            if !required_write_retry_used {
-                                required_write_retry_used = true;
-                                followup_context = Some(build_required_tool_retry_context(
+                            if required_write_retry_count + 1 < strict_write_retry_max_attempts {
+                                required_write_retry_count += 1;
+                                followup_context = Some(build_write_required_retry_context(
                                     &offered_tool_preview,
                                     latest_required_tool_failure_kind,
+                                    &text,
                                 ));
                                 self.event_bus.publish(EngineEvent::new(
                                     "provider.call.iteration.finish",
@@ -1425,14 +1480,26 @@ impl EngineLoop {
                     && productive_tool_calls_total == 0
                 {
                     if requested_write_required
-                        && required_write_retry_used
+                        && required_write_retry_count > 0
                         && productive_write_tool_calls_total == 0
+                        && !is_write_invalid_args_failure_kind(latest_required_tool_failure_kind)
                     {
                         latest_required_tool_failure_kind =
                             RequiredToolFailureKind::WriteRequiredNotSatisfied;
                     }
-                    if !required_tool_retry_used {
-                        required_tool_retry_used = true;
+                    if requested_write_required
+                        && required_write_retry_count + 1 < strict_write_retry_max_attempts
+                    {
+                        required_write_retry_count += 1;
+                        followup_context = Some(build_write_required_retry_context(
+                            &offered_tool_preview,
+                            latest_required_tool_failure_kind,
+                            &text,
+                        ));
+                        continue;
+                    }
+                    if !requested_write_required && required_tool_retry_count == 0 {
+                        required_tool_retry_count += 1;
                         followup_context = Some(build_required_tool_retry_context(
                             &offered_tool_preview,
                             latest_required_tool_failure_kind,
@@ -1647,15 +1714,22 @@ impl EngineLoop {
         args: Value,
         equipped_skills: Option<&[String]>,
         latest_user_text: &str,
+        write_required: bool,
         latest_assistant_context: Option<&str>,
         cancel: CancellationToken,
     ) -> anyhow::Result<Option<String>> {
         let tool = normalize_tool_name(&tool);
-        let normalized = normalize_tool_args(
+        let raw_args = args.clone();
+        let normalized = normalize_tool_args_with_mode(
             &tool,
             args,
             latest_user_text,
             latest_assistant_context.unwrap_or_default(),
+            if write_required {
+                WritePathRecoveryMode::OutputTargetOnly
+            } else {
+                WritePathRecoveryMode::Heuristic
+            },
         );
         self.event_bus.publish(EngineEvent::new(
             "tool.args.normalized",
@@ -1665,6 +1739,7 @@ impl EngineLoop {
                 "tool": tool,
                 "argsSource": normalized.args_source,
                 "argsIntegrity": normalized.args_integrity,
+                "rawArgsState": normalized.raw_args_state.as_str(),
                 "query": normalized.query,
                 "queryHash": normalized.query.as_ref().map(|q| stable_hash(q)),
                 "requestID": Value::Null
@@ -1689,6 +1764,11 @@ impl EngineLoop {
                 .missing_terminal_reason
                 .clone()
                 .unwrap_or_else(|| "TOOL_ARGUMENTS_MISSING".to_string());
+            let raw_args_preview = truncate_text(&raw_args.to_string(), 2_000);
+            let normalized_args_preview = truncate_text(&normalized.args.to_string(), 2_000);
+            let latest_user_preview = truncate_text(latest_user_text, 500);
+            let latest_assistant_preview =
+                truncate_text(latest_assistant_context.unwrap_or_default(), 500);
             self.event_bus.publish(EngineEvent::new(
                 "tool.args.missing_terminal",
                 json!({
@@ -1697,19 +1777,48 @@ impl EngineLoop {
                     "tool": tool,
                     "argsSource": normalized.args_source,
                     "argsIntegrity": normalized.args_integrity,
+                    "rawArgsState": normalized.raw_args_state.as_str(),
                     "requestID": Value::Null,
-                    "error": missing_reason
+                    "error": missing_reason,
+                    "rawArgsPreview": raw_args_preview,
+                    "normalizedArgsPreview": normalized_args_preview,
+                    "latestUserPreview": latest_user_preview,
+                    "latestAssistantPreview": latest_assistant_preview,
                 }),
             ));
-            let mut failed_part =
-                WireMessagePart::tool_result(session_id, message_id, tool.clone(), json!(null));
+            if tool == "write" {
+                tracing::warn!(
+                    session_id = %session_id,
+                    message_id = %message_id,
+                    tool = %tool,
+                    reason = %missing_reason,
+                    args_source = %normalized.args_source,
+                    args_integrity = %normalized.args_integrity,
+                    raw_args_state = %normalized.raw_args_state.as_str(),
+                    raw_args = %raw_args_preview,
+                    normalized_args = %normalized_args_preview,
+                    latest_user = %latest_user_preview,
+                    latest_assistant = %latest_assistant_preview,
+                    "write tool arguments missing terminal field"
+                );
+            }
+            let mut failed_part = WireMessagePart::tool_result(
+                session_id,
+                message_id,
+                tool.clone(),
+                Some(raw_args.clone()),
+                json!(null),
+            );
             failed_part.state = Some("failed".to_string());
-            failed_part.error = Some(missing_reason.clone());
+            let surfaced_reason =
+                provider_specific_write_reason(&tool, &missing_reason, normalized.raw_args_state)
+                    .unwrap_or_else(|| missing_reason.clone());
+            failed_part.error = Some(surfaced_reason.clone());
             self.event_bus.publish(EngineEvent::new(
                 "message.part.updated",
                 json!({"part": failed_part}),
             ));
-            return Ok(Some(missing_reason));
+            return Ok(Some(surfaced_reason));
         }
 
         let args = match enforce_skill_scope(&tool, normalized.args, equipped_skills) {
@@ -1740,8 +1849,13 @@ impl EngineLoop {
                 let reason = decision
                     .reason
                     .unwrap_or_else(|| "Tool denied by runtime policy".to_string());
-                let mut blocked_part =
-                    WireMessagePart::tool_result(session_id, message_id, tool.clone(), json!(null));
+                let mut blocked_part = WireMessagePart::tool_result(
+                    session_id,
+                    message_id,
+                    tool.clone(),
+                    Some(args.clone()),
+                    json!(null),
+                );
                 blocked_part.state = Some("failed".to_string());
                 blocked_part.error = Some(reason.clone());
                 self.event_bus.publish(EngineEvent::new(
@@ -1756,8 +1870,13 @@ impl EngineLoop {
             .workspace_sandbox_violation(session_id, &tool, &args)
             .await
         {
-            let mut blocked_part =
-                WireMessagePart::tool_result(session_id, message_id, tool.clone(), json!(null));
+            let mut blocked_part = WireMessagePart::tool_result(
+                session_id,
+                message_id,
+                tool.clone(),
+                Some(args.clone()),
+                json!(null),
+            );
             blocked_part.state = Some("failed".to_string());
             blocked_part.error = Some(violation.clone());
             self.event_bus.publish(EngineEvent::new(
@@ -1829,8 +1948,13 @@ impl EngineLoop {
                         "timeoutMs": timeout_ms,
                     }),
                 ));
-                let mut timeout_part =
-                    WireMessagePart::tool_result(session_id, message_id, tool.clone(), json!(null));
+                let mut timeout_part = WireMessagePart::tool_result(
+                    session_id,
+                    message_id,
+                    tool.clone(),
+                    Some(args.clone()),
+                    json!(null),
+                );
                 timeout_part.id = Some(pending.id);
                 timeout_part.state = Some("failed".to_string());
                 timeout_part.error = Some(format!(
@@ -1847,8 +1971,13 @@ impl EngineLoop {
             }
             let approved = matches!(reply.as_deref(), Some("once" | "always" | "allow"));
             if !approved {
-                let mut denied_part =
-                    WireMessagePart::tool_result(session_id, message_id, tool.clone(), json!(null));
+                let mut denied_part = WireMessagePart::tool_result(
+                    session_id,
+                    message_id,
+                    tool.clone(),
+                    Some(args.clone()),
+                    json!(null),
+                );
                 denied_part.id = Some(pending.id);
                 denied_part.state = Some("denied".to_string());
                 denied_part.error = Some("Permission denied by user".to_string());
@@ -1930,6 +2059,7 @@ impl EngineLoop {
                     session_id,
                     message_id,
                     tool.clone(),
+                    Some(args_for_side_events.clone()),
                     json!(output.clone()),
                 );
                 result_part.id = invoke_part_id;
@@ -1943,8 +2073,13 @@ impl EngineLoop {
                 )));
             }
             let output = "spawn_agent is unavailable in this runtime (no spawn hook installed).";
-            let mut failed_part =
-                WireMessagePart::tool_result(session_id, message_id, tool.clone(), json!(null));
+            let mut failed_part = WireMessagePart::tool_result(
+                session_id,
+                message_id,
+                tool.clone(),
+                Some(args_for_side_events.clone()),
+                json!(null),
+            );
             failed_part.id = invoke_part_id.clone();
             failed_part.state = Some("failed".to_string());
             failed_part.error = Some(output.to_string());
@@ -1970,6 +2105,7 @@ impl EngineLoop {
                         session_id,
                         message_id,
                         tool.clone(),
+                        Some(args_for_side_events.clone()),
                         json!(null),
                     );
                     failed_part.id = invoke_part_id.clone();
@@ -2002,6 +2138,7 @@ impl EngineLoop {
                         session_id,
                         message_id,
                         tool.clone(),
+                        Some(args_for_side_events.clone()),
                         json!(auth_output.clone()),
                     );
                     result_part.id = invoke_part_id.clone();
@@ -2014,8 +2151,13 @@ impl EngineLoop {
                         16_000,
                     )));
                 }
-                let mut failed_part =
-                    WireMessagePart::tool_result(session_id, message_id, tool.clone(), json!(null));
+                let mut failed_part = WireMessagePart::tool_result(
+                    session_id,
+                    message_id,
+                    tool.clone(),
+                    Some(args_for_side_events.clone()),
+                    json!(null),
+                );
                 failed_part.id = invoke_part_id.clone();
                 failed_part.state = Some("failed".to_string());
                 failed_part.error = Some(err_text.clone());
@@ -2083,6 +2225,7 @@ impl EngineLoop {
             session_id,
             message_id,
             tool.clone(),
+            Some(args_for_side_events.clone()),
             json!(output.clone()),
         );
         result_part.id = invoke_part_id;
@@ -2736,6 +2879,8 @@ fn is_terminal_tool_error_reason(output: &str) -> bool {
             | "BASH_COMMAND_MISSING"
             | "FILE_PATH_MISSING"
             | "WRITE_CONTENT_MISSING"
+            | "WRITE_ARGS_EMPTY_FROM_PROVIDER"
+            | "WRITE_ARGS_UNPARSEABLE_FROM_PROVIDER"
             | "WEBFETCH_URL_MISSING"
             | "PACK_BUILDER_PLAN_ID_MISSING"
             | "PACK_BUILDER_GOAL_MISSING"
@@ -2972,6 +3117,8 @@ enum RequiredToolFailureKind {
     NoToolCallEmitted,
     ToolCallParseFailed,
     ToolCallInvalidArgs,
+    WriteArgsEmptyFromProvider,
+    WriteArgsUnparseableFromProvider,
     ToolCallRejectedByPolicy,
     ToolCallExecutedNonProductive,
     WriteRequiredNotSatisfied,
@@ -2983,6 +3130,8 @@ impl RequiredToolFailureKind {
             Self::NoToolCallEmitted => "NO_TOOL_CALL_EMITTED",
             Self::ToolCallParseFailed => "TOOL_CALL_PARSE_FAILED",
             Self::ToolCallInvalidArgs => "TOOL_CALL_INVALID_ARGS",
+            Self::WriteArgsEmptyFromProvider => "WRITE_ARGS_EMPTY_FROM_PROVIDER",
+            Self::WriteArgsUnparseableFromProvider => "WRITE_ARGS_UNPARSEABLE_FROM_PROVIDER",
             Self::ToolCallRejectedByPolicy => "TOOL_CALL_REJECTED_BY_POLICY",
             Self::ToolCallExecutedNonProductive => "TOOL_CALL_EXECUTED_NON_PRODUCTIVE",
             Self::WriteRequiredNotSatisfied => "WRITE_REQUIRED_NOT_SATISFIED",
@@ -3011,7 +3160,7 @@ fn build_required_tool_retry_context(
         == RequiredToolFailureKind::WriteRequiredNotSatisfied
     {
         "Inspection is complete; now create or modify workspace files with write, edit, or apply_patch.".to_string()
-    } else if previous_reason == RequiredToolFailureKind::ToolCallInvalidArgs {
+    } else if is_write_invalid_args_failure_kind(previous_reason) {
         "Previous tool call arguments were invalid. If you use write, include both `path` and the full `content`. If inspection is already complete, use write, edit, or apply_patch now.".to_string()
     } else {
         available_tools
@@ -3021,6 +3170,30 @@ fn build_required_tool_retry_context(
         previous_reason.code(),
         execution_instruction
     )
+}
+
+fn is_write_invalid_args_failure_kind(reason: RequiredToolFailureKind) -> bool {
+    matches!(
+        reason,
+        RequiredToolFailureKind::ToolCallInvalidArgs
+            | RequiredToolFailureKind::WriteArgsEmptyFromProvider
+            | RequiredToolFailureKind::WriteArgsUnparseableFromProvider
+    )
+}
+
+fn build_write_required_retry_context(
+    offered_tool_preview: &str,
+    previous_reason: RequiredToolFailureKind,
+    latest_user_text: &str,
+) -> String {
+    let mut prompt = build_required_tool_retry_context(offered_tool_preview, previous_reason);
+    if let Some(path) = infer_required_output_target_path_from_text(latest_user_text) {
+        prompt.push(' ');
+        prompt.push_str(&format!(
+            "The required output target for this task is `{path}`. Write or update that file now."
+        ));
+    }
+    prompt
 }
 
 fn looks_like_unparsed_tool_payload(output: &str) -> bool {
@@ -3063,6 +3236,18 @@ fn classify_required_tool_failure(
     }
     if outputs
         .iter()
+        .any(|output| output.contains("WRITE_ARGS_EMPTY_FROM_PROVIDER"))
+    {
+        return RequiredToolFailureKind::WriteArgsEmptyFromProvider;
+    }
+    if outputs
+        .iter()
+        .any(|output| output.contains("WRITE_ARGS_UNPARSEABLE_FROM_PROVIDER"))
+    {
+        return RequiredToolFailureKind::WriteArgsUnparseableFromProvider;
+    }
+    if outputs
+        .iter()
         .any(|output| is_terminal_tool_error_reason(output))
     {
         return RequiredToolFailureKind::ToolCallInvalidArgs;
@@ -3095,6 +3280,14 @@ fn max_tool_iterations() -> usize {
         .and_then(|raw| raw.trim().parse::<usize>().ok())
         .filter(|value| *value > 0)
         .unwrap_or(default_iterations)
+}
+
+fn strict_write_retry_max_attempts() -> usize {
+    std::env::var("TANDEM_STRICT_WRITE_RETRY_MAX_ATTEMPTS")
+        .ok()
+        .and_then(|raw| raw.trim().parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(3)
 }
 
 fn provider_stream_connect_timeout_ms() -> usize {
@@ -3206,16 +3399,34 @@ struct NormalizedToolArgs {
     args: Value,
     args_source: String,
     args_integrity: String,
+    raw_args_state: RawToolArgsState,
     query: Option<String>,
     missing_terminal: bool,
     missing_terminal_reason: Option<String>,
 }
 
+#[cfg(test)]
 fn normalize_tool_args(
     tool_name: &str,
     raw_args: Value,
     latest_user_text: &str,
     latest_assistant_context: &str,
+) -> NormalizedToolArgs {
+    normalize_tool_args_with_mode(
+        tool_name,
+        raw_args,
+        latest_user_text,
+        latest_assistant_context,
+        WritePathRecoveryMode::Heuristic,
+    )
+}
+
+fn normalize_tool_args_with_mode(
+    tool_name: &str,
+    raw_args: Value,
+    latest_user_text: &str,
+    latest_assistant_context: &str,
+    write_path_recovery_mode: WritePathRecoveryMode,
 ) -> NormalizedToolArgs {
     let normalized_tool = normalize_tool_name(tool_name);
     let mut args = raw_args;
@@ -3225,6 +3436,7 @@ fn normalize_tool_args(
         "provider_json".to_string()
     };
     let mut args_integrity = "ok".to_string();
+    let raw_args_state = classify_raw_tool_args_state(&args);
     let mut query = None;
     let mut missing_terminal = false;
     let mut missing_terminal_reason = None;
@@ -3269,6 +3481,30 @@ fn normalize_tool_args(
     } else if matches!(normalized_tool.as_str(), "read" | "write" | "edit") {
         if let Some(path) = extract_file_path_arg(&args) {
             args = set_file_path_arg(args, path);
+        } else if normalized_tool == "write" || normalized_tool == "edit" {
+            if let Some(inferred) = infer_required_output_target_path_from_text(latest_user_text)
+                .or_else(|| infer_required_output_target_path_from_text(latest_assistant_context))
+            {
+                args_source = "recovered_from_context".to_string();
+                args_integrity = "recovered".to_string();
+                args = set_file_path_arg(args, inferred);
+            } else if write_path_recovery_mode == WritePathRecoveryMode::Heuristic {
+                if let Some(inferred) = infer_write_file_path_from_text(latest_user_text) {
+                    args_source = "inferred_from_user".to_string();
+                    args_integrity = "recovered".to_string();
+                    args = set_file_path_arg(args, inferred);
+                } else {
+                    args_source = "missing".to_string();
+                    args_integrity = "empty".to_string();
+                    missing_terminal = true;
+                    missing_terminal_reason = Some("FILE_PATH_MISSING".to_string());
+                }
+            } else {
+                args_source = "missing".to_string();
+                args_integrity = "empty".to_string();
+                missing_terminal = true;
+                missing_terminal_reason = Some("FILE_PATH_MISSING".to_string());
+            }
         } else if let Some(inferred) = infer_file_path_from_text(latest_user_text) {
             args_source = "inferred_from_user".to_string();
             args_integrity = "recovered".to_string();
@@ -3361,9 +3597,64 @@ fn normalize_tool_args(
         args,
         args_source,
         args_integrity,
+        raw_args_state,
         query,
         missing_terminal,
         missing_terminal_reason,
+    }
+}
+
+fn classify_raw_tool_args_state(raw_args: &Value) -> RawToolArgsState {
+    match raw_args {
+        Value::Null => RawToolArgsState::Empty,
+        Value::Object(obj) => {
+            if obj.is_empty() {
+                RawToolArgsState::Empty
+            } else {
+                RawToolArgsState::Present
+            }
+        }
+        Value::Array(items) => {
+            if items.is_empty() {
+                RawToolArgsState::Empty
+            } else {
+                RawToolArgsState::Present
+            }
+        }
+        Value::String(raw) => {
+            let trimmed = raw.trim();
+            if trimmed.is_empty() {
+                return RawToolArgsState::Empty;
+            }
+            if let Ok(parsed) = serde_json::from_str::<Value>(trimmed) {
+                return classify_raw_tool_args_state(&parsed);
+            }
+            if parse_function_style_args(trimmed).is_empty() {
+                return RawToolArgsState::Unparseable;
+            }
+            RawToolArgsState::Present
+        }
+        _ => RawToolArgsState::Present,
+    }
+}
+
+fn provider_specific_write_reason(
+    tool: &str,
+    missing_reason: &str,
+    raw_args_state: RawToolArgsState,
+) -> Option<String> {
+    if tool != "write"
+        || !matches!(
+            missing_reason,
+            "FILE_PATH_MISSING" | "WRITE_CONTENT_MISSING"
+        )
+    {
+        return None;
+    }
+    match raw_args_state {
+        RawToolArgsState::Empty => Some("WRITE_ARGS_EMPTY_FROM_PROVIDER".to_string()),
+        RawToolArgsState::Unparseable => Some("WRITE_ARGS_UNPARSEABLE_FROM_PROVIDER".to_string()),
+        RawToolArgsState::Present => None,
     }
 }
 
@@ -3995,6 +4286,50 @@ fn infer_file_path_from_text(text: &str) -> Option<String> {
     deduped.into_iter().next()
 }
 
+fn infer_workspace_root_from_text(text: &str) -> Option<String> {
+    text.lines().find_map(|line| {
+        let trimmed = line.trim();
+        let value = trimmed.strip_prefix("Workspace:")?.trim();
+        sanitize_path_candidate(value)
+    })
+}
+
+fn infer_required_output_target_path_from_text(text: &str) -> Option<String> {
+    let marker = "Required output target:";
+    let idx = text.find(marker)?;
+    let tail = text[idx + marker.len()..].trim_start();
+    if let Some(start) = tail.find('{') {
+        let json_candidate = tail[start..]
+            .lines()
+            .take_while(|line| {
+                let trimmed = line.trim();
+                !(trimmed.is_empty() && !trimmed.starts_with('{'))
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        if let Ok(parsed) = serde_json::from_str::<Value>(&json_candidate) {
+            if let Some(path) = parsed.get("path").and_then(|v| v.as_str()) {
+                if let Some(clean) = sanitize_explicit_output_target_path(path) {
+                    return Some(clean);
+                }
+            }
+        }
+    }
+    None
+}
+
+fn infer_write_file_path_from_text(text: &str) -> Option<String> {
+    let inferred = infer_file_path_from_text(text)?;
+    let workspace_root = infer_workspace_root_from_text(text);
+    if workspace_root
+        .as_deref()
+        .is_some_and(|root| root == inferred)
+    {
+        return None;
+    }
+    Some(inferred)
+}
+
 fn infer_url_from_text(text: &str) -> Option<String> {
     let trimmed = text.trim();
     if trimmed.is_empty() {
@@ -4063,7 +4398,7 @@ fn sanitize_url_candidate(raw: &str) -> Option<String> {
     Some(token.to_string())
 }
 
-fn sanitize_path_candidate(raw: &str) -> Option<String> {
+fn clean_path_candidate_token(raw: &str) -> Option<String> {
     let token = raw
         .trim()
         .trim_matches(|c: char| matches!(c, '`' | '"' | '\'' | '*' | '|'))
@@ -4075,17 +4410,43 @@ fn sanitize_path_candidate(raw: &str) -> Option<String> {
     if token.is_empty() {
         return None;
     }
+    Some(token.to_string())
+}
+
+fn sanitize_explicit_output_target_path(raw: &str) -> Option<String> {
+    let token = clean_path_candidate_token(raw)?;
     let lower = token.to_ascii_lowercase();
     if lower.starts_with("http://") || lower.starts_with("https://") {
         return None;
     }
-    if is_malformed_tool_path_token(token) {
+    if is_malformed_tool_path_token(&token) {
         return None;
     }
-    if is_root_only_path_token(token) {
+    if is_root_only_path_token(&token) {
         return None;
     }
-    if is_placeholder_path_token(token) {
+    if is_placeholder_path_token(&token) {
+        return None;
+    }
+    if token.ends_with('/') || token.ends_with('\\') {
+        return None;
+    }
+    Some(token.to_string())
+}
+
+fn sanitize_path_candidate(raw: &str) -> Option<String> {
+    let token = clean_path_candidate_token(raw)?;
+    let lower = token.to_ascii_lowercase();
+    if lower.starts_with("http://") || lower.starts_with("https://") {
+        return None;
+    }
+    if is_malformed_tool_path_token(token.as_str()) {
+        return None;
+    }
+    if is_root_only_path_token(token.as_str()) {
+        return None;
+    }
+    if is_placeholder_path_token(token.as_str()) {
         return None;
     }
 
@@ -4093,6 +4454,7 @@ fn sanitize_path_candidate(raw: &str) -> Option<String> {
     let has_file_ext = [
         ".md", ".txt", ".json", ".yaml", ".yml", ".toml", ".rs", ".ts", ".tsx", ".js", ".jsx",
         ".py", ".go", ".java", ".cpp", ".c", ".h", ".pdf", ".docx", ".pptx", ".xlsx", ".rtf",
+        ".html", ".htm", ".css", ".scss", ".sass", ".less", ".svg", ".xml", ".sql", ".sh",
     ]
     .iter()
     .any(|ext| lower.ends_with(ext));
@@ -4101,7 +4463,7 @@ fn sanitize_path_candidate(raw: &str) -> Option<String> {
         return None;
     }
 
-    Some(token.to_string())
+    Some(token)
 }
 
 fn is_placeholder_path_token(token: &str) -> bool {
@@ -4766,6 +5128,87 @@ fn parse_scalar_like_value(raw: &str) -> Value {
     Value::String(trimmed.to_string())
 }
 
+fn recover_write_args_from_malformed_json(raw: &str) -> Option<Value> {
+    let content = extract_loose_json_string_field(raw, "content")?;
+    let mut obj = Map::new();
+    if let Some(path) = extract_loose_json_string_field(raw, "path") {
+        obj.insert("path".to_string(), Value::String(path));
+    }
+    obj.insert("content".to_string(), Value::String(content));
+    Some(Value::Object(obj))
+}
+
+fn extract_loose_json_string_field(input: &str, key: &str) -> Option<String> {
+    let pattern = format!("\"{key}\"");
+    let start = input.find(&pattern)?;
+    let remainder = input.get(start + pattern.len()..)?;
+    let colon = remainder.find(':')?;
+    let value = remainder.get(colon + 1..)?.trim_start();
+    let value = value.strip_prefix('"')?;
+    Some(parse_loose_json_string_value(value))
+}
+
+fn parse_loose_json_string_value(input: &str) -> String {
+    let mut out = String::new();
+    let mut chars = input.chars().peekable();
+    let mut closed = false;
+
+    while let Some(ch) = chars.next() {
+        if ch == '"' {
+            closed = true;
+            break;
+        }
+        if ch != '\\' {
+            out.push(ch);
+            continue;
+        }
+
+        let Some(escaped) = chars.next() else {
+            out.push('\\');
+            break;
+        };
+        match escaped {
+            '"' => out.push('"'),
+            '\\' => out.push('\\'),
+            '/' => out.push('/'),
+            'b' => out.push('\u{0008}'),
+            'f' => out.push('\u{000C}'),
+            'n' => out.push('\n'),
+            'r' => out.push('\r'),
+            't' => out.push('\t'),
+            'u' => {
+                let mut hex = String::new();
+                for _ in 0..4 {
+                    let Some(next) = chars.next() else {
+                        break;
+                    };
+                    hex.push(next);
+                }
+                if hex.len() == 4 {
+                    if let Ok(codepoint) = u16::from_str_radix(&hex, 16) {
+                        if let Some(decoded) = char::from_u32(codepoint as u32) {
+                            out.push(decoded);
+                            continue;
+                        }
+                    }
+                }
+                out.push('\\');
+                out.push('u');
+                out.push_str(&hex);
+            }
+            other => {
+                out.push('\\');
+                out.push(other);
+            }
+        }
+    }
+
+    if !closed {
+        return out;
+    }
+    out
+}
+
 fn normalize_todo_write_args(args: Value, completion: &str) -> Value {
     if is_todo_status_update_args(&args) {
         return args;
@@ -4883,25 +5326,32 @@ fn parse_streamed_tool_args(tool_name: &str, raw_args: &str) -> Value {
         return json!({});
     }
 
+    let normalized_tool = normalize_tool_name(tool_name);
     if let Ok(parsed) = serde_json::from_str::<Value>(trimmed) {
-        return normalize_streamed_tool_args(tool_name, parsed, trimmed);
+        return normalize_streamed_tool_args(&normalized_tool, parsed, trimmed);
+    }
+
+    if normalized_tool == "write" {
+        if let Some(recovered) = recover_write_args_from_malformed_json(trimmed) {
+            return recovered;
+        }
     }
 
     // Some providers emit non-JSON argument text (for example: raw query strings
     // or key=value fragments). Recover the common forms instead of dropping to {}.
     let kv_args = parse_function_style_args(trimmed);
     if !kv_args.is_empty() {
-        return normalize_streamed_tool_args(tool_name, Value::Object(kv_args), trimmed);
+        return normalize_streamed_tool_args(&normalized_tool, Value::Object(kv_args), trimmed);
     }
 
-    if normalize_tool_name(tool_name) == "websearch" {
+    if normalized_tool == "websearch" {
         if let Some(query) = sanitize_websearch_query_candidate(trimmed) {
             return json!({ "query": query });
         }
         return json!({});
     }
 
-    json!({})
+    Value::String(trimmed.to_string())
 }
 
 fn normalize_streamed_tool_args(tool_name: &str, parsed: Value, raw: &str) -> Value {
@@ -5103,9 +5553,14 @@ async fn emit_plan_todo_fallback(
         json!({"part": invoke_part}),
     ));
 
-    if storage.set_todos(session_id, todos).await.is_err() {
-        let mut failed_part =
-            WireMessagePart::tool_result(session_id, message_id, "todo_write", json!(null));
+    if storage.set_todos(session_id, todos.clone()).await.is_err() {
+        let mut failed_part = WireMessagePart::tool_result(
+            session_id,
+            message_id,
+            "todo_write",
+            Some(json!({"todos": todos.clone()})),
+            json!(null),
+        );
         failed_part.id = call_id;
         failed_part.state = Some("failed".to_string());
         failed_part.error = Some("failed to persist plan todos".to_string());
@@ -5121,6 +5576,7 @@ async fn emit_plan_todo_fallback(
         session_id,
         message_id,
         "todo_write",
+        Some(json!({"todos": todos.clone()})),
         json!({ "todos": normalized }),
     );
     result_part.id = call_id;
@@ -6126,6 +6582,22 @@ Call: todowrite(task_id=3, status="in_progress")
     }
 
     #[test]
+    fn normalize_tool_args_write_recovers_html_output_target_path() {
+        let normalized = normalize_tool_args_with_mode(
+            "write",
+            json!({"content":"<html></html>"}),
+            "Execute task.\n\nRequired output target:\n{\n  \"path\": \"game.html\",\n  \"kind\": \"source\",\n  \"operation\": \"create_or_update\"\n}\n",
+            "",
+            WritePathRecoveryMode::OutputTargetOnly,
+        );
+        assert!(!normalized.missing_terminal);
+        assert_eq!(
+            normalized.args.get("path").and_then(|v| v.as_str()),
+            Some("game.html")
+        );
+    }
+
+    #[test]
     fn normalize_tool_args_read_infers_path_from_user_prompt() {
         let normalized = normalize_tool_args(
             "read",
@@ -6198,6 +6670,22 @@ Call: todowrite(task_id=3, status="in_progress")
     }
 
     #[test]
+    fn normalize_tool_args_write_output_target_only_rejects_freeform_guess() {
+        let normalized = normalize_tool_args_with_mode(
+            "write",
+            json!({}),
+            "Please implement the screen/state structure in the workspace.",
+            "",
+            WritePathRecoveryMode::OutputTargetOnly,
+        );
+        assert!(normalized.missing_terminal);
+        assert_eq!(
+            normalized.missing_terminal_reason.as_deref(),
+            Some("FILE_PATH_MISSING")
+        );
+    }
+
+    #[test]
     fn normalize_tool_args_write_recovers_content_from_assistant_context() {
         let normalized = normalize_tool_args(
             "write",
@@ -6245,6 +6733,18 @@ Call: todowrite(task_id=3, status="in_progress")
             normalized.missing_terminal_reason.as_deref(),
             Some("WRITE_CONTENT_MISSING")
         );
+    }
+
+    #[test]
+    fn classify_required_tool_failure_detects_empty_provider_write_args() {
+        let reason = classify_required_tool_failure(
+            &[String::from("WRITE_ARGS_EMPTY_FROM_PROVIDER")],
+            true,
+            1,
+            false,
+            false,
+        );
+        assert_eq!(reason, RequiredToolFailureKind::WriteArgsEmptyFromProvider);
     }
 
     #[test]
@@ -6669,6 +7169,46 @@ Call: todowrite(task_id=3, status="in_progress")
     }
 
     #[test]
+    fn infer_required_output_target_path_reads_prompt_json_block() {
+        let prompt = r#"Execute task.
+
+Required output target:
+{
+  "path": "src/game.html",
+  "kind": "source",
+  "operation": "create"
+}
+"#;
+        assert_eq!(
+            infer_required_output_target_path_from_text(prompt).as_deref(),
+            Some("src/game.html")
+        );
+    }
+
+    #[test]
+    fn infer_required_output_target_path_accepts_extensionless_target() {
+        let prompt = r#"Execute task.
+
+Required output target:
+{
+  "path": "Dockerfile",
+  "kind": "source",
+  "operation": "create"
+}
+"#;
+        assert_eq!(
+            infer_required_output_target_path_from_text(prompt).as_deref(),
+            Some("Dockerfile")
+        );
+    }
+
+    #[test]
+    fn infer_write_file_path_from_text_rejects_workspace_root() {
+        let prompt = "Workspace: /home/evan/game\nCreate the scaffold in the workspace now.";
+        assert_eq!(infer_write_file_path_from_text(prompt), None);
+    }
+
+    #[test]
     fn duplicate_signature_limit_defaults_to_200_for_all_tools() {
         let _guard = env_test_lock();
         unsafe {
@@ -6677,6 +7217,57 @@ Call: todowrite(task_id=3, status="in_progress")
         assert_eq!(duplicate_signature_limit_for("pack_builder"), 200);
         assert_eq!(duplicate_signature_limit_for("bash"), 200);
         assert_eq!(duplicate_signature_limit_for("write"), 200);
+    }
+
+    #[test]
+    fn parse_streamed_tool_args_preserves_unparseable_write_payload() {
+        let parsed = parse_streamed_tool_args("write", "path=game.html content");
+        assert_ne!(parsed, json!({}));
+    }
+
+    #[test]
+    fn parse_streamed_tool_args_preserves_large_write_payload() {
+        let content = "x".repeat(4096);
+        let raw_args = format!(r#"{{"path":"game.html","content":"{}"}}"#, content);
+        let parsed = parse_streamed_tool_args("write", &raw_args);
+        assert_eq!(
+            parsed.get("path").and_then(|value| value.as_str()),
+            Some("game.html")
+        );
+        assert_eq!(
+            parsed.get("content").and_then(|value| value.as_str()),
+            Some(content.as_str())
+        );
+    }
+
+    #[test]
+    fn parse_streamed_tool_args_recovers_truncated_write_json() {
+        let raw_args = concat!(
+            r#"{"path":"game.html","allow_empty":false,"content":"<!DOCTYPE html>\n"#,
+            r#"<html lang=\"en\"><body>Neon Drift"#
+        );
+        let parsed = parse_streamed_tool_args("write", raw_args);
+        assert_eq!(
+            parsed,
+            json!({
+                "path": "game.html",
+                "content": "<!DOCTYPE html>\n<html lang=\"en\"><body>Neon Drift"
+            })
+        );
+    }
+
+    #[test]
+    fn parse_streamed_tool_args_recovers_truncated_write_json_without_path() {
+        let raw_args = concat!(
+            r#"{"allow_empty":false,"content":"<!DOCTYPE html>\n"#,
+            r#"<html lang=\"en\"><body>Neon Drift"#
+        );
+        let parsed = parse_streamed_tool_args("write", raw_args);
+        assert_eq!(parsed.get("path"), None);
+        assert_eq!(
+            parsed.get("content").and_then(|value| value.as_str()),
+            Some("<!DOCTYPE html>\n<html lang=\"en\"><body>Neon Drift")
+        );
     }
 
     #[test]

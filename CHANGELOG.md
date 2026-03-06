@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Strict swarm write recovery and engine-client retry hardening**:
+  - fixed OpenAI/OpenRouter streamed tool-call parsing so multi-chunk write args keep the real tool-call ID and no longer drop follow-up argument deltas when later chunks omit the tool name
+  - hardened write-arg recovery in the engine loop so truncated/malformed JSON can still recover `content` even when `path` is absent, and raised the default provider output budget from `2048` to `16384` to avoid clipping large single-file artifacts
+  - session/tool history persistence now keeps write args/results intact across engine events by using a dedicated session-part channel, coalescing repeated tool invocation updates, and persisting `tool_result` args for verifier/session consumers
+  - swarm planner/worker prompts now prefer single-pass implementation for single-file objectives instead of over-decomposing greenfield artifact creation into fragile inspect/refine task chains
+  - added consistent local-engine retry handling across control panel, Tauri desktop, and TUI clients for transient transport failures and `ENGINE_STARTING` startup responses
+
 - **Orchestration planner/runtime diagnostics hardened**:
   - strict swarm planning now surfaces upstream provider failures directly in orchestration start instead of collapsing them into `LLM planner returned no valid tasks`
   - backend session dispatch now persists explicit assistant-visible engine error markers such as `ENGINE_ERROR: AUTHENTICATION_ERROR: ...` so planner/session consumers can show the real provider failure reason

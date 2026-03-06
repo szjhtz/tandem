@@ -2,6 +2,13 @@
 
 ### Highlights
 
+- **Strict swarm write reliability and cross-client engine retries**:
+  - Fixed streamed OpenAI/OpenRouter tool-call parsing so multi-chunk `write` calls keep the correct tool-call identity and no longer lose follow-up argument chunks when later deltas omit the tool name.
+  - Hardened write-argument recovery so truncated/malformed JSON can still recover `content` even when `path` is omitted, and raised the default provider output budget from `2048` to `16384` to reduce clipped single-file artifact responses.
+  - Session/tool history persistence now preserves write args/results through the verifier path, eliminating false strict-write verifier failures where tools ran but persisted session history looked empty.
+  - Swarm planner and worker prompts now prefer single-pass implementation for single-file objectives instead of splitting creation/refinement into fragile multi-task chains.
+  - Added consistent local-engine retry handling across the control-panel orchestrator, Tauri desktop sidecar client, and Rust TUI for transient transport failures and `ENGINE_STARTING` startup responses.
+
 - **Orchestration now reports real planner/provider failures and persists real tool history**:
   - Swarm planning now surfaces upstream provider failures directly when LLM planning is required, instead of reducing quota/auth problems to vague `no valid tasks` planner errors.
   - Backend session dispatch now writes explicit engine error markers like `ENGINE_ERROR: AUTHENTICATION_ERROR: ...` into session history so control-panel orchestration can present the actual cause to the user.

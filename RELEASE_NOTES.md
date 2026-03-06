@@ -4,6 +4,13 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
 
 ## v0.4.1 (Unreleased)
 
+- Strict swarm write reliability and cross-client engine retries
+  - Fixed streamed OpenAI/OpenRouter tool-call parsing so multi-chunk `write` args keep the correct tool-call identity and no longer lose later argument chunks when the provider omits the tool name on follow-up deltas.
+  - Hardened write-argument recovery for truncated/malformed JSON: the engine can now recover `content` even when `path` is missing, and the default provider output budget was raised from `2048` to `16384` so large single-file artifacts are less likely to be clipped.
+  - Session/tool history persistence now preserves write args/results through the verifier path, avoiding false `NO_TOOL_ACTIVITY_NO_WORKSPACE_CHANGE` / strict-write failure classifications when tools actually ran.
+  - Swarm planner/worker prompts now favor one implementation task for single-file goals, reducing over-decomposition on greenfield artifact generation.
+  - Added consistent local-engine retry handling for transient transport failures and `ENGINE_STARTING` responses across the control-panel orchestrator, Tauri desktop sidecar client, and Rust TUI client.
+
 - Provider catalog honesty in Settings and `/provider`
   - `GET /provider` now returns explicit catalog metadata so clients can distinguish live remote model catalogs from config-defined catalogs and manual-entry-only providers.
   - Removed the synthetic single-model fallback behavior that made most non-OpenRouter providers appear to have exactly one available model.

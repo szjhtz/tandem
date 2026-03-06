@@ -129,6 +129,36 @@ fn merge_message_part(message: &mut Message, part: MessagePart) {
             result,
             error,
         } => {
+            let args_are_empty =
+                args.is_null() || args.as_object().is_some_and(|value| value.is_empty());
+            if result.is_none() && error.is_none() {
+                if let Some(existing) = message.parts.iter_mut().rev().find(|existing| {
+                    matches!(
+                        existing,
+                        MessagePart::ToolInvocation {
+                            tool: existing_tool,
+                            result: None,
+                            error: None,
+                            ..
+                        } if existing_tool == &tool
+                    )
+                }) {
+                    if let MessagePart::ToolInvocation {
+                        args: existing_args,
+                        ..
+                    } = existing
+                    {
+                        let existing_args_are_empty = existing_args.is_null()
+                            || existing_args
+                                .as_object()
+                                .is_some_and(|value| value.is_empty());
+                        if !args_are_empty || existing_args_are_empty {
+                            *existing_args = args;
+                        }
+                        return;
+                    }
+                }
+            }
             if result.is_some() || error.is_some() {
                 if let Some(existing) = message.parts.iter_mut().rev().find(|existing| {
                     matches!(
@@ -148,9 +178,17 @@ fn merge_message_part(message: &mut Message, part: MessagePart) {
                         ..
                     } = existing
                     {
-                        if existing_args.is_null()
-                            || existing_args.as_object().is_some_and(|o| o.is_empty())
-                        {
+                        let existing_args_are_empty = existing_args.is_null()
+                            || existing_args
+                                .as_object()
+                                .is_some_and(|value| value.is_empty());
+                        if existing_args_are_empty {
+                            if tool == "write" && args_are_empty {
+                                tracing::info!(
+                                    tool = %tool,
+                                    "merging write result/error into existing tool part with empty args"
+                                );
+                            }
                             *existing_args = args.clone();
                         }
                         *existing_result = result;
@@ -439,11 +477,20 @@ impl Storage {
             .context("session not found for append_message_part")?;
         let mut meta_guard = self.metadata.write().await;
         snapshot_session_messages(session_id, session, &mut meta_guard);
-        let message = session
+        let message = if let Some(message) = session
             .messages
             .iter_mut()
             .find(|message| message.id == message_id)
-            .context("message not found for append_message_part")?;
+        {
+            message
+        } else {
+            session
+                .messages
+                .iter_mut()
+                .rev()
+                .find(|message| matches!(message.role, MessageRole::User))
+                .context("message not found for append_message_part")?
+        };
         merge_message_part(message, part);
         session.time.updated = Utc::now();
         drop(sessions);
@@ -1631,6 +1678,130 @@ mod tests {
         match &message.parts[1] {
             MessagePart::ToolInvocation { error, .. } => {
                 assert_eq!(error.as_deref(), Some("WRITE_CONTENT_MISSING"));
+            }
+            other => panic!("expected tool part, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn append_message_part_coalesces_repeated_tool_invocation_updates() {
+        let base = std::env::temp_dir().join(format!("tandem-core-tool-merge-{}", Uuid::new_v4()));
+        let storage = Storage::new(&base).await.expect("storage");
+        let session = Session::new(Some("tool merge".to_string()), Some(".".to_string()));
+        let session_id = session.id.clone();
+        storage.save_session(session).await.expect("save session");
+
+        let user = Message::new(
+            MessageRole::User,
+            vec![MessagePart::Text {
+                text: "build ui".to_string(),
+            }],
+        );
+        let message_id = user.id.clone();
+        storage
+            .append_message(&session_id, user)
+            .await
+            .expect("append user");
+
+        storage
+            .append_message_part(
+                &session_id,
+                &message_id,
+                MessagePart::ToolInvocation {
+                    tool: "write".to_string(),
+                    args: json!({"path":"game.html"}),
+                    result: None,
+                    error: None,
+                },
+            )
+            .await
+            .expect("append first invocation");
+        storage
+            .append_message_part(
+                &session_id,
+                &message_id,
+                MessagePart::ToolInvocation {
+                    tool: "write".to_string(),
+                    args: json!({"path":"game.html","content":"<html></html>"}),
+                    result: None,
+                    error: None,
+                },
+            )
+            .await
+            .expect("append updated invocation");
+
+        let session = storage.get_session(&session_id).await.expect("session");
+        let message = session
+            .messages
+            .iter()
+            .find(|message| message.id == message_id)
+            .expect("message");
+        assert_eq!(message.parts.len(), 2);
+        match &message.parts[1] {
+            MessagePart::ToolInvocation { tool, args, .. } => {
+                assert_eq!(tool, "write");
+                assert_eq!(args["path"], "game.html");
+                assert_eq!(args["content"], "<html></html>");
+            }
+            other => panic!("expected tool part, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn append_message_part_falls_back_to_latest_user_message_when_id_missing() {
+        let base =
+            std::env::temp_dir().join(format!("tandem-core-tool-fallback-{}", Uuid::new_v4()));
+        let storage = Storage::new(&base).await.expect("storage");
+        let session = Session::new(Some("tool fallback".to_string()), Some(".".to_string()));
+        let session_id = session.id.clone();
+        storage.save_session(session).await.expect("save session");
+
+        let first = Message::new(
+            MessageRole::User,
+            vec![MessagePart::Text {
+                text: "first prompt".to_string(),
+            }],
+        );
+        let second = Message::new(
+            MessageRole::User,
+            vec![MessagePart::Text {
+                text: "second prompt".to_string(),
+            }],
+        );
+        let second_id = second.id.clone();
+        storage
+            .append_message(&session_id, first)
+            .await
+            .expect("append first");
+        storage
+            .append_message(&session_id, second)
+            .await
+            .expect("append second");
+
+        storage
+            .append_message_part(
+                &session_id,
+                "missing-message-id",
+                MessagePart::ToolInvocation {
+                    tool: "glob".to_string(),
+                    args: json!({"pattern":"*"}),
+                    result: Some(json!(["README.md"])),
+                    error: None,
+                },
+            )
+            .await
+            .expect("append fallback tool part");
+
+        let session = storage.get_session(&session_id).await.expect("session");
+        let message = session
+            .messages
+            .iter()
+            .find(|message| message.id == second_id)
+            .expect("latest user message");
+        match &message.parts[1] {
+            MessagePart::ToolInvocation { tool, result, .. } => {
+                assert_eq!(tool, "glob");
+                assert_eq!(result.as_ref(), Some(&json!(["README.md"])));
             }
             other => panic!("expected tool part, got {other:?}"),
         }

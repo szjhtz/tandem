@@ -178,6 +178,7 @@ impl WireMessagePart {
         session_id: &str,
         message_id: &str,
         tool: impl Into<String>,
+        args: Option<Value>,
         result: Value,
     ) -> Self {
         Self {
@@ -187,7 +188,7 @@ impl WireMessagePart {
             part_type: Some("tool".to_string()),
             text: None,
             tool: Some(tool.into()),
-            args: None,
+            args,
             state: Some("completed".to_string()),
             result: Some(result),
             error: None,

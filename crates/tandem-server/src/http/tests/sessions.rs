@@ -162,6 +162,7 @@ async fn session_part_persister_stores_runtime_wire_tool_parts_in_session_histor
         &session_id,
         &message_id,
         "glob",
+        Some(json!({ "pattern": "*" })),
         json!(["README.md"]),
     );
 
@@ -213,6 +214,90 @@ async fn session_part_persister_stores_runtime_wire_tool_parts_in_session_histor
         MessagePart::ToolInvocation { tool, result, .. } => {
             assert_eq!(tool, "glob");
             assert_eq!(result.as_ref(), Some(&json!(["README.md"])));
+        }
+        other => panic!("expected tool invocation, got {other:?}"),
+    }
+
+    task.abort();
+}
+
+#[tokio::test]
+async fn session_part_persister_stores_result_args_without_prior_invoke() {
+    let state = test_state().await;
+    let task = tokio::spawn(crate::run_session_part_persister(state.clone()));
+    let session = Session::new(
+        Some("persist result args".to_string()),
+        Some(".".to_string()),
+    );
+    let session_id = session.id.clone();
+    state.storage.save_session(session).await.expect("save");
+    let message = Message::new(
+        MessageRole::User,
+        vec![MessagePart::Text {
+            text: "build ui".to_string(),
+        }],
+    );
+    let message_id = message.id.clone();
+    state
+        .storage
+        .append_message(&session_id, message)
+        .await
+        .expect("append");
+
+    let result = tandem_wire::WireMessagePart::tool_result(
+        &session_id,
+        &message_id,
+        "write",
+        Some(json!({ "path": "game.html", "content": "<html></html>" })),
+        json!(null),
+    );
+
+    state.event_bus.publish(EngineEvent::new(
+        "message.part.updated",
+        json!({
+            "part": result
+        }),
+    ));
+
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let session = state
+                .storage
+                .get_session(&session_id)
+                .await
+                .expect("session");
+            let message = session
+                .messages
+                .iter()
+                .find(|message| message.id == message_id)
+                .expect("message");
+            if message.parts.len() > 1 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    })
+    .await
+    .expect("result tool part persisted");
+
+    let session = state
+        .storage
+        .get_session(&session_id)
+        .await
+        .expect("session");
+    let message = session
+        .messages
+        .iter()
+        .find(|message| message.id == message_id)
+        .expect("message");
+    match &message.parts[1] {
+        MessagePart::ToolInvocation {
+            tool, args, result, ..
+        } => {
+            assert_eq!(tool, "write");
+            assert_eq!(args["path"], "game.html");
+            assert_eq!(args["content"], "<html></html>");
+            assert_eq!(result.as_ref(), None);
         }
         other => panic!("expected tool invocation, got {other:?}"),
     }
@@ -505,6 +590,34 @@ fn infer_event_channel_routes_tool_message_parts() {
         .expect("map"),
     );
     assert_eq!(channel, "tool");
+}
+
+#[test]
+fn extract_persistable_tool_part_uses_streamed_args_preview_when_part_args_empty() {
+    let properties = json!({
+        "part": {
+            "type": "tool",
+            "tool": "write",
+            "messageID": "msg_123",
+            "args": {}
+        },
+        "toolCallDelta": {
+            "parsedArgsPreview": {
+                "path": "game.html",
+                "content": "<html></html>"
+            }
+        }
+    });
+    let (message_id, part) = crate::extract_persistable_tool_part(&properties).expect("tool part");
+    assert_eq!(message_id, "msg_123");
+    match part {
+        tandem_types::MessagePart::ToolInvocation { tool, args, .. } => {
+            assert_eq!(tool, "write");
+            assert_eq!(args["path"], "game.html");
+            assert_eq!(args["content"], "<html></html>");
+        }
+        other => panic!("expected tool invocation, got {other:?}"),
+    }
 }
 
 #[tokio::test]

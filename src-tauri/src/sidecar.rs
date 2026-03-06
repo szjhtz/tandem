@@ -493,6 +493,8 @@ pub struct SendMessageRequest {
     pub tool_mode: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_allowlist: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub write_required: Option<bool>,
 }
 
 impl SendMessageRequest {
@@ -507,6 +509,7 @@ impl SendMessageRequest {
             agent: None,
             tool_mode: None,
             tool_allowlist: None,
+            write_required: None,
         }
     }
 
@@ -525,6 +528,7 @@ impl SendMessageRequest {
             agent: None,
             tool_mode: None,
             tool_allowlist: None,
+            write_required: None,
         }
     }
 
@@ -548,6 +552,7 @@ impl SendMessageRequest {
             agent: None,
             tool_mode: None,
             tool_allowlist: None,
+            write_required: None,
         }
     }
 
@@ -1527,15 +1532,59 @@ pub struct ContextRunStep {
     pub status: ContextStepStatus,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ContextTaskOutputTarget {
+    #[serde(default)]
+    pub path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub operation: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ContextBlackboardTask {
+    #[serde(default)]
+    pub id: String,
+    #[serde(default)]
+    pub task_type: String,
+    #[serde(default)]
+    pub payload: serde_json::Value,
+    #[serde(default)]
+    pub status: ContextStepStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workflow_id: Option<String>,
+    #[serde(default)]
+    pub depends_on_task_ids: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assigned_agent: Option<String>,
+    #[serde(default)]
+    pub attempt: u32,
+    #[serde(default)]
+    pub max_attempts: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lease_token: Option<String>,
+    #[serde(default)]
+    pub task_rev: u64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContextRunState {
     pub run_id: String,
     pub run_type: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_provider: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_id: Option<String>,
     pub status: ContextRunStatus,
     pub objective: String,
     pub workspace: ContextWorkspaceLease,
     #[serde(default)]
     pub steps: Vec<ContextRunStep>,
+    #[serde(default)]
+    pub tasks: Vec<ContextBlackboardTask>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub why_next_step: Option<String>,
     pub revision: u64,
@@ -3320,12 +3369,11 @@ impl SidecarManager {
         let mut last_error = String::new();
         for attempt in 0..=ENGINE_STARTUP_RETRIES {
             let response = self
-                .http_client
-                .post(&url)
-                .json(&request)
-                .send()
-                .await
-                .map_err(|e| TandemError::Sidecar(format!("Failed to create session: {}", e)))?;
+                .send_with_net_retry(
+                    || self.http_client.post(&url).json(&request),
+                    "Failed to create session",
+                )
+                .await?;
 
             if response.status().is_success() {
                 self.record_success().await;
@@ -3348,12 +3396,11 @@ impl SidecarManager {
                 fallback_url
             );
             let fallback = self
-                .http_client
-                .post(&fallback_url)
-                .json(&request)
-                .send()
-                .await
-                .map_err(|e| TandemError::Sidecar(format!("Failed to create session: {}", e)))?;
+                .send_with_net_retry(
+                    || self.http_client.post(&fallback_url).json(&request),
+                    "Failed to create session",
+                )
+                .await?;
 
             if fallback.status().is_success() {
                 self.record_success().await;
@@ -3689,16 +3736,20 @@ impl SidecarManager {
         let mut append_ok = false;
         let mut last_append_error = String::new();
         for attempt in 0..=MAX_PROMPT_ASYNC_RETRIES {
-            let mut append_builder = self.http_client.post(&append_url);
-            if let Some(cid) = correlation_id {
-                append_builder = append_builder
-                    .header("x-tandem-correlation-id", cid)
-                    .header("x-tandem-session-id", session_id);
-            }
-            let append_response =
-                append_builder.json(&request).send().await.map_err(|e| {
-                    TandemError::Sidecar(format!("Failed to append message: {}", e))
-                })?;
+            let append_response = self
+                .send_with_net_retry(
+                    || {
+                        let mut append_builder = self.http_client.post(&append_url);
+                        if let Some(cid) = correlation_id {
+                            append_builder = append_builder
+                                .header("x-tandem-correlation-id", cid)
+                                .header("x-tandem-session-id", session_id);
+                        }
+                        append_builder.json(&request)
+                    },
+                    "Failed to append message",
+                )
+                .await?;
 
             if append_response.status().is_success() {
                 append_ok = true;
@@ -3710,17 +3761,21 @@ impl SidecarManager {
                 append_url,
                 append_fallback_url
             );
-            let mut append_fallback_builder = self.http_client.post(&append_fallback_url);
-            if let Some(cid) = correlation_id {
-                append_fallback_builder = append_fallback_builder
-                    .header("x-tandem-correlation-id", cid)
-                    .header("x-tandem-session-id", session_id);
-            }
-            let append_fallback_response = append_fallback_builder
-                .json(&request)
-                .send()
-                .await
-                .map_err(|e| TandemError::Sidecar(format!("Failed to append message: {}", e)))?;
+            let append_fallback_response = self
+                .send_with_net_retry(
+                    || {
+                        let mut append_fallback_builder =
+                            self.http_client.post(&append_fallback_url);
+                        if let Some(cid) = correlation_id {
+                            append_fallback_builder = append_fallback_builder
+                                .header("x-tandem-correlation-id", cid)
+                                .header("x-tandem-session-id", session_id);
+                        }
+                        append_fallback_builder.json(&request)
+                    },
+                    "Failed to append message",
+                )
+                .await?;
 
             if append_fallback_response.status().is_success() {
                 append_ok = true;
@@ -3761,17 +3816,20 @@ impl SidecarManager {
         let mut run_conflict_streak: usize = 0;
         let mut run_conflict_active_run: Option<String> = None;
         for attempt in 0..=MAX_PROMPT_ASYNC_RETRIES {
-            let mut request_builder = self.http_client.post(&url);
-            if let Some(cid) = correlation_id {
-                request_builder = request_builder
-                    .header("x-tandem-correlation-id", cid)
-                    .header("x-tandem-session-id", session_id);
-            }
-            let response = request_builder
-                .json(&request)
-                .send()
-                .await
-                .map_err(|e| TandemError::Sidecar(format!("Failed to send message: {}", e)))?;
+            let response = self
+                .send_with_net_retry(
+                    || {
+                        let mut request_builder = self.http_client.post(&url);
+                        if let Some(cid) = correlation_id {
+                            request_builder = request_builder
+                                .header("x-tandem-correlation-id", cid)
+                                .header("x-tandem-session-id", session_id);
+                        }
+                        request_builder.json(&request)
+                    },
+                    "Failed to send message",
+                )
+                .await?;
 
             let outcome = match Self::handle_prompt_async_response(response).await {
                 Ok(()) => Ok(()),
@@ -3781,15 +3839,20 @@ impl SidecarManager {
                         url,
                         fallback_url
                     );
-                    let mut fallback_builder = self.http_client.post(&fallback_url);
-                    if let Some(cid) = correlation_id {
-                        fallback_builder = fallback_builder
-                            .header("x-tandem-correlation-id", cid)
-                            .header("x-tandem-session-id", session_id);
-                    }
-                    let response = fallback_builder.json(&request).send().await.map_err(|e| {
-                        TandemError::Sidecar(format!("Failed to send message: {}", e))
-                    })?;
+                    let response = self
+                        .send_with_net_retry(
+                            || {
+                                let mut fallback_builder = self.http_client.post(&fallback_url);
+                                if let Some(cid) = correlation_id {
+                                    fallback_builder = fallback_builder
+                                        .header("x-tandem-correlation-id", cid)
+                                        .header("x-tandem-session-id", session_id);
+                                }
+                                fallback_builder.json(&request)
+                            },
+                            "Failed to send message",
+                        )
+                        .await?;
                     Self::handle_prompt_async_response(response).await
                 }
                 Err(err) => Err(err),
@@ -5802,6 +5865,34 @@ impl SidecarManager {
             return Err(TandemError::Sidecar("Circuit breaker is open".to_string()));
         }
         Ok(())
+    }
+
+    async fn send_with_net_retry<F>(
+        &self,
+        mut builder_fn: F,
+        label: &str,
+    ) -> Result<reqwest::Response>
+    where
+        F: FnMut() -> reqwest::RequestBuilder,
+    {
+        const MAX_RETRIES: usize = 2;
+        let mut last_err: Option<reqwest::Error> = None;
+        for attempt in 0..=MAX_RETRIES {
+            if attempt > 0 {
+                tokio::time::sleep(Duration::from_millis(500 * attempt as u64)).await;
+            }
+            match builder_fn().send().await {
+                Ok(resp) => return Ok(resp),
+                Err(err) if (err.is_connect() || err.is_timeout()) && attempt < MAX_RETRIES => {
+                    last_err = Some(err);
+                }
+                Err(err) => return Err(TandemError::Sidecar(format!("{}: {}", label, err))),
+            }
+        }
+        let detail = last_err
+            .map(|err| err.to_string())
+            .unwrap_or_else(|| "request failed".to_string());
+        Err(TandemError::Sidecar(format!("{}: {}", label, detail)))
     }
 
     async fn fetch_provider_catalog(&self, base: &str) -> Result<ProviderCatalogResponse> {

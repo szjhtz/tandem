@@ -19,7 +19,7 @@ fn provider_max_tokens() -> u32 {
         .ok()
         .and_then(|raw| raw.trim().parse::<u32>().ok())
         .filter(|value| *value >= 64)
-        .unwrap_or(2048)
+        .unwrap_or(16384)
 }
 
 fn protocol_title_header() -> String {
@@ -168,6 +168,7 @@ struct OpenAiToolCallChunk {
     id: String,
     name: String,
     args_delta: String,
+    index: u64,
 }
 
 fn canonical_openai_tool_name(
@@ -230,6 +231,10 @@ fn extract_openai_tool_call_chunk(
 ) -> Option<OpenAiToolCallChunk> {
     let obj = call.as_object()?;
     let function = obj.get("function").cloned().unwrap_or_default();
+    let index = obj
+        .get("index")
+        .and_then(|v| v.as_u64())
+        .unwrap_or_default();
     let raw_name = obj
         .get("name")
         .and_then(|v| v.as_str())
@@ -243,10 +248,6 @@ fn extract_openai_tool_call_chunk(
         .unwrap_or_default()
         .trim()
         .to_string();
-    if raw_name.is_empty() {
-        return None;
-    }
-    let canonical_name = canonical_openai_tool_name(&raw_name, alias_to_original);
     let args_delta = obj
         .get("arguments")
         .and_then(|v| v.as_str())
@@ -278,10 +279,19 @@ fn extract_openai_tool_call_chunk(
         .map(ToString::to_string)
         .filter(|value| !value.is_empty())
         .unwrap_or(fallback_id);
+    let canonical_name = if raw_name.is_empty() {
+        String::new()
+    } else {
+        canonical_openai_tool_name(&raw_name, alias_to_original)
+    };
+    if canonical_name.is_empty() && args_delta.is_empty() {
+        return None;
+    }
     Some(OpenAiToolCallChunk {
         id,
         name: canonical_name,
         args_delta,
+        index,
     })
 }
 
@@ -299,9 +309,15 @@ fn extract_openai_tool_call_chunks(
     ];
     for list in direct_lists.into_iter().flatten() {
         for (idx, call) in list.iter().enumerate() {
-            if let Some(chunk) =
-                extract_openai_tool_call_chunk(call, alias_to_original, format!("tool_call_{idx}"))
-            {
+            let index = call
+                .get("index")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(idx as u64);
+            if let Some(chunk) = extract_openai_tool_call_chunk(
+                call,
+                alias_to_original,
+                format!("tool_call_{index}"),
+            ) {
                 calls.push(chunk);
             }
         }
@@ -315,6 +331,10 @@ fn extract_openai_tool_call_chunks(
             continue;
         };
         for (idx, item) in items.iter().enumerate() {
+            let index = item
+                .get("index")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(idx as u64);
             let item_type = item
                 .get("type")
                 .and_then(|v| v.as_str())
@@ -327,7 +347,7 @@ fn extract_openai_tool_call_chunks(
                 if let Some(chunk) = extract_openai_tool_call_chunk(
                     item,
                     alias_to_original,
-                    format!("content_tool_call_{idx}"),
+                    format!("content_tool_call_{index}"),
                 ) {
                     calls.push(chunk);
                 }
@@ -335,6 +355,25 @@ fn extract_openai_tool_call_chunks(
         }
     }
     calls
+}
+
+fn is_openai_tool_call_fallback_id(id: &str) -> bool {
+    id.starts_with("tool_call_") || id.starts_with("content_tool_call_")
+}
+
+fn resolve_openai_tool_call_stream_id(
+    call: &OpenAiToolCallChunk,
+    real_ids_by_index: &mut HashMap<u64, String>,
+) -> String {
+    if !is_openai_tool_call_fallback_id(&call.id) {
+        real_ids_by_index.insert(call.index, call.id.clone());
+        return call.id.clone();
+    }
+
+    real_ids_by_index
+        .get(&call.index)
+        .cloned()
+        .unwrap_or_else(|| call.id.clone())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -1169,6 +1208,7 @@ impl Provider for OpenAICompatibleProvider {
         let alias_to_original = alias_to_original.clone();
         let stream = try_stream! {
             let mut buffer = String::new();
+            let mut tool_call_real_ids = HashMap::new();
             while let Some(chunk) = bytes.next().await {
                 if cancel.is_cancelled() {
                     yield StreamChunk::Done {
@@ -1236,20 +1276,22 @@ impl Provider for OpenAICompatibleProvider {
                             }
 
                             for call in extract_openai_tool_call_chunks(&choice, &alias_to_original) {
-                                if !call.id.is_empty() && !call.name.is_empty() {
+                                let effective_id =
+                                    resolve_openai_tool_call_stream_id(&call, &mut tool_call_real_ids);
+                                if !effective_id.is_empty() && !call.name.is_empty() {
                                     yield StreamChunk::ToolCallStart {
-                                        id: call.id.clone(),
+                                        id: effective_id.clone(),
                                         name: call.name.clone(),
                                     };
                                 }
-                                if !call.id.is_empty() && !call.args_delta.is_empty() {
+                                if !effective_id.is_empty() && !call.args_delta.is_empty() {
                                     yield StreamChunk::ToolCallDelta {
-                                        id: call.id.clone(),
-                                        args_delta: call.args_delta,
+                                        id: effective_id.clone(),
+                                        args_delta: call.args_delta.clone(),
                                     };
                                 }
-                                if !call.id.is_empty() {
-                                    yield StreamChunk::ToolCallEnd { id: call.id };
+                                if !effective_id.is_empty() {
+                                    yield StreamChunk::ToolCallEnd { id: effective_id };
                                 }
                             }
 
@@ -1831,6 +1873,73 @@ mod tests {
         assert_eq!(calls[0].id, "call-1");
         assert_eq!(calls[0].name, "write");
         assert!(calls[0].args_delta.contains("\"README.md\""));
+    }
+
+    #[test]
+    fn resolve_openai_tool_call_stream_id_keeps_multichunk_write_args_on_same_id() {
+        let mut alias_to_original = HashMap::new();
+        alias_to_original.insert("write_alias".to_string(), "write".to_string());
+
+        let first_choice = json!({
+            "delta": {
+                "tool_calls": [
+                    {
+                        "index": 2,
+                        "id": "call_ghi",
+                        "function": {
+                            "name": "write_alias",
+                            "arguments": ""
+                        }
+                    }
+                ]
+            }
+        });
+        let continuation_choice = json!({
+            "delta": {
+                "tool_calls": [
+                    {
+                        "index": 2,
+                        "function": {
+                            "arguments": "{\"path\":\"game.html\",\"content\":\"hi\"}"
+                        }
+                    }
+                ]
+            }
+        });
+
+        let first_calls = extract_openai_tool_call_chunks(&first_choice, &alias_to_original);
+        let continuation_calls =
+            extract_openai_tool_call_chunks(&continuation_choice, &alias_to_original);
+
+        assert_eq!(first_calls.len(), 1);
+        assert_eq!(first_calls[0].id, "call_ghi");
+        assert_eq!(first_calls[0].name, "write");
+        assert_eq!(first_calls[0].index, 2);
+
+        assert_eq!(continuation_calls.len(), 1);
+        assert_eq!(continuation_calls[0].id, "tool_call_2");
+        assert_eq!(continuation_calls[0].name, "");
+        assert_eq!(continuation_calls[0].index, 2);
+
+        let mut real_ids_by_index = HashMap::new();
+        let mut args_by_id = HashMap::<String, String>::new();
+        for call in first_calls.into_iter().chain(continuation_calls) {
+            let effective_id = resolve_openai_tool_call_stream_id(&call, &mut real_ids_by_index);
+            args_by_id
+                .entry(effective_id)
+                .or_default()
+                .push_str(&call.args_delta);
+        }
+
+        assert_eq!(
+            real_ids_by_index.get(&2).map(String::as_str),
+            Some("call_ghi")
+        );
+        assert_eq!(
+            args_by_id.get("call_ghi").map(String::as_str),
+            Some("{\"path\":\"game.html\",\"content\":\"hi\"}")
+        );
+        assert!(!args_by_id.contains_key("tool_call_2"));
     }
 
     #[test]

@@ -1526,31 +1526,59 @@ function workspaceExistsAsDirectory(workspaceRoot) {
 async function engineRequestJson(session, path, options = {}) {
   const method = String(options.method || "GET").toUpperCase();
   const body = options.body;
-  const response = await fetch(`${ENGINE_URL}${path}`, {
-    method,
-    headers: {
-      authorization: `Bearer ${session.token}`,
-      "x-tandem-token": session.token,
-      ...(body ? { "content-type": "application/json" } : {}),
-      ...(options.headers || {}),
-    },
-    body: body ? JSON.stringify(body) : undefined,
-    signal: AbortSignal.timeout(options.timeoutMs || 8000),
-  });
-  if (!response.ok) {
-    let detail = `${method} ${path} failed: ${response.status}`;
+  const maxNetworkRetries = options.maxNetworkRetries ?? 2;
+  const isEngineStarting = (value) =>
+    typeof value === "string" &&
+    (value.includes("ENGINE_STARTING") ||
+      value.includes("Engine starting") ||
+      value.includes("Service Unavailable"));
+  let response = null;
+  let lastError = null;
+  for (let attempt = 0; attempt <= maxNetworkRetries; attempt += 1) {
+    if (attempt > 0) await sleep(1000 * attempt);
     try {
-      const payload = await response.json();
-      detail = String(payload?.error || payload?.message || detail);
-    } catch {
-      try {
-        detail = (await response.text()) || detail;
-      } catch {
-        // ignore
-      }
+      response = await fetch(`${ENGINE_URL}${path}`, {
+        method,
+        headers: {
+          authorization: `Bearer ${session.token}`,
+          "x-tandem-token": session.token,
+          ...(body ? { "content-type": "application/json" } : {}),
+          ...(options.headers || {}),
+        },
+        body: body ? JSON.stringify(body) : undefined,
+        signal: AbortSignal.timeout(options.timeoutMs || 8000),
+      });
+    } catch (error) {
+      const name = String(error?.name || "");
+      const isTimeout = name === "AbortError" || name === "TimeoutError";
+      if (isTimeout || attempt >= maxNetworkRetries) throw error;
+      lastError = error;
+      continue;
     }
-    throw new Error(detail);
+    if (!response.ok) {
+      const rawText = await response.text().catch(() => "");
+      if (
+        (response.status === 503 || isEngineStarting(rawText)) &&
+        attempt < maxNetworkRetries
+      ) {
+        lastError = new Error(rawText || `${method} ${path} failed: ${response.status}`);
+        response = null;
+        continue;
+      }
+      let detail = `${method} ${path} failed: ${response.status}`;
+      if (rawText.trim()) {
+        try {
+          const payload = JSON.parse(rawText);
+          detail = String(payload?.error || payload?.message || detail);
+        } catch {
+          detail = rawText || detail;
+        }
+      }
+      throw new Error(detail);
+    }
+    break;
   }
+  if (!response) throw lastError || new Error(`${method} ${path} failed`);
   if (response.status === 204) return {};
   const text = await response.text();
   if (!text.trim()) return {};
@@ -1742,6 +1770,19 @@ function normalizePlannerTasks(rawTasks, maxTasks = 8, options = {}) {
   const normalizedMax = Math.max(1, Number(maxTasks) || 8);
   const linearFallback = options?.linearFallback === true;
   const candidates = Array.isArray(rawTasks) ? rawTasks : [];
+  const normalizeTaskKind = (value, outputTarget) => {
+    const raw = String(value || "").trim().toLowerCase();
+    if (["implementation", "inspection", "research", "validation"].includes(raw)) return raw;
+    return outputTarget?.path ? "implementation" : "inspection";
+  };
+  const normalizeOutputTarget = (value) => {
+    if (!value || typeof value !== "object") return null;
+    const path = String(value?.path || value?.file || value?.file_path || value?.target || "").trim();
+    if (!path) return null;
+    const kind = String(value?.kind || value?.type || "artifact").trim().toLowerCase() || "artifact";
+    const operation = String(value?.operation || value?.mode || "").trim().toLowerCase() || "create_or_update";
+    return { path, kind, operation };
+  };
   const provisional = candidates
     .map((row, index) => {
       if (typeof row === "string") {
@@ -1751,6 +1792,7 @@ function normalizePlannerTasks(rawTasks, maxTasks = 8, options = {}) {
           id: `task-${index + 1}`,
           title,
           dependsOnTaskIds: [],
+          outputTarget: null,
         };
       }
       if (!row || typeof row !== "object") return null;
@@ -1770,10 +1812,15 @@ function normalizePlannerTasks(rawTasks, maxTasks = 8, options = {}) {
       const dependsOnTaskIds = dependencySource
         .map((dep) => String(dep || "").trim())
         .filter(Boolean);
+      const outputTarget = normalizeOutputTarget(
+        row?.output_target || row?.outputTarget || row?.artifact || row?.target_file || null
+      );
       return {
         id,
         title,
         dependsOnTaskIds,
+        outputTarget,
+        taskKind: normalizeTaskKind(row?.task_kind || row?.taskKind || row?.kind, outputTarget),
       };
     })
     .filter(Boolean)
@@ -1789,6 +1836,8 @@ function normalizePlannerTasks(rawTasks, maxTasks = 8, options = {}) {
       id: uniqueId,
       title: String(row?.title || "").trim(),
       dependsOnTaskIds: Array.isArray(row?.dependsOnTaskIds) ? row.dependsOnTaskIds : [],
+      outputTarget: row?.outputTarget || null,
+      taskKind: String(row?.taskKind || "").trim() || "inspection",
     });
   }
   const knownIds = new Set(withUniqueIds.map((row) => row.id));
@@ -1803,8 +1852,65 @@ function normalizePlannerTasks(rawTasks, maxTasks = 8, options = {}) {
       id: row.id,
       title: row.title,
       dependsOnTaskIds,
+      outputTarget: row?.outputTarget || null,
+      taskKind: String(row?.taskKind || "").trim() || "inspection",
     };
   });
+}
+
+function inferOutputTargetFromText(text) {
+  const source = String(text || "").trim();
+  if (!source) return null;
+  const backtickMatch = source.match(/`([^`\n]+?\.[A-Za-z0-9_-]{1,12})`/);
+  if (backtickMatch?.[1]) {
+    return {
+      path: backtickMatch[1].trim(),
+      kind: "artifact",
+      operation: "create_or_update",
+    };
+  }
+  const saveAsMatch = source.match(/\bsave as\s+([A-Za-z0-9_./-]+\.[A-Za-z0-9_-]{1,12})\b/i);
+  if (saveAsMatch?.[1]) {
+    return {
+      path: saveAsMatch[1].trim(),
+      kind: "artifact",
+      operation: "create_or_update",
+    };
+  }
+  return null;
+}
+
+function ensurePlannerTaskOutputTargets(tasks, objective) {
+  const list = Array.isArray(tasks) ? tasks : [];
+  return list.map((task) => {
+    const taskKind = String(task?.taskKind || "").trim().toLowerCase() || "inspection";
+    const existing = task?.outputTarget && typeof task.outputTarget === "object" ? task.outputTarget : null;
+    return {
+      ...task,
+      taskKind,
+      outputTarget: existing || null,
+    };
+  });
+}
+
+function validateStrictPlannerTasks(tasks) {
+  const list = Array.isArray(tasks) ? tasks : [];
+  const invalidTaskKinds = list
+    .filter((task) => !["implementation", "inspection", "research", "validation"].includes(String(task?.taskKind || "").trim().toLowerCase()))
+    .map((task) => String(task?.id || task?.title || "task").trim())
+    .filter(Boolean);
+  const missing = list
+    .filter((task) => {
+      const taskKind = String(task?.taskKind || "").trim().toLowerCase();
+      return taskKind === "implementation" && !String(task?.outputTarget?.path || "").trim();
+    })
+    .map((task) => String(task?.id || task?.title || "task").trim())
+    .filter(Boolean);
+  return {
+    ok: missing.length === 0 && invalidTaskKinds.length === 0,
+    missing,
+    invalidTaskKinds,
+  };
 }
 
 function parsePlanTasksFromAssistant(assistantText, maxTasks = 8, options = {}) {
@@ -1897,11 +2003,19 @@ async function generatePlanTodosWithLLM(session, run, maxTasks) {
     `Objective: ${String(run?.objective || "").trim()}`,
     `Workspace: ${String(run?.workspace?.canonical_path || "").trim()}`,
     "",
-    `Generate ${Math.max(1, Number(maxTasks) || 3)} concise, execution-ready implementation steps.`,
+    `Generate ${Math.max(1, Number(maxTasks) || 3)} concise, execution-ready tasks.`,
+    "If the objective requires creating or updating a single file, prefer ONE implementation task that creates the complete file.",
+    "Do not split creation and refinement of the same artifact into separate dependent tasks.",
+    "Inspection tasks should only exist when the workspace has existing files that must be understood first.",
+    "For greenfield or nearly empty workspaces, skip inspection and go straight to implementation.",
     "Return strict JSON only in this shape:",
-    '{"tasks":[{"id":"task-1","title":"...","depends_on_task_ids":[]},{"id":"task-2","title":"...","depends_on_task_ids":["task-1"]}]}',
+    '{"tasks":[{"id":"task-1","title":"...","task_kind":"inspection","depends_on_task_ids":[]},{"id":"task-2","title":"...","task_kind":"implementation","depends_on_task_ids":["task-1"],"output_target":{"path":"relative/path.ext","kind":"source|spec|config|document|test|asset","operation":"create|update|create_or_update"}}]}',
     "Use depends_on_task_ids only when a task requires outputs from another task.",
     "Independent tasks must have an empty depends_on_task_ids array.",
+    "Every task must include task_kind: implementation, inspection, research, or validation.",
+    "Only implementation tasks must include output_target.path naming the concrete workspace file or artifact to create or update.",
+    "Inspection/research tasks are read-only and should not require file writes.",
+    "Keep output_target generic and file-type agnostic: Python, JS, HTML, Markdown, TOML, YAML, text, tests, and assets are all valid.",
     "Do not include explanations.",
   ].join("\n");
   const promptResponse = await engineRequestJson(
@@ -2087,6 +2201,81 @@ function workerExecutionToolAllowlist() {
 
 function workerWriteRetryToolAllowlist() {
   return ["write", "edit", "apply_patch"];
+}
+
+function strictWriteRetryEnabled() {
+  const raw = String(process.env.TANDEM_STRICT_WRITE_RETRY_ENABLED || "").trim().toLowerCase();
+  if (!raw) return true;
+  return !["0", "false", "no", "off"].includes(raw);
+}
+
+function strictWriteRetryMaxAttempts() {
+  const parsed = Number.parseInt(
+    String(process.env.TANDEM_STRICT_WRITE_RETRY_MAX_ATTEMPTS || "3"),
+    10
+  );
+  return Number.isFinite(parsed) ? Math.max(1, parsed) : 3;
+}
+
+function classifyStrictWriteFailureReason(verification) {
+  const reason = String(verification?.reason || "").trim().toUpperCase();
+  if (!reason || reason === "VERIFIED") return "";
+  if (
+    reason === "WRITE_ARGS_EMPTY_FROM_PROVIDER" ||
+    reason === "WRITE_ARGS_UNPARSEABLE_FROM_PROVIDER" ||
+    reason === "FILE_PATH_MISSING" ||
+    reason === "WRITE_CONTENT_MISSING"
+  ) {
+    return "malformed_write_args";
+  }
+  if (
+    reason === "NO_WRITE_ACTIVITY_NO_WORKSPACE_CHANGE" ||
+    reason === "WRITE_REQUIRED_NOT_SATISFIED" ||
+    reason === "WRITE_TOOL_ATTEMPT_REJECTED_NO_WORKSPACE_CHANGE"
+  ) {
+    return "write_required_unsatisfied";
+  }
+  if (
+    reason === "TOOL_ATTEMPT_REJECTED_NO_WORKSPACE_CHANGE" ||
+    reason === "NO_TOOL_ACTIVITY_NO_WORKSPACE_CHANGE"
+  ) {
+    return "no_workspace_change";
+  }
+  return "";
+}
+
+function buildStrictWriteRetryRequest(prompt, verification, attemptIndex, maxAttempts) {
+  const failureClass = classifyStrictWriteFailureReason(verification);
+  const needsInspection =
+    Number(verification?.total_tool_calls || 0) === 0 &&
+    Number(verification?.rejected_tool_calls || 0) === 0;
+  const recoveryLines = [
+    prompt,
+    "",
+    "[Strict Write Recovery]",
+    `Attempt ${attemptIndex}/${maxAttempts} failed with ${failureClass || "strict_write_failure"}.`,
+    "- You must satisfy strict write mode on this retry.",
+    '- Valid write shape: {"path":"target-file","content":"full file contents"}',
+    "- For file tools, include a non-empty `path` string.",
+    "- For `write`, include a non-empty `content` string.",
+    "- Do not use bash.",
+  ];
+  if (needsInspection) {
+    recoveryLines.push("- Use tools on this retry.");
+    recoveryLines.push("- Inspect minimally with ls/list/glob/search/read if needed.");
+    recoveryLines.push("- Then create or modify the required file in the same turn.");
+  } else {
+    recoveryLines.push("- Do not inspect further with read/search/glob/ls/list.");
+    recoveryLines.push("- Create or modify the required target directly with write/edit/apply_patch.");
+  }
+  return {
+    parts: [{ type: "text", text: recoveryLines.join("\n") }],
+    tool_mode: "required",
+    tool_allowlist: needsInspection
+      ? workerExecutionToolAllowlist()
+      : workerWriteRetryToolAllowlist(),
+    write_required: true,
+  };
 }
 
 const WRITE_TOOL_NAMES = new Set(["write", "edit", "apply_patch"]);
@@ -2390,6 +2579,8 @@ function extractToolFailureSignalsFromText(text) {
   const knownReasons = [
     "FILE_PATH_MISSING",
     "WRITE_CONTENT_MISSING",
+    "WRITE_ARGS_EMPTY_FROM_PROVIDER",
+    "WRITE_ARGS_UNPARSEABLE_FROM_PROVIDER",
     "WEBFETCH_URL_MISSING",
     "WEBSEARCH_QUERY_MISSING",
     "BASH_COMMAND_MISSING",
@@ -2547,6 +2738,15 @@ function mergeToolActivityAudits(...audits) {
   };
 }
 
+function selectProviderWriteFailureReason(reasons) {
+  const list = Array.isArray(reasons) ? reasons : [];
+  if (list.includes("WRITE_ARGS_EMPTY_FROM_PROVIDER")) return "WRITE_ARGS_EMPTY_FROM_PROVIDER";
+  if (list.includes("WRITE_ARGS_UNPARSEABLE_FROM_PROVIDER")) {
+    return "WRITE_ARGS_UNPARSEABLE_FROM_PROVIDER";
+  }
+  return "";
+}
+
 function summarizeExecutionRows(rows, limit = 12) {
   const list = Array.isArray(rows) ? rows : [];
   const out = [];
@@ -2574,13 +2774,16 @@ function summarizeExecutionRows(rows, limit = 12) {
   return out;
 }
 
-function buildAttemptTelemetry(name, request, rows, messages, startedAtMs, error = null) {
+function buildAttemptTelemetry(name, request, rows, messages, startedAtMs, error = null, meta = {}) {
   const syncAudit = collectToolActivity(rows, `${name}_prompt_sync`);
   const sessionAudit = collectToolActivity(messages, `${name}_session_snapshot`);
   const merged = mergeToolActivityAudits(syncAudit, sessionAudit);
   const assistantText = extractAssistantText(rows) || extractAssistantText(messages);
   return {
     name,
+    attempt_index: Number(meta?.attemptIndex || 0),
+    strict_write_failure_class: String(meta?.failureClass || "").trim() || null,
+    strict_write_retry_remaining: Number(meta?.retryRemaining || 0),
     started_at_ms: Number(startedAtMs || Date.now()),
     tool_mode: String(request?.tool_mode || "").trim() || null,
     tool_allowlist: Array.isArray(request?.tool_allowlist) ? request.tool_allowlist.slice() : [],
@@ -2614,6 +2817,7 @@ function buildVerificationSummary(syncRows, messages, workspaceChanges, sessionI
   const mode = normalizeVerificationMode(options.verificationMode || swarmState.verificationMode);
   const requiredToolModeUnsatisfied = assistantText.includes(REQUIRED_TOOL_MODE_REASON);
   const requiredToolFailureReason = extractRequiredToolFailureReason(assistantText);
+  const providerWriteFailureReason = selectProviderWriteFailureReason(toolAudit.rejectionReasons);
   const workspaceChanged = workspaceChanges?.hasChanges === true;
   const strictMode = mode === "strict";
   const passed = strictMode
@@ -2621,7 +2825,8 @@ function buildVerificationSummary(syncRows, messages, workspaceChanges, sessionI
     : workspaceChanged || toolAudit.totalToolCalls > 0;
   let reason = "VERIFIED";
   if (!passed) {
-    if (requiredToolFailureReason) reason = requiredToolFailureReason;
+    if (providerWriteFailureReason) reason = providerWriteFailureReason;
+    else if (requiredToolFailureReason) reason = requiredToolFailureReason;
     else if (requiredToolModeUnsatisfied) reason = REQUIRED_TOOL_MODE_REASON;
     else if (toolAudit.rejectedWriteToolCalls > 0)
       reason = "WRITE_TOOL_ATTEMPT_REJECTED_NO_WORKSPACE_CHANGE";
@@ -2729,6 +2934,18 @@ async function resolveExecutionModel(session, run) {
   throw new Error("MODEL_SELECTION_REQUIRED: no provider/model configured for swarm execution.");
 }
 
+function normalizeSessionModelRef(value) {
+  if (typeof value === "string") return value.trim();
+  if (value && typeof value === "object") {
+    const model =
+      String(
+        value?.model_id || value?.id || value?.name || value?.slug || value?.model || ""
+      ).trim();
+    if (model) return model;
+  }
+  return "";
+}
+
 function summarizeRunStepsForPrompt(run, currentStepId, limit = 12) {
   const steps = Array.isArray(run?.steps) ? run.steps : [];
   return steps
@@ -2791,7 +3008,60 @@ function rowsSinceAttemptStart(rows, startIndex = 0) {
   return list.length > offset ? list.slice(offset) : list;
 }
 
-async function runExecutionPromptWithVerification(session, run, prompt, sessionId = "") {
+function parseDecisionPayload(text) {
+  const candidate = String(text || "").trim();
+  if (!candidate) return null;
+  const fencedJson = candidate.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  const raw = (fencedJson?.[1] || candidate).trim();
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" && parsed.decision ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function buildNonWritingVerificationSummary(syncRows, messages, sessionId, options = {}) {
+  const syncAudit = collectToolActivity(syncRows, "prompt_sync");
+  const sessionAudit = collectToolActivity(messages, "session_snapshot");
+  const toolAudit = mergeToolActivityAudits(syncAudit, sessionAudit);
+  const assistantText = extractAssistantText(syncRows) || extractAssistantText(messages);
+  const decisionPayload = parseDecisionPayload(assistantText);
+  const passed = toolAudit.totalToolCalls > 0 && !!decisionPayload;
+  return {
+    mode: normalizeVerificationMode(options.verificationMode || swarmState.verificationMode),
+    reason: passed
+      ? "VERIFIED"
+      : toolAudit.totalToolCalls === 0
+        ? "NO_TOOL_ACTIVITY_NO_DECISION"
+        : "DECISION_PAYLOAD_MISSING",
+    passed,
+    session_id: String(sessionId || "").trim() || null,
+    assistant_present: !!assistantText.trim(),
+    assistant_excerpt: assistantText.trim().slice(0, 280),
+    any_tool_attempts: toolAudit.totalToolCalls > 0 || toolAudit.rejectedToolCalls > 0,
+    any_tool_calls: toolAudit.totalToolCalls > 0,
+    total_tool_calls: toolAudit.totalToolCalls,
+    write_tool_calls: toolAudit.writeToolCalls,
+    tool_names: toolAudit.toolNames,
+    rejected_tool_calls: toolAudit.rejectedToolCalls,
+    rejected_write_tool_calls: toolAudit.rejectedWriteToolCalls,
+    rejected_tool_names: toolAudit.rejectedToolNames,
+    rejection_reasons: toolAudit.rejectionReasons,
+    detection_sources: toolAudit.sources,
+    workspace_changed: false,
+    workspace_change_mode: "not_required",
+    workspace_change_paths: [],
+    workspace_change_summary: "Workspace changes not required for this task kind.",
+    decision_payload: decisionPayload,
+    execution_trace:
+      options?.executionTrace && typeof options.executionTrace === "object"
+        ? options.executionTrace
+        : undefined,
+  };
+}
+
+async function runExecutionPromptWithVerification(session, run, prompt, sessionId = "", options = {}) {
   const activeSessionId =
     String(sessionId || "").trim() || (await createExecutionSession(session, run));
   if (!activeSessionId) throw new Error("Failed to create execution session.");
@@ -2815,16 +3085,10 @@ async function runExecutionPromptWithVerification(session, run, prompt, sessionI
     summary: "",
   };
   const resolvedModel = await resolveExecutionModel(session, run);
-  const initialRequestBody = {
-    parts: [{ type: "text", text: prompt }],
-    tool_mode: "required",
-    tool_allowlist: workerExecutionToolAllowlist(),
-    write_required: true,
-  };
-  let initialAttemptRows = [];
-  let retryAttemptRows = [];
-  let retryAttemptMessages = [];
-  let retryRequestBody = null;
+  const writeRequired = options.writeRequired !== false;
+  const maxAttempts =
+    writeRequired && strictWriteRetryEnabled() ? strictWriteRetryMaxAttempts() : 1;
+  const attempts = [];
   const workspaceSeedPaths = () => [
     ...Object.keys(workspaceBefore?.files || {}),
     ...Object.keys(workspaceBefore?.statusByPath || {}),
@@ -2838,153 +3102,145 @@ async function runExecutionPromptWithVerification(session, run, prompt, sessionI
       error: String(error?.message || error || "workspace snapshot failed"),
     }));
   }
-  let promptResponse = await engineRequestJson(
-    session,
-    `/session/${encodeURIComponent(activeSessionId)}/prompt_sync`,
-    {
-      method: "POST",
-      timeoutMs: 10 * 60 * 1000,
-      body: initialRequestBody,
-    }
-  );
-  let syncRows = Array.isArray(promptResponse) ? promptResponse : [];
-  initialAttemptRows = syncRows.slice();
-  let verificationStartIndex = 0;
-  let retryError = null;
-  let hasAssistant = syncRows.some((row) => roleOfMessage(row) === "assistant");
-  let hasToolSignal = hasToolActivity(syncRows);
-  if (!hasAssistant || !hasToolSignal) {
-    verificationStartIndex = syncRows.length;
-    const retryNeedsInitialInspection = !hasToolSignal;
-    const retryPrompt = retryNeedsInitialInspection
-      ? [
-          prompt,
-          "",
-          "Mandatory execution rule:",
-          "- Before final text, execute at least one tool call.",
-          "- You have not used any tools yet in this step.",
-          "- You are explicitly allowed and expected to call tools on this retry.",
-          "- Inspect the workspace first with ls/list/glob/search/read if needed.",
-          "- Use list/ls/glob for directories. Use read only for files.",
-          "- Then make the required file changes in the same turn with write/edit/apply_patch.",
-          '- Valid write shape: {"path":"target-file","content":"full file contents"}',
-          "- Do not end with prose only.",
-          "- Do not use bash.",
-        ].join("\n")
-      : [
-          prompt,
-          "",
-          "Mandatory execution rule:",
-          "- Before final text, execute at least one tool call.",
-          "- You are explicitly allowed and expected to call tools on this retry.",
-          "- Use write/edit/apply_patch to make workspace changes.",
-          "- On this retry, do not inspect further with read/search/glob/ls/list.",
-          "- Create or modify the target file directly with write/edit/apply_patch.",
-          '- Valid write shape: {"path":"target-file","content":"full file contents"}',
-          "- Do not use bash.",
-        ].join("\n");
-    retryRequestBody = {
-      parts: [{ type: "text", text: retryPrompt }],
-      tool_mode: "required",
-      tool_allowlist: retryNeedsInitialInspection
-        ? workerExecutionToolAllowlist()
-        : workerWriteRetryToolAllowlist(),
-      write_required: true,
-    };
-    promptResponse = await engineRequestJson(
+  let previousSyncCount = 0;
+  let previousMessageCount = 0;
+  let syncRows = [];
+  let messages = [];
+  let verification = null;
+  let attemptError = null;
+  let hasAssistant = false;
+  let persistedAssistant = false;
+  let lastSessionSnapshot = null;
+  for (let attemptIndex = 1; attemptIndex <= maxAttempts; attemptIndex += 1) {
+    attemptError = null;
+    const requestBody =
+      attemptIndex === 1
+        ? {
+            parts: [{ type: "text", text: prompt }],
+            tool_mode: "required",
+            tool_allowlist:
+              options.toolAllowlist ||
+              (writeRequired ? workerExecutionToolAllowlist() : [
+                "ls",
+                "list",
+                "glob",
+                "search",
+                "grep",
+                "codesearch",
+                "read",
+              ]),
+            write_required: writeRequired ? true : undefined,
+          }
+        : buildStrictWriteRetryRequest(prompt, verification, attemptIndex, maxAttempts);
+    const promptResponse = await engineRequestJson(
       session,
       `/session/${encodeURIComponent(activeSessionId)}/prompt_sync`,
       {
         method: "POST",
         timeoutMs: 10 * 60 * 1000,
-        body: retryRequestBody,
+        body: requestBody,
       }
     ).catch((error) => {
-      retryError = error;
+      attemptError = error;
       return null;
     });
-    syncRows = rowsSinceAttemptStart(promptResponse, verificationStartIndex);
-    retryAttemptRows = syncRows.slice();
+    const allSyncRows = Array.isArray(promptResponse) ? promptResponse : [];
+    syncRows = rowsSinceAttemptStart(allSyncRows, previousSyncCount);
+    previousSyncCount = allSyncRows.length;
+    const sessionSnapshot = await engineRequestJson(
+      session,
+      `/session/${encodeURIComponent(activeSessionId)}`
+    ).catch(() => null);
+    lastSessionSnapshot = sessionSnapshot;
+    const sessionMessages = Array.isArray(sessionSnapshot?.messages) ? sessionSnapshot.messages : [];
+    messages = rowsSinceAttemptStart(sessionMessages, previousMessageCount);
+    previousMessageCount = sessionMessages.length;
     hasAssistant = syncRows.some((row) => roleOfMessage(row) === "assistant");
-    hasToolSignal = hasToolActivity(syncRows);
-  }
-  const sessionSnapshot = await engineRequestJson(
-    session,
-    `/session/${encodeURIComponent(activeSessionId)}`
-  ).catch(() => null);
-  const sessionMessages = Array.isArray(sessionSnapshot?.messages) ? sessionSnapshot.messages : [];
-  const messages = rowsSinceAttemptStart(sessionMessages, verificationStartIndex);
-  retryAttemptMessages = messages.slice();
-  const persistedAssistant = messages.some((message) => roleOfMessage(message) === "assistant");
-  if (workspaceRoot) {
-    workspaceAfter = await captureWorkspaceSnapshot(workspaceRoot, {
-      includePaths: workspaceSeedPaths(),
-    }).catch((error) => ({
-      mode: "capture_failed",
-      root: workspaceRoot,
-      files: {},
-      statusByPath: {},
-      error: String(error?.message || error || "workspace snapshot failed"),
-    }));
-  }
-  if (workspaceBefore && workspaceAfter) {
-    workspaceChanges = summarizeWorkspaceChanges(workspaceBefore, workspaceAfter);
-    if (workspaceBefore?.error || workspaceAfter?.error) {
-      const detail = [workspaceBefore?.error, workspaceAfter?.error].filter(Boolean).join(" | ");
-      workspaceChanges.summary = [
-        workspaceChanges.summary,
-        detail ? `Workspace snapshot warnings: ${detail}` : "",
-      ]
-        .filter(Boolean)
-        .join("\n");
+    persistedAssistant = messages.some((message) => roleOfMessage(message) === "assistant");
+
+    if (workspaceRoot) {
+      workspaceAfter = await captureWorkspaceSnapshot(workspaceRoot, {
+        includePaths: workspaceSeedPaths(),
+      }).catch((error) => ({
+        mode: "capture_failed",
+        root: workspaceRoot,
+        files: {},
+        statusByPath: {},
+        error: String(error?.message || error || "workspace snapshot failed"),
+      }));
     }
+    if (workspaceBefore && workspaceAfter) {
+      workspaceChanges = summarizeWorkspaceChanges(workspaceBefore, workspaceAfter);
+      if (workspaceBefore?.error || workspaceAfter?.error) {
+        const detail = [workspaceBefore?.error, workspaceAfter?.error].filter(Boolean).join(" | ");
+        workspaceChanges.summary = [
+          workspaceChanges.summary,
+          detail ? `Workspace snapshot warnings: ${detail}` : "",
+        ]
+          .filter(Boolean)
+          .join("\n");
+      }
+    }
+    verification = writeRequired
+      ? buildVerificationSummary(syncRows, messages, workspaceChanges, activeSessionId, {
+          verificationMode: controller?.verificationMode || swarmState.verificationMode,
+        })
+      : buildNonWritingVerificationSummary(syncRows, messages, activeSessionId, {
+          verificationMode: controller?.verificationMode || swarmState.verificationMode,
+        });
+    const failureClass = classifyStrictWriteFailureReason(verification);
+    attempts.push(
+      buildAttemptTelemetry(
+        attemptIndex === 1 ? "initial" : `retry_${attemptIndex - 1}`,
+        requestBody,
+        syncRows,
+        messages,
+        Date.now(),
+        attemptError,
+        {
+          attemptIndex,
+          failureClass,
+          retryRemaining: maxAttempts - attemptIndex,
+        }
+      )
+    );
+    if (verification?.passed) break;
+    if (!writeRequired || !failureClass || attemptIndex >= maxAttempts) break;
   }
   const executionTrace = {
     session_id: activeSessionId,
     model: {
-      provider: String(resolvedModel?.provider || "").trim(),
-      model_id: String(resolvedModel?.model || "").trim(),
-      source: String(resolvedModel?.source || "").trim(),
+      provider: String(lastSessionSnapshot?.provider || resolvedModel?.provider || "").trim(),
+      model_id:
+        normalizeSessionModelRef(lastSessionSnapshot?.model) ||
+        normalizeSessionModelRef(resolvedModel?.model),
+      source: String(
+        lastSessionSnapshot?.provider &&
+          normalizeSessionModelRef(lastSessionSnapshot?.model)
+          ? "session_snapshot"
+          : resolvedModel?.source || ""
+      ).trim(),
     },
-    attempts: [
-      buildAttemptTelemetry(
-        "initial",
-        initialRequestBody,
-        initialAttemptRows,
-        retryRequestBody ? [] : messages,
-        Date.now()
-      ),
-      retryRequestBody
-        ? buildAttemptTelemetry(
-            "retry",
-            retryRequestBody,
-            retryAttemptRows,
-            retryAttemptMessages,
-            Date.now(),
-            retryError
-          )
-        : null,
-    ].filter(Boolean),
+    attempts,
   };
-  const verification = buildVerificationSummary(
-    syncRows,
-    messages,
-    workspaceChanges,
-    activeSessionId,
-    {
-      verificationMode: controller?.verificationMode || swarmState.verificationMode,
-      executionTrace,
-    }
-  );
-  if (retryError && !hasAssistant && !persistedAssistant) {
-    throw createExecutionError(`PROMPT_RETRY_FAILED: ${retryError.message}`, {
+  verification = writeRequired
+    ? buildVerificationSummary(syncRows, messages, workspaceChanges, activeSessionId, {
+        verificationMode: controller?.verificationMode || swarmState.verificationMode,
+        executionTrace,
+      })
+    : buildNonWritingVerificationSummary(syncRows, messages, activeSessionId, {
+        verificationMode: controller?.verificationMode || swarmState.verificationMode,
+        executionTrace,
+      });
+  if (attemptError && !hasAssistant && !persistedAssistant) {
+    throw createExecutionError(`PROMPT_RETRY_FAILED: ${attemptError.message}`, {
       sessionId: activeSessionId,
       verification: {
         ...verification,
         reason: "PROMPT_RETRY_FAILED",
         passed: false,
         assistant_present: false,
-        retry_error: String(retryError?.message || retryError || "").trim(),
+        retry_error: String(attemptError?.message || attemptError || "").trim(),
       },
     });
   }
@@ -3054,6 +3310,18 @@ function taskTitleFromRecord(task) {
   return String(payload?.title || task?.title || task?.task_type || task?.id || "task").trim();
 }
 
+function taskKindFromRecord(task) {
+  const payload = task?.payload && typeof task.payload === "object" ? task.payload : {};
+  const raw = String(payload?.task_kind || task?.task_type || "inspection").trim().toLowerCase();
+  return ["implementation", "inspection", "research", "validation"].includes(raw)
+    ? raw
+    : "inspection";
+}
+
+function isNonWritingTaskRecord(task) {
+  return taskKindFromRecord(task) !== "implementation";
+}
+
 function summarizeBlackboardTasksForPrompt(tasks, currentTaskId, limit = 16) {
   const list = Array.isArray(tasks) ? tasks : [];
   return list
@@ -3072,14 +3340,59 @@ function summarizeBlackboardTasksForPrompt(tasks, currentTaskId, limit = 16) {
 function taskPromptText(run, task, workerId, workflowId) {
   const taskId = String(task?.id || "").trim();
   const taskTitle = taskTitleFromRecord(task);
+  const taskKind = taskKindFromRecord(task);
   const taskDetails =
     task && typeof task === "object" ? JSON.stringify(task, null, 2).trim() : "";
   const taskList = summarizeBlackboardTasksForPrompt(run?.tasks, taskId);
+  const outputTarget =
+    task?.payload?.output_target && typeof task.payload.output_target === "object"
+      ? task.payload.output_target
+      : task?.output_target && typeof task.output_target === "object"
+        ? task.output_target
+        : null;
+  const outputPath = String(outputTarget?.path || "").trim();
+  const outputKind = String(outputTarget?.kind || "artifact").trim();
+  const outputOperation = String(outputTarget?.operation || "create_or_update").trim();
+  if (taskKind !== "implementation") {
+    return [
+      "Execute this swarm blackboard task.",
+      "",
+      `Task: ${taskTitle}`,
+      `Task ID: ${taskId}`,
+      `Task Kind: ${taskKind}`,
+      `Workflow: ${String(workflowId || task?.workflow_id || "swarm.blackboard.default").trim()}`,
+      `Agent: ${workerId}`,
+      `Workspace: ${String(run?.workspace?.canonical_path || "").trim()}`,
+      "",
+      "This is a non-writing research/inspection task.",
+      "Treat the current assigned task as the authority for what to inspect or decide.",
+      "Use the original objective and task list only to clarify the assigned task, not to re-plan the run.",
+      "Do not create a new plan, do not restate the task graph, and do not describe future work.",
+      "Use read-only tools to inspect the workspace now.",
+      "",
+      "Current assigned task payload:",
+      taskDetails || "{}",
+      "",
+      "Run blackboard task list:",
+      taskList || "(no task list available)",
+      "",
+      `Original objective: ${String(run?.objective || "").trim()}`,
+      "",
+      "Requirements:",
+      "- You must use tools in this task.",
+      "- Use only read-only tools such as ls/list/glob/search/grep/codesearch/read.",
+      "- Do not call write/edit/apply_patch for this task.",
+      "- Return a concise structured JSON decision object with your findings.",
+      "- If you decide a future artifact path, include `output_target.path` in the JSON.",
+      '- Output shape: {"decision":{"summary":"...","output_target":{"path":"...","kind":"artifact","operation":"create_or_update"},"evidence":["..."]}}',
+    ].join("\n");
+  }
   return [
     "Execute this swarm blackboard task.",
     "",
     `Task: ${taskTitle}`,
     `Task ID: ${taskId}`,
+    `Task Kind: ${taskKind}`,
     `Workflow: ${String(workflowId || task?.workflow_id || "swarm.blackboard.default").trim()}`,
     `Agent: ${workerId}`,
     `Workspace: ${String(run?.workspace?.canonical_path || "").trim()}`,
@@ -3093,6 +3406,19 @@ function taskPromptText(run, task, workerId, workflowId) {
     "Current assigned task payload:",
     taskDetails || "{}",
     "",
+    "Required output target:",
+    outputPath
+      ? JSON.stringify(
+          {
+            path: outputPath,
+            kind: outputKind,
+            operation: outputOperation,
+          },
+          null,
+          2
+        )
+      : '{"path":"","kind":"artifact","operation":"create_or_update"}',
+    "",
     "Run blackboard task list:",
     taskList || "(no task list available)",
     "",
@@ -3100,10 +3426,15 @@ function taskPromptText(run, task, workerId, workflowId) {
     "",
     "Requirements:",
     "- First inspect the relevant workspace files with read/glob/list/search if needed.",
+    "- If the target file does not exist, create the COMPLETE file in a single write call.",
+    "- Do not split the implementation across multiple tool calls if the result should be one file.",
     "- Use list/ls/glob for directories. Use read only for concrete file paths.",
     "- Implement this task in the workspace right now.",
     "- Create or edit files as needed for this task only.",
-    "- If no relevant file exists yet, create the correct new file directly.",
+    outputPath
+      ? `- The required output for this task is \`${outputPath}\` (${outputKind}, ${outputOperation}).`
+      : "- The required output target is missing; do not guess a file path.",
+    "- If the target file does not exist yet, create it directly.",
     "- A write call must include both a path and the full content to write.",
     "- Use write/edit/apply_patch instead of a prose-only response.",
     "- Keep scope limited to this task.",
@@ -3113,7 +3444,9 @@ function taskPromptText(run, task, workerId, workflowId) {
 
 async function runTaskWithLLM(session, run, task, workerId, workflowId, sessionId = "") {
   const prompt = taskPromptText(run, task, workerId, workflowId);
-  return runExecutionPromptWithVerification(session, run, prompt, sessionId);
+  return runExecutionPromptWithVerification(session, run, prompt, sessionId, {
+    writeRequired: !isNonWritingTaskRecord(task),
+  });
 }
 
 async function fetchBlackboardTasks(session, runId) {
@@ -3125,42 +3458,38 @@ async function fetchBlackboardTasks(session, runId) {
 }
 
 async function seedBlackboardTasks(session, runId, objective, taskRows, workflowId) {
-  const normalizedTasks = normalizePlannerTasks(taskRows, 128, { linearFallback: true });
+  const normalizedTasks = ensurePlannerTaskOutputTargets(
+    normalizePlannerTasks(taskRows, 128, { linearFallback: true }),
+    objective
+  );
   const validTaskIds = new Set(normalizedTasks.map((task) => task.id));
   const prepared = normalizedTasks
     .map((task, idx, list) => ({
       id: String(task?.id || `task-${idx + 1}`).trim(),
-      task_type: "implementation",
+      task_type: String(task?.taskKind || "inspection").trim(),
       workflow_id: workflowId,
       depends_on_task_ids: (Array.isArray(task?.dependsOnTaskIds) ? task.dependsOnTaskIds : [])
         .map((dep) => String(dep || "").trim())
         .filter((dep) => dep && validTaskIds.has(dep)),
       payload: {
         title: String(task?.title || "").trim(),
+        task_kind: String(task?.taskKind || "inspection").trim(),
         objective,
         step_index: idx + 1,
         total_steps: list.length,
+        output_target: task?.outputTarget || null,
       },
     }))
     .filter((task) => String(task?.payload?.title || "").trim().length >= 6);
   if (!prepared.length) {
     throw new Error("No valid tasks to seed.");
   }
-  try {
-    await engineRequestJson(session, `/context/runs/${encodeURIComponent(runId)}/tasks`, {
-      method: "POST",
-      body: { tasks: prepared },
-    });
-  } catch (error) {
-    const detail = String(error?.message || error || "").toLowerCase();
-    const endpointMissing = detail.includes("404") || detail.includes("not found");
-    if (!endpointMissing) throw error;
-    const todoCount = await seedContextRunStepsFromTitles(
-      session,
-      runId,
-      prepared.map((row) => String(row?.payload?.title || "").trim())
-    );
-    return { mode: "steps_compat", count: todoCount };
+  const created = await engineRequestJson(session, `/context/runs/${encodeURIComponent(runId)}/tasks`, {
+    method: "POST",
+    body: { tasks: prepared },
+  });
+  if (created && created.ok === false) {
+    throw new Error(String(created.error || created.code || "Task seeding failed."));
   }
   const seeded = await fetchBlackboardTasks(session, runId);
   if (!seeded.length) {
@@ -3791,19 +4120,31 @@ async function startSwarm(session, config = {}) {
   await synced;
   let plannerTasks = [];
   let planSeedMode = "fallback_local";
+  const enforceStrictTaskOutputs = String(verificationMode || "strict").trim().toLowerCase() === "strict";
   try {
     const llmPlan = await generatePlanTodosWithLLM(session, run, maxTasks);
     let plannerSource = "llm_objective_planner";
     let plannerNote = "";
-    plannerTasks = normalizePlannerTasks(llmPlan.tasks, maxTasks, { linearFallback: false });
+    plannerTasks = ensurePlannerTaskOutputTargets(
+      normalizePlannerTasks(llmPlan.tasks, maxTasks, { linearFallback: false }),
+      objective
+    );
     if (!plannerTasks.length) {
       const recovered = fallbackPlannerTasks(objective, maxTasks, llmPlan?.assistantText || "");
-      plannerTasks = recovered.tasks;
+      plannerTasks = ensurePlannerTaskOutputTargets(recovered.tasks, objective);
       plannerSource = recovered.source;
       plannerNote = recovered.note;
     }
+    if (enforceStrictTaskOutputs) {
+      const strictCheck = validateStrictPlannerTasks(plannerTasks);
+      if (!strictCheck.ok) {
+        throw new Error(
+          `STRICT_TASK_PLAN_INVALID: missing_output_target=${strictCheck.missing.join(", ")} invalid_task_kind=${strictCheck.invalidTaskKinds.join(", ")}`
+        );
+      }
+    }
     const seeded = await seedBlackboardTasks(session, runId, objective, plannerTasks, workflowId);
-    planSeedMode = seeded?.mode === "steps_compat" ? "steps_llm_compat" : "blackboard_llm";
+    planSeedMode = "blackboard_llm";
     await appendContextRunEvent(session, runId, "plan_seeded_llm", "planning", {
       source: plannerSource,
       session_id: llmPlan.sessionId || null,
@@ -3822,7 +4163,7 @@ async function startSwarm(session, config = {}) {
       planningError?.message || planningError || "unknown planning failure"
     );
     const recovered = fallbackPlannerTasks(objective, maxTasks, planningError?.assistantText || "");
-    plannerTasks = recovered.tasks;
+    plannerTasks = ensurePlannerTaskOutputTargets(recovered.tasks, objective);
     const forcedFallback = requireLlmPlan && !allowLocalPlannerFallback;
     if (forcedFallback) {
       await appendContextRunEvent(session, runId, "plan_failed_llm_required", "planning", {
@@ -3832,9 +4173,23 @@ async function startSwarm(session, config = {}) {
       }).catch(() => null);
       throw new Error(`LLM planning failed and fallback is disabled: ${plannerFailureReason}`);
     }
+    if (enforceStrictTaskOutputs) {
+      const strictCheck = validateStrictPlannerTasks(plannerTasks);
+      if (!strictCheck.ok) {
+        await appendContextRunEvent(session, runId, "plan_failed_output_target_missing", "planning", {
+          reason: plannerFailureReason,
+          missing_tasks: strictCheck.missing,
+          invalid_task_kind_tasks: strictCheck.invalidTaskKinds,
+          recovery_source: recovered.source,
+        }).catch(() => null);
+        throw new Error(
+          `Strict orchestration requires valid task kinds and output targets where needed: missing_output_target=${strictCheck.missing.join(", ")} invalid_task_kind=${strictCheck.invalidTaskKinds.join(", ")}`
+        );
+      }
+    }
     try {
       const seeded = await seedBlackboardTasks(session, runId, objective, plannerTasks, workflowId);
-      planSeedMode = seeded?.mode === "steps_compat" ? "steps_local_compat" : "blackboard_local";
+      planSeedMode = "blackboard_local";
       await appendContextRunEvent(session, runId, "plan_seeded_local", "planning", {
         source: recovered.source,
         task_count: Number(seeded?.count || 0),
@@ -3848,16 +4203,7 @@ async function startSwarm(session, config = {}) {
         note: `${recovered.note} Planner fallback used: ${plannerFailureReason}`,
       });
     } catch (blackboardError) {
-      await seedContextRunStepsFromTitles(
-        session,
-        runId,
-        plannerTasks.map((task) => String(task?.title || "").trim()).filter(Boolean)
-      );
-      planSeedMode = "steps_fallback";
-      await appendContextRunEvent(session, runId, "plan_seeded_local", "planning", {
-        source: recovered.source,
-        note: `${recovered.note} Step fallback used: ${String(blackboardError?.message || blackboardError || "unknown planning failure")}`,
-      });
+      throw blackboardError;
     }
   }
   await appendContextRunEvent(session, runId, "plan_ready_for_approval", "awaiting_approval", {

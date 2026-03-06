@@ -8,6 +8,56 @@ use std::time::Duration;
 use tandem_types::{CreateSessionRequest, ModelSpec};
 use tandem_wire::{WireProviderEntry, WireSessionMessage};
 
+const NET_RETRY_ATTEMPTS: usize = 2;
+const ENGINE_STARTING_ATTEMPTS: usize = 10;
+const ENGINE_STARTING_DELAY_MS: u64 = 450;
+
+enum EngineRetryOutcome {
+    Response(reqwest::Response),
+    ErrorStatus(reqwest::StatusCode, String),
+}
+
+fn is_engine_starting_text(body: &str) -> bool {
+    body.contains("ENGINE_STARTING")
+        || body.contains("Engine starting")
+        || body.contains("Service Unavailable")
+}
+
+async fn send_with_engine_retry<F>(mut make_req: F) -> Result<EngineRetryOutcome>
+where
+    F: FnMut() -> reqwest::RequestBuilder,
+{
+    let mut net_attempts = 0;
+    let mut starting_attempts = 0;
+    loop {
+        match make_req().send().await {
+            Ok(resp) if resp.status().is_success() => {
+                return Ok(EngineRetryOutcome::Response(resp))
+            }
+            Ok(resp) => {
+                let status = resp.status();
+                let body = resp.text().await.unwrap_or_default();
+                if (status == reqwest::StatusCode::SERVICE_UNAVAILABLE
+                    || is_engine_starting_text(&body))
+                    && starting_attempts < ENGINE_STARTING_ATTEMPTS
+                {
+                    starting_attempts += 1;
+                    tokio::time::sleep(Duration::from_millis(ENGINE_STARTING_DELAY_MS)).await;
+                    continue;
+                }
+                return Ok(EngineRetryOutcome::ErrorStatus(status, body));
+            }
+            Err(err)
+                if (err.is_connect() || err.is_timeout()) && net_attempts < NET_RETRY_ATTEMPTS =>
+            {
+                net_attempts += 1;
+                tokio::time::sleep(Duration::from_millis(500 * net_attempts as u64)).await;
+            }
+            Err(err) => return Err(err.into()),
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct EngineClient {
     base_url: String,
@@ -1125,7 +1175,12 @@ impl EngineClient {
             permission: Some(default_tui_permission_rules()),
         };
 
-        let resp = self.client.post(&url).json(&req).send().await?;
+        let resp = match send_with_engine_retry(|| self.client.post(&url).json(&req)).await? {
+            EngineRetryOutcome::Response(resp) => resp,
+            EngineRetryOutcome::ErrorStatus(status, body) => {
+                bail!("{}: {}", status, body);
+            }
+        };
         let session = resp.json::<Session>().await?;
         Ok(session)
     }
@@ -1294,39 +1349,49 @@ impl EngineClient {
             model,
             agent: agent.map(String::from),
         };
-        let append_resp = self.client.post(&append_url).json(&req).send().await?;
-        if !append_resp.status().is_success() {
-            let status = append_resp.status();
-            let body = append_resp.text().await?;
-            bail!("append failed {}: {}", status, body);
-        }
-        let mut prompt_req = self
-            .client
-            .post(&prompt_url)
-            .header("Accept", "text/event-stream");
-        if let Some(agent_id) = agent_id {
-            prompt_req = prompt_req.header("x-tandem-agent-id", agent_id);
-        }
-        let resp = prompt_req.json(&req).send().await?;
-        if resp.status() == reqwest::StatusCode::CONFLICT {
-            let body = resp.text().await?;
-            let run_id = serde_json::from_str::<PromptConflictResponse>(&body)
-                .ok()
-                .and_then(|payload| {
-                    if payload.code.as_deref() == Some("SESSION_RUN_CONFLICT") {
-                        payload.active_run.and_then(|run| run.run_id)
-                    } else {
-                        None
-                    }
-                });
-            if let Some(run_id) = run_id {
-                bail!(
-                    "409 Conflict: session has active run `{}`. Queue follow-up or cancel first.",
-                    run_id
-                );
+        match send_with_engine_retry(|| self.client.post(&append_url).json(&req)).await? {
+            EngineRetryOutcome::Response(_) => {}
+            EngineRetryOutcome::ErrorStatus(status, body) => {
+                bail!("append failed {}: {}", status, body);
             }
-            bail!("409 Conflict: {}", body);
         }
+        let resp = match send_with_engine_retry(|| {
+            let mut prompt_req = self
+                .client
+                .post(&prompt_url)
+                .header("Accept", "text/event-stream");
+            if let Some(agent_id) = agent_id {
+                prompt_req = prompt_req.header("x-tandem-agent-id", agent_id);
+            }
+            prompt_req.json(&req)
+        })
+        .await?
+        {
+            EngineRetryOutcome::Response(resp) => resp,
+            EngineRetryOutcome::ErrorStatus(status, body)
+                if status == reqwest::StatusCode::CONFLICT =>
+            {
+                let run_id = serde_json::from_str::<PromptConflictResponse>(&body)
+                    .ok()
+                    .and_then(|payload| {
+                        if payload.code.as_deref() == Some("SESSION_RUN_CONFLICT") {
+                            payload.active_run.and_then(|run| run.run_id)
+                        } else {
+                            None
+                        }
+                    });
+                if let Some(run_id) = run_id {
+                    bail!(
+                        "409 Conflict: session has active run `{}`. Queue follow-up or cancel first.",
+                        run_id
+                    );
+                }
+                bail!("409 Conflict: {}", body);
+            }
+            EngineRetryOutcome::ErrorStatus(status, body) => {
+                bail!("{}: {}", status, body);
+            }
+        };
         let status = resp.status();
         if !status.is_success() {
             let body = resp.text().await?;
