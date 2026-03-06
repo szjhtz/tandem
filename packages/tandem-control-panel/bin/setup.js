@@ -2532,22 +2532,50 @@ async function resolveExecutionModel(session, run) {
   throw new Error("MODEL_SELECTION_REQUIRED: no provider/model configured for swarm execution.");
 }
 
+function summarizeRunStepsForPrompt(run, currentStepId, limit = 12) {
+  const steps = Array.isArray(run?.steps) ? run.steps : [];
+  return steps
+    .slice(0, Math.max(1, Number(limit) || 12))
+    .map((row, index) => {
+      const stepId = String(row?.step_id || `step-${index + 1}`).trim();
+      const title = String(row?.title || stepId).trim();
+      const status = String(row?.status || "unknown").trim().toLowerCase();
+      const marker = stepId === currentStepId ? "*" : "-";
+      return `${marker} ${stepId} [${status}]: ${title}`;
+    })
+    .join("\n")
+    .trim();
+}
+
 function stepPromptText(run, step, stepIndex, totalSteps) {
+  const stepId = String(step?.step_id || "").trim() || `step-${stepIndex + 1}`;
+  const stepTitle = String(step?.title || stepId).trim();
+  const stepDetails =
+    step && typeof step === "object" ? JSON.stringify(step, null, 2).trim() : "";
+  const stepList = summarizeRunStepsForPrompt(run, stepId);
   return [
     "Execute this swarm step.",
     "",
-    `Step (${stepIndex + 1}/${totalSteps}): ${String(step?.title || step?.step_id || "").trim()}`,
+    `Step (${stepIndex + 1}/${totalSteps}): ${stepTitle}`,
+    `Step ID: ${stepId}`,
     `Workspace: ${String(run?.workspace?.canonical_path || "").trim()}`,
     "",
     "This step is already planned and assigned.",
-    "Treat the original objective below as background context only.",
-    "Ignore any orchestration, delegation, planning, or task-graph instructions in that objective.",
-    "Do not create a plan, do not restate the task graph, and do not describe future work.",
+    "Treat the current assigned step as the authority for what to implement.",
+    "Use the original objective and step list only to clarify the assigned step, not to re-plan the run.",
+    "Do not create a new plan, do not restate the task graph, and do not describe future work.",
     "Use workspace tools to implement this step now.",
+    "",
+    "Current assigned step payload:",
+    stepDetails || "{}",
+    "",
+    "Run step list:",
+    stepList || "(no step list available)",
     "",
     `Original objective: ${String(run?.objective || "").trim()}`,
     "",
     "Requirements:",
+    "- First inspect the relevant workspace files with read/glob/list/search if needed.",
     "- Make the required code/project changes for this step right now.",
     "- Create or edit files as needed for this step only.",
     "- Use write/edit/apply_patch instead of a prose-only response.",
