@@ -28,6 +28,16 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
   - Desktop and control-panel Settings can now create those triage runs directly from approved Failure Reporter drafts.
   - Control-panel Dashboard now includes those `failure_reporter_triage` context runs in the existing context-run visibility drawer.
 
+- Initial Tandem Coder engine API foundation
+  - Added the first engine-owned coder endpoints:
+    - `POST /coder/runs`
+    - `GET /coder/runs`
+    - `GET /coder/runs/{id}`
+    - `GET /coder/runs/{id}/artifacts`
+  - Coder runs now persist as thin metadata records linked to engine context runs rather than introducing a frontend-owned workflow store.
+  - `issue_triage` coder run creation now seeds a deterministic context-run task template for issue normalization, memory retrieval, repo inspection, reproduction, and triage artifact writing.
+  - Added initial `coder.run.created` engine event emission and backend regression coverage for coder create/get/list/artifact behavior.
+
 ## v0.4.1 (2026-03-07)
 
 - Strict swarm write reliability and cross-client engine retries

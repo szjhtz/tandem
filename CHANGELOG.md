@@ -48,6 +48,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - desktop and control-panel Settings can now promote approved Failure Reporter drafts into triage context runs without frontend-owned run orchestration
   - control-panel Dashboard context-run visibility now includes `failure_reporter_triage` runs in the existing context-run drawer so the handoff can be inspected without a new page
 
+- **Initial Tandem Coder engine API foundation**:
+  - added a first engine-owned coder API surface:
+    - `POST /coder/runs`
+    - `GET /coder/runs`
+    - `GET /coder/runs/{id}`
+    - `GET /coder/runs/{id}/artifacts`
+  - coder runs are persisted as thin metadata records linked to engine context runs instead of a frontend-owned workflow store
+  - `POST /coder/runs` now creates a linked `coder_issue_triage` context run for `issue_triage` workflows and seeds the first deterministic task template:
+    - normalize issue reference
+    - retrieve prior memory
+    - inspect repo
+    - attempt reproduction
+    - write triage artifact
+  - added initial `coder.run.created` event emission so clients can observe coder run creation through the engine event bus
+  - added backend regression coverage for coder run creation, retrieval, list projection, context-run linkage, and artifact projection
+
 - **Setup-understanding across channels and chat surfaces**:
   - added a shared deterministic setup-intent resolver at `POST /setup/understand` in `tandem-server`
   - setup understanding now classifies provider setup, MCP/integration setup, automation creation, channel setup help, broad setup help, and normal pass-through chat

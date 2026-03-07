@@ -51,10 +51,11 @@ use crate::{
 
 mod capabilities;
 mod channels_api;
+mod coder;
 mod config_providers;
 mod context_runs;
 mod context_types;
-mod failure_reporter;
+pub(crate) mod failure_reporter;
 mod global;
 mod mcp;
 mod middleware;
@@ -66,6 +67,7 @@ mod presets;
 mod resources;
 mod router;
 mod routes_capabilities;
+mod routes_coder;
 mod routes_config_providers;
 mod routes_context;
 mod routes_failure_reporter;
@@ -215,6 +217,7 @@ pub async fn serve(addr: SocketAddr, state: AppState) -> anyhow::Result<()> {
     let workflow_dispatcher_state = state.clone();
     let agent_team_supervisor_state = state.clone();
     let global_memory_ingestor_state = state.clone();
+    let failure_reporter_state = state.clone();
     let mcp_bootstrap_state = state.clone();
     tokio::spawn(async move {
         bootstrap_mcp_servers_when_ready(mcp_bootstrap_state).await;
@@ -262,6 +265,7 @@ pub async fn serve(addr: SocketAddr, state: AppState) -> anyhow::Result<()> {
     let agent_team_supervisor = tokio::spawn(crate::run_agent_team_supervisor(
         agent_team_supervisor_state,
     ));
+    let failure_reporter = tokio::spawn(crate::run_failure_reporter(failure_reporter_state));
     let global_memory_ingestor =
         tokio::spawn(run_global_memory_ingestor(global_memory_ingestor_state));
 
@@ -328,6 +332,7 @@ pub async fn serve(addr: SocketAddr, state: AppState) -> anyhow::Result<()> {
     automation_v2_executor.abort();
     workflow_dispatcher.abort();
     agent_team_supervisor.abort();
+    failure_reporter.abort();
     global_memory_ingestor.abort();
     hygiene_task.abort();
     if let Some(mut set) = channel_listener_set {
