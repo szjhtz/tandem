@@ -61,6 +61,7 @@ type SettingsSection =
 
 type FailureReporterConfigRow = {
   enabled?: boolean;
+  workspace_root?: string | null;
   repo?: string | null;
   mcp_server?: string | null;
   provider_preference?: string | null;
@@ -78,6 +79,22 @@ type FailureReporterStatusRow = {
   config?: FailureReporterConfigRow;
   readiness?: Record<string, boolean>;
   required_capabilities?: Record<string, boolean>;
+  missing_required_capabilities?: string[];
+  resolved_capabilities?: Array<{
+    capability_id?: string;
+    provider?: string;
+    tool_name?: string;
+    binding_index?: number;
+  }>;
+  discovered_mcp_tools?: string[];
+  selected_server_binding_candidates?: Array<{
+    capability_id?: string;
+    binding_tool_name?: string;
+    aliases?: string[];
+    matched?: boolean;
+  }>;
+  binding_source_version?: string | null;
+  bindings_last_merged_at_ms?: number | null;
   selected_model?: {
     provider_id?: string | null;
     model_id?: string | null;
@@ -382,6 +399,7 @@ export function SettingsPage({
   const [botControlPanelAlias, setBotControlPanelAlias] = useState("Control Center");
   const [activeSection, setActiveSection] = useState<SettingsSection>("providers");
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
+  const [githubMcpGuideOpen, setGithubMcpGuideOpen] = useState(false);
   const [providerDefaultsOpen, setProviderDefaultsOpen] = useState(false);
   const [channelDrafts, setChannelDrafts] = useState<Record<string, ChannelDraft>>({});
   const [channelVerifyResult, setChannelVerifyResult] = useState<Record<string, any>>({});
@@ -396,12 +414,18 @@ export function SettingsPage({
   const [mcpModalTab, setMcpModalTab] = useState<"manual" | "catalog">("manual");
   const [mcpCatalogSearch, setMcpCatalogSearch] = useState("");
   const [failureReporterEnabled, setFailureReporterEnabled] = useState(false);
+  const [failureReporterWorkspaceRoot, setFailureReporterWorkspaceRoot] = useState("");
   const [failureReporterRepo, setFailureReporterRepo] = useState("");
   const [failureReporterMcpServer, setFailureReporterMcpServer] = useState("");
   const [failureReporterProviderPreference, setFailureReporterProviderPreference] =
     useState("auto");
   const [failureReporterProviderId, setFailureReporterProviderId] = useState("");
   const [failureReporterModelId, setFailureReporterModelId] = useState("");
+  const [failureReporterWorkspaceBrowserOpen, setFailureReporterWorkspaceBrowserOpen] =
+    useState(false);
+  const [failureReporterWorkspaceBrowserDir, setFailureReporterWorkspaceBrowserDir] = useState("");
+  const [failureReporterWorkspaceBrowserSearch, setFailureReporterWorkspaceBrowserSearch] =
+    useState("");
   const avatarInputRef = useRef<HTMLInputElement | null>(null);
 
   const loadIdentityConfig = async () => {
@@ -523,6 +547,22 @@ export function SettingsPage({
       })),
     refetchInterval: 15_000,
   });
+  const failureReporterWorkspaceBrowserQuery = useQuery({
+    queryKey: [
+      "settings",
+      "failure-reporter",
+      "workspace-browser",
+      failureReporterWorkspaceBrowserDir,
+    ],
+    enabled: failureReporterWorkspaceBrowserOpen && !!failureReporterWorkspaceBrowserDir,
+    queryFn: () =>
+      api(
+        `/api/orchestrator/workspaces/list?dir=${encodeURIComponent(
+          failureReporterWorkspaceBrowserDir
+        )}`,
+        { method: "GET" }
+      ),
+  });
   const channelsConfigQuery = useQuery({
     queryKey: ["settings", "channels", "config"],
     queryFn: () => client.channels.config().catch(() => ({})),
@@ -553,6 +593,7 @@ export function SettingsPage({
         body: JSON.stringify({
           failure_reporter: {
             enabled: failureReporterEnabled,
+            workspace_root: String(failureReporterWorkspaceRoot || "").trim() || null,
             repo: String(failureReporterRepo || "").trim() || null,
             mcp_server: String(failureReporterMcpServer || "").trim() || null,
             provider_preference: String(failureReporterProviderPreference || "auto").trim(),
@@ -575,6 +616,44 @@ export function SettingsPage({
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["settings", "failure-reporter"] }),
       ]);
+    },
+    onError: (error: any) => {
+      const detail =
+        error instanceof Error ? error.message : String(error?.detail || error?.error || error);
+      toast("err", detail);
+    },
+  });
+  const refreshFailureReporterBindingsMutation = useMutation({
+    mutationFn: async () =>
+      api("/api/engine/capabilities/bindings/refresh-builtins", {
+        method: "POST",
+      }),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["settings", "failure-reporter"] }),
+        queryClient.invalidateQueries({ queryKey: ["settings", "mcp"] }),
+      ]);
+      toast("ok", "Capability bindings refreshed from built-ins.");
+    },
+    onError: (error: any) => {
+      const detail =
+        error instanceof Error ? error.message : String(error?.detail || error?.error || error);
+      toast("err", detail);
+    },
+  });
+  const failureReporterDraftDecisionMutation = useMutation({
+    mutationFn: async ({ draftId, decision }: { draftId: string; decision: "approve" | "deny" }) =>
+      api(`/api/engine/failure-reporter/drafts/${encodeURIComponent(draftId)}/${decision}`, {
+        method: "POST",
+        body: JSON.stringify({
+          reason: `${decision}d from control panel settings`,
+        }),
+      }),
+    onSuccess: async (_payload, vars) => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["settings", "failure-reporter"] }),
+      ]);
+      toast("ok", `Failure Reporter draft ${vars.decision === "approve" ? "approved" : "denied"}.`);
     },
     onError: (error: any) => {
       const detail =
@@ -876,6 +955,29 @@ export function SettingsPage({
   const connectedChannelCount = channelNames.filter(
     (name) => !!(channelsStatusQuery.data as any)?.[name]?.connected
   ).length;
+  const failureReporterWorkspaceDirectories = Array.isArray(
+    failureReporterWorkspaceBrowserQuery.data?.directories
+  )
+    ? failureReporterWorkspaceBrowserQuery.data.directories
+    : [];
+  const failureReporterWorkspaceSearchQuery = String(failureReporterWorkspaceBrowserSearch || "")
+    .trim()
+    .toLowerCase();
+  const filteredFailureReporterWorkspaceDirectories = useMemo(() => {
+    if (!failureReporterWorkspaceSearchQuery) return failureReporterWorkspaceDirectories;
+    return failureReporterWorkspaceDirectories.filter((entry: any) => {
+      const name = String(entry?.name || entry?.path || "")
+        .trim()
+        .toLowerCase();
+      return name.includes(failureReporterWorkspaceSearchQuery);
+    });
+  }, [failureReporterWorkspaceDirectories, failureReporterWorkspaceSearchQuery]);
+  const failureReporterWorkspaceParentDir = String(
+    failureReporterWorkspaceBrowserQuery.data?.parent || ""
+  ).trim();
+  const failureReporterCurrentBrowseDir = String(
+    failureReporterWorkspaceBrowserQuery.data?.dir || failureReporterWorkspaceBrowserDir || ""
+  ).trim();
 
   useEffect(() => {
     const config =
@@ -884,6 +986,7 @@ export function SettingsPage({
         ? ((failureReporterConfigQuery.data as any).failure_reporter as FailureReporterConfigRow)
         : {};
     setFailureReporterEnabled(!!config.enabled);
+    setFailureReporterWorkspaceRoot(String(config.workspace_root || "").trim());
     setFailureReporterRepo(String(config.repo || "").trim());
     setFailureReporterMcpServer(String(config.mcp_server || "").trim());
     setFailureReporterProviderPreference(
@@ -958,6 +1061,12 @@ export function SettingsPage({
       setMcpConnectAfterAdd(true);
     }
     setMcpModalOpen(true);
+  };
+
+  const copyFailureReporterDebugPayload = async () => {
+    const payload = await api("/api/engine/failure-reporter/debug", { method: "GET" });
+    await navigator.clipboard.writeText(JSON.stringify(payload, null, 2));
+    toast("ok", "Failure reporter debug payload copied.");
   };
 
   const sectionTabs: Array<{ id: SettingsSection; label: string; icon: string }> = [
@@ -1677,6 +1786,25 @@ export function SettingsPage({
                       <i data-lucide="refresh-cw"></i>
                       Reload status
                     </button>
+                    <button
+                      className="tcp-btn"
+                      disabled={refreshFailureReporterBindingsMutation.isPending}
+                      onClick={() => refreshFailureReporterBindingsMutation.mutate()}
+                    >
+                      <i data-lucide="rotate-cw"></i>
+                      Refresh capability bindings
+                    </button>
+                    <button
+                      className="tcp-btn"
+                      onClick={() => void copyFailureReporterDebugPayload()}
+                    >
+                      <i data-lucide="copy"></i>
+                      Copy debug payload
+                    </button>
+                    <button className="tcp-btn" onClick={() => setGithubMcpGuideOpen(true)}>
+                      <i data-lucide="book-open"></i>
+                      GitHub MCP guide
+                    </button>
                   </div>
                 }
               >
@@ -1700,6 +1828,47 @@ export function SettingsPage({
                             : "No reporter work will execute."}
                         </div>
                       </button>
+                    </label>
+
+                    <label className="grid gap-2">
+                      <span className="text-xs uppercase tracking-[0.24em] tcp-subtle">
+                        Local directory
+                      </span>
+                      <div className="grid gap-2 md:grid-cols-[auto_1fr_auto]">
+                        <button
+                          className="tcp-btn"
+                          type="button"
+                          onClick={() => {
+                            const seed = String(failureReporterWorkspaceRoot || "/").trim();
+                            setFailureReporterWorkspaceBrowserDir(seed || "/");
+                            setFailureReporterWorkspaceBrowserSearch("");
+                            setFailureReporterWorkspaceBrowserOpen(true);
+                          }}
+                        >
+                          <i data-lucide="folder-open"></i>
+                          Browse
+                        </button>
+                        <input
+                          className="tcp-input"
+                          readOnly
+                          value={failureReporterWorkspaceRoot}
+                          placeholder="No local directory selected. Use Browse."
+                        />
+                        <button
+                          className="tcp-btn"
+                          type="button"
+                          onClick={() => setFailureReporterWorkspaceRoot("")}
+                          disabled={!failureReporterWorkspaceRoot}
+                        >
+                          <i data-lucide="x"></i>
+                          Clear
+                        </button>
+                      </div>
+                      <div className="tcp-subtle text-xs">
+                        {failureReporterWorkspaceRoot
+                          ? `Reporter analysis root: ${failureReporterWorkspaceRoot}`
+                          : "Defaults to the engine workspace root if not set."}
+                      </div>
                     </label>
 
                     <label className="grid gap-2">
@@ -1818,6 +1987,25 @@ export function SettingsPage({
                       <i data-lucide="plus"></i>
                       Add MCP server
                     </button>
+                    <button className="tcp-btn" onClick={() => setGithubMcpGuideOpen(true)}>
+                      <i data-lucide="external-link"></i>
+                      Setup guide
+                    </button>
+                    <button
+                      className="tcp-btn"
+                      disabled={refreshFailureReporterBindingsMutation.isPending}
+                      onClick={() => refreshFailureReporterBindingsMutation.mutate()}
+                    >
+                      <i data-lucide="rotate-cw"></i>
+                      Refresh capability bindings
+                    </button>
+                    <button
+                      className="tcp-btn"
+                      onClick={() => void copyFailureReporterDebugPayload()}
+                    >
+                      <i data-lucide="copy"></i>
+                      Copy debug payload
+                    </button>
                     {selectedFailureReporterServer ? (
                       <button
                         className="tcp-btn"
@@ -1850,6 +2038,13 @@ export function SettingsPage({
                       <div className="tcp-subtle text-xs">
                         {failureReporterStatus.last_error || "No blocking issue reported."}
                       </div>
+                      {!failureReporterStatus.readiness?.runtime_ready &&
+                      Array.isArray(failureReporterStatus.missing_required_capabilities) &&
+                      failureReporterStatus.missing_required_capabilities.length ? (
+                        <div className="tcp-subtle mt-2 text-xs">
+                          Missing: {failureReporterStatus.missing_required_capabilities.join(", ")}
+                        </div>
+                      ) : null}
                     </div>
                     <div className="tcp-list-item">
                       <div className="text-sm font-medium">Selected MCP</div>
@@ -1862,6 +2057,19 @@ export function SettingsPage({
                             ? "Connected"
                             : "Disconnected"
                           : "No server selected"}
+                      </div>
+                      <div className="tcp-subtle mt-2 text-xs">
+                        Bindings:{" "}
+                        {failureReporterStatus.binding_source_version || "unknown version"}
+                        {failureReporterStatus.bindings_last_merged_at_ms
+                          ? ` · merged ${new Date(failureReporterStatus.bindings_last_merged_at_ms).toLocaleString()}`
+                          : ""}
+                      </div>
+                      <div className="tcp-subtle mt-2 text-xs">
+                        Local directory:{" "}
+                        {failureReporterWorkspaceRoot ||
+                          String(failureReporterStatus.config?.workspace_root || "").trim() ||
+                          "engine workspace root"}
                       </div>
                     </div>
                     <div className="tcp-list-item">
@@ -1909,6 +2117,44 @@ export function SettingsPage({
                             : "missing"}
                         </div>
                       </div>
+                      {Array.isArray(failureReporterStatus.resolved_capabilities) &&
+                      failureReporterStatus.resolved_capabilities.length ? (
+                        <div className="tcp-subtle mt-3 grid gap-1 text-xs">
+                          {failureReporterStatus.resolved_capabilities.map((row, index) => (
+                            <div key={`${row.capability_id || "cap"}-${index}`}>
+                              {String(row.capability_id || "unknown")}:{" "}
+                              {String(row.tool_name || "unresolved")}
+                            </div>
+                          ))}
+                        </div>
+                      ) : null}
+                      {Array.isArray(failureReporterStatus.selected_server_binding_candidates) &&
+                      failureReporterStatus.selected_server_binding_candidates.length ? (
+                        <div className="tcp-subtle mt-3 grid gap-1 text-xs">
+                          {failureReporterStatus.selected_server_binding_candidates.map(
+                            (row, index) => (
+                              <div key={`${row.capability_id || "candidate"}-${index}`}>
+                                {String(row.capability_id || "unknown")}:{" "}
+                                {String(row.binding_tool_name || "unknown")}
+                                {row.matched ? " · matched" : " · candidate"}
+                              </div>
+                            )
+                          )}
+                        </div>
+                      ) : null}
+                      {Array.isArray(failureReporterStatus.discovered_mcp_tools) &&
+                      failureReporterStatus.discovered_mcp_tools.length ? (
+                        <div className="mt-3">
+                          <div className="tcp-subtle text-xs font-medium">Discovered MCP tools</div>
+                          <pre className="tcp-code mt-1 max-h-40 overflow-auto whitespace-pre-wrap break-words text-xs">
+                            {failureReporterStatus.discovered_mcp_tools.join("\n")}
+                          </pre>
+                        </div>
+                      ) : (
+                        <div className="tcp-subtle mt-3 text-xs">
+                          No MCP tools were discovered for the selected server.
+                        </div>
+                      )}
                     </div>
 
                     <div className="tcp-list-item">
@@ -1944,6 +2190,38 @@ export function SettingsPage({
                             </div>
                             {draft.detail ? (
                               <div className="tcp-subtle mt-1 text-xs">{draft.detail}</div>
+                            ) : null}
+                            {draft.status === "approval_required" ? (
+                              <div className="mt-3 flex flex-wrap gap-2">
+                                <button
+                                  className="tcp-btn-primary"
+                                  disabled={failureReporterDraftDecisionMutation.isPending}
+                                  onClick={() =>
+                                    failureReporterDraftDecisionMutation.mutate({
+                                      draftId: draft.draft_id,
+                                      decision: "approve",
+                                    })
+                                  }
+                                >
+                                  <i data-lucide="check"></i>
+                                  {failureReporterDraftDecisionMutation.isPending
+                                    ? "Updating..."
+                                    : "Approve"}
+                                </button>
+                                <button
+                                  className="tcp-btn"
+                                  disabled={failureReporterDraftDecisionMutation.isPending}
+                                  onClick={() =>
+                                    failureReporterDraftDecisionMutation.mutate({
+                                      draftId: draft.draft_id,
+                                      decision: "deny",
+                                    })
+                                  }
+                                >
+                                  <i data-lucide="x"></i>
+                                  Deny
+                                </button>
+                              </div>
                             ) : null}
                           </div>
                         ))}
@@ -2146,6 +2424,200 @@ export function SettingsPage({
           </div>
         }
       />
+
+      <DetailDrawer
+        open={githubMcpGuideOpen}
+        onClose={() => setGithubMcpGuideOpen(false)}
+        title="Official GitHub MCP guide"
+      >
+        <div className="grid gap-3">
+          <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3 text-sm">
+            Recommended for the Failure Reporter: use the official GitHub MCP endpoint instead of a
+            third-party wrapper when you want stable issue read/write operations.
+          </div>
+
+          <div className="grid gap-2 md:grid-cols-2">
+            <div className="tcp-list-item">
+              <div className="text-sm font-medium">Transport URL</div>
+              <div className="mt-1 break-all text-sm">https://api.githubcopilot.com/mcp/</div>
+              <div className="tcp-subtle text-xs">
+                Use this as the MCP server transport in Tandem Settings.
+              </div>
+            </div>
+            <div className="tcp-list-item">
+              <div className="text-sm font-medium">Auth mode</div>
+              <div className="mt-1 text-sm">Authorization Bearer</div>
+              <div className="tcp-subtle text-xs">
+                Paste a GitHub token in the MCP server dialog and use bearer auth.
+              </div>
+            </div>
+          </div>
+
+          <div className="grid gap-2">
+            <div className="text-sm font-medium">Recommended setup</div>
+            <div className="tcp-list-item text-sm">
+              1. Open `Add MCP server`.
+              <br />
+              2. Name it `github` or another stable name.
+              <br />
+              3. Set transport to `https://api.githubcopilot.com/mcp/`.
+              <br />
+              4. Set auth mode to `Authorization Bearer`.
+              <br />
+              5. Paste a GitHub Personal Access Token.
+              <br />
+              6. Save, connect, then select that MCP server in Failure Reporter settings.
+            </div>
+          </div>
+
+          <div className="grid gap-2">
+            <div className="text-sm font-medium">Token guidance</div>
+            <div className="tcp-list-item text-sm">
+              For failure reporting, the token needs issue read/write access on the target
+              repository so the runtime can create issues and add comments.
+            </div>
+          </div>
+
+          <div className="grid gap-2">
+            <div className="text-sm font-medium">Direct links</div>
+            <div className="flex flex-wrap gap-2">
+              <a
+                className="tcp-btn"
+                href="https://github.com/github/github-mcp-server?tab=readme-ov-file"
+                target="_blank"
+                rel="noreferrer"
+              >
+                <i data-lucide="external-link"></i>
+                GitHub MCP README
+              </a>
+              <a
+                className="tcp-btn"
+                href="https://docs.github.com/en/copilot/how-tos/provide-context/use-mcp/use-the-github-mcp-server"
+                target="_blank"
+                rel="noreferrer"
+              >
+                <i data-lucide="external-link"></i>
+                GitHub Docs
+              </a>
+            </div>
+          </div>
+
+          <div className="grid gap-2">
+            <div className="text-sm font-medium">Issue tools to expect</div>
+            <div className="tcp-list-item text-sm">
+              The reporter should be able to resolve issue-list, issue-read, issue-create, and
+              issue-comment operations from the selected GitHub MCP server. If readiness still
+              fails, compare the discovered MCP tools shown in Settings against those issue
+              operations.
+            </div>
+          </div>
+        </div>
+      </DetailDrawer>
+
+      <AnimatePresence>
+        {failureReporterWorkspaceBrowserOpen ? (
+          <motion.div
+            className="tcp-confirm-overlay"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+          >
+            <button
+              type="button"
+              className="tcp-confirm-backdrop"
+              aria-label="Close failure reporter workspace dialog"
+              onClick={() => {
+                setFailureReporterWorkspaceBrowserOpen(false);
+                setFailureReporterWorkspaceBrowserSearch("");
+              }}
+            />
+            <motion.div
+              className="tcp-confirm-dialog max-w-2xl"
+              initial={{ opacity: 0, y: 8, scale: 0.98 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 6, scale: 0.98 }}
+            >
+              <h3 className="tcp-confirm-title">Select Failure Reporter Directory</h3>
+              <p className="tcp-confirm-message">
+                Current: {failureReporterCurrentBrowseDir || "n/a"}
+              </p>
+              <div className="mb-2 flex flex-wrap gap-2">
+                <button
+                  className="tcp-btn"
+                  onClick={() => {
+                    if (!failureReporterWorkspaceParentDir) return;
+                    setFailureReporterWorkspaceBrowserDir(failureReporterWorkspaceParentDir);
+                  }}
+                  disabled={!failureReporterWorkspaceParentDir}
+                >
+                  <i data-lucide="arrow-up-circle"></i>
+                  Up
+                </button>
+                <button
+                  className="tcp-btn-primary"
+                  onClick={() => {
+                    if (!failureReporterCurrentBrowseDir) return;
+                    setFailureReporterWorkspaceRoot(failureReporterCurrentBrowseDir);
+                    setFailureReporterWorkspaceBrowserOpen(false);
+                    setFailureReporterWorkspaceBrowserSearch("");
+                    toast(
+                      "ok",
+                      `Failure reporter directory selected: ${failureReporterCurrentBrowseDir}`
+                    );
+                  }}
+                >
+                  <i data-lucide="badge-check"></i>
+                  Select This Folder
+                </button>
+                <button
+                  className="tcp-btn"
+                  onClick={() => {
+                    setFailureReporterWorkspaceBrowserOpen(false);
+                    setFailureReporterWorkspaceBrowserSearch("");
+                  }}
+                >
+                  <i data-lucide="x"></i>
+                  Close
+                </button>
+              </div>
+              <div className="mb-2">
+                <input
+                  className="tcp-input"
+                  placeholder="Type to filter folders..."
+                  value={failureReporterWorkspaceBrowserSearch}
+                  onInput={(e) =>
+                    setFailureReporterWorkspaceBrowserSearch((e.target as HTMLInputElement).value)
+                  }
+                />
+              </div>
+              <div className="max-h-[360px] overflow-auto rounded-lg border border-slate-700/60 bg-slate-900/20 p-2">
+                {filteredFailureReporterWorkspaceDirectories.length ? (
+                  filteredFailureReporterWorkspaceDirectories.map((entry: any) => (
+                    <button
+                      key={String(entry?.path || entry?.name)}
+                      className="tcp-list-item mb-1 w-full text-left"
+                      onClick={() =>
+                        setFailureReporterWorkspaceBrowserDir(String(entry?.path || ""))
+                      }
+                    >
+                      <i data-lucide="folder-open"></i>
+                      {String(entry?.name || entry?.path || "")}
+                    </button>
+                  ))
+                ) : (
+                  <EmptyState
+                    text={
+                      failureReporterWorkspaceSearchQuery
+                        ? "No folders match your search."
+                        : "No subdirectories in this folder."
+                    }
+                  />
+                )}
+              </div>
+            </motion.div>
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
 
       <DetailDrawer
         open={diagnosticsOpen}

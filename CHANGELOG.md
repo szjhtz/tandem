@@ -41,6 +41,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - `POST /failure-reporter/drafts/{id}/approve`
     - `POST /failure-reporter/drafts/{id}/deny`
   - desktop Settings can now approve or deny `approval_required` Failure Reporter drafts directly from the recent-drafts list
+  - control-panel Settings now uses the same engine draft approval endpoints so Failure Reporter draft decisions work consistently across both UIs
 
 - **Setup-understanding across channels and chat surfaces**:
   - added a shared deterministic setup-intent resolver at `POST /setup/understand` in `tandem-server`
