@@ -306,6 +306,10 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
   const [artifactQuery, setArtifactQuery] = useState("");
   const [eventQuery, setEventQuery] = useState("");
   const [eventTypeFilter, setEventTypeFilter] = useState<string>("all");
+  const [memoryHitFilter, setMemoryHitFilter] = useState<"all" | "scored">("all");
+  const [memoryCandidateFilter, setMemoryCandidateFilter] = useState<"all" | "artifact_backed">(
+    "all"
+  );
   const [detailTab, setDetailTab] = useState<"overview" | "artifacts" | "memory" | "validation">(
     "overview"
   );
@@ -717,6 +721,18 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
           .filter((item): item is Record<string, unknown> => !!item)
       : [];
   }, [selectedArtifactJson]);
+
+  const filteredMemoryHits = useMemo(() => {
+    return memoryHitFilter === "scored"
+      ? memoryHits.filter((hit) => typeof hit.score === "number")
+      : memoryHits;
+  }, [memoryHitFilter, memoryHits]);
+
+  const filteredMemoryCandidates = useMemo(() => {
+    return memoryCandidateFilter === "artifact_backed"
+      ? memoryCandidates.filter((candidate) => candidate.artifact)
+      : memoryCandidates;
+  }, [memoryCandidateFilter, memoryCandidates]);
 
   const selectedValidationSummary = useMemo(() => {
     if (!selectedArtifactJson) return null;
@@ -2903,7 +2919,10 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
                       <div className="grid gap-3 md:grid-cols-2">
                         <button
                           type="button"
-                          onClick={() => focusTabSection("memory", "memory_hits")}
+                          onClick={() => {
+                            setMemoryHitFilter("all");
+                            focusTabSection("memory", "memory_hits");
+                          }}
                           className="rounded-2xl border border-border bg-surface-elevated/40 p-3 text-left transition-colors hover:bg-surface-elevated"
                         >
                           <p className="text-[11px] uppercase tracking-[0.2em] text-text-muted">
@@ -2915,7 +2934,10 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
                         </button>
                         <button
                           type="button"
-                          onClick={() => focusTabSection("memory", "memory_hits")}
+                          onClick={() => {
+                            setMemoryHitFilter("scored");
+                            focusTabSection("memory", "memory_hits");
+                          }}
                           className="rounded-2xl border border-border bg-surface-elevated/40 p-3 text-left transition-colors hover:bg-surface-elevated"
                         >
                           <p className="text-[11px] uppercase tracking-[0.2em] text-text-muted">
@@ -2930,7 +2952,32 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
                         <p className="text-sm text-text-muted">No memory hits returned.</p>
                       ) : (
                         <div ref={memoryHitsRef} className="space-y-4">
-                          {memoryHits.map((hit, index) => (
+                          <div className="flex flex-wrap gap-2">
+                            {[
+                              ["all", "All hits"],
+                              ["scored", "Scored only"],
+                            ].map(([key, label]) => (
+                              <button
+                                key={key}
+                                type="button"
+                                onClick={() => setMemoryHitFilter(key as "all" | "scored")}
+                                className={cn(
+                                  "rounded-full border px-3 py-1.5 text-xs font-medium transition-colors",
+                                  memoryHitFilter === key
+                                    ? "border-primary/40 bg-primary/10 text-primary"
+                                    : "border-border bg-surface text-text-muted hover:text-text"
+                                )}
+                              >
+                                {label}
+                              </button>
+                            ))}
+                          </div>
+                          {filteredMemoryHits.length === 0 ? (
+                            <p className="text-sm text-text-muted">
+                              No memory hits match the current filter.
+                            </p>
+                          ) : null}
+                          {filteredMemoryHits.map((hit, index) => (
                             <div
                               key={String(hit.candidate_id ?? hit.memory_id ?? index)}
                               className="rounded-3xl border border-border bg-surface-elevated/40 p-4"
@@ -2995,7 +3042,10 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
                       <div className="grid gap-3 md:grid-cols-2">
                         <button
                           type="button"
-                          onClick={() => focusTabSection("memory", "memory_candidates")}
+                          onClick={() => {
+                            setMemoryCandidateFilter("all");
+                            focusTabSection("memory", "memory_candidates");
+                          }}
                           className="rounded-2xl border border-border bg-surface-elevated/40 p-3 text-left transition-colors hover:bg-surface-elevated"
                         >
                           <p className="text-[11px] uppercase tracking-[0.2em] text-text-muted">
@@ -3007,7 +3057,10 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
                         </button>
                         <button
                           type="button"
-                          onClick={() => focusTabSection("memory", "memory_candidates")}
+                          onClick={() => {
+                            setMemoryCandidateFilter("artifact_backed");
+                            focusTabSection("memory", "memory_candidates");
+                          }}
                           className="rounded-2xl border border-border bg-surface-elevated/40 p-3 text-left transition-colors hover:bg-surface-elevated"
                         >
                           <p className="text-[11px] uppercase tracking-[0.2em] text-text-muted">
@@ -3022,7 +3075,34 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
                         <p className="text-sm text-text-muted">No memory candidates recorded.</p>
                       ) : (
                         <div ref={memoryCandidatesRef} className="space-y-4">
-                          {memoryCandidates.map((candidate) => (
+                          <div className="flex flex-wrap gap-2">
+                            {[
+                              ["all", "All candidates"],
+                              ["artifact_backed", "Artifact-backed"],
+                            ].map(([key, label]) => (
+                              <button
+                                key={key}
+                                type="button"
+                                onClick={() =>
+                                  setMemoryCandidateFilter(key as "all" | "artifact_backed")
+                                }
+                                className={cn(
+                                  "rounded-full border px-3 py-1.5 text-xs font-medium transition-colors",
+                                  memoryCandidateFilter === key
+                                    ? "border-primary/40 bg-primary/10 text-primary"
+                                    : "border-border bg-surface text-text-muted hover:text-text"
+                                )}
+                              >
+                                {label}
+                              </button>
+                            ))}
+                          </div>
+                          {filteredMemoryCandidates.length === 0 ? (
+                            <p className="text-sm text-text-muted">
+                              No memory candidates match the current filter.
+                            </p>
+                          ) : null}
+                          {filteredMemoryCandidates.map((candidate) => (
                             <div
                               key={candidate.candidate_id}
                               className="rounded-3xl border border-border bg-surface-elevated/40 p-4"
