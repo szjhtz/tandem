@@ -754,6 +754,47 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
     return [...validationArtifacts].sort((left, right) => right.ts_ms - left.ts_ms)[0] ?? null;
   }, [validationArtifacts]);
 
+  const latestBlackboardArtifact = useMemo(() => {
+    const blackboardArtifacts = Array.isArray(selectedBlackboard?.artifacts)
+      ? selectedBlackboard.artifacts
+      : [];
+    if (blackboardArtifacts.length === 0 || artifacts.length === 0) return null;
+    const refs = new Set<string>();
+    for (const item of blackboardArtifacts) {
+      if (typeof item === "string" && item.trim().length > 0) {
+        refs.add(item.trim());
+        continue;
+      }
+      const record = asRecord(item);
+      if (!record) continue;
+      for (const candidate of [
+        pickText(record.path),
+        pickText(record.artifact_path),
+        pickText(record.id),
+        pickText(record.artifact_id),
+        pickText(record.artifact_type),
+        pickText(record.step_id),
+        pickText(record.source_event_id),
+      ]) {
+        if (candidate) refs.add(candidate);
+      }
+    }
+    if (refs.size === 0) return null;
+    return (
+      [...artifacts]
+        .filter((artifact) =>
+          [
+            artifact.path,
+            artifact.id,
+            artifact.artifact_type,
+            artifact.step_id ?? "",
+            artifact.source_event_id ?? "",
+          ].some((value) => value && refs.has(value))
+        )
+        .sort((left, right) => right.ts_ms - left.ts_ms)[0] ?? null
+    );
+  }, [artifacts, selectedBlackboard]);
+
   const latestDuplicateArtifact = useMemo(() => {
     const duplicateArtifacts =
       artifactGroups.find((group) => group.key === "duplicate")?.artifacts ?? [];
@@ -1552,10 +1593,20 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
                                       } else if (label === "Open questions") {
                                         focusBlackboardSection("questions");
                                       } else {
-                                        if (latestTriageArtifact) {
+                                        if (latestBlackboardArtifact) {
+                                          setSelectedArtifactPath(latestBlackboardArtifact.path);
+                                          setDetailTab(
+                                            artifactCategory(latestBlackboardArtifact) ===
+                                              "validation"
+                                              ? "validation"
+                                              : "artifacts"
+                                          );
+                                        } else if (latestTriageArtifact) {
                                           setSelectedArtifactPath(latestTriageArtifact.path);
+                                          setDetailTab("artifacts");
+                                        } else {
+                                          setDetailTab("artifacts");
                                         }
-                                        setDetailTab("artifacts");
                                       }
                                     }}
                                     className="rounded-2xl border border-border bg-surface-elevated/40 p-3 text-left transition-colors hover:bg-surface-elevated"
