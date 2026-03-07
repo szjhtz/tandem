@@ -5815,6 +5815,17 @@ pub async fn failure_reporter_deny_draft(
 }
 
 #[tauri::command]
+pub async fn failure_reporter_create_triage_run(
+    state: State<'_, AppState>,
+    draft_id: String,
+) -> Result<serde_json::Value> {
+    state
+        .sidecar
+        .failure_reporter_create_triage_run(&draft_id)
+        .await
+}
+
+#[tauri::command]
 pub async fn pack_builder_preview(
     state: State<'_, AppState>,
     request: serde_json::Value,

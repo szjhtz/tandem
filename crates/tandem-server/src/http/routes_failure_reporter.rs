@@ -35,4 +35,8 @@ pub(super) fn apply(router: Router<AppState>) -> Router<AppState> {
             "/failure-reporter/report",
             post(report_failure_reporter_issue),
         )
+        .route(
+            "/failure-reporter/drafts/{id}/triage-run",
+            post(create_failure_reporter_triage_run),
+        )
 }

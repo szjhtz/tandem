@@ -4600,6 +4600,25 @@ impl SidecarManager {
         self.handle_response(response).await
     }
 
+    pub async fn failure_reporter_create_triage_run(
+        &self,
+        draft_id: &str,
+    ) -> Result<serde_json::Value> {
+        self.check_circuit_breaker().await?;
+        let url = format!(
+            "{}/failure-reporter/drafts/{}/triage-run",
+            self.base_url().await?,
+            draft_id
+        );
+        let response = self.http_client.post(&url).send().await.map_err(|e| {
+            TandemError::Sidecar(format!(
+                "Failed to create Failure Reporter triage run: {}",
+                e
+            ))
+        })?;
+        self.handle_response(response).await
+    }
+
     pub async fn pack_builder_preview(
         &self,
         request: serde_json::Value,

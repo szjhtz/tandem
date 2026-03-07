@@ -1060,9 +1060,18 @@ export interface FailureReporterDraftRecord {
   repo: string;
   status: string;
   created_at_ms: number;
+  triage_run_id?: string | null;
   issue_number?: number | null;
   title?: string | null;
   detail?: string | null;
+}
+
+export interface FailureReporterTriageRunRecord {
+  run_id: string;
+  run_type?: string;
+  status?: string;
+  objective?: string;
+  [key: string]: unknown;
 }
 
 export interface FailureReporterSubmission {
@@ -1129,6 +1138,17 @@ export async function denyFailureReporterDraft(
   reason?: string
 ): Promise<{ ok: boolean; draft: FailureReporterDraftRecord }> {
   return invoke("failure_reporter_deny_draft", { draftId, reason });
+}
+
+export async function createFailureReporterTriageRun(
+  draftId: string
+): Promise<{
+  ok: boolean;
+  deduped?: boolean;
+  draft: FailureReporterDraftRecord;
+  run: FailureReporterTriageRunRecord;
+}> {
+  return invoke("failure_reporter_create_triage_run", { draftId });
 }
 
 export type PackBuilderStatus =

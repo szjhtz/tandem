@@ -110,6 +110,7 @@ type FailureReporterDraftRow = {
   repo: string;
   status: string;
   created_at_ms: number;
+  triage_run_id?: string | null;
   issue_number?: number | null;
   title?: string | null;
   detail?: string | null;
@@ -654,6 +655,28 @@ export function SettingsPage({
         queryClient.invalidateQueries({ queryKey: ["settings", "failure-reporter"] }),
       ]);
       toast("ok", `Failure Reporter draft ${vars.decision === "approve" ? "approved" : "denied"}.`);
+    },
+    onError: (error: any) => {
+      const detail =
+        error instanceof Error ? error.message : String(error?.detail || error?.error || error);
+      toast("err", detail);
+    },
+  });
+  const failureReporterTriageRunMutation = useMutation({
+    mutationFn: async ({ draftId }: { draftId: string }) =>
+      api(`/api/engine/failure-reporter/drafts/${encodeURIComponent(draftId)}/triage-run`, {
+        method: "POST",
+      }),
+    onSuccess: async (payload: any) => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["settings", "failure-reporter"] }),
+      ]);
+      toast(
+        "ok",
+        payload?.deduped
+          ? `Failure Reporter triage run already exists: ${payload?.run?.run_id || "unknown"}`
+          : `Failure Reporter triage run created: ${payload?.run?.run_id || "unknown"}`
+      );
     },
     onError: (error: any) => {
       const detail =
@@ -2191,6 +2214,11 @@ export function SettingsPage({
                             {draft.detail ? (
                               <div className="tcp-subtle mt-1 text-xs">{draft.detail}</div>
                             ) : null}
+                            {draft.triage_run_id ? (
+                              <div className="tcp-subtle mt-2 text-xs">
+                                triage run: {draft.triage_run_id}
+                              </div>
+                            ) : null}
                             {draft.status === "approval_required" ? (
                               <div className="mt-3 flex flex-wrap gap-2">
                                 <button
@@ -2220,6 +2248,25 @@ export function SettingsPage({
                                 >
                                   <i data-lucide="x"></i>
                                   Deny
+                                </button>
+                              </div>
+                            ) : null}
+                            {(draft.status === "draft_ready" || draft.status === "triage_queued") &&
+                            !draft.triage_run_id ? (
+                              <div className="mt-3 flex flex-wrap gap-2">
+                                <button
+                                  className="tcp-btn"
+                                  disabled={failureReporterTriageRunMutation.isPending}
+                                  onClick={() =>
+                                    failureReporterTriageRunMutation.mutate({
+                                      draftId: draft.draft_id,
+                                    })
+                                  }
+                                >
+                                  <i data-lucide="sparkles"></i>
+                                  {failureReporterTriageRunMutation.isPending
+                                    ? "Creating..."
+                                    : "Create triage run"}
                                 </button>
                               </div>
                             ) : null}

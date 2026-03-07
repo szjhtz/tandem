@@ -30,6 +30,8 @@
   - fixed the desktop sidecar reporter config path to use the canonical `GET/PATCH /config/failure-reporter` route
   - added engine-backed draft approval/deny actions at `POST /failure-reporter/drafts/{id}/approve` and `POST /failure-reporter/drafts/{id}/deny`, and surfaced those actions in desktop Settings
   - control-panel Settings now uses those same draft approval endpoints, keeping Failure Reporter decisions consistent across desktop and web surfaces
+  - added `POST /failure-reporter/drafts/{id}/triage-run`, which promotes an approved draft into a minimal engine-owned `failure_reporter_triage` context run with seeded inspection and validation tasks
+  - desktop and control-panel Settings can now create those triage runs directly from approved Failure Reporter drafts
 
 - **Setup understanding now routes setup asks instead of treating them as ordinary chat**:
   - added a shared backend setup-understanding endpoint at `POST /setup/understand`

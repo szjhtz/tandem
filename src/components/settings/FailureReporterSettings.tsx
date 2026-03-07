@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/Input";
 import { Switch } from "@/components/ui/Switch";
 import {
   approveFailureReporterDraft,
+  createFailureReporterTriageRun,
   denyFailureReporterDraft,
   getFailureReporterConfig,
   getFailureReporterStatus,
@@ -60,6 +61,7 @@ export function FailureReporterSettings({
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [actingDraftId, setActingDraftId] = useState<string | null>(null);
+  const [triagingDraftId, setTriagingDraftId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -168,6 +170,25 @@ export function FailureReporterSettings({
       setError(err instanceof Error ? err.message : `Failed to ${decision} Failure Reporter draft`);
     } finally {
       setActingDraftId(null);
+    }
+  };
+
+  const handleCreateTriageRun = async (draftId: string) => {
+    setTriagingDraftId(draftId);
+    setError(null);
+    setNotice(null);
+    try {
+      const response = await createFailureReporterTriageRun(draftId);
+      setNotice(
+        response.deduped
+          ? `Failure Reporter triage run already exists: ${response.run.run_id}`
+          : `Failure Reporter triage run created: ${response.run.run_id}`
+      );
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to create triage run");
+    } finally {
+      setTriagingDraftId(null);
     }
   };
 
@@ -412,6 +433,11 @@ export function FailureReporterSettings({
                   {draft.detail ? (
                     <p className="mt-2 text-sm text-text-muted">{draft.detail}</p>
                   ) : null}
+                  {draft.triage_run_id ? (
+                    <p className="mt-2 text-xs text-text-subtle">
+                      triage run: {draft.triage_run_id}
+                    </p>
+                  ) : null}
                   {draft.status === "approval_required" ? (
                     <div className="mt-3 flex flex-wrap items-center gap-2">
                       <Button
@@ -428,6 +454,18 @@ export function FailureReporterSettings({
                         disabled={actingDraftId === draft.draft_id}
                       >
                         Deny
+                      </Button>
+                    </div>
+                  ) : null}
+                  {draft.status === "draft_ready" || draft.status === "triage_queued" ? (
+                    <div className="mt-3 flex flex-wrap items-center gap-2">
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={() => void handleCreateTriageRun(draft.draft_id)}
+                        disabled={triagingDraftId === draft.draft_id}
+                      >
+                        {triagingDraftId === draft.draft_id ? "Creating..." : "Create triage run"}
                       </Button>
                     </div>
                   ) : null}

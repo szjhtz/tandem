@@ -24,6 +24,8 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
   - Fixed the desktop sidecar reporter config path to use the canonical `GET/PATCH /config/failure-reporter` route.
   - Added engine-backed draft approval/deny actions at `POST /failure-reporter/drafts/{id}/approve` and `POST /failure-reporter/drafts/{id}/deny`, and surfaced those actions in desktop Settings.
   - Control-panel Settings now uses those same draft approval endpoints, keeping Failure Reporter decisions consistent across desktop and web surfaces.
+  - Added `POST /failure-reporter/drafts/{id}/triage-run`, which promotes an approved draft into a minimal engine-owned `failure_reporter_triage` context run with seeded inspection and validation tasks.
+  - Desktop and control-panel Settings can now create those triage runs directly from approved Failure Reporter drafts.
 
 ## v0.4.1 (2026-03-07)
 

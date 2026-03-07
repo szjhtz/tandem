@@ -691,6 +691,7 @@ pub fn run() {
             commands::failure_reporter_report,
             commands::failure_reporter_approve_draft,
             commands::failure_reporter_deny_draft,
+            commands::failure_reporter_create_triage_run,
             commands::setup_understand,
             commands::pack_builder_preview,
             commands::pack_builder_apply,

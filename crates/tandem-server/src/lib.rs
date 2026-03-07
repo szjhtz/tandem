@@ -759,6 +759,8 @@ pub struct FailureReporterDraftRecord {
     pub status: String,
     pub created_at_ms: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub triage_run_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub issue_number: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
@@ -2220,6 +2222,7 @@ impl AppState {
                 "draft_ready".to_string()
             },
             created_at_ms: now_ms(),
+            triage_run_id: None,
             issue_number: None,
             title: Some(title),
             detail,

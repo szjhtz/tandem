@@ -42,6 +42,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - `POST /failure-reporter/drafts/{id}/deny`
   - desktop Settings can now approve or deny `approval_required` Failure Reporter drafts directly from the recent-drafts list
   - control-panel Settings now uses the same engine draft approval endpoints so Failure Reporter draft decisions work consistently across both UIs
+  - added engine-backed triage-run creation for approved Failure Reporter drafts through:
+    - `POST /failure-reporter/drafts/{id}/triage-run`
+  - triage-run creation now seeds a minimal `failure_reporter_triage` context run with inspection and validation blackboard tasks, plus draft-to-run dedupe through `triage_run_id`
+  - desktop and control-panel Settings can now promote approved Failure Reporter drafts into triage context runs without frontend-owned run orchestration
 
 - **Setup-understanding across channels and chat surfaces**:
   - added a shared deterministic setup-intent resolver at `POST /setup/understand` in `tandem-server`
