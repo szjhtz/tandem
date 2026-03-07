@@ -569,6 +569,129 @@ async fn coder_issue_fix_summary_create_writes_artifact() {
 }
 
 #[tokio::test]
+async fn coder_issue_fix_reuses_prior_fix_pattern_memory_hits() {
+    let state = test_state().await;
+    state
+        .capability_resolver
+        .refresh_builtin_bindings()
+        .await
+        .expect("refresh builtin bindings");
+    let app = app_router(state.clone());
+
+    let create_first_req = Request::builder()
+        .method("POST")
+        .uri("/coder/runs")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "coder_run_id": "coder-issue-fix-a",
+                "workflow_mode": "issue_fix",
+                "repo_binding": {
+                    "project_id": "proj-engine",
+                    "workspace_id": "ws-tandem",
+                    "workspace_root": "/tmp/tandem-repo",
+                    "repo_slug": "evan/tandem"
+                },
+                "github_ref": {
+                    "kind": "issue",
+                    "number": 79
+                }
+            })
+            .to_string(),
+        ))
+        .expect("first create request");
+    let create_first_resp = app
+        .clone()
+        .oneshot(create_first_req)
+        .await
+        .expect("first create response");
+    assert_eq!(create_first_resp.status(), StatusCode::OK);
+
+    let summary_req = Request::builder()
+        .method("POST")
+        .uri("/coder/runs/coder-issue-fix-a/issue-fix-summary")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "summary": "Add the missing startup fallback guard and cover it with a targeted regression test.",
+                "root_cause": "Startup recovery skipped the nil-config fallback path.",
+                "fix_strategy": "add startup fallback guard",
+                "changed_files": ["crates/tandem-server/src/http/coder.rs"],
+                "validation_results": [{
+                    "kind": "test",
+                    "status": "passed",
+                    "summary": "startup recovery regression is now covered"
+                }]
+            })
+            .to_string(),
+        ))
+        .expect("summary request");
+    let summary_resp = app
+        .clone()
+        .oneshot(summary_req)
+        .await
+        .expect("summary response");
+    assert_eq!(summary_resp.status(), StatusCode::OK);
+
+    let create_second_req = Request::builder()
+        .method("POST")
+        .uri("/coder/runs")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "coder_run_id": "coder-issue-fix-b",
+                "workflow_mode": "issue_fix",
+                "repo_binding": {
+                    "project_id": "proj-engine",
+                    "workspace_id": "ws-tandem",
+                    "workspace_root": "/tmp/tandem-repo",
+                    "repo_slug": "evan/tandem"
+                },
+                "github_ref": {
+                    "kind": "issue",
+                    "number": 79
+                }
+            })
+            .to_string(),
+        ))
+        .expect("second create request");
+    let create_second_resp = app
+        .clone()
+        .oneshot(create_second_req)
+        .await
+        .expect("second create response");
+    assert_eq!(create_second_resp.status(), StatusCode::OK);
+
+    let hits_req = Request::builder()
+        .method("GET")
+        .uri("/coder/runs/coder-issue-fix-b/memory-hits")
+        .body(Body::empty())
+        .expect("hits request");
+    let hits_resp = app.clone().oneshot(hits_req).await.expect("hits response");
+    assert_eq!(hits_resp.status(), StatusCode::OK);
+    let hits_payload: Value = serde_json::from_slice(
+        &to_bytes(hits_resp.into_body(), usize::MAX)
+            .await
+            .expect("hits body"),
+    )
+    .expect("hits json");
+    assert_eq!(
+        hits_payload.get("query").and_then(Value::as_str),
+        Some("evan/tandem issue #79")
+    );
+    assert!(hits_payload
+        .get("hits")
+        .and_then(Value::as_array)
+        .map(|rows| rows.iter().any(|row| {
+            row.get("kind").and_then(Value::as_str) == Some("fix_pattern")
+                && (row.get("source_coder_run_id").and_then(Value::as_str)
+                    == Some("coder-issue-fix-a")
+                    || row.get("run_id").and_then(Value::as_str) == Some("coder-issue-fix-a"))
+        }))
+        .unwrap_or(false));
+}
+
+#[tokio::test]
 async fn coder_pr_review_summary_create_writes_artifact_and_outcome() {
     let state = test_state().await;
     state
