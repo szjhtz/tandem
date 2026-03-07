@@ -102,6 +102,10 @@ async fn memory_put_then_search_in_session_scope() {
         .cloned()
         .unwrap_or(Value::Null);
     assert_eq!(
+        first_result.get("kind").and_then(Value::as_str),
+        Some("solution_capsule")
+    );
+    assert_eq!(
         first_result.get("artifact_refs").and_then(Value::as_array),
         Some(&artifact_refs)
     );
@@ -455,6 +459,7 @@ async fn memory_list_and_delete_admin_routes_work() {
         .map(|rows| {
             rows.iter().any(|row| {
                 row.get("id").and_then(|v| v.as_str()) == Some(memory_id.as_str())
+                    && row.get("kind").and_then(Value::as_str) == Some("fact")
                     && row.get("artifact_refs").and_then(Value::as_array) == Some(&artifact_refs)
             })
         })

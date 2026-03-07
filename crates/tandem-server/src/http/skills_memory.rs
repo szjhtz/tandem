@@ -947,6 +947,15 @@ fn memory_artifact_refs(metadata: Option<&Value>) -> Vec<String> {
         .unwrap_or_default()
 }
 
+fn memory_kind_label(source_type: &str) -> &str {
+    match source_type {
+        "solution_capsule" => "solution_capsule",
+        "note" => "note",
+        "fact" => "fact",
+        other => other,
+    }
+}
+
 pub(super) fn validate_memory_capability(
     run_id: &str,
     partition: &tandem_memory::MemoryPartition,
@@ -1894,7 +1903,7 @@ pub(super) async fn memory_search(
                 "id": hit.record.id,
                 "tier": request.partition.tier,
                 "classification": "internal",
-                "kind": "fact",
+                "kind": memory_kind_label(&hit.record.source_type),
                 "source_type": hit.record.source_type,
                 "created_at_ms": hit.record.created_at_ms,
                 "content": hit.record.content,
@@ -2004,6 +2013,7 @@ pub(super) async fn memory_list(
                     "id": row.id,
                     "user_id": row.user_id,
                     "run_id": row.run_id,
+                    "kind": memory_kind_label(&row.source_type),
                     "source_type": row.source_type,
                     "content": row.content,
                     "artifact_refs": memory_artifact_refs(row.metadata.as_ref()),
