@@ -370,6 +370,47 @@ fn derive_bug_monitor_failure_pattern_markers(
     canonical_markers
 }
 
+async fn bug_monitor_failure_recurrence_count(
+    state: &AppState,
+    repo: &str,
+    fingerprint: &str,
+) -> u64 {
+    state
+        .bug_monitor_incidents
+        .read()
+        .await
+        .values()
+        .filter(|row| row.repo == repo && row.fingerprint == fingerprint)
+        .map(|row| row.occurrence_count.max(1))
+        .sum::<u64>()
+        .max(1)
+}
+
+async fn bug_monitor_max_occurrence_count_for_draft(
+    state: &AppState,
+    draft_id: &str,
+) -> Option<u64> {
+    state
+        .bug_monitor_incidents
+        .read()
+        .await
+        .values()
+        .filter(|row| row.draft_id.as_deref() == Some(draft_id))
+        .map(|row| row.occurrence_count.max(1))
+        .max()
+}
+
+fn bug_monitor_linked_issue_numbers(draft: &BugMonitorDraftRecord) -> Vec<u64> {
+    let mut linked = draft
+        .issue_number
+        .into_iter()
+        .chain(draft.matched_issue_number)
+        .collect::<Vec<_>>();
+    linked.sort_unstable();
+    linked.dedup();
+    linked
+}
+
 async fn persist_bug_monitor_failure_pattern_memory(
     state: &AppState,
     draft: &BugMonitorDraftRecord,
@@ -429,6 +470,14 @@ async fn persist_bug_monitor_failure_pattern_memory(
         3,
     )
     .await?;
+    let recurrence_count = if let Some(count) =
+        bug_monitor_max_occurrence_count_for_draft(state, &draft.draft_id).await
+    {
+        count
+    } else {
+        bug_monitor_failure_recurrence_count(state, &draft.repo, &draft.fingerprint).await
+    };
+    let linked_issue_numbers = bug_monitor_linked_issue_numbers(draft);
     if duplicate_matches.iter().any(|row| {
         row.get("source").and_then(Value::as_str) == Some("governed_memory")
             && row.get("match_reason").and_then(Value::as_str) == Some("exact_fingerprint")
@@ -457,7 +506,8 @@ async fn persist_bug_monitor_failure_pattern_memory(
         "kind": "failure_pattern",
         "repo_slug": draft.repo,
         "failure_pattern_fingerprint": fingerprint,
-        "linked_issue_numbers": draft.issue_number.into_iter().collect::<Vec<_>>(),
+        "linked_issue_numbers": linked_issue_numbers,
+        "recurrence_count": recurrence_count,
         "affected_components": affected_components,
         "artifact_refs": [summary_artifact_path],
         "canonical_markers": canonical_markers,
@@ -530,6 +580,9 @@ async fn persist_bug_monitor_failure_pattern_from_approved_draft(
         3,
     )
     .await?;
+    let recurrence_count =
+        bug_monitor_failure_recurrence_count(state, &draft.repo, &draft.fingerprint).await;
+    let linked_issue_numbers = bug_monitor_linked_issue_numbers(draft);
     if duplicate_matches.iter().any(|row| {
         row.get("source").and_then(Value::as_str) == Some("governed_memory")
             && row.get("match_reason").and_then(Value::as_str) == Some("exact_fingerprint")
@@ -559,7 +612,8 @@ async fn persist_bug_monitor_failure_pattern_from_approved_draft(
         "kind": "failure_pattern",
         "repo_slug": draft.repo,
         "failure_pattern_fingerprint": draft.fingerprint,
-        "linked_issue_numbers": draft.issue_number.into_iter().collect::<Vec<_>>(),
+        "linked_issue_numbers": linked_issue_numbers,
+        "recurrence_count": recurrence_count,
         "affected_components": [draft
             .repo
             .rsplit('/')

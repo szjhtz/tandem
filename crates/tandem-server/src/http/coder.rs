@@ -618,12 +618,26 @@ fn build_failure_pattern_payload(
     }
     canonical_markers.sort();
     canonical_markers.dedup();
-    let linked_issue_numbers = record
+    let mut linked_issue_numbers = record
         .github_ref
         .as_ref()
         .filter(|reference| matches!(reference.kind, CoderGithubRefKind::Issue))
         .map(|reference| vec![reference.number])
         .unwrap_or_default();
+    for number in duplicate_candidates
+        .iter()
+        .filter_map(|candidate| {
+            candidate
+                .get("linked_issue_numbers")
+                .and_then(Value::as_array)
+        })
+        .flatten()
+        .filter_map(Value::as_u64)
+    {
+        linked_issue_numbers.push(number);
+    }
+    linked_issue_numbers.sort_unstable();
+    linked_issue_numbers.dedup();
     let affected_components = if affected_files.is_empty() {
         vec![fallback_component]
     } else {
@@ -642,6 +656,7 @@ fn build_failure_pattern_payload(
         "symptoms": [summary_text],
         "canonical_markers": canonical_markers,
         "linked_issue_numbers": linked_issue_numbers,
+        "recurrence_count": 1,
         "linked_pr_numbers": duplicate_candidates
             .iter()
             .filter_map(|candidate| candidate.get("kind").and_then(Value::as_str).filter(|kind| *kind == "pull_request").and_then(|_| candidate.get("number")).and_then(Value::as_u64))
@@ -851,6 +866,12 @@ fn derive_failure_pattern_duplicate_matches(
                 .cloned()
                 .or_else(|| hit.get("metadata").and_then(|row| row.get("linked_issue_numbers")).cloned())
                 .unwrap_or_else(|| Value::Array(Vec::new())),
+            "recurrence_count": hit
+                .get("payload")
+                .and_then(|row| row.get("recurrence_count"))
+                .cloned()
+                .or_else(|| hit.get("metadata").and_then(|row| row.get("recurrence_count")).cloned())
+                .unwrap_or_else(|| Value::from(1_u64)),
             "affected_components": hit
                 .get("payload")
                 .and_then(|row| row.get("affected_components"))
@@ -875,10 +896,20 @@ fn derive_failure_pattern_duplicate_matches(
             .unwrap_or(false);
         let a_score = a.get("score").and_then(Value::as_f64).unwrap_or(0.0);
         let b_score = b.get("score").and_then(Value::as_f64).unwrap_or(0.0);
+        let a_recurrence = a
+            .get("recurrence_count")
+            .and_then(Value::as_u64)
+            .unwrap_or(1);
+        let b_recurrence = b
+            .get("recurrence_count")
+            .and_then(Value::as_u64)
+            .unwrap_or(1);
         b_exact.cmp(&a_exact).then_with(|| {
-            b_score
-                .partial_cmp(&a_score)
-                .unwrap_or(std::cmp::Ordering::Equal)
+            b_recurrence.cmp(&a_recurrence).then_with(|| {
+                b_score
+                    .partial_cmp(&a_score)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
         })
     });
     duplicates.truncate(limit.clamp(1, 8));

@@ -39,6 +39,7 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
   - Bug Monitor incidents now persist a compact duplicate summary when suppression happens so tracker UIs can explain duplicate suppression after reload/reconnect without overloading the raw source-event payload.
   - Bug Monitor triage summaries now persist governed `failure_pattern` memory for subject `bug_monitor`, so structured triage can suppress later matching reports even without a prior coder-run artifact.
   - Approving a Bug Monitor draft without triage now also persists governed `failure_pattern` memory from the approved draft itself, so operator-approved issues still teach duplicate suppression.
+  - `failure_pattern` memory now carries recurrence metadata and stronger issue-linkage metadata, and duplicate ranking uses recurrence as a tie-breaker after exact fingerprint matches.
 
 - Initial Tandem Coder engine API foundation
   - Added the first engine-owned coder endpoints:

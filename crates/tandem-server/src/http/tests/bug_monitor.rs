@@ -580,6 +580,14 @@ async fn bug_monitor_draft_can_be_approved_and_denied() {
             .and_then(Value::as_str),
         Some("bug_monitor_approval")
     );
+    assert_eq!(
+        approve_payload
+            .get("failure_pattern_memory")
+            .and_then(|row| row.get("metadata"))
+            .and_then(|row| row.get("recurrence_count"))
+            .and_then(Value::as_u64),
+        Some(1)
+    );
 
     let duplicate_req = Request::builder()
         .method("POST")
@@ -723,7 +731,6 @@ async fn bug_monitor_issue_draft_renders_repo_template() {
         .and_then(Value::as_str)
         .expect("draft id")
         .to_string();
-
     let triage_req = Request::builder()
         .method("POST")
         .uri(format!("/bug-monitor/drafts/{draft_id}/triage-run"))
@@ -735,7 +742,6 @@ async fn bug_monitor_issue_draft_renders_repo_template() {
         .await
         .expect("triage response");
     assert_eq!(triage_resp.status(), StatusCode::OK);
-
     let draft_req = Request::builder()
         .method("POST")
         .uri(format!("/bug-monitor/drafts/{draft_id}/issue-draft"))
@@ -822,6 +828,46 @@ async fn bug_monitor_issue_draft_prefers_structured_triage_summary() {
         .await
         .expect("triage response");
     assert_eq!(triage_resp.status(), StatusCode::OK);
+    let seeded_draft = state
+        .get_bug_monitor_draft(&draft_id)
+        .await
+        .expect("seeded draft");
+    let mut enriched_draft = seeded_draft.clone();
+    enriched_draft.issue_number = Some(1234);
+    enriched_draft.matched_issue_number = Some(1234);
+    state
+        .put_bug_monitor_draft(enriched_draft.clone())
+        .await
+        .expect("update draft");
+    state
+        .put_bug_monitor_incident(crate::BugMonitorIncidentRecord {
+            incident_id: "incident-structured-triage".to_string(),
+            fingerprint: enriched_draft.fingerprint.clone(),
+            event_type: "orchestrator.run_failed".to_string(),
+            status: "queued".to_string(),
+            repo: enriched_draft.repo.clone(),
+            workspace_root: "/tmp/acme".to_string(),
+            title: "Structured triage title".to_string(),
+            detail: Some("structured incident detail".to_string()),
+            excerpt: vec!["structured log line".to_string()],
+            source: Some("desktop_logs".to_string()),
+            run_id: None,
+            session_id: None,
+            correlation_id: None,
+            component: Some("orchestrator".to_string()),
+            level: Some("error".to_string()),
+            occurrence_count: 3,
+            created_at_ms: crate::now_ms(),
+            updated_at_ms: crate::now_ms(),
+            last_seen_at_ms: Some(crate::now_ms()),
+            draft_id: Some(draft_id.clone()),
+            triage_run_id: enriched_draft.triage_run_id.clone(),
+            last_error: None,
+            duplicate_summary: None,
+            event_payload: None,
+        })
+        .await
+        .expect("seed incident");
 
     let summary_req = Request::builder()
         .method("POST")
@@ -900,7 +946,13 @@ async fn bug_monitor_issue_draft_prefers_structured_triage_summary() {
             .and_then(Value::as_str),
         Some("acme/platform")
     );
-
+    assert_eq!(
+        failure_pattern_payload
+            .get("metadata")
+            .and_then(|row| row.get("recurrence_count"))
+            .and_then(Value::as_u64),
+        Some(3)
+    );
     let duplicate_report_req = Request::builder()
         .method("POST")
         .uri("/bug-monitor/report")
