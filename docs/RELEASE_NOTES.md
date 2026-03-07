@@ -8,6 +8,9 @@
     - selected provider/model availability
     - selected MCP server presence/connectivity
     - required GitHub read/write capability coverage
+  - fixed the control-panel Failure Reporter settings-page initialization crash caused by early query access
+  - changed reporter model selection to allow typed/manual model IDs with provider suggestions and fixed model persistence across reloads
+  - generalized GitHub MCP capability readiness so arbitrary MCP server instance names can satisfy reporter issue capabilities
   - added new reporter endpoints:
     - `GET /config/failure-reporter`
     - `PATCH /config/failure-reporter`

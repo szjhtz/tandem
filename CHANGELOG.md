@@ -12,6 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Failure reporter settings foundation and server config/status surface**:
   - added persisted failure-reporter config and status state in `tandem-server`, including repo, MCP server, provider preference, and dedicated `model_policy.default_model` routing for the reporter agent
   - added fail-closed readiness validation for the selected provider/model, required GitHub capabilities, and selected MCP server connectivity
+  - fixed the control-panel Failure Reporter tab initialization crash caused by early query access
+  - changed reporter model selection from a strict catalog-only dropdown to typed model entry with provider suggestions so manual model IDs persist across reloads
+  - generalized GitHub MCP capability readiness so arbitrary MCP server instance names can satisfy reporter issue capabilities instead of depending on hardcoded provider-style server names
   - added new HTTP endpoints for reporter configuration and operator visibility:
     - `GET /config/failure-reporter`
     - `PATCH /config/failure-reporter`

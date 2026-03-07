@@ -7,6 +7,9 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
 - Failure reporter settings foundation and server config/status surface
   - Added persisted failure-reporter config in `tandem-server` for repo, selected MCP server, provider preference, and dedicated `model_policy.default_model` routing.
   - Added fail-closed readiness/status evaluation for selected model availability, MCP connectivity, and required GitHub capabilities.
+  - Fixed the Failure Reporter settings-page initialization crash caused by early query access.
+  - Changed reporter model selection to allow typed/manual model IDs with provider-backed suggestions, and fixed model persistence across reloads.
+  - Generalized GitHub MCP capability readiness so arbitrary MCP server instance names can satisfy reporter issue capabilities.
   - Added reporter HTTP endpoints:
     - `GET /config/failure-reporter`
     - `PATCH /config/failure-reporter`
