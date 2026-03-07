@@ -535,6 +535,149 @@ async fn coder_issue_fix_run_create_gets_seeded_fix_tasks() {
 }
 
 #[tokio::test]
+async fn coder_issue_fix_validation_report_advances_fix_run() {
+    let state = test_state().await;
+    state
+        .capability_resolver
+        .refresh_builtin_bindings()
+        .await
+        .expect("refresh builtin bindings");
+    let app = app_router(state.clone());
+
+    let create_req = Request::builder()
+        .method("POST")
+        .uri("/coder/runs")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "coder_run_id": "coder-issue-fix-validate",
+                "workflow_mode": "issue_fix",
+                "repo_binding": {
+                    "project_id": "proj-engine",
+                    "workspace_id": "ws-tandem",
+                    "workspace_root": "/tmp/tandem-repo",
+                    "repo_slug": "evan/tandem"
+                },
+                "github_ref": {
+                    "kind": "issue",
+                    "number": 79
+                }
+            })
+            .to_string(),
+        ))
+        .expect("create request");
+    let create_resp = app
+        .clone()
+        .oneshot(create_req)
+        .await
+        .expect("create response");
+    assert_eq!(create_resp.status(), StatusCode::OK);
+    let create_payload: Value = serde_json::from_slice(
+        &to_bytes(create_resp.into_body(), usize::MAX)
+            .await
+            .expect("create body"),
+    )
+    .expect("create json");
+    let linked_context_run_id = create_payload
+        .get("coder_run")
+        .and_then(|row| row.get("linked_context_run_id"))
+        .and_then(Value::as_str)
+        .expect("linked context run id")
+        .to_string();
+
+    let validation_req = Request::builder()
+        .method("POST")
+        .uri("/coder/runs/coder-issue-fix-validate/issue-fix-validation-report")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "summary": "Added a guard around the startup recovery path.",
+                "root_cause": "Startup recovery skipped the config fallback branch.",
+                "fix_strategy": "guard fallback branch",
+                "changed_files": ["crates/tandem-server/src/http/coder.rs"],
+                "validation_steps": ["cargo test -p tandem-server coder_issue_fix_validation_report_advances_fix_run -- --test-threads=1"],
+                "validation_results": [{
+                    "kind": "test",
+                    "status": "passed",
+                    "summary": "targeted validation regression passed"
+                }],
+                "memory_hits_used": ["memory-hit-fix-validation-1"]
+            })
+            .to_string(),
+        ))
+        .expect("validation request");
+    let validation_resp = app
+        .clone()
+        .oneshot(validation_req)
+        .await
+        .expect("validation response");
+    assert_eq!(validation_resp.status(), StatusCode::OK);
+    let validation_payload: Value = serde_json::from_slice(
+        &to_bytes(validation_resp.into_body(), usize::MAX)
+            .await
+            .expect("validation body"),
+    )
+    .expect("validation json");
+    assert_eq!(
+        validation_payload
+            .get("artifact")
+            .and_then(|row| row.get("artifact_type"))
+            .and_then(Value::as_str),
+        Some("coder_validation_report")
+    );
+    assert_eq!(
+        validation_payload
+            .get("generated_candidates")
+            .and_then(Value::as_array)
+            .map(|rows| rows.iter().any(|row| {
+                row.get("kind").and_then(Value::as_str) == Some("validation_memory")
+            })),
+        Some(true)
+    );
+    assert_eq!(
+        validation_payload
+            .get("run")
+            .and_then(|row| row.get("status"))
+            .and_then(Value::as_str),
+        Some("running")
+    );
+    assert_eq!(
+        validation_payload
+            .get("coder_run")
+            .and_then(|row| row.get("phase"))
+            .and_then(Value::as_str),
+        Some("artifact_write")
+    );
+
+    let run = load_context_run_state(&state, &linked_context_run_id)
+        .await
+        .expect("context run state");
+    assert_eq!(run.status, ContextRunStatus::Running);
+    for workflow_node_id in [
+        "inspect_issue_context",
+        "retrieve_memory",
+        "prepare_fix",
+        "validate_fix",
+    ] {
+        assert_eq!(
+            run.tasks
+                .iter()
+                .find(|task| task.workflow_node_id.as_deref() == Some(workflow_node_id))
+                .map(|task| &task.status),
+            Some(&ContextBlackboardTaskStatus::Done),
+            "expected {workflow_node_id} to be done"
+        );
+    }
+    assert_eq!(
+        run.tasks
+            .iter()
+            .find(|task| task.workflow_node_id.as_deref() == Some("write_fix_artifact"))
+            .map(|task| &task.status),
+        Some(&ContextBlackboardTaskStatus::Runnable)
+    );
+}
+
+#[tokio::test]
 async fn coder_issue_fix_summary_create_writes_artifact() {
     let state = test_state().await;
     state

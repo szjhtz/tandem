@@ -206,6 +206,26 @@ pub(super) struct CoderIssueFixSummaryCreateInput {
 }
 
 #[derive(Debug, Deserialize, Default)]
+pub(super) struct CoderIssueFixValidationReportCreateInput {
+    #[serde(default)]
+    pub(super) summary: Option<String>,
+    #[serde(default)]
+    pub(super) root_cause: Option<String>,
+    #[serde(default)]
+    pub(super) fix_strategy: Option<String>,
+    #[serde(default)]
+    pub(super) changed_files: Vec<String>,
+    #[serde(default)]
+    pub(super) validation_steps: Vec<String>,
+    #[serde(default)]
+    pub(super) validation_results: Vec<Value>,
+    #[serde(default)]
+    pub(super) memory_hits_used: Vec<String>,
+    #[serde(default)]
+    pub(super) notes: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Default)]
 pub(super) struct CoderMergeRecommendationSummaryCreateInput {
     #[serde(default)]
     pub(super) recommendation: Option<String>,
@@ -1590,6 +1610,8 @@ fn project_coder_phase(run: &ContextRunState) -> &'static str {
                 Some("review_pull_request") => "analysis",
                 Some("write_triage_artifact") => "artifact_write",
                 Some("write_review_artifact") => "artifact_write",
+                Some("write_fix_artifact") => "artifact_write",
+                Some("write_merge_artifact") => "artifact_write",
                 _ => "analysis",
             };
         }
@@ -1686,7 +1708,7 @@ async fn finalize_coder_workflow_run(
     Ok(run)
 }
 
-async fn bootstrap_coder_workflow_run(
+async fn advance_coder_workflow_run(
     state: &AppState,
     record: &CoderRunRecord,
     completed_workflow_node_ids: &[&str],
@@ -1728,7 +1750,131 @@ async fn bootstrap_coder_workflow_run(
     run.why_next_step = Some(next_reason.to_string());
     ensure_context_run_dir(state, &record.linked_context_run_id).await?;
     save_context_run_state(state, &run).await?;
+    publish_coder_run_event(
+        state,
+        "coder.run.phase_changed",
+        record,
+        Some(project_coder_phase(&run)),
+        {
+            let mut extra = serde_json::Map::new();
+            extra.insert("status".to_string(), json!(run.status));
+            extra.insert("event_type".to_string(), json!("workflow_progressed"));
+            extra
+        },
+    );
     Ok(run)
+}
+
+async fn bootstrap_coder_workflow_run(
+    state: &AppState,
+    record: &CoderRunRecord,
+    completed_workflow_node_ids: &[&str],
+    runnable_workflow_node_ids: &[&str],
+    next_reason: &str,
+) -> Result<ContextRunState, StatusCode> {
+    advance_coder_workflow_run(
+        state,
+        record,
+        completed_workflow_node_ids,
+        runnable_workflow_node_ids,
+        next_reason,
+    )
+    .await
+}
+
+async fn write_issue_fix_validation_outputs(
+    state: &AppState,
+    record: &CoderRunRecord,
+    summary: Option<&str>,
+    root_cause: Option<&str>,
+    fix_strategy: Option<&str>,
+    changed_files: &[String],
+    validation_steps: &[String],
+    validation_results: &[Value],
+    memory_hits_used: &[String],
+    notes: Option<&str>,
+    summary_artifact_path: Option<&str>,
+) -> Result<(Option<ContextBlackboardArtifact>, Vec<Value>), StatusCode> {
+    if validation_steps.is_empty() && validation_results.is_empty() {
+        return Ok((None, Vec::new()));
+    }
+    let validation_id = format!("issue-fix-validation-{}", Uuid::new_v4().simple());
+    let validation_payload = json!({
+        "coder_run_id": record.coder_run_id,
+        "linked_context_run_id": record.linked_context_run_id,
+        "workflow_mode": record.workflow_mode,
+        "repo_binding": record.repo_binding,
+        "github_ref": record.github_ref,
+        "summary": summary,
+        "root_cause": root_cause,
+        "fix_strategy": fix_strategy,
+        "changed_files": changed_files,
+        "validation_steps": validation_steps,
+        "validation_results": validation_results,
+        "memory_hits_used": memory_hits_used,
+        "notes": notes,
+        "summary_artifact_path": summary_artifact_path,
+        "created_at_ms": crate::now_ms(),
+    });
+    let validation_artifact = write_coder_artifact(
+        state,
+        &record.linked_context_run_id,
+        &validation_id,
+        "coder_validation_report",
+        "artifacts/issue_fix.validation.json",
+        &validation_payload,
+    )
+    .await?;
+    publish_coder_artifact_added(state, record, &validation_artifact, Some("validation"), {
+        let mut extra = serde_json::Map::new();
+        extra.insert("kind".to_string(), json!("validation_report"));
+        extra.insert("workflow_mode".to_string(), json!("issue_fix"));
+        extra
+    });
+
+    let validation_summary = validation_results
+        .iter()
+        .filter_map(|row| {
+            row.get("summary")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToString::to_string)
+        })
+        .next()
+        .or_else(|| {
+            (!validation_steps.is_empty())
+                .then(|| format!("Validation attempted: {}", validation_steps.join(", ")))
+        })
+        .unwrap_or_else(|| "Validation evidence captured for issue fix.".to_string());
+    let mut generated_candidates = Vec::<Value>::new();
+    let (validation_memory_id, validation_memory_artifact) = write_coder_memory_candidate_artifact(
+        state,
+        record,
+        CoderMemoryCandidateKind::ValidationMemory,
+        Some(validation_summary),
+        Some("validate_fix".to_string()),
+        json!({
+            "workflow_mode": "issue_fix",
+            "summary": summary,
+            "root_cause": root_cause,
+            "fix_strategy": fix_strategy,
+            "changed_files": changed_files,
+            "validation_steps": validation_steps,
+            "validation_results": validation_results,
+            "memory_hits_used": memory_hits_used,
+            "notes": notes,
+            "summary_artifact_path": summary_artifact_path,
+            "validation_artifact_path": validation_artifact.path,
+        }),
+    )
+    .await?;
+    generated_candidates.push(json!({
+        "candidate_id": validation_memory_id,
+        "kind": "validation_memory",
+        "artifact_path": validation_memory_artifact.path,
+    }));
+    Ok((Some(validation_artifact), generated_candidates))
 }
 
 fn coder_event_base(record: &CoderRunRecord) -> serde_json::Map<String, Value> {
@@ -3868,47 +4014,21 @@ pub(super) async fn coder_issue_fix_summary_create(
         extra
     });
 
-    let validation_artifact =
-        if !input.validation_steps.is_empty() || !input.validation_results.is_empty() {
-            let validation_id = format!("issue-fix-validation-{}", Uuid::new_v4().simple());
-            let validation_payload = json!({
-                "coder_run_id": record.coder_run_id,
-                "linked_context_run_id": record.linked_context_run_id,
-                "workflow_mode": record.workflow_mode,
-                "repo_binding": record.repo_binding,
-                "github_ref": record.github_ref,
-                "validation_steps": input.validation_steps,
-                "validation_results": input.validation_results,
-                "summary_artifact_path": artifact.path,
-                "created_at_ms": crate::now_ms(),
-            });
-            let validation_artifact = write_coder_artifact(
-                &state,
-                &record.linked_context_run_id,
-                &validation_id,
-                "coder_validation_report",
-                "artifacts/issue_fix.validation.json",
-                &validation_payload,
-            )
-            .await?;
-            publish_coder_artifact_added(
-                &state,
-                &record,
-                &validation_artifact,
-                Some("artifact_write"),
-                {
-                    let mut extra = serde_json::Map::new();
-                    extra.insert("kind".to_string(), json!("validation_report"));
-                    extra.insert("workflow_mode".to_string(), json!("issue_fix"));
-                    extra
-                },
-            );
-            Some(validation_artifact)
-        } else {
-            None
-        };
+    let (validation_artifact, mut generated_candidates) = write_issue_fix_validation_outputs(
+        &state,
+        &record,
+        input.summary.as_deref(),
+        input.root_cause.as_deref(),
+        input.fix_strategy.as_deref(),
+        &input.changed_files,
+        &input.validation_steps,
+        &input.validation_results,
+        &input.memory_hits_used,
+        input.notes.as_deref(),
+        Some(&artifact.path),
+    )
+    .await?;
 
-    let mut generated_candidates = Vec::<Value>::new();
     if let Some(summary_text) = input
         .summary
         .as_deref()
@@ -3947,56 +4067,6 @@ pub(super) async fn coder_issue_fix_summary_create(
             "kind": "fix_pattern",
             "artifact_path": fix_pattern_artifact.path,
         }));
-
-        if !input.validation_steps.is_empty() || !input.validation_results.is_empty() {
-            let validation_summary = input
-                .validation_results
-                .iter()
-                .filter_map(|row| {
-                    row.get("summary")
-                        .and_then(Value::as_str)
-                        .map(str::trim)
-                        .filter(|value| !value.is_empty())
-                        .map(ToString::to_string)
-                })
-                .next()
-                .or_else(|| {
-                    (!input.validation_steps.is_empty()).then(|| {
-                        format!(
-                            "Validation attempted: {}",
-                            input.validation_steps.join(", ")
-                        )
-                    })
-                })
-                .unwrap_or_else(|| "Validation evidence captured for issue fix.".to_string());
-            let (validation_memory_id, validation_memory_artifact) =
-                write_coder_memory_candidate_artifact(
-                    &state,
-                    &record,
-                    CoderMemoryCandidateKind::ValidationMemory,
-                    Some(validation_summary),
-                    Some("validate_fix".to_string()),
-                    json!({
-                        "workflow_mode": "issue_fix",
-                        "summary": summary_text,
-                        "result": strategy,
-                        "root_cause": input.root_cause,
-                        "fix_strategy": input.fix_strategy,
-                        "changed_files": input.changed_files,
-                        "validation_steps": input.validation_steps,
-                        "validation_results": input.validation_results,
-                        "memory_hits_used": input.memory_hits_used,
-                        "summary_artifact_path": artifact.path,
-                        "validation_artifact_path": validation_artifact.as_ref().map(|row| row.path.clone()),
-                    }),
-                )
-                .await?;
-            generated_candidates.push(json!({
-                "candidate_id": validation_memory_id,
-                "kind": "validation_memory",
-                "artifact_path": validation_memory_artifact.path,
-            }));
-        }
 
         let (run_outcome_id, run_outcome_artifact) = write_coder_memory_candidate_artifact(
             &state,
@@ -4044,6 +4114,56 @@ pub(super) async fn coder_issue_fix_summary_create(
         "ok": true,
         "artifact": artifact,
         "validation_artifact": validation_artifact,
+        "generated_candidates": generated_candidates,
+        "coder_run": coder_run_payload(&record, &final_run),
+        "run": final_run,
+    })))
+}
+
+pub(super) async fn coder_issue_fix_validation_report_create(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(input): Json<CoderIssueFixValidationReportCreateInput>,
+) -> Result<Json<Value>, StatusCode> {
+    let mut record = load_coder_run_record(&state, &id).await?;
+    if !matches!(record.workflow_mode, CoderWorkflowMode::IssueFix) {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    if input.validation_steps.is_empty() && input.validation_results.is_empty() {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let (validation_artifact, generated_candidates) = write_issue_fix_validation_outputs(
+        &state,
+        &record,
+        input.summary.as_deref(),
+        input.root_cause.as_deref(),
+        input.fix_strategy.as_deref(),
+        &input.changed_files,
+        &input.validation_steps,
+        &input.validation_results,
+        &input.memory_hits_used,
+        input.notes.as_deref(),
+        None,
+    )
+    .await?;
+    let final_run = advance_coder_workflow_run(
+        &state,
+        &record,
+        &[
+            "inspect_issue_context",
+            "retrieve_memory",
+            "prepare_fix",
+            "validate_fix",
+        ],
+        &["write_fix_artifact"],
+        "Write the fix summary and patch rationale.",
+    )
+    .await?;
+    record.updated_at_ms = final_run.updated_at_ms;
+    save_coder_run_record(&state, &record).await?;
+    Ok(Json(json!({
+        "ok": true,
+        "artifact": validation_artifact,
         "generated_candidates": generated_candidates,
         "coder_run": coder_run_payload(&record, &final_run),
         "run": final_run,
