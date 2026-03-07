@@ -1597,6 +1597,95 @@ fn project_coder_phase(run: &ContextRunState) -> &'static str {
     "analysis"
 }
 
+async fn finalize_coder_workflow_run(
+    state: &AppState,
+    record: &CoderRunRecord,
+    workflow_node_ids: &[&str],
+    completion_reason: &str,
+) -> Result<ContextRunState, StatusCode> {
+    let mut run = load_context_run_state(state, &record.linked_context_run_id).await?;
+    let now = crate::now_ms();
+    let workflow_nodes: HashSet<&str> = workflow_node_ids.iter().copied().collect();
+    for task in &mut run.tasks {
+        if task
+            .workflow_node_id
+            .as_deref()
+            .is_some_and(|node_id| workflow_nodes.contains(node_id))
+        {
+            task.status = ContextBlackboardTaskStatus::Done;
+            task.lease_owner = None;
+            task.lease_token = None;
+            task.lease_expires_at_ms = None;
+            task.updated_ts = now;
+            task.task_rev = task.task_rev.saturating_add(1);
+        }
+    }
+    for workflow_node_id in workflow_node_ids {
+        if run
+            .tasks
+            .iter()
+            .any(|task| task.workflow_node_id.as_deref() == Some(*workflow_node_id))
+        {
+            continue;
+        }
+        let task_type = match *workflow_node_id {
+            "retrieve_memory" => "research",
+            "inspect_repo" | "inspect_pull_request" | "inspect_issue_context" => "inspection",
+            "attempt_reproduction"
+            | "review_pull_request"
+            | "prepare_fix"
+            | "assess_merge_readiness" => "analysis",
+            _ => "implementation",
+        };
+        run.tasks.push(super::context_types::ContextBlackboardTask {
+            id: format!("coder-autocomplete-{}", Uuid::new_v4().simple()),
+            task_type: task_type.to_string(),
+            payload: json!({
+                "task_kind": task_type,
+                "title": format!("Complete workflow step: {workflow_node_id}"),
+                "source": "coder_summary_finalize",
+            }),
+            status: ContextBlackboardTaskStatus::Done,
+            workflow_id: Some(run.run_type.clone()),
+            workflow_node_id: Some((*workflow_node_id).to_string()),
+            parent_task_id: None,
+            depends_on_task_ids: Vec::new(),
+            decision_ids: Vec::new(),
+            artifact_ids: Vec::new(),
+            assigned_agent: None,
+            priority: 0,
+            attempt: 0,
+            max_attempts: 1,
+            last_error: None,
+            next_retry_at_ms: None,
+            lease_owner: None,
+            lease_token: None,
+            lease_expires_at_ms: None,
+            task_rev: 1,
+            created_ts: now,
+            updated_ts: now,
+        });
+    }
+    run.status = ContextRunStatus::Completed;
+    run.updated_at_ms = now;
+    run.why_next_step = Some(completion_reason.to_string());
+    ensure_context_run_dir(state, &record.linked_context_run_id).await?;
+    save_context_run_state(state, &run).await?;
+    publish_coder_run_event(
+        state,
+        "coder.run.phase_changed",
+        record,
+        Some(project_coder_phase(&run)),
+        {
+            let mut extra = serde_json::Map::new();
+            extra.insert("status".to_string(), json!(run.status));
+            extra.insert("event_type".to_string(), json!("workflow_summary_recorded"));
+            extra
+        },
+    );
+    Ok(run)
+}
+
 fn coder_event_base(record: &CoderRunRecord) -> serde_json::Map<String, Value> {
     let mut payload = serde_json::Map::new();
     payload.insert("coder_run_id".to_string(), json!(record.coder_run_id));
@@ -3289,7 +3378,7 @@ pub(super) async fn coder_triage_summary_create(
     Path(id): Path<String>,
     Json(input): Json<CoderTriageSummaryCreateInput>,
 ) -> Result<Json<Value>, StatusCode> {
-    let record = load_coder_run_record(&state, &id).await?;
+    let mut record = load_coder_run_record(&state, &id).await?;
     if !matches!(record.workflow_mode, CoderWorkflowMode::IssueTriage) {
         return Err(StatusCode::BAD_REQUEST);
     }
@@ -3414,10 +3503,27 @@ pub(super) async fn coder_triage_summary_create(
             "artifact_path": run_outcome_artifact.path,
         }));
     }
+    let final_run = finalize_coder_workflow_run(
+        &state,
+        &record,
+        &[
+            "ingest_reference",
+            "retrieve_memory",
+            "inspect_repo",
+            "attempt_reproduction",
+            "write_triage_artifact",
+        ],
+        "Issue triage summary recorded.",
+    )
+    .await?;
+    record.updated_at_ms = final_run.updated_at_ms;
+    save_coder_run_record(&state, &record).await?;
     Ok(Json(json!({
         "ok": true,
         "artifact": artifact,
         "generated_candidates": generated_candidates,
+        "coder_run": coder_run_payload(&record, &final_run),
+        "run": final_run,
     })))
 }
 
@@ -3426,7 +3532,7 @@ pub(super) async fn coder_pr_review_summary_create(
     Path(id): Path<String>,
     Json(input): Json<CoderPrReviewSummaryCreateInput>,
 ) -> Result<Json<Value>, StatusCode> {
-    let record = load_coder_run_record(&state, &id).await?;
+    let mut record = load_coder_run_record(&state, &id).await?;
     if !matches!(record.workflow_mode, CoderWorkflowMode::PrReview) {
         return Err(StatusCode::BAD_REQUEST);
     }
@@ -3640,11 +3746,27 @@ pub(super) async fn coder_pr_review_summary_create(
         }));
     }
 
+    let final_run = finalize_coder_workflow_run(
+        &state,
+        &record,
+        &[
+            "inspect_pull_request",
+            "retrieve_memory",
+            "review_pull_request",
+            "write_review_artifact",
+        ],
+        "PR review summary recorded.",
+    )
+    .await?;
+    record.updated_at_ms = final_run.updated_at_ms;
+    save_coder_run_record(&state, &record).await?;
     Ok(Json(json!({
         "ok": true,
         "artifact": artifact,
         "review_evidence_artifact": review_evidence_artifact,
         "generated_candidates": generated_candidates,
+        "coder_run": coder_run_payload(&record, &final_run),
+        "run": final_run,
     })))
 }
 
@@ -3653,7 +3775,7 @@ pub(super) async fn coder_issue_fix_summary_create(
     Path(id): Path<String>,
     Json(input): Json<CoderIssueFixSummaryCreateInput>,
 ) -> Result<Json<Value>, StatusCode> {
-    let record = load_coder_run_record(&state, &id).await?;
+    let mut record = load_coder_run_record(&state, &id).await?;
     if !matches!(record.workflow_mode, CoderWorkflowMode::IssueFix) {
         return Err(StatusCode::BAD_REQUEST);
     }
@@ -3849,11 +3971,28 @@ pub(super) async fn coder_issue_fix_summary_create(
         }));
     }
 
+    let final_run = finalize_coder_workflow_run(
+        &state,
+        &record,
+        &[
+            "inspect_issue_context",
+            "retrieve_memory",
+            "prepare_fix",
+            "validate_fix",
+            "write_fix_artifact",
+        ],
+        "Issue fix summary recorded.",
+    )
+    .await?;
+    record.updated_at_ms = final_run.updated_at_ms;
+    save_coder_run_record(&state, &record).await?;
     Ok(Json(json!({
         "ok": true,
         "artifact": artifact,
         "validation_artifact": validation_artifact,
         "generated_candidates": generated_candidates,
+        "coder_run": coder_run_payload(&record, &final_run),
+        "run": final_run,
     })))
 }
 
@@ -3862,7 +4001,7 @@ pub(super) async fn coder_merge_recommendation_summary_create(
     Path(id): Path<String>,
     Json(input): Json<CoderMergeRecommendationSummaryCreateInput>,
 ) -> Result<Json<Value>, StatusCode> {
-    let record = load_coder_run_record(&state, &id).await?;
+    let mut record = load_coder_run_record(&state, &id).await?;
     if !matches!(record.workflow_mode, CoderWorkflowMode::MergeRecommendation) {
         return Err(StatusCode::BAD_REQUEST);
     }
@@ -4022,10 +4161,26 @@ pub(super) async fn coder_merge_recommendation_summary_create(
             "artifact_path": run_outcome_artifact.path,
         }));
     }
+    let final_run = finalize_coder_workflow_run(
+        &state,
+        &record,
+        &[
+            "inspect_pull_request",
+            "retrieve_memory",
+            "assess_merge_readiness",
+            "write_merge_artifact",
+        ],
+        "Merge recommendation summary recorded.",
+    )
+    .await?;
+    record.updated_at_ms = final_run.updated_at_ms;
+    save_coder_run_record(&state, &record).await?;
     Ok(Json(json!({
         "ok": true,
         "artifact": artifact,
         "readiness_artifact": readiness_artifact,
         "generated_candidates": generated_candidates,
+        "coder_run": coder_run_payload(&record, &final_run),
+        "run": final_run,
     })))
 }

@@ -478,6 +478,18 @@ async fn coder_issue_fix_summary_create_writes_artifact() {
         .await
         .expect("create response");
     assert_eq!(create_resp.status(), StatusCode::OK);
+    let create_payload: Value = serde_json::from_slice(
+        &to_bytes(create_resp.into_body(), usize::MAX)
+            .await
+            .expect("create body"),
+    )
+    .expect("create json");
+    let linked_context_run_id = create_payload
+        .get("coder_run")
+        .and_then(|row| row.get("linked_context_run_id"))
+        .and_then(Value::as_str)
+        .expect("linked context run id")
+        .to_string();
 
     let summary_req = Request::builder()
         .method("POST")
@@ -557,6 +569,33 @@ async fn coder_issue_fix_summary_create_writes_artifact() {
                 .any(|row| { row.get("kind").and_then(Value::as_str) == Some("run_outcome") })),
         Some(true)
     );
+    assert_eq!(
+        summary_payload
+            .get("run")
+            .and_then(|row| row.get("status"))
+            .and_then(Value::as_str),
+        Some("completed")
+    );
+    let run = load_context_run_state(&state, &linked_context_run_id)
+        .await
+        .expect("context run state");
+    assert_eq!(run.status, ContextRunStatus::Completed);
+    for workflow_node_id in [
+        "inspect_issue_context",
+        "retrieve_memory",
+        "prepare_fix",
+        "validate_fix",
+        "write_fix_artifact",
+    ] {
+        assert_eq!(
+            run.tasks
+                .iter()
+                .find(|task| task.workflow_node_id.as_deref() == Some(workflow_node_id))
+                .map(|task| &task.status),
+            Some(&ContextBlackboardTaskStatus::Done),
+            "expected {workflow_node_id} to be done"
+        );
+    }
 
     let artifacts_req = Request::builder()
         .method("GET")
@@ -1097,6 +1136,27 @@ async fn coder_pr_review_summary_create_writes_artifact_and_outcome() {
         .await
         .expect("context run state");
     assert_eq!(run.run_type, "coder_pr_review");
+    assert_eq!(run.status, ContextRunStatus::Completed);
+    let workflow_nodes = run
+        .tasks
+        .iter()
+        .filter_map(|task| task.workflow_node_id.clone())
+        .collect::<Vec<_>>();
+    for workflow_node_id in [
+        "inspect_pull_request",
+        "retrieve_memory",
+        "review_pull_request",
+        "write_review_artifact",
+    ] {
+        assert_eq!(
+            run.tasks
+                .iter()
+                .find(|task| task.workflow_node_id.as_deref() == Some(workflow_node_id))
+                .map(|task| &task.status),
+            Some(&ContextBlackboardTaskStatus::Done),
+            "expected {workflow_node_id} to be done; saw workflow nodes: {workflow_nodes:?}"
+        );
+    }
 }
 
 #[tokio::test]
@@ -1476,6 +1536,18 @@ async fn coder_merge_recommendation_summary_create_writes_artifact() {
         .await
         .expect("create response");
     assert_eq!(create_resp.status(), StatusCode::OK);
+    let create_payload: Value = serde_json::from_slice(
+        &to_bytes(create_resp.into_body(), usize::MAX)
+            .await
+            .expect("create body"),
+    )
+    .expect("create json");
+    let linked_context_run_id = create_payload
+        .get("coder_run")
+        .and_then(|row| row.get("linked_context_run_id"))
+        .and_then(Value::as_str)
+        .expect("linked context run id")
+        .to_string();
 
     let summary_req = Request::builder()
         .method("POST")
@@ -1523,6 +1595,13 @@ async fn coder_merge_recommendation_summary_create_writes_artifact() {
     );
     assert_eq!(
         summary_payload
+            .get("run")
+            .and_then(|row| row.get("status"))
+            .and_then(Value::as_str),
+        Some("completed")
+    );
+    assert_eq!(
+        summary_payload
             .get("generated_candidates")
             .and_then(Value::as_array)
             .map(|rows| rows.iter().any(|row| {
@@ -1539,6 +1618,25 @@ async fn coder_merge_recommendation_summary_create_writes_artifact() {
                 .any(|row| { row.get("kind").and_then(Value::as_str) == Some("run_outcome") })),
         Some(true)
     );
+    let run = load_context_run_state(&state, &linked_context_run_id)
+        .await
+        .expect("context run state");
+    assert_eq!(run.status, ContextRunStatus::Completed);
+    for workflow_node_id in [
+        "inspect_pull_request",
+        "retrieve_memory",
+        "assess_merge_readiness",
+        "write_merge_artifact",
+    ] {
+        assert_eq!(
+            run.tasks
+                .iter()
+                .find(|task| task.workflow_node_id.as_deref() == Some(workflow_node_id))
+                .map(|task| &task.status),
+            Some(&ContextBlackboardTaskStatus::Done),
+            "expected {workflow_node_id} to be done"
+        );
+    }
     let readiness_artifact_id = summary_payload
         .get("readiness_artifact")
         .and_then(|row| row.get("id"))
@@ -2702,6 +2800,18 @@ async fn coder_triage_summary_write_adds_summary_artifact() {
         .await
         .expect("create response");
     assert_eq!(create_resp.status(), StatusCode::OK);
+    let create_payload: Value = serde_json::from_slice(
+        &to_bytes(create_resp.into_body(), usize::MAX)
+            .await
+            .expect("create body"),
+    )
+    .expect("create json");
+    let linked_context_run_id = create_payload
+        .get("coder_run")
+        .and_then(|row| row.get("linked_context_run_id"))
+        .and_then(Value::as_str)
+        .expect("linked context run id")
+        .to_string();
 
     let summary_req = Request::builder()
         .method("POST")
@@ -2785,7 +2895,14 @@ async fn coder_triage_summary_write_adds_summary_artifact() {
             .get("generated_candidates")
             .and_then(Value::as_array)
             .map(|rows| rows.len()),
-        Some(2)
+        Some(3)
+    );
+    assert_eq!(
+        summary_payload
+            .get("run")
+            .and_then(|row| row.get("status"))
+            .and_then(Value::as_str),
+        Some("completed")
     );
 
     let artifacts_req = Request::builder()
@@ -2852,6 +2969,26 @@ async fn coder_triage_summary_write_adds_summary_artifact() {
         .unwrap_or_default();
     assert!(kinds.contains(&"triage_memory"));
     assert!(kinds.contains(&"run_outcome"));
+    let run = load_context_run_state(&state, &linked_context_run_id)
+        .await
+        .expect("context run state");
+    assert_eq!(run.status, ContextRunStatus::Completed);
+    for workflow_node_id in [
+        "ingest_reference",
+        "retrieve_memory",
+        "inspect_repo",
+        "attempt_reproduction",
+        "write_triage_artifact",
+    ] {
+        assert_eq!(
+            run.tasks
+                .iter()
+                .find(|task| task.workflow_node_id.as_deref() == Some(workflow_node_id))
+                .map(|task| &task.status),
+            Some(&ContextBlackboardTaskStatus::Done),
+            "expected {workflow_node_id} to be done"
+        );
+    }
 }
 
 #[tokio::test]
