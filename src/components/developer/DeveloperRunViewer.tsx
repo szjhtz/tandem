@@ -752,6 +752,16 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
     return [...duplicateArtifacts].sort((left, right) => right.ts_ms - left.ts_ms)[0] ?? null;
   }, [artifactGroups]);
 
+  const latestMemoryArtifact = useMemo(() => {
+    const memoryArtifacts = artifactGroups.find((group) => group.key === "memory")?.artifacts ?? [];
+    return [...memoryArtifacts].sort((left, right) => right.ts_ms - left.ts_ms)[0] ?? null;
+  }, [artifactGroups]);
+
+  const latestTriageArtifact = useMemo(() => {
+    const triageArtifacts = artifactGroups.find((group) => group.key === "triage")?.artifacts ?? [];
+    return [...triageArtifacts].sort((left, right) => right.ts_ms - left.ts_ms)[0] ?? null;
+  }, [artifactGroups]);
+
   const detailTabMeta = useMemo(() => {
     return [
       { key: "overview" as const, label: "Overview", count: selectedTaskRows.length },
@@ -1067,6 +1077,20 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
                             {selectedDuplicateMatches.length} duplicate matches
                           </button>
                         ) : null}
+                        {selectedRunOverview.duplicateArtifacts > 0 ? (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (latestDuplicateArtifact) {
+                                setSelectedArtifactPath(latestDuplicateArtifact.path);
+                              }
+                              setDetailTab("artifacts");
+                            }}
+                            className="rounded-full border border-amber-500/20 bg-amber-500/10 px-2.5 py-1 text-[10px] uppercase tracking-[0.18em] text-amber-100 transition-colors hover:bg-amber-500/15"
+                          >
+                            {selectedRunOverview.duplicateArtifacts} duplicate artifacts
+                          </button>
+                        ) : null}
                         {selectedValidationSummary?.validationsAttempted ? (
                           <button
                             type="button"
@@ -1171,6 +1195,32 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
                       >
                         <Database className="h-4 w-4" />
                         Latest duplicate
+                      </Button>
+                    ) : null}
+                    {latestTriageArtifact ? (
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => {
+                          setSelectedArtifactPath(latestTriageArtifact.path);
+                          setDetailTab("artifacts");
+                        }}
+                      >
+                        <Database className="h-4 w-4" />
+                        Latest triage
+                      </Button>
+                    ) : null}
+                    {latestMemoryArtifact ? (
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => {
+                          setSelectedArtifactPath(latestMemoryArtifact.path);
+                          setDetailTab("memory");
+                        }}
+                      >
+                        <Brain className="h-4 w-4" />
+                        Latest memory
                       </Button>
                     ) : null}
                   </div>
@@ -1950,19 +2000,31 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
                           </div>
                           <div className="flex flex-wrap gap-2">
                             {selectedDuplicateMatches.length > 0 ? (
-                              <span className="rounded-full border border-amber-500/20 bg-amber-500/10 px-2.5 py-1 text-[10px] uppercase tracking-[0.18em] text-amber-100">
+                              <button
+                                type="button"
+                                onClick={() => setDetailTab("artifacts")}
+                                className="rounded-full border border-amber-500/20 bg-amber-500/10 px-2.5 py-1 text-[10px] uppercase tracking-[0.18em] text-amber-100 transition-colors hover:bg-amber-500/15"
+                              >
                                 {selectedDuplicateMatches.length} duplicate matches
-                              </span>
+                              </button>
                             ) : null}
                             {selectedValidationSummary?.outcome ? (
-                              <span className="rounded-full border border-violet-500/20 bg-violet-500/10 px-2.5 py-1 text-[10px] uppercase tracking-[0.18em] text-violet-200">
+                              <button
+                                type="button"
+                                onClick={() => setDetailTab("validation")}
+                                className="rounded-full border border-violet-500/20 bg-violet-500/10 px-2.5 py-1 text-[10px] uppercase tracking-[0.18em] text-violet-200 transition-colors hover:bg-violet-500/15"
+                              >
                                 {selectedValidationSummary.outcome}
-                              </span>
+                              </button>
                             ) : null}
                             {selectedValidationSummary?.validationsAttempted ? (
-                              <span className="rounded-full border border-violet-500/20 bg-violet-500/10 px-2.5 py-1 text-[10px] uppercase tracking-[0.18em] text-violet-200">
+                              <button
+                                type="button"
+                                onClick={() => setDetailTab("validation")}
+                                className="rounded-full border border-violet-500/20 bg-violet-500/10 px-2.5 py-1 text-[10px] uppercase tracking-[0.18em] text-violet-200 transition-colors hover:bg-violet-500/15"
+                              >
                                 {selectedValidationSummary.validationsAttempted} checks
-                              </span>
+                              </button>
                             ) : null}
                           </div>
 
