@@ -242,6 +242,7 @@ async fn memory_promote_blocks_sensitive_content_and_emits_audit() {
 async fn memory_list_and_delete_admin_routes_work() {
     let state = test_state().await;
     let app = app_router(state.clone());
+    let artifact_refs = vec![Value::from("artifact://run-4/task-1/admin.json")];
 
     let put_req = Request::builder()
         .method("POST")
@@ -258,7 +259,7 @@ async fn memory_list_and_delete_admin_routes_work() {
                 },
                 "kind": "fact",
                 "content": "admin memory test",
-                "artifact_refs": [],
+                "artifact_refs": artifact_refs,
                 "classification": "internal",
                 "metadata": null
             })
@@ -300,8 +301,10 @@ async fn memory_list_and_delete_admin_routes_work() {
         .get("items")
         .and_then(|v| v.as_array())
         .map(|rows| {
-            rows.iter()
-                .any(|row| row.get("id").and_then(|v| v.as_str()) == Some(memory_id.as_str()))
+            rows.iter().any(|row| {
+                row.get("id").and_then(|v| v.as_str()) == Some(memory_id.as_str())
+                    && row.get("artifact_refs").and_then(Value::as_array) == Some(&artifact_refs)
+            })
         })
         .unwrap_or(false);
     assert!(contains);

@@ -917,6 +917,36 @@ pub(super) fn default_memory_capability_for(
     issue_run_memory_capability(run_id, None, partition, RunMemoryCapabilityPolicy::Default)
 }
 
+fn memory_metadata_with_artifact_refs(
+    metadata: Option<Value>,
+    artifact_refs: &[String],
+) -> Option<Value> {
+    if artifact_refs.is_empty() {
+        return metadata;
+    }
+    let mut metadata = metadata.unwrap_or_else(|| json!({}));
+    if !metadata.is_object() {
+        metadata = json!({ "value": metadata });
+    }
+    if let Some(obj) = metadata.as_object_mut() {
+        obj.insert("artifact_refs".to_string(), json!(artifact_refs));
+    }
+    Some(metadata)
+}
+
+fn memory_artifact_refs(metadata: Option<&Value>) -> Vec<String> {
+    metadata
+        .and_then(|row| row.get("artifact_refs"))
+        .and_then(Value::as_array)
+        .map(|rows| {
+            rows.iter()
+                .filter_map(Value::as_str)
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default()
+}
+
 pub(super) fn validate_memory_capability(
     run_id: &str,
     partition: &tandem_memory::MemoryPartition,
@@ -1602,7 +1632,10 @@ pub(super) async fn memory_put_impl(
         project_tag: Some(request.partition.project_id.clone()),
         channel_tag: None,
         host_tag: None,
-        metadata: request.metadata.clone(),
+        metadata: memory_metadata_with_artifact_refs(
+            request.metadata.clone(),
+            &request.artifact_refs,
+        ),
         provenance: Some(json!({
             "origin_event_type": "memory.put",
             "partition_key": partition_key,
@@ -1867,6 +1900,9 @@ pub(super) async fn memory_search(
                 "content": hit.record.content,
                 "score": hit.score,
                 "run_id": hit.record.run_id,
+                "artifact_refs": memory_artifact_refs(hit.record.metadata.as_ref()),
+                "metadata": hit.record.metadata,
+                "provenance": hit.record.provenance,
             })
         })
         .collect::<Vec<_>>();
@@ -1969,7 +2005,9 @@ pub(super) async fn memory_list(
                     "run_id": row.run_id,
                     "source_type": row.source_type,
                     "content": row.content,
+                    "artifact_refs": memory_artifact_refs(row.metadata.as_ref()),
                     "metadata": row.metadata,
+                    "provenance": row.provenance,
                     "created_at_ms": row.created_at_ms,
                     "updated_at_ms": row.updated_at_ms,
                     "visibility": row.visibility,
