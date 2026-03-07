@@ -83,6 +83,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - coder `issue_triage` readiness now reuses the shared engine capability-readiness evaluator, so run creation blocks on the same missing/unbound/disconnected/auth-pending conditions exposed by `/capabilities/readiness`
   - explicit `mcp_servers` requested by coder runs remain hard requirements on top of that shared readiness check
   - the HTTP test harness now seeds a connected GitHub MCP server/tool cache so coder tests exercise the real readiness/discovery path rather than a reduced fallback
+  - unified coder memory promotion with the generic governed-memory contract: the coder adapter now reuses the shared `memory_put` / `memory_promote` implementation path instead of writing directly to the global memory database
+  - fixed cold-start global memory initialization so `/memory/*` routes create the memory DB parent directory before opening SQLite, which also keeps the shared governed-memory path reliable for coder promotion
 
 - **Setup-understanding across channels and chat surfaces**:
   - added a shared deterministic setup-intent resolver at `POST /setup/understand` in `tandem-server`

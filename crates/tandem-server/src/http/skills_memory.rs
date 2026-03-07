@@ -1036,6 +1036,9 @@ pub(super) struct RunMemoryContext {
 
 pub(super) async fn open_global_memory_db() -> Option<MemoryDatabase> {
     let paths = tandem_core::resolve_shared_paths().ok()?;
+    if let Some(parent) = paths.memory_db_path.parent() {
+        let _ = tokio::fs::create_dir_all(parent).await;
+    }
     MemoryDatabase::new(&paths.memory_db_path).await.ok()
 }
 
@@ -1519,9 +1522,16 @@ pub(super) async fn memory_put(
     State(state): State<AppState>,
     Json(input): Json<MemoryPutInput>,
 ) -> Result<Json<MemoryPutResponse>, StatusCode> {
-    let request = input.request;
-    let capability =
-        validate_memory_capability(&request.run_id, &request.partition, input.capability)?;
+    let response = memory_put_impl(&state, input.request, input.capability).await?;
+    Ok(Json(response))
+}
+
+pub(super) async fn memory_put_impl(
+    state: &AppState,
+    request: MemoryPutRequest,
+    capability: Option<MemoryCapabilityToken>,
+) -> Result<MemoryPutResponse, StatusCode> {
+    let capability = validate_memory_capability(&request.run_id, &request.partition, capability)?;
     if !capability
         .memory
         .write_tiers
@@ -1605,23 +1615,30 @@ pub(super) async fn memory_put(
             "action": "put",
         }),
     ));
-    Ok(Json(MemoryPutResponse {
+    Ok(MemoryPutResponse {
         id,
         stored: true,
         tier: request.partition.tier,
         partition_key,
         audit_id,
-    }))
+    })
 }
 
 pub(super) async fn memory_promote(
     State(state): State<AppState>,
     Json(input): Json<MemoryPromoteInput>,
 ) -> Result<Json<MemoryPromoteResponse>, StatusCode> {
-    let request = input.request;
+    let response = memory_promote_impl(&state, input.request, input.capability).await?;
+    Ok(Json(response))
+}
+
+pub(super) async fn memory_promote_impl(
+    state: &AppState,
+    request: MemoryPromoteRequest,
+    capability: Option<MemoryCapabilityToken>,
+) -> Result<MemoryPromoteResponse, StatusCode> {
     let source_memory_id = request.source_memory_id.clone();
-    let capability =
-        validate_memory_capability(&request.run_id, &request.partition, input.capability)?;
+    let capability = validate_memory_capability(&request.run_id, &request.partition, capability)?;
     if !capability.memory.promote_targets.contains(&request.to_tier) {
         return Err(StatusCode::FORBIDDEN);
     }
@@ -1667,13 +1684,13 @@ pub(super) async fn memory_promote(
             },
         )
         .await?;
-        return Ok(Json(MemoryPromoteResponse {
+        return Ok(MemoryPromoteResponse {
             promoted: false,
             new_memory_id: None,
             to_tier: request.to_tier,
             scrub_report,
             audit_id,
-        }));
+        });
     };
     let scrub_report = scrub_content(&source.content);
     let audit_id = Uuid::new_v4().to_string();
@@ -1703,13 +1720,13 @@ pub(super) async fn memory_promote(
             },
         )
         .await?;
-        return Ok(Json(MemoryPromoteResponse {
+        return Ok(MemoryPromoteResponse {
             promoted: false,
             new_memory_id: None,
             to_tier: request.to_tier,
             scrub_report,
             audit_id,
-        }));
+        });
     }
     let new_id = source.id.clone();
     db.set_global_memory_visibility(&new_id, "shared", false)
@@ -1756,13 +1773,13 @@ pub(super) async fn memory_promote(
             "action": "promote",
         }),
     ));
-    Ok(Json(MemoryPromoteResponse {
+    Ok(MemoryPromoteResponse {
         promoted: true,
         new_memory_id: Some(new_id),
         to_tier: request.to_tier,
         scrub_report,
         audit_id,
-    }))
+    })
 }
 
 pub(super) async fn memory_search(

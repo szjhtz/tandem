@@ -14,8 +14,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::path::PathBuf;
 use tandem_memory::{
-    types::{GlobalMemoryRecord, MemoryTier},
-    GovernedMemoryTier, MemoryManager, ScrubStatus,
+    types::MemoryTier, GovernedMemoryTier, MemoryCapabilities, MemoryCapabilityToken,
+    MemoryClassification, MemoryContentKind, MemoryManager, MemoryPartition, MemoryPromoteRequest,
+    MemoryPutRequest, PromotionReview,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -566,14 +567,6 @@ async fn write_coder_memory_candidate_artifact(
     Ok((candidate_id, artifact))
 }
 
-fn coder_memory_source_type(kind: &CoderMemoryCandidateKind) -> &'static str {
-    match kind {
-        CoderMemoryCandidateKind::TriageMemory => "solution_capsule",
-        CoderMemoryCandidateKind::FailurePattern => "fact",
-        CoderMemoryCandidateKind::RunOutcome => "note",
-    }
-}
-
 fn build_governed_memory_content(candidate_payload: &Value) -> Option<String> {
     candidate_payload
         .get("summary")
@@ -590,6 +583,42 @@ fn build_governed_memory_content(candidate_payload: &Value) -> Option<String> {
                 .filter(|value| !value.is_empty())
                 .map(ToString::to_string)
         })
+}
+
+fn coder_memory_partition(record: &CoderRunRecord, tier: GovernedMemoryTier) -> MemoryPartition {
+    MemoryPartition {
+        org_id: record.repo_binding.workspace_id.clone(),
+        workspace_id: record.repo_binding.workspace_id.clone(),
+        project_id: record.repo_binding.project_id.clone(),
+        tier,
+    }
+}
+
+fn coder_memory_capability(
+    record: &CoderRunRecord,
+    partition: &MemoryPartition,
+) -> MemoryCapabilityToken {
+    MemoryCapabilityToken {
+        run_id: record.linked_context_run_id.clone(),
+        subject: record
+            .source_client
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or("default")
+            .to_string(),
+        org_id: partition.org_id.clone(),
+        workspace_id: partition.workspace_id.clone(),
+        project_id: partition.project_id.clone(),
+        memory: MemoryCapabilities {
+            read_tiers: vec![GovernedMemoryTier::Session, GovernedMemoryTier::Project],
+            write_tiers: vec![GovernedMemoryTier::Session],
+            promote_targets: vec![GovernedMemoryTier::Project],
+            require_review_for_promote: true,
+            allow_auto_use_tiers: vec![GovernedMemoryTier::Curated],
+        },
+        expires_at: u64::MAX,
+    }
 }
 
 fn project_coder_phase(run: &ContextRunState) -> &'static str {
@@ -1302,136 +1331,70 @@ pub(super) async fn coder_memory_candidate_promote(
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let content =
         build_governed_memory_content(&candidate_payload).ok_or(StatusCode::BAD_REQUEST)?;
-    let db = super::skills_memory::open_global_memory_db()
-        .await
-        .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
-    let actor = record
-        .source_client
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or("default")
-        .to_string();
-    let memory_id = format!("coder-memory-{}", Uuid::new_v4().simple());
-    let now = crate::now_ms();
     let to_tier = input.to_tier.unwrap_or(GovernedMemoryTier::Project);
-    let mut record_to_store = GlobalMemoryRecord {
-        id: memory_id.clone(),
-        user_id: actor.clone(),
-        source_type: coder_memory_source_type(&kind).to_string(),
-        content: content.clone(),
-        content_hash: String::new(),
-        run_id: record.linked_context_run_id.clone(),
-        session_id: None,
-        message_id: None,
-        tool_name: None,
-        project_tag: Some(record.repo_binding.project_id.clone()),
-        channel_tag: None,
-        host_tag: None,
-        metadata: Some(json!({
-            "kind": kind,
-            "candidate_id": candidate_id,
-            "coder_run_id": record.coder_run_id,
-            "workflow_mode": record.workflow_mode,
-            "repo_slug": record.repo_binding.repo_slug,
-            "github_ref": record.github_ref,
-        })),
-        provenance: Some(json!({
-            "origin_event_type": "coder.memory.candidate_promote",
-            "candidate_id": candidate_id,
-            "linked_context_run_id": record.linked_context_run_id,
-        })),
-        redaction_status: "passed".to_string(),
-        redaction_count: 0,
-        visibility: "private".to_string(),
-        demoted: false,
-        score_boost: 0.0,
-        created_at_ms: now,
-        updated_at_ms: now,
-        expires_at_ms: None,
-    };
-    state.event_bus.publish(EngineEvent::new(
-        "memory.write.attempted",
-        json!({
-            "runID": record_to_store.run_id,
-            "sourceType": record_to_store.source_type,
-        }),
-    ));
-    let (scrubbed, scrub_report) = super::skills_memory::scrub_content_for_memory(&content);
-    if scrub_report.status == ScrubStatus::Blocked || scrubbed.trim().is_empty() {
-        state.event_bus.publish(EngineEvent::new(
-            "memory.write.skipped",
-            json!({
-                "runID": record.linked_context_run_id,
-                "sourceType": record_to_store.source_type,
-                "reason": scrub_report
-                    .block_reason
-                    .clone()
-                    .unwrap_or_else(|| "scrub_blocked".to_string()),
-            }),
-        ));
-        return Ok(Json(json!({
-            "ok": true,
-            "memory_id": memory_id,
-            "stored": false,
-            "deduped": false,
-            "promoted": false,
-            "to_tier": to_tier,
-            "scrub_report": scrub_report,
-        })));
-    }
-    record_to_store.content = scrubbed;
-    record_to_store.redaction_count = scrub_report.redactions;
-    record_to_store.redaction_status = match scrub_report.status {
-        ScrubStatus::Passed => "passed".to_string(),
-        ScrubStatus::Redacted => "redacted".to_string(),
-        ScrubStatus::Blocked => "blocked".to_string(),
-    };
-    record_to_store.content_hash = super::skills_memory::hash_text(&record_to_store.content);
-    let write_result = db
-        .put_global_memory_record(&record_to_store)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let promoted = input.approval_id.as_deref().is_some()
-        && input.reviewer_id.as_deref().is_some()
-        && scrub_report.status != ScrubStatus::Blocked;
-    if promoted {
-        db.set_global_memory_visibility(&memory_id, "shared", false)
-            .await
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    }
-    let audit_id = Uuid::new_v4().to_string();
-    super::skills_memory::append_memory_audit(
+    let session_partition = coder_memory_partition(&record, GovernedMemoryTier::Session);
+    let capability = coder_memory_capability(&record, &session_partition);
+    let artifact_refs = vec![format!(
+        "context_run:{}/coder_memory/{}.json",
+        record.linked_context_run_id, candidate_id
+    )];
+    let put_response = super::skills_memory::memory_put_impl(
         &state,
-        crate::MemoryAuditEvent {
-            audit_id: audit_id.clone(),
-            action: if promoted {
-                "coder_memory_promote".to_string()
-            } else {
-                "coder_memory_store".to_string()
-            },
+        MemoryPutRequest {
             run_id: record.linked_context_run_id.clone(),
-            memory_id: Some(memory_id.clone()),
-            source_memory_id: Some(candidate_id.clone()),
-            to_tier: Some(to_tier),
-            partition_key: format!(
-                "coder/{}/{}/{}",
-                record.repo_binding.workspace_id, record.repo_binding.project_id, to_tier
-            ),
-            actor,
-            status: if scrub_report.status == ScrubStatus::Blocked {
-                "blocked".to_string()
-            } else {
-                "ok".to_string()
+            partition: session_partition.clone(),
+            kind: match kind {
+                CoderMemoryCandidateKind::TriageMemory => MemoryContentKind::SolutionCapsule,
+                CoderMemoryCandidateKind::FailurePattern => MemoryContentKind::Fact,
+                CoderMemoryCandidateKind::RunOutcome => MemoryContentKind::Note,
             },
-            detail: input
-                .reason
-                .clone()
-                .or_else(|| scrub_report.block_reason.clone()),
-            created_at_ms: now,
+            content,
+            artifact_refs: artifact_refs.clone(),
+            classification: MemoryClassification::Internal,
+            metadata: Some(json!({
+                "kind": kind,
+                "candidate_id": candidate_id,
+                "coder_run_id": record.coder_run_id,
+                "workflow_mode": record.workflow_mode,
+                "repo_slug": record.repo_binding.repo_slug,
+                "github_ref": record.github_ref,
+            })),
         },
+        Some(capability.clone()),
     )
     .await?;
+    let promote_response =
+        if input.approval_id.as_deref().is_some() && input.reviewer_id.as_deref().is_some() {
+            Some(
+                super::skills_memory::memory_promote_impl(
+                    &state,
+                    MemoryPromoteRequest {
+                        run_id: record.linked_context_run_id.clone(),
+                        source_memory_id: put_response.id.clone(),
+                        from_tier: GovernedMemoryTier::Session,
+                        to_tier,
+                        partition: session_partition.clone(),
+                        reason: input
+                            .reason
+                            .clone()
+                            .unwrap_or_else(|| "approved reusable coder memory".to_string()),
+                        review: PromotionReview {
+                            required: true,
+                            reviewer_id: input.reviewer_id.clone(),
+                            approval_id: input.approval_id.clone(),
+                        },
+                    },
+                    Some(capability),
+                )
+                .await?,
+            )
+        } else {
+            None
+        };
+    let promoted = promote_response
+        .as_ref()
+        .map(|row| row.promoted)
+        .unwrap_or(false);
     let artifact = write_coder_artifact(
         &state,
         &record.linked_context_run_id,
@@ -1440,14 +1403,15 @@ pub(super) async fn coder_memory_candidate_promote(
         &format!("artifacts/memory_promotions/{candidate_id}.json"),
         &json!({
             "candidate_id": candidate_id,
-            "memory_id": memory_id,
-            "stored": write_result.stored,
-            "deduped": write_result.deduped,
+            "memory_id": put_response.id,
+            "stored": put_response.stored,
+            "deduped": false,
             "promoted": promoted,
             "to_tier": to_tier,
             "reviewer_id": input.reviewer_id,
             "approval_id": input.approval_id,
-            "scrub_report": scrub_report,
+            "promotion": promote_response,
+            "artifact_refs": artifact_refs,
         }),
     )
     .await?;
@@ -1457,7 +1421,7 @@ pub(super) async fn coder_memory_candidate_promote(
             "coder_run_id": record.coder_run_id,
             "linked_context_run_id": record.linked_context_run_id,
             "candidate_id": candidate_id,
-            "memory_id": memory_id,
+            "memory_id": put_response.id,
             "promoted": promoted,
             "to_tier": to_tier,
             "artifact_path": artifact.path,
@@ -1465,12 +1429,12 @@ pub(super) async fn coder_memory_candidate_promote(
     ));
     Ok(Json(json!({
         "ok": true,
-        "memory_id": memory_id,
-        "stored": write_result.stored,
-        "deduped": write_result.deduped,
+        "memory_id": put_response.id,
+        "stored": put_response.stored,
+        "deduped": false,
         "promoted": promoted,
         "to_tier": to_tier,
-        "scrub_report": scrub_report,
+        "promotion": promote_response,
         "artifact": artifact,
     })))
 }

@@ -56,6 +56,8 @@
   - those control endpoints now emit `coder.run.phase_changed`, and cancelled coder runs now project a dedicated `cancelled` phase
   - `issue_triage` readiness now reuses the shared engine capability-readiness evaluator, so coder run creation blocks on the same missing/unbound/disconnected/auth-pending conditions surfaced by `/capabilities/readiness`
   - explicit `mcp_servers` requested by coder runs still remain hard requirements on top of that shared readiness check
+  - coder memory promotion now reuses the generic governed-memory `memory_put` / `memory_promote` path instead of a coder-specific direct DB bridge
+  - fixed cold-start global memory initialization so `/memory/*` routes create the memory DB parent directory before opening SQLite
 
 - **Setup understanding now routes setup asks instead of treating them as ordinary chat**:
   - added a shared backend setup-understanding endpoint at `POST /setup/understand`
