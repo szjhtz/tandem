@@ -1231,6 +1231,128 @@ async fn coder_merge_recommendation_summary_create_writes_artifact() {
 }
 
 #[tokio::test]
+async fn coder_merge_recommendation_reuses_prior_memory_hits() {
+    let state = test_state().await;
+    state
+        .capability_resolver
+        .refresh_builtin_bindings()
+        .await
+        .expect("refresh builtin bindings");
+    let app = app_router(state.clone());
+
+    let create_first_req = Request::builder()
+        .method("POST")
+        .uri("/coder/runs")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "coder_run_id": "coder-merge-recommendation-a",
+                "workflow_mode": "merge_recommendation",
+                "repo_binding": {
+                    "project_id": "proj-engine",
+                    "workspace_id": "ws-tandem",
+                    "workspace_root": "/tmp/tandem-repo",
+                    "repo_slug": "evan/tandem"
+                },
+                "github_ref": {
+                    "kind": "pull_request",
+                    "number": 93
+                }
+            })
+            .to_string(),
+        ))
+        .expect("first create request");
+    let create_first_resp = app
+        .clone()
+        .oneshot(create_first_req)
+        .await
+        .expect("first create response");
+    assert_eq!(create_first_resp.status(), StatusCode::OK);
+
+    let summary_req = Request::builder()
+        .method("POST")
+        .uri("/coder/runs/coder-merge-recommendation-a/merge-recommendation-summary")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "recommendation": "hold",
+                "summary": "Hold merge until the final approval lands and the rollout note is attached.",
+                "risk_level": "medium",
+                "blockers": ["Required reviewer approval missing"],
+                "required_checks": ["ci / test"],
+                "required_approvals": ["codeowners"],
+                "memory_hits_used": ["memory-hit-merge-a"]
+            })
+            .to_string(),
+        ))
+        .expect("summary request");
+    let summary_resp = app
+        .clone()
+        .oneshot(summary_req)
+        .await
+        .expect("summary response");
+    assert_eq!(summary_resp.status(), StatusCode::OK);
+
+    let create_second_req = Request::builder()
+        .method("POST")
+        .uri("/coder/runs")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "coder_run_id": "coder-merge-recommendation-b",
+                "workflow_mode": "merge_recommendation",
+                "repo_binding": {
+                    "project_id": "proj-engine",
+                    "workspace_id": "ws-tandem",
+                    "workspace_root": "/tmp/tandem-repo",
+                    "repo_slug": "evan/tandem"
+                },
+                "github_ref": {
+                    "kind": "pull_request",
+                    "number": 93
+                }
+            })
+            .to_string(),
+        ))
+        .expect("second create request");
+    let create_second_resp = app
+        .clone()
+        .oneshot(create_second_req)
+        .await
+        .expect("second create response");
+    assert_eq!(create_second_resp.status(), StatusCode::OK);
+
+    let hits_req = Request::builder()
+        .method("GET")
+        .uri("/coder/runs/coder-merge-recommendation-b/memory-hits")
+        .body(Body::empty())
+        .expect("hits request");
+    let hits_resp = app.clone().oneshot(hits_req).await.expect("hits response");
+    assert_eq!(hits_resp.status(), StatusCode::OK);
+    let hits_payload: Value = serde_json::from_slice(
+        &to_bytes(hits_resp.into_body(), usize::MAX)
+            .await
+            .expect("hits body"),
+    )
+    .expect("hits json");
+    assert_eq!(
+        hits_payload.get("query").and_then(Value::as_str),
+        Some("evan/tandem pull request #93")
+    );
+    assert!(hits_payload
+        .get("hits")
+        .and_then(Value::as_array)
+        .map(|rows| rows.iter().any(|row| {
+            row.get("kind").and_then(Value::as_str) == Some("merge_recommendation_memory")
+                && (row.get("source_coder_run_id").and_then(Value::as_str)
+                    == Some("coder-merge-recommendation-a")
+                    || row.get("run_id").and_then(Value::as_str)
+                        == Some("coder-merge-recommendation-a"))
+        }))
+        .unwrap_or(false));
+}
+
+#[tokio::test]
 async fn coder_run_approve_and_cancel_project_context_run_controls() {
     let state = test_state().await;
     state
