@@ -1232,6 +1232,23 @@ async fn bug_monitor_triage_run_created_from_approved_draft() {
             .and_then(Value::as_str),
         Some("triage_queued")
     );
+    assert!(triage_payload
+        .get("issue_draft")
+        .and_then(|row| row.get("rendered_body"))
+        .and_then(Value::as_str)
+        .is_some_and(|body| body.contains("Build failure in CI")));
+    assert_eq!(
+        triage_payload
+            .get("issue_draft_artifact")
+            .and_then(|row| row.get("artifact_type"))
+            .and_then(Value::as_str),
+        Some("bug_monitor_issue_draft")
+    );
+    assert!(triage_payload
+        .get("issue_draft_artifact")
+        .and_then(|row| row.get("path"))
+        .and_then(Value::as_str)
+        .is_some_and(|path| path.ends_with("/artifacts/bug_monitor.issue_draft.json")));
 
     let get_run_req = Request::builder()
         .method("GET")
@@ -1305,6 +1322,13 @@ async fn bug_monitor_triage_run_created_from_approved_draft() {
     assert_eq!(
         second_payload.get("deduped").and_then(Value::as_bool),
         Some(true)
+    );
+    assert_eq!(
+        second_payload
+            .get("issue_draft_artifact")
+            .and_then(|row| row.get("artifact_type"))
+            .and_then(Value::as_str),
+        Some("bug_monitor_issue_draft")
     );
     assert!(
         second_payload.get("duplicate_matches_artifact").is_none()
