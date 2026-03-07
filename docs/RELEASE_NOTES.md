@@ -114,6 +114,7 @@
   - `issue_fix` summary writes now also emit reusable `fix_pattern` memory so later fix runs can reuse prior patch strategies and validation context
   - `issue_fix` memory retrieval now ranks same-issue `fix_pattern` and issue-fix `run_outcome` hits ahead of generic triage memory so fix runs surface prior patch strategy first
   - `merge_recommendation` memory retrieval now ranks same-PR `merge_recommendation_memory`, merge run outcomes, and regression signals ahead of generic review memory so merge runs surface prior merge guidance first
+  - `merge_recommendation` ranking now also prefers policy-rich same-PR memories that carry blockers, required checks, or required approvals over generic merge summaries, so readiness-specific history surfaces first
   - `pr_review` memory retrieval now ranks same-PR `review_memory`, `regression_signal`, and PR review outcomes ahead of generic triage memory so review runs surface prior review guidance first
   - `issue_fix` summary writes now also emit a dedicated `coder_validation_report` artifact when validation steps or results are provided, so validation evidence is consumable without parsing the fix summary
   - `issue_fix` summary writes now also emit reusable `validation_memory` candidates, and same-issue fix retrieval ranks that validation-specific memory ahead of generic triage memory so later fix runs can reuse prior validation evidence directly

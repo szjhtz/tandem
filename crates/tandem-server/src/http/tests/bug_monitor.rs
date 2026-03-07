@@ -1277,6 +1277,12 @@ async fn bug_monitor_triage_run_created_from_approved_draft() {
         second_payload.get("deduped").and_then(Value::as_bool),
         Some(true)
     );
+    assert!(
+        second_payload.get("duplicate_matches_artifact").is_none()
+            || second_payload
+                .get("duplicate_matches_artifact")
+                .is_some_and(Value::is_null)
+    );
 }
 
 #[tokio::test]
@@ -1434,6 +1440,18 @@ async fn bug_monitor_triage_run_writes_duplicate_match_artifact() {
         .and_then(|row| row.get("run_id"))
         .and_then(Value::as_str)
         .expect("run id");
+    assert_eq!(
+        triage_payload
+            .get("duplicate_matches_artifact")
+            .and_then(|row| row.get("artifact_type"))
+            .and_then(Value::as_str),
+        Some("failure_duplicate_matches")
+    );
+    assert!(triage_payload
+        .get("duplicate_matches_artifact")
+        .and_then(|row| row.get("path"))
+        .and_then(Value::as_str)
+        .is_some_and(|path| path.ends_with("/artifacts/failure_duplicate_matches.json")));
 
     let get_blackboard_req = Request::builder()
         .method("GET")

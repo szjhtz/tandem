@@ -930,19 +930,9 @@ fn compare_coder_memory_hits(record: &CoderRunRecord, a: &Value, b: &Value) -> s
         .unwrap_or(false);
     let a_score = a.get("score").and_then(Value::as_f64).unwrap_or(0.0);
     let b_score = b.get("score").and_then(Value::as_f64).unwrap_or(0.0);
-    let base = b_same_ref
+    let ref_order = b_same_ref
         .cmp(&a_same_ref)
-        .then_with(|| b_same_issue.cmp(&a_same_issue))
-        .then_with(|| {
-            b_score
-                .partial_cmp(&a_score)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        })
-        .then_with(|| {
-            b.get("created_at_ms")
-                .and_then(Value::as_u64)
-                .cmp(&a.get("created_at_ms").and_then(Value::as_u64))
-        });
+        .then_with(|| b_same_issue.cmp(&a_same_issue));
     let kind_weight = |hit: &Value| match memory_hit_kind(hit).as_deref() {
         Some("fix_pattern") if matches!(record.workflow_mode, CoderWorkflowMode::IssueFix) => 4_u8,
         Some("validation_memory")
@@ -991,10 +981,40 @@ fn compare_coder_memory_hits(record: &CoderRunRecord, a: &Value, b: &Value) -> s
         }
         _ => 1_u8,
     };
-    if kind_weight(a) == 1 && kind_weight(b) == 1 {
-        return base;
-    }
-    kind_weight(b).cmp(&kind_weight(a)).then(base)
+    let policy_signal_weight = |hit: &Value| {
+        if !matches!(record.workflow_mode, CoderWorkflowMode::MergeRecommendation) {
+            return 0_u8;
+        }
+        let payload = hit
+            .get("payload")
+            .or_else(|| hit.get("metadata"))
+            .cloned()
+            .unwrap_or(Value::Null);
+        let list_weight = |key: &str| {
+            payload
+                .get(key)
+                .and_then(Value::as_array)
+                .map(|rows| !rows.is_empty() as u8)
+                .unwrap_or(0_u8)
+        };
+        list_weight("blockers") + list_weight("required_checks") + list_weight("required_approvals")
+    };
+    let kind_order = kind_weight(b).cmp(&kind_weight(a));
+    let policy_order = policy_signal_weight(b).cmp(&policy_signal_weight(a));
+    let score_order = || {
+        b_score
+            .partial_cmp(&a_score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| {
+                b.get("created_at_ms")
+                    .and_then(Value::as_u64)
+                    .cmp(&a.get("created_at_ms").and_then(Value::as_u64))
+            })
+    };
+    ref_order
+        .then_with(|| kind_order)
+        .then_with(|| policy_order)
+        .then_with(score_order)
 }
 
 fn memory_hit_workflow_mode(hit: &Value) -> Option<String> {

@@ -1568,17 +1568,16 @@ pub(super) async fn create_bug_monitor_triage_run(
 ) -> Response {
     match ensure_bug_monitor_triage_run(state.clone(), &id, false).await {
         Ok((draft, run_id, deduped)) => {
-            let run = load_context_run_state(
-                &state,
-                draft.triage_run_id.as_deref().unwrap_or(run_id.as_str()),
-            )
-            .await
-            .ok();
+            let triage_run_id = draft.triage_run_id.as_deref().unwrap_or(run_id.as_str());
+            let run = load_context_run_state(&state, triage_run_id).await.ok();
+            let duplicate_matches_artifact =
+                latest_bug_monitor_artifact(&state, triage_run_id, "failure_duplicate_matches");
             Json(json!({
                 "ok": true,
                 "draft": draft,
                 "run": run,
                 "deduped": deduped,
+                "duplicate_matches_artifact": duplicate_matches_artifact,
             }))
             .into_response()
         }

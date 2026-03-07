@@ -3088,6 +3088,15 @@ async fn coder_promoted_merge_memory_reuses_policy_history_across_pull_requests(
         })
         .cloned()
         .expect("promoted merge hit");
+    assert_eq!(
+        hits_payload
+            .get("hits")
+            .and_then(Value::as_array)
+            .and_then(|rows| rows.first())
+            .and_then(|row| row.get("memory_id"))
+            .and_then(Value::as_str),
+        promote_payload.get("memory_id").and_then(Value::as_str)
+    );
     assert_eq!(promoted_hit.get("same_ref").and_then(Value::as_bool), None);
     assert_eq!(
         promoted_hit
