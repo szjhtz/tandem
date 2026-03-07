@@ -113,6 +113,7 @@ pub(super) struct CoderRunListQuery {
 #[serde(rename_all = "snake_case")]
 pub(super) enum CoderMemoryCandidateKind {
     TriageMemory,
+    FixPattern,
     ReviewMemory,
     MergeRecommendationMemory,
     RegressionSignal,
@@ -2847,6 +2848,7 @@ pub(super) async fn coder_memory_candidate_promote(
             partition: session_partition.clone(),
             kind: match kind {
                 CoderMemoryCandidateKind::TriageMemory => MemoryContentKind::SolutionCapsule,
+                CoderMemoryCandidateKind::FixPattern => MemoryContentKind::SolutionCapsule,
                 CoderMemoryCandidateKind::ReviewMemory => MemoryContentKind::SolutionCapsule,
                 CoderMemoryCandidateKind::MergeRecommendationMemory => {
                     MemoryContentKind::SolutionCapsule
@@ -3332,6 +3334,32 @@ pub(super) async fn coder_issue_fix_summary_create(
             .map(str::trim)
             .filter(|row| !row.is_empty())
             .unwrap_or("applied");
+        let (fix_pattern_id, fix_pattern_artifact) = write_coder_memory_candidate_artifact(
+            &state,
+            &record,
+            CoderMemoryCandidateKind::FixPattern,
+            Some(format!("Fix pattern: {strategy} - {summary_text}")),
+            Some("write_fix_artifact".to_string()),
+            json!({
+                "workflow_mode": "issue_fix",
+                "result": strategy,
+                "summary": summary_text,
+                "root_cause": input.root_cause,
+                "fix_strategy": input.fix_strategy,
+                "changed_files": input.changed_files,
+                "validation_steps": input.validation_steps,
+                "validation_results": input.validation_results,
+                "memory_hits_used": input.memory_hits_used,
+                "summary_artifact_path": artifact.path,
+            }),
+        )
+        .await?;
+        generated_candidates.push(json!({
+            "candidate_id": fix_pattern_id,
+            "kind": "fix_pattern",
+            "artifact_path": fix_pattern_artifact.path,
+        }));
+
         let (run_outcome_id, run_outcome_artifact) = write_coder_memory_candidate_artifact(
             &state,
             &record,

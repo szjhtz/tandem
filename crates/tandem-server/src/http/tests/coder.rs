@@ -529,6 +529,15 @@ async fn coder_issue_fix_summary_create_writes_artifact() {
             .and_then(Value::as_array)
             .map(|rows| rows
                 .iter()
+                .any(|row| { row.get("kind").and_then(Value::as_str) == Some("fix_pattern") })),
+        Some(true)
+    );
+    assert_eq!(
+        summary_payload
+            .get("generated_candidates")
+            .and_then(Value::as_array)
+            .map(|rows| rows
+                .iter()
                 .any(|row| { row.get("kind").and_then(Value::as_str) == Some("run_outcome") })),
         Some(true)
     );

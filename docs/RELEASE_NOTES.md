@@ -111,6 +111,7 @@
   - merge recommendation summaries now emit reusable `merge_recommendation_memory` and `run_outcome` candidates so later runs can reuse prior merge guidance without needing a separate manual candidate write
   - added a dedicated `merge_recommendation_memory` candidate kind so merge guidance is stored as reusable recommendation knowledge instead of only a generic run outcome
   - added the first `issue_fix` coder workflow skeleton with issue-backed readiness checks, seeded fix and validation tasks, bootstrapped `coder_memory_hits`, and `POST /coder/runs/{id}/issue-fix-summary` for structured fix summary artifacts with reusable `run_outcome` memory
+  - `issue_fix` summary writes now also emit reusable `fix_pattern` memory so later fix runs can reuse prior patch strategies and validation context
 
 - **Setup understanding now routes setup asks instead of treating them as ordinary chat**:
   - added a shared backend setup-understanding endpoint at `POST /setup/understand`
