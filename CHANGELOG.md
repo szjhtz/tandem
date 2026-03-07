@@ -63,6 +63,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - write triage artifact
   - added initial `coder.run.created` event emission so clients can observe coder run creation through the engine event bus
   - added backend regression coverage for coder run creation, retrieval, list projection, context-run linkage, and artifact projection
+  - added the first fail-closed readiness gate for `issue_triage` coder runs:
+    - required GitHub issue capability bindings must exist
+    - explicitly requested MCP servers must be configured and connected
+  - added `POST /coder/runs/{id}/memory-candidates` so `issue_triage` runs can persist engine-owned memory candidate payloads with blackboard artifact provenance
+  - memory candidate writes now emit `coder.memory.candidate_added` and attach `coder_memory_candidate` artifacts to the linked context run
 
 - **Setup-understanding across channels and chat surfaces**:
   - added a shared deterministic setup-intent resolver at `POST /setup/understand` in `tandem-server`

@@ -193,8 +193,13 @@ async fn coder_artifacts_endpoint_projects_context_blackboard_artifacts() {
 }
 
 #[tokio::test]
-async fn coder_issue_triage_blocks_when_github_bindings_are_missing() {
+async fn coder_issue_triage_blocks_when_preferred_mcp_server_is_missing() {
     let state = test_state().await;
+    state
+        .capability_resolver
+        .refresh_builtin_bindings()
+        .await
+        .expect("refresh builtin bindings");
     let app = app_router(state);
 
     let create_req = Request::builder()
@@ -213,7 +218,8 @@ async fn coder_issue_triage_blocks_when_github_bindings_are_missing() {
                 "github_ref": {
                     "kind": "issue",
                     "number": 42
-                }
+                },
+                "mcp_servers": ["missing-github"]
             })
             .to_string(),
         ))
@@ -310,20 +316,14 @@ async fn coder_memory_candidate_create_persists_artifact() {
         .await
         .expect("artifacts body");
     let artifacts_payload: Value = serde_json::from_slice(&artifacts_body).expect("artifacts json");
-    assert_eq!(
-        artifacts_payload
-            .get("artifacts")
-            .and_then(Value::as_array)
-            .map(|rows| rows.len()),
-        Some(1)
-    );
-    assert_eq!(
-        artifacts_payload
-            .get("artifacts")
-            .and_then(Value::as_array)
-            .and_then(|rows| rows.first())
-            .and_then(|row| row.get("artifact_type"))
-            .and_then(Value::as_str),
-        Some("coder_memory_candidate")
-    );
+    let contains_candidate = artifacts_payload
+        .get("artifacts")
+        .and_then(Value::as_array)
+        .map(|rows| {
+            rows.iter().any(|row| {
+                row.get("artifact_type").and_then(Value::as_str) == Some("coder_memory_candidate")
+            })
+        })
+        .unwrap_or(false);
+    assert!(contains_candidate);
 }

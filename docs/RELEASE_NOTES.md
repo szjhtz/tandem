@@ -43,6 +43,8 @@
   - coder runs now persist as thin metadata records linked to engine context runs instead of a frontend-owned workflow store
   - creating an `issue_triage` coder run now seeds a deterministic context-run task graph for issue normalization, memory retrieval, repo inspection, reproduction, and triage artifact writing
   - added initial `coder.run.created` engine event emission and backend regression coverage for coder create/get/list/artifact behavior
+  - added an initial fail-closed readiness gate for `issue_triage`: required GitHub issue capability bindings must exist, and explicitly requested MCP servers must be configured and connected
+  - added `POST /coder/runs/{id}/memory-candidates` so `issue_triage` runs can persist engine-owned memory candidate payloads and attach them to the linked context run as `coder_memory_candidate` artifacts
 
 - **Setup understanding now routes setup asks instead of treating them as ordinary chat**:
   - added a shared backend setup-understanding endpoint at `POST /setup/understand`
