@@ -50,7 +50,33 @@ type BrowserSmokeTestResponse = {
   closed?: boolean;
 };
 
-type SettingsSection = "providers" | "identity" | "theme" | "mcp" | "browser";
+type SettingsSection = "providers" | "identity" | "theme" | "channels" | "mcp" | "browser";
+
+type ChannelConfigRow = {
+  has_token?: boolean;
+  allowed_users?: string[];
+  mention_only?: boolean;
+  guild_id?: string;
+  channel_id?: string;
+  style_profile?: string;
+};
+
+type ChannelStatusRow = {
+  enabled?: boolean;
+  connected?: boolean;
+  last_error?: string | null;
+  active_sessions?: number;
+  meta?: Record<string, unknown>;
+};
+
+type ChannelDraft = {
+  botToken: string;
+  allowedUsers: string;
+  mentionOnly: boolean;
+  guildId: string;
+  channelId: string;
+  styleProfile: string;
+};
 
 type McpServerRow = {
   name: string;
@@ -249,6 +275,28 @@ function normalizeMcpCatalog(raw: any): McpCatalog {
   };
 }
 
+function normalizeChannelDraft(
+  channel: string,
+  config: ChannelConfigRow | null | undefined
+): ChannelDraft {
+  const row = config && typeof config === "object" ? config : {};
+  return {
+    botToken: "",
+    allowedUsers: Array.isArray(row.allowed_users) ? row.allowed_users.join(", ") : "",
+    mentionOnly: row.mention_only !== false && channel === "discord" ? true : !!row.mention_only,
+    guildId: String(row.guild_id || "").trim(),
+    channelId: String(row.channel_id || "").trim(),
+    styleProfile: String(row.style_profile || "default").trim() || "default",
+  };
+}
+
+function parseAllowedUsers(input: string) {
+  return String(input || "")
+    .split(",")
+    .map((row) => row.trim())
+    .filter(Boolean);
+}
+
 function providerCatalogBadge(provider: any, modelCount: number) {
   const source = String(provider?.catalog_source || "")
     .trim()
@@ -289,6 +337,8 @@ export function SettingsPage({
   const [activeSection, setActiveSection] = useState<SettingsSection>("providers");
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
   const [providerDefaultsOpen, setProviderDefaultsOpen] = useState(false);
+  const [channelDrafts, setChannelDrafts] = useState<Record<string, ChannelDraft>>({});
+  const [channelVerifyResult, setChannelVerifyResult] = useState<Record<string, any>>({});
   const [mcpModalOpen, setMcpModalOpen] = useState(false);
   const [mcpName, setMcpName] = useState("");
   const [mcpTransport, setMcpTransport] = useState("");
@@ -336,6 +386,7 @@ export function SettingsPage({
 
   useEffect(() => {
     if (currentRoute === "mcp") setActiveSection("mcp");
+    if (currentRoute === "channels") setActiveSection("channels");
   }, [currentRoute]);
 
   const providersCatalog = useQuery({
@@ -395,6 +446,16 @@ export function SettingsPage({
     queryFn: () => api("/api/engine/mcp/catalog", { method: "GET" }).catch(() => null),
     refetchInterval: 60_000,
   });
+  const channelsConfigQuery = useQuery({
+    queryKey: ["settings", "channels", "config"],
+    queryFn: () => client.channels.config().catch(() => ({})),
+    refetchInterval: 15_000,
+  });
+  const channelsStatusQuery = useQuery({
+    queryKey: ["settings", "channels", "status"],
+    queryFn: () => client.channels.status().catch(() => ({})),
+    refetchInterval: 6_000,
+  });
 
   const setDefaultsMutation = useMutation({
     mutationFn: async ({ providerId, modelId }: { providerId: string; modelId: string }) =>
@@ -446,6 +507,77 @@ export function SettingsPage({
         queryClient.invalidateQueries({ queryKey: ["settings", "identity"] }),
         refreshIdentityStatus(),
       ]);
+    },
+    onError: (error) => toast("err", error instanceof Error ? error.message : String(error)),
+  });
+  const invalidateChannels = useCallback(
+    async () => queryClient.invalidateQueries({ queryKey: ["settings", "channels"] }),
+    [queryClient]
+  );
+  const saveChannelMutation = useMutation({
+    mutationFn: async (channel: "telegram" | "discord" | "slack") => {
+      const draft = channelDrafts[channel];
+      if (!draft) throw new Error(`No draft found for ${channel}.`);
+      const payload: Record<string, unknown> = {
+        allowed_users: parseAllowedUsers(draft.allowedUsers),
+        mention_only: !!draft.mentionOnly,
+      };
+      const token = String(draft.botToken || "").trim();
+      if (token) payload.bot_token = token;
+      if (channel === "telegram") {
+        payload.style_profile = String(draft.styleProfile || "default").trim() || "default";
+      }
+      if (channel === "discord") {
+        payload.guild_id = String(draft.guildId || "").trim();
+      }
+      if (channel === "slack") {
+        const channelId = String(draft.channelId || "").trim();
+        if (!channelId && !(channelsConfigQuery.data as any)?.slack?.channel_id) {
+          throw new Error("Slack channel ID is required.");
+        }
+        if (channelId) payload.channel_id = channelId;
+      }
+      return client.channels.put(channel, payload as any);
+    },
+    onSuccess: async (_, channel) => {
+      toast("ok", `Saved ${channel} channel settings.`);
+      setChannelVerifyResult((prev) => ({ ...prev, [channel]: null }));
+      setChannelDrafts((prev) => ({
+        ...prev,
+        [channel]: {
+          ...prev[channel],
+          botToken: "",
+        },
+      }));
+      await invalidateChannels();
+    },
+    onError: (error) => toast("err", error instanceof Error ? error.message : String(error)),
+  });
+  const deleteChannelMutation = useMutation({
+    mutationFn: async (channel: "telegram" | "discord" | "slack") =>
+      client.channels.delete(channel),
+    onSuccess: async (_, channel) => {
+      toast("ok", `Removed ${channel} channel settings.`);
+      setChannelVerifyResult((prev) => ({ ...prev, [channel]: null }));
+      setChannelDrafts((prev) => ({
+        ...prev,
+        [channel]: normalizeChannelDraft(channel, null),
+      }));
+      await invalidateChannels();
+    },
+    onError: (error) => toast("err", error instanceof Error ? error.message : String(error)),
+  });
+  const verifyChannelMutation = useMutation({
+    mutationFn: async (channel: "discord") => {
+      const draft = channelDrafts[channel];
+      const payload = {
+        bot_token: String(draft?.botToken || "").trim() || undefined,
+      };
+      return client.channels.verify(channel, payload as any);
+    },
+    onSuccess: (result, channel) => {
+      setChannelVerifyResult((prev) => ({ ...prev, [channel]: result }));
+      toast("ok", `${channel} verification complete.`);
     },
     onError: (error) => toast("err", error instanceof Error ? error.message : String(error)),
   });
@@ -587,6 +719,24 @@ export function SettingsPage({
   const browserInstallHints = Array.isArray(browserStatus.data?.install_hints)
     ? browserStatus.data?.install_hints || []
     : [];
+  const channelNames = ["telegram", "discord", "slack"] as const;
+  const connectedChannelCount = channelNames.filter(
+    (name) => !!(channelsStatusQuery.data as any)?.[name]?.connected
+  ).length;
+
+  useEffect(() => {
+    const config =
+      channelsConfigQuery.data && typeof channelsConfigQuery.data === "object"
+        ? (channelsConfigQuery.data as Record<string, ChannelConfigRow>)
+        : {};
+    setChannelDrafts((prev) => {
+      const next = { ...prev };
+      for (const channel of channelNames) {
+        if (!next[channel]) next[channel] = normalizeChannelDraft(channel, config[channel]);
+      }
+      return next;
+    });
+  }, [channelsConfigQuery.data]);
 
   const applyDefaultModel = (providerId: string, modelId: string) => {
     const next = String(modelId || "").trim();
@@ -643,6 +793,7 @@ export function SettingsPage({
     { id: "providers", label: "Providers", icon: "cpu" },
     { id: "identity", label: "Identity", icon: "badge-check" },
     { id: "theme", label: "Themes", icon: "palette" },
+    { id: "channels", label: "Channels", icon: "message-circle" },
     { id: "mcp", label: "MCP", icon: "plug-zap" },
     { id: "browser", label: "Browser", icon: "monitor-cog" },
   ];
@@ -991,6 +1142,219 @@ export function SettingsPage({
               </PanelCard>
             ) : null}
 
+            {activeSection === "channels" ? (
+              <PanelCard
+                title="Channel connections"
+                subtitle="Telegram, Discord, and Slack delivery setup and live listener status."
+                actions={
+                  <Toolbar>
+                    <Badge tone={connectedChannelCount ? "ok" : "warn"}>
+                      {connectedChannelCount}/{channelNames.length} connected
+                    </Badge>
+                    <button className="tcp-btn" onClick={() => void invalidateChannels()}>
+                      <i data-lucide="refresh-cw"></i>
+                      Refresh channels
+                    </button>
+                  </Toolbar>
+                }
+              >
+                <div className="grid gap-3">
+                  {channelNames.map((channel) => {
+                    const config = ((channelsConfigQuery.data as any)?.[channel] ||
+                      {}) as ChannelConfigRow;
+                    const status = ((channelsStatusQuery.data as any)?.[channel] ||
+                      {}) as ChannelStatusRow;
+                    const draft = channelDrafts[channel] || normalizeChannelDraft(channel, config);
+                    const verifyResult = channelVerifyResult[channel];
+                    const hasSavedConfig =
+                      !!config?.has_token ||
+                      !!(Array.isArray(config?.allowed_users) && config.allowed_users.length) ||
+                      !!String(config?.guild_id || "").trim() ||
+                      !!String(config?.channel_id || "").trim();
+
+                    return (
+                      <div key={channel} className="tcp-list-item grid gap-3">
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                          <div>
+                            <div className="font-semibold capitalize">{channel}</div>
+                            <div className="tcp-subtle text-xs">
+                              {channel === "telegram"
+                                ? "Bot token, allowed users, and style profile."
+                                : channel === "discord"
+                                  ? "Bot token, allowed users, mention policy, and guild targeting."
+                                  : "Bot token, allowed users, mention policy, and default channel."}
+                            </div>
+                          </div>
+                          <div className="flex flex-wrap gap-2">
+                            <Badge tone={status.connected ? "ok" : "warn"}>
+                              {status.connected
+                                ? "Connected"
+                                : status.enabled
+                                  ? "Configured"
+                                  : "Disconnected"}
+                            </Badge>
+                            <Badge tone={config.has_token ? "info" : "warn"}>
+                              {config.has_token ? "Token saved" : "No token"}
+                            </Badge>
+                          </div>
+                        </div>
+
+                        <div className="grid gap-3 md:grid-cols-2">
+                          <input
+                            className="tcp-input"
+                            type="password"
+                            placeholder={
+                              config.has_token
+                                ? `Token saved for ${channel}. Enter a new token to replace it.`
+                                : `Paste ${channel} bot token`
+                            }
+                            value={draft.botToken}
+                            onInput={(e) =>
+                              setChannelDrafts((prev) => ({
+                                ...prev,
+                                [channel]: {
+                                  ...draft,
+                                  botToken: (e.target as HTMLInputElement).value,
+                                },
+                              }))
+                            }
+                          />
+                          <input
+                            className="tcp-input"
+                            placeholder="Allowed users (comma separated)"
+                            value={draft.allowedUsers}
+                            onInput={(e) =>
+                              setChannelDrafts((prev) => ({
+                                ...prev,
+                                [channel]: {
+                                  ...draft,
+                                  allowedUsers: (e.target as HTMLInputElement).value,
+                                },
+                              }))
+                            }
+                          />
+                        </div>
+
+                        <div className="grid gap-3 md:grid-cols-2">
+                          {channel === "telegram" ? (
+                            <input
+                              className="tcp-input"
+                              placeholder="Style profile"
+                              value={draft.styleProfile}
+                              onInput={(e) =>
+                                setChannelDrafts((prev) => ({
+                                  ...prev,
+                                  [channel]: {
+                                    ...draft,
+                                    styleProfile: (e.target as HTMLInputElement).value,
+                                  },
+                                }))
+                              }
+                            />
+                          ) : null}
+                          {channel === "discord" ? (
+                            <input
+                              className="tcp-input"
+                              placeholder="Guild ID (optional)"
+                              value={draft.guildId}
+                              onInput={(e) =>
+                                setChannelDrafts((prev) => ({
+                                  ...prev,
+                                  [channel]: {
+                                    ...draft,
+                                    guildId: (e.target as HTMLInputElement).value,
+                                  },
+                                }))
+                              }
+                            />
+                          ) : null}
+                          {channel === "slack" ? (
+                            <input
+                              className="tcp-input"
+                              placeholder="Default channel ID"
+                              value={draft.channelId}
+                              onInput={(e) =>
+                                setChannelDrafts((prev) => ({
+                                  ...prev,
+                                  [channel]: {
+                                    ...draft,
+                                    channelId: (e.target as HTMLInputElement).value,
+                                  },
+                                }))
+                              }
+                            />
+                          ) : null}
+                          <label className="inline-flex items-center gap-2 rounded-xl border border-slate-700/60 bg-slate-900/20 px-3 py-2 text-sm">
+                            <input
+                              type="checkbox"
+                              checked={draft.mentionOnly}
+                              onChange={(e) =>
+                                setChannelDrafts((prev) => ({
+                                  ...prev,
+                                  [channel]: {
+                                    ...draft,
+                                    mentionOnly: e.target.checked,
+                                  },
+                                }))
+                              }
+                            />
+                            Mention only
+                          </label>
+                        </div>
+
+                        <div className="tcp-subtle text-xs">
+                          Active sessions: {Number(status.active_sessions || 0)}
+                          {status.last_error ? ` · Last error: ${status.last_error}` : ""}
+                        </div>
+
+                        {verifyResult?.hints?.length ? (
+                          <div className="rounded-xl border border-slate-700/60 bg-slate-900/20 p-3 text-xs">
+                            <div className="mb-1 font-medium">Verification hints</div>
+                            <div className="grid gap-1">
+                              {verifyResult.hints.map((hint: string, index: number) => (
+                                <div key={`${channel}-hint-${index}`} className="tcp-subtle">
+                                  {hint}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        ) : null}
+
+                        <div className="flex flex-wrap gap-2">
+                          <button
+                            className="tcp-btn-primary"
+                            disabled={saveChannelMutation.isPending}
+                            onClick={() => saveChannelMutation.mutate(channel)}
+                          >
+                            <i data-lucide="save"></i>
+                            Save
+                          </button>
+                          {channel === "discord" ? (
+                            <button
+                              className="tcp-btn"
+                              disabled={verifyChannelMutation.isPending}
+                              onClick={() => verifyChannelMutation.mutate("discord")}
+                            >
+                              <i data-lucide="shield-check"></i>
+                              Verify
+                            </button>
+                          ) : null}
+                          <button
+                            className="tcp-btn-danger"
+                            disabled={deleteChannelMutation.isPending || !hasSavedConfig}
+                            onClick={() => deleteChannelMutation.mutate(channel)}
+                          >
+                            <i data-lucide="trash-2"></i>
+                            Remove
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </PanelCard>
+            ) : null}
+
             {activeSection === "mcp" ? (
               <PanelCard
                 title="MCP connections"
@@ -1264,6 +1628,12 @@ export function SettingsPage({
                   <div className="font-medium">MCP</div>
                   <div className="tcp-subtle mt-1 text-xs">
                     {connectedMcpCount} connected, {mcpToolIds.length} discovered tools
+                  </div>
+                </div>
+                <div className="tcp-list-item">
+                  <div className="font-medium">Channels</div>
+                  <div className="tcp-subtle mt-1 text-xs">
+                    {connectedChannelCount} connected, {channelNames.length} available
                   </div>
                 </div>
               </div>

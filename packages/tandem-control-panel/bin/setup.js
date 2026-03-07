@@ -2217,6 +2217,14 @@ function strictWriteRetryMaxAttempts() {
   return Number.isFinite(parsed) ? Math.max(1, parsed) : 3;
 }
 
+function nonWritingRetryMaxAttempts() {
+  const parsed = Number.parseInt(
+    String(process.env.TANDEM_NON_WRITING_RETRY_MAX_ATTEMPTS || "2"),
+    10
+  );
+  return Number.isFinite(parsed) ? Math.max(1, parsed) : 2;
+}
+
 function classifyStrictWriteFailureReason(verification) {
   const reason = String(verification?.reason || "").trim().toUpperCase();
   if (!reason || reason === "VERIFIED") return "";
@@ -2275,6 +2283,45 @@ function buildStrictWriteRetryRequest(prompt, verification, attemptIndex, maxAtt
       ? workerExecutionToolAllowlist()
       : workerWriteRetryToolAllowlist(),
     write_required: true,
+  };
+}
+
+function classifyNonWritingFailureReason(verification) {
+  const reason = String(verification?.reason || "").trim().toUpperCase();
+  if (!reason || reason === "VERIFIED") return "";
+  if (reason === "NO_TOOL_ACTIVITY_NO_DECISION" || reason === "NO_TOOL_ACTIVITY") {
+    return "no_tool_activity";
+  }
+  if (reason === "DECISION_PAYLOAD_MISSING") return "decision_payload_missing";
+  return "non_writing_verification_failed";
+}
+
+function buildNonWritingRetryRequest(prompt, verification, attemptIndex, maxAttempts) {
+  const failureClass = classifyNonWritingFailureReason(verification);
+  const hasToolCalls =
+    Number(verification?.total_tool_calls || 0) > 0 ||
+    Number(verification?.rejected_tool_calls || 0) > 0;
+  const recoveryLines = [
+    prompt,
+    "",
+    "[Non-Writing Recovery]",
+    `Attempt ${attemptIndex}/${maxAttempts} failed with ${failureClass || "verification_failed"}.`,
+    "- This task is read-only and must use tools.",
+    "- Allowed tools: ls, list, glob, search, grep, codesearch, read.",
+    "- Do not call write/edit/apply_patch for this task.",
+    '- Return strict JSON only: {"decision":{"summary":"...","evidence":["..."],"output_target":{"path":"...","kind":"artifact","operation":"create_or_update"}}}.',
+  ];
+  if (!hasToolCalls) {
+    recoveryLines.push("- Execute at least one read-only tool call before finalizing.");
+    recoveryLines.push("- Keep tool usage minimal and directly relevant to the task.");
+  } else {
+    recoveryLines.push("- You already used tools; now return the required JSON decision payload.");
+    recoveryLines.push("- Ensure the response is valid JSON and includes decision.summary.");
+  }
+  return {
+    parts: [{ type: "text", text: recoveryLines.join("\n") }],
+    tool_mode: "required",
+    tool_allowlist: ["ls", "list", "glob", "search", "grep", "codesearch", "read"],
   };
 }
 
@@ -3028,13 +3075,17 @@ function buildNonWritingVerificationSummary(syncRows, messages, sessionId, optio
   const assistantText = extractAssistantText(syncRows) || extractAssistantText(messages);
   const decisionPayload = parseDecisionPayload(assistantText);
   const passed = toolAudit.totalToolCalls > 0 && !!decisionPayload;
+  const hasToolCalls = toolAudit.totalToolCalls > 0;
+  const hasDecisionPayload = !!decisionPayload;
+  let reason = "VERIFIED";
+  if (!passed) {
+    if (!hasToolCalls && !hasDecisionPayload) reason = "NO_TOOL_ACTIVITY_NO_DECISION";
+    else if (!hasToolCalls) reason = "NO_TOOL_ACTIVITY";
+    else reason = "DECISION_PAYLOAD_MISSING";
+  }
   return {
     mode: normalizeVerificationMode(options.verificationMode || swarmState.verificationMode),
-    reason: passed
-      ? "VERIFIED"
-      : toolAudit.totalToolCalls === 0
-        ? "NO_TOOL_ACTIVITY_NO_DECISION"
-        : "DECISION_PAYLOAD_MISSING",
+    reason,
     passed,
     session_id: String(sessionId || "").trim() || null,
     assistant_present: !!assistantText.trim(),
@@ -3086,8 +3137,11 @@ async function runExecutionPromptWithVerification(session, run, prompt, sessionI
   };
   const resolvedModel = await resolveExecutionModel(session, run);
   const writeRequired = options.writeRequired !== false;
-  const maxAttempts =
-    writeRequired && strictWriteRetryEnabled() ? strictWriteRetryMaxAttempts() : 1;
+  const maxAttempts = writeRequired
+    ? strictWriteRetryEnabled()
+      ? strictWriteRetryMaxAttempts()
+      : 1
+    : nonWritingRetryMaxAttempts();
   const attempts = [];
   const workspaceSeedPaths = () => [
     ...Object.keys(workspaceBefore?.files || {}),
@@ -3120,18 +3174,14 @@ async function runExecutionPromptWithVerification(session, run, prompt, sessionI
             tool_mode: "required",
             tool_allowlist:
               options.toolAllowlist ||
-              (writeRequired ? workerExecutionToolAllowlist() : [
-                "ls",
-                "list",
-                "glob",
-                "search",
-                "grep",
-                "codesearch",
-                "read",
-              ]),
+              (writeRequired
+                ? workerExecutionToolAllowlist()
+                : ["ls", "list", "glob", "search", "grep", "codesearch", "read"]),
             write_required: writeRequired ? true : undefined,
           }
-        : buildStrictWriteRetryRequest(prompt, verification, attemptIndex, maxAttempts);
+        : writeRequired
+          ? buildStrictWriteRetryRequest(prompt, verification, attemptIndex, maxAttempts)
+          : buildNonWritingRetryRequest(prompt, verification, attemptIndex, maxAttempts);
     const promptResponse = await engineRequestJson(
       session,
       `/session/${encodeURIComponent(activeSessionId)}/prompt_sync`,
@@ -3188,7 +3238,9 @@ async function runExecutionPromptWithVerification(session, run, prompt, sessionI
       : buildNonWritingVerificationSummary(syncRows, messages, activeSessionId, {
           verificationMode: controller?.verificationMode || swarmState.verificationMode,
         });
-    const failureClass = classifyStrictWriteFailureReason(verification);
+    const failureClass = writeRequired
+      ? classifyStrictWriteFailureReason(verification)
+      : classifyNonWritingFailureReason(verification);
     attempts.push(
       buildAttemptTelemetry(
         attemptIndex === 1 ? "initial" : `retry_${attemptIndex - 1}`,
@@ -3205,7 +3257,7 @@ async function runExecutionPromptWithVerification(session, run, prompt, sessionI
       )
     );
     if (verification?.passed) break;
-    if (!writeRequired || !failureClass || attemptIndex >= maxAttempts) break;
+    if (!failureClass || attemptIndex >= maxAttempts) break;
   }
   const executionTrace = {
     session_id: activeSessionId,

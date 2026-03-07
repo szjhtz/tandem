@@ -1338,6 +1338,184 @@ test("swarm strict write retries malformed write failures up to configured budge
   assert.equal(requiredCallCount, 3);
 });
 
+test("swarm non-writing tasks retry when tool activity is missing", async (t) => {
+  let requiredCallCount = 0;
+  const fake = await startFakeEngine({
+    onPromptSync: async ({ call, snapshot }) => {
+      if (call?.body?.tool_mode !== "required") {
+        const assistant = {
+          role: "assistant",
+          content: JSON.stringify([
+            {
+              id: "task-1",
+              title: "Inspect existing game files and defects",
+              description: "Inspect current workspace files and report defects.",
+              task_kind: "inspection",
+              depends_on_task_ids: [],
+            },
+          ]),
+        };
+        if (snapshot) snapshot.messages.push(assistant);
+        return { status: 200, body: snapshot?.messages || [assistant] };
+      }
+      requiredCallCount += 1;
+      if (requiredCallCount === 1) {
+        const assistant = {
+          role: "assistant",
+          content: JSON.stringify({
+            decision: {
+              summary: "Inspected project structure and captured key defect risks.",
+              evidence: ["Observed single-file game structure in index.html."],
+              output_target: {
+                path: "inspection/task-1-findings.json",
+                kind: "artifact",
+                operation: "create_or_update",
+              },
+            },
+          }),
+        };
+        if (snapshot) snapshot.messages.push(assistant);
+        return { status: 200, body: snapshot?.messages || [assistant] };
+      }
+      const assistant = {
+        role: "assistant",
+        content: JSON.stringify({
+          decision: {
+            summary: "Inspected files with read-only tools and confirmed defect inventory.",
+            evidence: ["Read index.html and confirmed monolithic implementation."],
+            output_target: {
+              path: "inspection/task-1-findings.json",
+              kind: "artifact",
+              operation: "create_or_update",
+            },
+          },
+        }),
+      };
+      if (snapshot) snapshot.messages.push(assistant);
+      return {
+        status: 200,
+        body: [
+          {
+            role: "user",
+            parts: [
+              { type: "text", text: textFromParts(call?.body?.parts) },
+              {
+                type: "tool_invocation",
+                tool: "read",
+                args: { path: "index.html" },
+                result: "<html>...</html>",
+              },
+            ],
+          },
+          assistant,
+        ],
+      };
+    },
+  });
+  t.after(async () => {
+    await fake.close();
+  });
+
+  const panelPort = await getFreePort();
+  const baseUrl = `http://127.0.0.1:${panelPort}`;
+
+  const panel = spawn(process.execPath, ["bin/setup.js"], {
+    cwd: new URL("..", import.meta.url),
+    env: {
+      ...process.env,
+      TANDEM_CONTROL_PANEL_PORT: String(panelPort),
+      TANDEM_ENGINE_URL: `http://127.0.0.1:${fake.port}`,
+      TANDEM_CONTROL_PANEL_AUTO_START_ENGINE: "0",
+      TANDEM_NON_WRITING_RETRY_MAX_ATTEMPTS: "2",
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+
+  t.after(() => {
+    if (!panel.killed) panel.kill("SIGTERM");
+  });
+
+  await waitForReady(baseUrl);
+
+  const login = await request(baseUrl, "/api/auth/login", {
+    method: "POST",
+    body: { token: fake.token },
+  });
+  assert.equal(login.status, 200);
+  const cookie = extractCookie(login);
+
+  const swarmStart = await request(baseUrl, "/api/swarm/start", {
+    method: "POST",
+    cookie,
+    body: {
+      workspaceRoot: process.cwd(),
+      objective: "Inspect existing game files and defects",
+      maxTasks: 1,
+      verificationMode: "strict",
+      requireLlmPlan: true,
+      allowLocalPlannerFallback: true,
+    },
+  });
+  const swarmStartJson = await swarmStart.json();
+  assert.equal(swarmStart.status, 200, JSON.stringify(swarmStartJson));
+
+  const approveRes = await request(baseUrl, "/api/swarm/approve", {
+    method: "POST",
+    cookie,
+    body: { runId: swarmStartJson.runId },
+  });
+  assert.equal(approveRes.status, 200);
+
+  await waitForCondition(async () => {
+    const runState = await request(
+      baseUrl,
+      `/api/swarm/run/${encodeURIComponent(swarmStartJson.runId)}`,
+      {
+        cookie,
+      }
+    );
+    if (!runState.ok) return false;
+    const payload = await runState.json();
+    return String(payload?.run?.status || "").toLowerCase() === "completed";
+  }, 12000);
+
+  const runRes = await request(baseUrl, `/api/swarm/run/${encodeURIComponent(swarmStartJson.runId)}`, {
+    cookie,
+  });
+  assert.equal(runRes.status, 200);
+  const runJson = await runRes.json();
+  assert.equal(String(runJson?.run?.status || "").toLowerCase(), "completed");
+  const events = Array.isArray(runJson.events) ? runJson.events : [];
+  const taskCompleted = events.find(
+    (event) => event?.type === "step_completed" || event?.type === "task_completed"
+  );
+  assert.ok(taskCompleted, "missing task_completed event");
+  assert.equal(taskCompleted?.payload?.verification?.reason, "VERIFIED");
+  assert.equal(taskCompleted?.payload?.verification?.execution_trace?.attempts?.length, 2);
+  assert.equal(requiredCallCount, 2);
+
+  const requiredCalls = fake.promptSyncCalls.filter((entry) => entry?.body?.tool_mode === "required");
+  assert.equal(requiredCalls.length, 2);
+  assert.deepEqual(requiredCalls[0]?.body?.tool_allowlist, [
+    "ls",
+    "list",
+    "glob",
+    "search",
+    "grep",
+    "codesearch",
+    "read",
+  ]);
+  assert.deepEqual(requiredCalls[1]?.body?.tool_allowlist, [
+    "ls",
+    "list",
+    "glob",
+    "search",
+    "grep",
+    "codesearch",
+    "read",
+  ]);
+});
+
 test("swarm start seeds fallback tasks when llm planning is required but returns no valid tasks", async (t) => {
   const fake = await startFakeEngine({
     onPromptSync: async ({ call, snapshot }) => {
