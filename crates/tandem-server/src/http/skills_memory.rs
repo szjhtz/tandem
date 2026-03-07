@@ -2138,12 +2138,14 @@ pub(super) async fn memory_delete(
         return Err(StatusCode::NOT_FOUND);
     }
     let now = crate::now_ms();
+    let audit_id = Uuid::new_v4().to_string();
+    let run_id = record.run_id.clone();
     append_memory_audit(
         &state,
         crate::MemoryAuditEvent {
-            audit_id: Uuid::new_v4().to_string(),
+            audit_id: audit_id.clone(),
             action: "memory_delete".to_string(),
-            run_id: record.run_id,
+            run_id: run_id.clone(),
             memory_id: Some(id.clone()),
             source_memory_id: None,
             to_tier: None,
@@ -2159,7 +2161,12 @@ pub(super) async fn memory_delete(
         "memory.deleted",
         json!({
             "memoryID": id,
+            "runID": run_id,
+            "auditID": audit_id,
         }),
     ));
-    Ok(Json(json!({"ok": true})))
+    Ok(Json(json!({
+        "ok": true,
+        "audit_id": audit_id,
+    })))
 }

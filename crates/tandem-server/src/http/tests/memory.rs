@@ -589,6 +589,7 @@ async fn memory_promote_preserves_artifact_refs_and_shared_visibility() {
 async fn memory_list_and_delete_admin_routes_work() {
     let state = test_state().await;
     let app = app_router(state.clone());
+    let mut rx = state.event_bus.subscribe();
     let artifact_refs = vec![Value::from("artifact://run-4/task-1/admin.json")];
 
     let put_req = Request::builder()
@@ -670,6 +671,63 @@ async fn memory_list_and_delete_admin_routes_work() {
         .await
         .expect("memory delete response");
     assert_eq!(del_resp.status(), StatusCode::OK);
+    let del_body = to_bytes(del_resp.into_body(), usize::MAX)
+        .await
+        .expect("memory delete body");
+    let del_payload: Value = serde_json::from_slice(&del_body).expect("memory delete json");
+    let delete_audit_id = del_payload
+        .get("audit_id")
+        .and_then(Value::as_str)
+        .expect("memory delete audit id")
+        .to_string();
+    let delete_event = next_event_of_type(&mut rx, "memory.deleted").await;
+    assert_eq!(
+        delete_event
+            .properties
+            .get("memoryID")
+            .and_then(Value::as_str),
+        Some(memory_id.as_str())
+    );
+    assert_eq!(
+        delete_event.properties.get("runID").and_then(Value::as_str),
+        Some("run-4")
+    );
+    assert_eq!(
+        delete_event
+            .properties
+            .get("auditID")
+            .and_then(Value::as_str),
+        Some(delete_audit_id.as_str())
+    );
+
+    let audit_req = Request::builder()
+        .method("GET")
+        .uri("/memory/audit?run_id=run-4")
+        .body(Body::empty())
+        .expect("memory audit request");
+    let audit_resp = app
+        .clone()
+        .oneshot(audit_req)
+        .await
+        .expect("memory audit response");
+    assert_eq!(audit_resp.status(), StatusCode::OK);
+    let audit_body = to_bytes(audit_resp.into_body(), usize::MAX)
+        .await
+        .expect("memory audit body");
+    let audit_payload: Value = serde_json::from_slice(&audit_body).expect("memory audit json");
+    let delete_audit_exists = audit_payload
+        .get("events")
+        .and_then(Value::as_array)
+        .map(|rows| {
+            rows.iter().any(|row| {
+                row.get("action").and_then(Value::as_str) == Some("memory_delete")
+                    && row.get("status").and_then(Value::as_str) == Some("ok")
+                    && row.get("memory_id").and_then(Value::as_str) == Some(memory_id.as_str())
+                    && row.get("audit_id").and_then(Value::as_str) == Some(delete_audit_id.as_str())
+            })
+        })
+        .unwrap_or(false);
+    assert!(delete_audit_exists);
 }
 
 #[tokio::test]
