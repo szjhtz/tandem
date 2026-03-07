@@ -291,6 +291,7 @@ async fn bug_monitor_report_surfaces_duplicate_failure_patterns() {
                     "symptoms": ["orchestrator.run_failed"],
                     "canonical_markers": ["orchestrator.run_failed", "stack trace"],
                     "linked_issue_numbers": [301],
+                    "recurrence_count": 5,
                     "linked_pr_numbers": [],
                     "affected_components": ["orchestrator"],
                     "artifact_refs": ["artifact://ctx/manual/triage.summary.json"]
@@ -305,6 +306,66 @@ async fn bug_monitor_report_surfaces_duplicate_failure_patterns() {
         .await
         .expect("candidate response");
     assert_eq!(candidate_resp.status(), StatusCode::OK);
+
+    let second_seed_req = Request::builder()
+        .method("POST")
+        .uri("/coder/runs")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "coder_run_id": "coder-run-failure-pattern-seed-2",
+                "workflow_mode": "issue_triage",
+                "repo_binding": {
+                    "project_id": "proj-engine",
+                    "workspace_id": "ws-tandem",
+                    "workspace_root": "/tmp/tandem-repo",
+                    "repo_slug": "acme/platform"
+                },
+                "github_ref": {
+                    "kind": "issue",
+                    "number": 302
+                }
+            })
+            .to_string(),
+        ))
+        .expect("second seed request");
+    let second_seed_resp = app
+        .clone()
+        .oneshot(second_seed_req)
+        .await
+        .expect("second seed response");
+    assert_eq!(second_seed_resp.status(), StatusCode::OK);
+
+    let second_candidate_req = Request::builder()
+        .method("POST")
+        .uri("/coder/runs/coder-run-failure-pattern-seed-2/memory-candidates")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "kind": "failure_pattern",
+                "summary": "stack trace orchestrator.run_failed desktop_logs",
+                "payload": {
+                    "type": "failure.pattern",
+                    "repo_slug": "acme/platform",
+                    "fingerprint": "manual-failure-pattern",
+                    "symptoms": ["desktop_logs", "orchestrator.run_failed"],
+                    "canonical_markers": ["orchestrator.run_failed", "stack trace", "desktop_logs"],
+                    "linked_issue_numbers": [302],
+                    "recurrence_count": 1,
+                    "linked_pr_numbers": [],
+                    "affected_components": ["orchestrator"],
+                    "artifact_refs": ["artifact://ctx/manual/triage.summary.json"]
+                }
+            })
+            .to_string(),
+        ))
+        .expect("second candidate request");
+    let second_candidate_resp = app
+        .clone()
+        .oneshot(second_candidate_req)
+        .await
+        .expect("second candidate response");
+    assert_eq!(second_candidate_resp.status(), StatusCode::OK);
 
     let report_req = Request::builder()
         .method("POST")
@@ -334,21 +395,39 @@ async fn bug_monitor_report_surfaces_duplicate_failure_patterns() {
             .expect("report body"),
     )
     .expect("report json");
-    let duplicate_matches = report_payload
-        .get("duplicate_matches")
-        .and_then(Value::as_array)
+    let duplicate_summary = report_payload
+        .get("duplicate_summary")
         .cloned()
-        .unwrap_or_default();
+        .unwrap_or(Value::Null);
     assert_eq!(
         report_payload.get("suppressed").and_then(Value::as_bool),
         Some(true)
     );
-    assert_eq!(duplicate_matches.len(), 1);
     assert_eq!(
-        duplicate_matches[0]
-            .get("fingerprint")
+        duplicate_summary.get("match_count").and_then(Value::as_u64),
+        Some(2)
+    );
+    assert_eq!(
+        duplicate_summary
+            .get("best_match")
+            .and_then(|value| value.get("fingerprint"))
             .and_then(Value::as_str),
         Some("manual-failure-pattern")
+    );
+    assert_eq!(
+        duplicate_summary
+            .get("best_match")
+            .and_then(|value| value.get("recurrence_count"))
+            .and_then(Value::as_u64),
+        Some(5)
+    );
+    assert_eq!(
+        duplicate_summary
+            .get("best_match")
+            .and_then(|value| value.get("linked_issue_numbers"))
+            .and_then(Value::as_array)
+            .cloned(),
+        Some(vec![Value::from(301_u64)])
     );
     assert!(state.list_bug_monitor_drafts(10).await.is_empty());
 }

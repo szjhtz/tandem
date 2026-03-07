@@ -438,6 +438,36 @@ fn normalize_failure_pattern_text(values: &[Option<&str>]) -> String {
         .to_ascii_lowercase()
 }
 
+fn compare_failure_pattern_duplicate_matches(a: &Value, b: &Value) -> std::cmp::Ordering {
+    let a_exact = a
+        .get("match_reason")
+        .and_then(Value::as_str)
+        .map(|value| value == "exact_fingerprint")
+        .unwrap_or(false);
+    let b_exact = b
+        .get("match_reason")
+        .and_then(Value::as_str)
+        .map(|value| value == "exact_fingerprint")
+        .unwrap_or(false);
+    let a_score = a.get("score").and_then(Value::as_f64).unwrap_or(0.0);
+    let b_score = b.get("score").and_then(Value::as_f64).unwrap_or(0.0);
+    let a_recurrence = a
+        .get("recurrence_count")
+        .and_then(Value::as_u64)
+        .unwrap_or(1);
+    let b_recurrence = b
+        .get("recurrence_count")
+        .and_then(Value::as_u64)
+        .unwrap_or(1);
+    b_exact.cmp(&a_exact).then_with(|| {
+        b_recurrence.cmp(&a_recurrence).then_with(|| {
+            b_score
+                .partial_cmp(&a_score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
+    })
+}
+
 pub(crate) async fn query_failure_pattern_matches(
     state: &AppState,
     repo_slug: &str,
@@ -582,12 +612,7 @@ pub(crate) async fn query_failure_pattern_matches(
         }
         matches.push(governed);
     }
-    matches.sort_by(|a, b| {
-        b.get("score")
-            .and_then(Value::as_f64)
-            .partial_cmp(&a.get("score").and_then(Value::as_f64))
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
+    matches.sort_by(compare_failure_pattern_duplicate_matches);
     matches.truncate(limit.clamp(1, 10));
     Ok(matches)
 }
@@ -884,35 +909,7 @@ fn derive_failure_pattern_duplicate_matches(
             "run_id": hit.get("run_id").cloned().unwrap_or_else(|| hit.get("source_coder_run_id").cloned().unwrap_or(Value::Null)),
         }));
     }
-    duplicates.sort_by(|a, b| {
-        let a_exact = a
-            .get("match_reason")
-            .and_then(Value::as_str)
-            .map(|value| value == "exact_fingerprint")
-            .unwrap_or(false);
-        let b_exact = b
-            .get("match_reason")
-            .and_then(Value::as_str)
-            .map(|value| value == "exact_fingerprint")
-            .unwrap_or(false);
-        let a_score = a.get("score").and_then(Value::as_f64).unwrap_or(0.0);
-        let b_score = b.get("score").and_then(Value::as_f64).unwrap_or(0.0);
-        let a_recurrence = a
-            .get("recurrence_count")
-            .and_then(Value::as_u64)
-            .unwrap_or(1);
-        let b_recurrence = b
-            .get("recurrence_count")
-            .and_then(Value::as_u64)
-            .unwrap_or(1);
-        b_exact.cmp(&a_exact).then_with(|| {
-            b_recurrence.cmp(&a_recurrence).then_with(|| {
-                b_score
-                    .partial_cmp(&a_score)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            })
-        })
-    });
+    duplicates.sort_by(compare_failure_pattern_duplicate_matches);
     duplicates.truncate(limit.clamp(1, 8));
     duplicates
 }

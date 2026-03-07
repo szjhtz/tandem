@@ -1408,10 +1408,11 @@ pub(super) async fn report_bug_monitor_issue(
     )
     .await;
     if !duplicate_matches.is_empty() {
+        let duplicate_summary = build_bug_monitor_duplicate_summary(&duplicate_matches);
         return Json(json!({
             "suppressed": true,
             "reason": "duplicate_failure_pattern",
-            "duplicate_matches": duplicate_matches,
+            "duplicate_summary": duplicate_summary,
         }))
         .into_response();
     }
