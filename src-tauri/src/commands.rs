@@ -10119,9 +10119,16 @@ pub async fn orchestrator_resume(state: State<'_, AppState>, run_id: String) -> 
 
     engine.resume().await?;
 
-    // Restart execution loop
+    // Restart planning/execution loop.
+    // If planning previously failed before a plan existed, resume should retry planning
+    // instead of trying to execute an empty task list.
     tauri::async_runtime::spawn(async move {
-        if let Err(e) = engine.execute().await {
+        let result = if engine.get_tasks().await.is_empty() {
+            engine.start().await
+        } else {
+            engine.execute().await
+        };
+        if let Err(e) = result {
             tracing::error!("Failed to resume run {}: {}", run_id, e);
         }
     });
@@ -10147,9 +10154,10 @@ pub async fn orchestrator_cancel(state: State<'_, AppState>, run_id: String) -> 
 /// List all orchestrator runs (from disk)
 #[tauri::command]
 pub async fn orchestrator_list_runs(state: State<'_, AppState>) -> Result<Vec<RunSummary>> {
-    if let Ok(rows) = state.sidecar.context_run_list().await {
-        let mut summaries = rows
-            .into_iter()
+    // Prefer context-runs when available, but merge legacy local runs as well so
+    // orchestrator sessions created through the desktop legacy path don't disappear.
+    let mut summaries = if let Ok(rows) = state.sidecar.context_run_list().await {
+        rows.into_iter()
             .map(|run| RunSummary {
                 run_id: run.run_id.clone(),
                 session_id: format!("context-{}", run.run_id),
@@ -10163,72 +10171,62 @@ pub async fn orchestrator_list_runs(state: State<'_, AppState>) -> Result<Vec<Ru
                 ended_at: None,
                 last_error: None,
             })
-            .collect::<Vec<_>>();
-        summaries.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
-        return Ok(summaries);
-    }
-    // Compatibility fallback for legacy local-orchestrator runs.
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
+
+    // Also include legacy local-orchestrator runs (dedup by run_id).
     // Get workspace path
     let workspace_path = {
         let path_guard = state.workspace_path.read().unwrap();
         path_guard.clone()
     };
 
-    let workspace_path = match workspace_path {
-        Some(p) => p,
-        None => return Ok(Vec::new()), // No workspace, no runs
-    };
-
-    // List all run directories
-    let runs_dir = workspace_path.join(".tandem").join("orchestrator");
-    if !runs_dir.exists() {
-        return Ok(Vec::new());
-    }
-
-    // Create store to access disk
-    let store = OrchestratorStore::new(&workspace_path)?;
-
-    let mut summaries = Vec::new();
-    if let Ok(entries) = fs::read_dir(&runs_dir) {
-        for entry in entries.flatten() {
-            if !entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
-                continue;
-            }
-
-            let run_id = entry.file_name().to_string_lossy().to_string();
-
-            // Try to load run from disk
-            if let Ok(run) = store.load_run(&run_id) {
-                let ended_at = run.ended_at;
-                let updated_at = ended_at.unwrap_or_else(chrono::Utc::now);
-                let last_error = run.error_message.as_ref().and_then(|msg| {
-                    let trimmed = msg.trim();
-                    if trimmed.is_empty() {
-                        None
-                    } else {
-                        Some(trimmed.chars().take(220).collect::<String>())
+    if let Some(workspace_path) = workspace_path {
+        let runs_dir = workspace_path.join(".tandem").join("orchestrator");
+        if runs_dir.exists() {
+            let store = OrchestratorStore::new(&workspace_path)?;
+            if let Ok(entries) = fs::read_dir(&runs_dir) {
+                for entry in entries.flatten() {
+                    if !entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                        continue;
                     }
-                });
-                summaries.push(RunSummary {
-                    run_id: run.run_id,
-                    session_id: run.session_id,
-                    workspace_root: run.workspace_root,
-                    source: run.source,
-                    objective: run.objective,
-                    status: run.status,
-                    created_at: run.started_at,
-                    updated_at,
-                    started_at: run.started_at,
-                    ended_at,
-                    last_error,
-                });
+                    let run_id = entry.file_name().to_string_lossy().to_string();
+                    if summaries.iter().any(|row| row.run_id == run_id) {
+                        continue;
+                    }
+                    if let Ok(run) = store.load_run(&run_id) {
+                        let ended_at = run.ended_at;
+                        let updated_at = ended_at.unwrap_or_else(chrono::Utc::now);
+                        let last_error = run.error_message.as_ref().and_then(|msg| {
+                            let trimmed = msg.trim();
+                            if trimmed.is_empty() {
+                                None
+                            } else {
+                                Some(trimmed.chars().take(220).collect::<String>())
+                            }
+                        });
+                        summaries.push(RunSummary {
+                            run_id: run.run_id,
+                            session_id: run.session_id,
+                            workspace_root: run.workspace_root,
+                            source: run.source,
+                            objective: run.objective,
+                            status: run.status,
+                            created_at: run.started_at,
+                            updated_at,
+                            started_at: run.started_at,
+                            ended_at,
+                            last_error,
+                        });
+                    }
+                }
             }
         }
     }
 
-    // Sort by updated_at descending (most recent first)
     summaries.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
-
     Ok(summaries)
 }
 
@@ -10446,6 +10444,29 @@ pub async fn orchestrator_restart_run(state: State<'_, AppState>, run_id: String
 /// Delete an orchestrator run (and its backing sidecar session)
 #[tauri::command]
 pub async fn orchestrator_delete_run(state: State<'_, AppState>, run_id: String) -> Result<()> {
+    // New engine-backed context runs (Command Center + newer orchestrator flow)
+    // are persisted under shared `data/context_runs`. Delete those directly when present.
+    if state.sidecar.context_run_get(&run_id).await.is_ok() {
+        if let Some(engine) = {
+            let mut engines = state.orchestrator_engines.write().unwrap();
+            engines.remove(&run_id)
+        } {
+            let _ = engine.cancel_and_finalize().await;
+        }
+        if let Ok(paths) = resolve_shared_paths() {
+            let context_run_dir = paths
+                .canonical_root
+                .join("data")
+                .join("context_runs")
+                .join(&run_id);
+            if context_run_dir.exists() {
+                fs::remove_dir_all(&context_run_dir)?;
+            }
+        }
+        return Ok(());
+    }
+
+    // Legacy local orchestrator runs
     let workspace_path = state
         .get_workspace_path()
         .ok_or_else(|| TandemError::NotFound("No workspace configured".to_string()))?;

@@ -97,6 +97,17 @@ Example:
    - include explicit web research tasks using `websearch` + `webfetch`
    - still include explicit local extraction tasks for the primary source file(s)
    - include concrete artifact-writing tasks (`write`/`edit`/`apply_patch`) for final deliverables.
+10. Avoid single-task plans unless the objective is truly trivial (for example: rename one symbol in one file).
+    For most objectives, produce 4-10 tasks.
+11. For report/overview deliverables (for example "one-page HTML overview"), include separate tasks for:
+    - source inventory/discovery
+    - local content extraction
+    - optional external research/context collection
+    - outline/structure design
+    - draft artifact creation
+    - review/refinement/finalization
+12. Prefer decomposition quality over over-compression into one mega task; each task should have a clear purpose
+    and measurable acceptance criteria.
 
 Output ONLY the JSON array, no other text."#,
             objective = objective,

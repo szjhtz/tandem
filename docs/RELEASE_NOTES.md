@@ -2,6 +2,16 @@
 
 ### Highlights
 
+- **Desktop orchestrator + command center stabilization**:
+  - fixed orchestrator resume so runs with no tasks re-enter planning instead of getting stuck trying to execute an empty plan
+  - restored run-list visibility across mixed storage by merging context runs with legacy local orchestrator runs
+  - hardened run deletion for context runs by removing shared `data/context_runs/<run_id>` state and surfacing real delete failures
+  - replaced native desktop confirm prompts in orchestrator controls with in-app confirmation dialogs
+  - added in-app toast surfacing for payment/quota failures (`payment required` and credit-limit provider failures)
+  - tuned planner guidance so non-trivial report/objective requests avoid collapsing into a single task
+  - reduced terminal log spam by suppressing duplicate in-flight `tool.lifecycle.start` events for the same tool part even when provider args stream updates
+  - fixed command-center action visibility so selected runs reliably expose pause/cancel/continue/delete controls
+
 - **Bug Monitor settings foundation and runtime config surface**:
   - added persisted bug-monitor config/state in `tandem-server` with explicit repo, MCP server, provider preference, and dedicated `model_policy.default_model` routing for the reporter agent
   - added fail-closed readiness evaluation for:

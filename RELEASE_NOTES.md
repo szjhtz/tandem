@@ -4,6 +4,16 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
 
 ## v0.4.2 (Unreleased)
 
+- Desktop orchestrator + command center stabilization
+  - Fixed orchestrator resume so runs with no tasks re-enter planning instead of getting stuck trying to execute an empty plan.
+  - Restored run-list visibility across mixed storage by merging context runs with legacy local orchestrator runs.
+  - Hardened run deletion for context runs by removing shared `data/context_runs/<run_id>` state and surfacing real delete failures.
+  - Replaced native desktop `window.confirm` prompts in orchestrator controls with in-app confirmation dialogs.
+  - Added in-app toast surfacing for payment/quota failures (`payment required`, credit-limit style provider errors).
+  - Tuned planner guidance so non-trivial report/objective requests avoid collapsing into a single task.
+  - Reduced terminal log spam by suppressing duplicate in-flight `tool.lifecycle.start` events for the same tool part even when provider args stream updates.
+  - Fixed command center action visibility so selected runs reliably expose pause/cancel/continue/delete controls.
+
 - Bug Monitor settings foundation and server config/status surface
   - Added persisted bug-monitor config in `tandem-server` for repo, selected MCP server, provider preference, and dedicated `model_policy.default_model` routing.
   - Added fail-closed readiness/status evaluation for selected model availability, MCP connectivity, and required GitHub capabilities.

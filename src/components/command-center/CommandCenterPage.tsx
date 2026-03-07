@@ -193,7 +193,6 @@ export function CommandCenterPage({
   const [isLoading, setIsLoading] = useState(false);
   const [isRunActionLoading, setIsRunActionLoading] = useState(false);
   const [runsCollapsed, setRunsCollapsed] = useState(false);
-  const [hasExplicitRunSelection, setHasExplicitRunSelection] = useState(false);
   const [pendingCreatedRun, setPendingCreatedRun] = useState<RunSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selectedModel, setSelectedModel] = useState<string | undefined>(undefined);
@@ -312,7 +311,9 @@ export function CommandCenterPage({
       }
       blackboardRefreshTimerRef.current = window.setTimeout(async () => {
         try {
-          const nextBlackboard = await invoke<Blackboard>("orchestrator_engine_get_blackboard", { runId });
+          const nextBlackboard = await invoke<Blackboard>("orchestrator_engine_get_blackboard", {
+            runId,
+          });
           if (disposed) return;
           setBlackboard(nextBlackboard);
           lastBlackboardRefreshSeqRef.current = Math.max(
@@ -362,7 +363,9 @@ export function CommandCenterPage({
         }
         if (freshEvents.length > 0) {
           setRunEvents((prev) => {
-            const merged = lastStructuredEventSeqRef.current ? [...prev, ...freshEvents] : freshEvents;
+            const merged = lastStructuredEventSeqRef.current
+              ? [...prev, ...freshEvents]
+              : freshEvents;
             return merged.slice(-250);
           });
           lastStructuredEventSeqRef.current = freshEvents[freshEvents.length - 1].seq;
@@ -441,7 +444,6 @@ export function CommandCenterPage({
 
   useEffect(() => {
     setRunId(null);
-    setHasExplicitRunSelection(false);
     setSnapshot(null);
     setTasks([]);
     setRunEvents([]);
@@ -463,7 +465,6 @@ export function CommandCenterPage({
   useEffect(() => {
     if (!initialRunId) return;
     setRunId(initialRunId);
-    setHasExplicitRunSelection(false);
     setTab("task-to-swarm");
   }, [initialRunId]);
 
@@ -703,7 +704,6 @@ export function CommandCenterPage({
         last_error: null,
       });
       setRunId(createdRunId);
-      setHasExplicitRunSelection(true);
       setTab("task-to-swarm");
       await loadRuns();
       await invoke("orchestrator_engine_start", { runId: createdRunId });
@@ -766,7 +766,6 @@ export function CommandCenterPage({
     try {
       await loadRunIntoEngine(targetRunId);
       setRunId(targetRunId);
-      setHasExplicitRunSelection(true);
       const summary = runs.find((run) => run.run_id === targetRunId);
       if (summary?.objective) {
         setObjective(summary.objective);
@@ -904,7 +903,6 @@ export function CommandCenterPage({
       await deleteOrchestratorRun(targetRunId);
       if (runId === targetRunId) {
         setRunId(null);
-        setHasExplicitRunSelection(false);
         setSnapshot(null);
         setTasks([]);
       }
@@ -921,9 +919,7 @@ export function CommandCenterPage({
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="space-y-2">
               <h2 className="text-lg font-semibold text-text">{t("title")}</h2>
-              <p className="text-sm text-text-muted">
-                {t("description")}
-              </p>
+              <p className="text-sm text-text-muted">{t("description")}</p>
               <div className="w-full max-w-xl">
                 <ProjectSwitcher
                   projects={userProjects}
@@ -1044,7 +1040,7 @@ export function CommandCenterPage({
 
         {tab === "task-to-swarm" ? (
           <div className="grid grid-cols-1 gap-4 xl:grid-cols-4">
-            {hasExplicitRunSelection && runId ? (
+            {runId ? (
               <div className="xl:col-span-4 rounded-lg border border-border bg-surface p-4">
                 <div className="text-xs uppercase tracking-wide text-text-subtle">Live Status</div>
                 <div className="mt-2 flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
@@ -1295,7 +1291,6 @@ export function CommandCenterPage({
                 }`}
                 onClick={() => {
                   setRunId(null);
-                  setHasExplicitRunSelection(false);
                   setPendingCreatedRun(null);
                 }}
               >

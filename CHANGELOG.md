@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Desktop orchestrator and command-center stability improvements**:
+  - fixed orchestrator resume behavior so paused/failed runs with no planned tasks trigger planning (`start`) instead of attempting to execute an empty plan
+  - improved run listing compatibility by merging engine context runs with legacy local orchestrator runs, preventing sessions from disappearing in mixed-storage scenarios
+  - improved run deletion for engine context runs by removing shared `data/context_runs/<run_id>` state and surfacing real filesystem errors instead of silently ignoring failed deletes
+  - replaced native desktop confirm popups in orchestrator flow with in-app confirmation dialogs for `Start Fresh Run` and resume model-switch actions
+  - added in-app toast handling for provider quota/payment failures so users see actionable `payment required` / credit-limit errors in the UI
+  - updated planner guidance to avoid over-collapsing non-trivial report/objective requests into a single task, restoring multi-task decomposition behavior
+  - reduced `tool.lifecycle.start` log spam by suppressing duplicate in-flight `ToolStart` events for the same logical tool call even when providers stream arg updates
+  - fixed command center run action visibility to rely on selected run identity directly, preventing cases where a selected running run looked stuck with no available controls
+
 - **Bug Monitor settings foundation and server config/status surface**:
   - added persisted bug-monitor config and status state in `tandem-server`, including repo, MCP server, provider preference, and dedicated `model_policy.default_model` routing for the reporter agent
   - added fail-closed readiness validation for the selected provider/model, required GitHub capabilities, and selected MCP server connectivity

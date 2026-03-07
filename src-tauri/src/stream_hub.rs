@@ -678,6 +678,34 @@ impl StreamHub {
                                                 args,
                                             );
                                             let args_fingerprint = fingerprint_json_value(args);
+                                            if let Some(existing) = pending_tools.get_mut(&(
+                                                session_id.clone(),
+                                                part_id.clone(),
+                                            )) {
+                                                if existing.message_id == *message_id
+                                                    && existing.tool.eq_ignore_ascii_case(tool)
+                                                {
+                                                    // Some providers can emit repeated ToolStart updates
+                                                    // for the same logical part_id with slightly changing
+                                                    // args payloads. Treat them as the same in-flight tool
+                                                    // and only refresh timeout metadata.
+                                                    existing.started = Instant::now();
+                                                    existing.args_fingerprint = args_fingerprint;
+                                                    existing.likely_missing_required_args =
+                                                        tool_has_likely_missing_required_args(
+                                                            tool, args,
+                                                        );
+                                                    existing.provisional = provisional;
+                                                    tracing::debug!(
+                                                        "tool.lifecycle.start suppressed duplicate in-flight start session_id={} message_id={} part_id={} tool={}",
+                                                        session_id,
+                                                        message_id,
+                                                        part_id,
+                                                        tool
+                                                    );
+                                                    continue;
+                                                }
+                                            }
                                             let duplicate_pending = pending_tools
                                                 .iter()
                                                 .find(|((sid, existing_part_id), pending)| {

@@ -15,6 +15,7 @@ import {
   ScrollText,
 } from "lucide-react";
 import { Button } from "@/components/ui";
+import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { BudgetMeter } from "./BudgetMeter";
 import { TaskBoard } from "./TaskBoard";
 import { BlackboardPanel } from "./BlackboardPanel";
@@ -83,6 +84,22 @@ export function OrchestratorPanel({
   runId: initialRunId,
   runSessionIdHint,
 }: OrchestratorPanelProps) {
+  const detectPaymentRequiredError = (message: string | null | undefined): string | null => {
+    if (!message) return null;
+    const normalized = message.toLowerCase();
+    if (
+      normalized.includes("payment required") ||
+      normalized.includes("requires more credits") ||
+      normalized.includes("out of credits") ||
+      normalized.includes("monthly limit") ||
+      normalized.includes("key limit exceeded") ||
+      normalized.includes("can only afford")
+    ) {
+      return "Provider credits exceeded. Add credits or switch to a cheaper model/provider, then resume.";
+    }
+    return null;
+  };
+
   const [runId, setRunId] = useState<string | null>(initialRunId || null);
   const [snapshot, setSnapshot] = useState<RunSnapshot | null>(null);
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -93,6 +110,7 @@ export function OrchestratorPanel({
   const [isLoading, setIsLoading] = useState(false);
   const [isReadOnly, setIsReadOnly] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [showLogsDrawer, setShowLogsDrawer] = useState(false);
   const [runEvents, setRunEvents] = useState<RunEventRecord[]>([]);
   const [blackboard, setBlackboard] = useState<Blackboard | null>(null);
@@ -103,6 +121,8 @@ export function OrchestratorPanel({
   const lastBlackboardRefreshSeqRef = useRef<number>(0);
   const lastBlackboardScheduleMsRef = useRef<number | null>(null);
   const blackboardRefreshTimerRef = useRef<number | null>(null);
+  const toastTimerRef = useRef<number | null>(null);
+  const lastToastKeyRef = useRef<string | null>(null);
   const lastRunStatusRef = useRef<string | null>(null);
 
   // Objective input for creating a new run
@@ -120,6 +140,8 @@ export function OrchestratorPanel({
   // Revision feedback
   const [showRevisionInput, setShowRevisionInput] = useState(false);
   const [revisionFeedback, setRevisionFeedback] = useState("");
+  const [showFreshRunConfirm, setShowFreshRunConfirm] = useState(false);
+  const [showResumeModelConfirm, setShowResumeModelConfirm] = useState(false);
 
   // Task detail modal
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
@@ -557,6 +579,35 @@ export function OrchestratorPanel({
     }
   }, [snapshot?.status]);
 
+  useEffect(() => {
+    const directMessage = detectPaymentRequiredError(error);
+    const statusMessage = detectPaymentRequiredError(snapshot?.error_message);
+    const toast = directMessage ?? statusMessage;
+    if (!toast) return;
+
+    const toastKey = `${snapshot?.run_id ?? runId ?? "run"}:${toast}`;
+    if (lastToastKeyRef.current === toastKey) return;
+    lastToastKeyRef.current = toastKey;
+
+    if (toastTimerRef.current !== null) {
+      window.clearTimeout(toastTimerRef.current);
+    }
+    setToastMessage(toast);
+    toastTimerRef.current = window.setTimeout(() => {
+      setToastMessage(null);
+      toastTimerRef.current = null;
+    }, 5500);
+  }, [error, snapshot?.error_message, snapshot?.run_id, runId]);
+
+  useEffect(
+    () => () => {
+      if (toastTimerRef.current !== null) {
+        window.clearTimeout(toastTimerRef.current);
+      }
+    },
+    []
+  );
+
   // Listen for orchestrator events
   useEffect(() => {
     let unlisten: UnlistenFn | undefined;
@@ -724,35 +775,37 @@ export function OrchestratorPanel({
     }
   };
 
-  const handleResume = async () => {
+  const resumeWithModelChoice = async (applySelectedModel: boolean) => {
     if (!runId) return;
     try {
-      if (resumeModelChanged && selectedModel && selectedProvider) {
-        const applySelected = window.confirm(
-          `Resume with selected model ${selectedProvider}/${selectedModel}?` +
-            `\n\nChoose OK to switch this run to the selected model first.` +
-            `\nChoose Cancel to keep the run's current model.`
+      if (applySelectedModel && selectedModel && selectedProvider) {
+        const selection = await invoke<OrchestratorModelSelection>(
+          "orchestrator_set_resume_model",
+          {
+            runId,
+            model: selectedModel,
+            provider: selectedProvider,
+          }
         );
-        if (applySelected) {
-          const selection = await invoke<OrchestratorModelSelection>(
-            "orchestrator_set_resume_model",
-            {
-              runId,
-              model: selectedModel,
-              provider: selectedProvider,
-            }
-          );
-          setRunModel(selection.model ?? selectedModel);
-          setRunProvider(selection.provider ?? selectedProvider);
-        } else {
-          setSelectedModel(runModel);
-          setSelectedProvider(runProvider);
-        }
+        setRunModel(selection.model ?? selectedModel);
+        setRunProvider(selection.provider ?? selectedProvider);
+      } else {
+        setSelectedModel(runModel);
+        setSelectedProvider(runProvider);
       }
       await invoke("orchestrator_resume", { runId });
     } catch (e) {
       setError(`Failed to resume: ${e}`);
     }
+  };
+
+  const handleResume = async () => {
+    if (!runId) return;
+    if (resumeModelChanged && selectedModel && selectedProvider) {
+      setShowResumeModelConfirm(true);
+      return;
+    }
+    await resumeWithModelChoice(false);
   };
 
   const handleCancel = async () => {
@@ -838,13 +891,7 @@ export function OrchestratorPanel({
     }
   };
 
-  const handleNewRun = () => {
-    if (runId && snapshot) {
-      const confirmed = window.confirm(
-        "Start a fresh run? This clears the current orchestration from view."
-      );
-      if (!confirmed) return;
-    }
+  const clearRunView = () => {
     setRunId(null);
     setSnapshot(null);
     setTasks([]);
@@ -857,6 +904,14 @@ export function OrchestratorPanel({
     setBlackboard(null);
     setLastEventSeq(0);
     lastEventSeqRef.current = 0;
+  };
+
+  const handleNewRun = () => {
+    if (runId && snapshot) {
+      setShowFreshRunConfirm(true);
+      return;
+    }
+    clearRunView();
   };
 
   const handleReportFailure = async () => {
@@ -1397,6 +1452,49 @@ export function OrchestratorPanel({
           )}
         </div>
       </div>
+
+      {toastMessage && (
+        <div className="fixed bottom-6 right-6 z-50 max-w-md rounded-lg border border-amber-500/40 bg-amber-500/15 px-4 py-3 text-sm text-amber-100 shadow-xl backdrop-blur">
+          <div className="flex items-start gap-2">
+            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+            <span>{toastMessage}</span>
+          </div>
+        </div>
+      )}
+
+      <ConfirmDialog
+        isOpen={showFreshRunConfirm}
+        title="Start Fresh Run?"
+        message="This clears the current orchestration from view."
+        confirmText="Start Fresh"
+        cancelText="Keep Current"
+        variant="danger"
+        onConfirm={() => {
+          setShowFreshRunConfirm(false);
+          clearRunView();
+        }}
+        onCancel={() => setShowFreshRunConfirm(false)}
+      />
+
+      <ConfirmDialog
+        isOpen={showResumeModelConfirm}
+        title="Switch Model Before Resume?"
+        message={
+          selectedModel && selectedProvider
+            ? `Resume with ${selectedProvider}/${selectedModel} first, or keep the run's current model.`
+            : "Resume this run now?"
+        }
+        confirmText="Switch & Resume"
+        cancelText="Keep Current"
+        onConfirm={() => {
+          setShowResumeModelConfirm(false);
+          void resumeWithModelChoice(true);
+        }}
+        onCancel={() => {
+          setShowResumeModelConfirm(false);
+          void resumeWithModelChoice(false);
+        }}
+      />
 
       {/* Task Detail Modal */}
       <AnimatePresence>
