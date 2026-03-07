@@ -2503,4 +2503,185 @@ async fn coder_memory_candidate_promote_stores_governed_memory() {
         })
         .unwrap_or(false);
     assert!(has_promoted_hit);
+
+    let create_fix_req = Request::builder()
+        .method("POST")
+        .uri("/coder/runs")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "coder_run_id": "coder-run-promote-fix",
+                "workflow_mode": "issue_fix",
+                "repo_binding": {
+                    "project_id": "proj-engine",
+                    "workspace_id": "ws-tandem",
+                    "workspace_root": "/tmp/tandem-repo",
+                    "repo_slug": "evan/tandem"
+                },
+                "github_ref": {
+                    "kind": "issue",
+                    "number": 334
+                },
+                "source_client": "desktop_developer_mode"
+            })
+            .to_string(),
+        ))
+        .expect("create fix request");
+    let create_fix_resp = app
+        .clone()
+        .oneshot(create_fix_req)
+        .await
+        .expect("create fix response");
+    assert_eq!(create_fix_resp.status(), StatusCode::OK);
+
+    let fix_summary_req = Request::builder()
+        .method("POST")
+        .uri("/coder/runs/coder-run-promote-fix/issue-fix-summary")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "summary": "Add the missing startup fallback guard and validate recovery behavior.",
+                "root_cause": "Startup recovery skipped the nil-config fallback path.",
+                "fix_strategy": "add startup fallback guard",
+                "changed_files": ["crates/tandem-server/src/http/coder.rs"]
+            })
+            .to_string(),
+        ))
+        .expect("fix summary request");
+    let fix_summary_resp = app
+        .clone()
+        .oneshot(fix_summary_req)
+        .await
+        .expect("fix summary response");
+    assert_eq!(fix_summary_resp.status(), StatusCode::OK);
+    let fix_summary_payload: Value = serde_json::from_slice(
+        &to_bytes(fix_summary_resp.into_body(), usize::MAX)
+            .await
+            .expect("fix summary body"),
+    )
+    .expect("fix summary json");
+    let fix_pattern_candidate_id = fix_summary_payload
+        .get("generated_candidates")
+        .and_then(Value::as_array)
+        .and_then(|rows| {
+            rows.iter().find_map(|row| {
+                (row.get("kind").and_then(Value::as_str) == Some("fix_pattern")).then(|| {
+                    row.get("candidate_id")
+                        .and_then(Value::as_str)
+                        .map(ToString::to_string)
+                })?
+            })
+        })
+        .expect("fix pattern candidate id");
+
+    let promote_fix_req = Request::builder()
+        .method("POST")
+        .uri(format!(
+            "/coder/runs/coder-run-promote-fix/memory-candidates/{fix_pattern_candidate_id}/promote"
+        ))
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "to_tier": "project",
+                "reviewer_id": "reviewer-1",
+                "approval_id": "approval-1",
+                "reason": "approved reusable fix pattern"
+            })
+            .to_string(),
+        ))
+        .expect("promote fix request");
+    let promote_fix_resp = app
+        .clone()
+        .oneshot(promote_fix_req)
+        .await
+        .expect("promote fix response");
+    assert_eq!(promote_fix_resp.status(), StatusCode::OK);
+    let promote_fix_payload: Value = serde_json::from_slice(
+        &to_bytes(promote_fix_resp.into_body(), usize::MAX)
+            .await
+            .expect("promote fix body"),
+    )
+    .expect("promote fix json");
+    assert_eq!(
+        promote_fix_payload.get("promoted").and_then(Value::as_bool),
+        Some(true)
+    );
+
+    let fix_hits_req = Request::builder()
+        .method("GET")
+        .uri("/coder/runs/coder-run-promote-fix/memory-hits?q=startup%20fallback%20guard")
+        .body(Body::empty())
+        .expect("fix hits request");
+    let fix_hits_resp = app
+        .clone()
+        .oneshot(fix_hits_req)
+        .await
+        .expect("fix hits response");
+    assert_eq!(fix_hits_resp.status(), StatusCode::OK);
+    let fix_hits_payload: Value = serde_json::from_slice(
+        &to_bytes(fix_hits_resp.into_body(), usize::MAX)
+            .await
+            .expect("fix hits body"),
+    )
+    .expect("fix hits json");
+    let has_promoted_fix_hit = fix_hits_payload
+        .get("hits")
+        .and_then(Value::as_array)
+        .map(|rows| {
+            rows.iter().any(|row| {
+                row.get("source").and_then(Value::as_str) == Some("governed_memory")
+                    && row.get("memory_id").and_then(Value::as_str)
+                        == promote_fix_payload.get("memory_id").and_then(Value::as_str)
+                    && row
+                        .get("metadata")
+                        .and_then(|metadata| metadata.get("kind"))
+                        .and_then(Value::as_str)
+                        == Some("fix_pattern")
+            })
+        })
+        .unwrap_or(false);
+    assert!(has_promoted_fix_hit);
+
+    let db = super::super::skills_memory::open_global_memory_db()
+        .await
+        .expect("global memory db");
+    let promoted_fix_record = db
+        .get_global_memory(
+            promote_fix_payload
+                .get("memory_id")
+                .and_then(Value::as_str)
+                .expect("fix memory id"),
+        )
+        .await
+        .expect("load fix governed memory")
+        .expect("fix governed memory record");
+    assert_eq!(promoted_fix_record.source_type, "solution_capsule");
+    assert_eq!(
+        promoted_fix_record.project_tag.as_deref(),
+        Some("proj-engine")
+    );
+    assert_eq!(
+        promoted_fix_record
+            .metadata
+            .as_ref()
+            .and_then(|metadata| metadata.get("kind"))
+            .and_then(Value::as_str),
+        Some("fix_pattern")
+    );
+    assert_eq!(
+        promoted_fix_record
+            .metadata
+            .as_ref()
+            .and_then(|metadata| metadata.get("workflow_mode"))
+            .and_then(Value::as_str),
+        Some("issue_fix")
+    );
+    assert_eq!(
+        promoted_fix_record
+            .metadata
+            .as_ref()
+            .and_then(|metadata| metadata.get("candidate_id"))
+            .and_then(Value::as_str),
+        Some(fix_pattern_candidate_id.as_str())
+    );
 }
