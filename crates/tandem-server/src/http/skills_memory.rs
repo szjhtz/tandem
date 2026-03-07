@@ -1881,6 +1881,9 @@ pub(super) async fn memory_search(
             blocked_scopes.push(scope);
         }
     }
+    let allow_private_results = scopes_used
+        .iter()
+        .any(|scope| matches!(scope, tandem_memory::GovernedMemoryTier::Session));
     let limit = request.limit.unwrap_or(8).clamp(1, 100);
     let db = open_global_memory_db()
         .await
@@ -1895,7 +1898,10 @@ pub(super) async fn memory_search(
             None,
         )
         .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .into_iter()
+        .filter(|hit| allow_private_results || hit.record.visibility.eq_ignore_ascii_case("shared"))
+        .collect::<Vec<_>>();
     let results = hits
         .into_iter()
         .map(|hit| {

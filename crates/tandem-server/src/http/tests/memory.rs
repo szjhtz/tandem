@@ -298,6 +298,46 @@ async fn memory_promote_preserves_artifact_refs_and_shared_visibility() {
         .expect("memory id")
         .to_string();
 
+    let private_project_search_req = Request::builder()
+        .method("POST")
+        .uri("/memory/search")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "run_id": "run-3-ok",
+                "query": "safe promote memory",
+                "read_scopes": ["project"],
+                "partition": {
+                    "org_id": "org-1",
+                    "workspace_id": "ws-1",
+                    "project_id": "proj-1",
+                    "tier": "project"
+                },
+                "capability": capability,
+                "limit": 5
+            })
+            .to_string(),
+        ))
+        .expect("private project search request");
+    let private_project_search_resp = app
+        .clone()
+        .oneshot(private_project_search_req)
+        .await
+        .expect("private project search response");
+    assert_eq!(private_project_search_resp.status(), StatusCode::OK);
+    let private_project_search_body = to_bytes(private_project_search_resp.into_body(), usize::MAX)
+        .await
+        .expect("private project search body");
+    let private_project_search_payload: Value =
+        serde_json::from_slice(&private_project_search_body).expect("private project search json");
+    assert_eq!(
+        private_project_search_payload
+            .get("results")
+            .and_then(Value::as_array)
+            .map(|rows| rows.len()),
+        Some(0)
+    );
+
     let promote_req = Request::builder()
         .method("POST")
         .uri("/memory/promote")
