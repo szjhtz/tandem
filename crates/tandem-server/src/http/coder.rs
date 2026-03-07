@@ -462,6 +462,7 @@ pub(crate) async fn query_failure_pattern_matches(
     )
     .await?;
     let mut matches = Vec::<Value>::new();
+    let mut seen_match_ids = HashSet::<String>::new();
     for row in candidates {
         let candidate = row.get("candidate").cloned().unwrap_or(Value::Null);
         let payload = candidate.get("payload").cloned().unwrap_or(Value::Null);
@@ -520,6 +521,14 @@ pub(crate) async fn query_failure_pattern_matches(
         if score <= 0.0 {
             continue;
         }
+        let identity = candidate
+            .get("candidate_id")
+            .and_then(Value::as_str)
+            .map(ToString::to_string)
+            .unwrap_or_else(|| candidate_fingerprint.to_string());
+        if !seen_match_ids.insert(identity) {
+            continue;
+        }
         matches.push(json!({
             "candidate_id": candidate.get("candidate_id").cloned().unwrap_or(Value::Null),
             "summary": candidate.get("summary").cloned().unwrap_or(Value::Null),
@@ -533,6 +542,44 @@ pub(crate) async fn query_failure_pattern_matches(
             "score": score,
             "match_reasons": reasons,
         }));
+    }
+    let governed_matches = find_failure_pattern_duplicates(
+        state,
+        repo_slug,
+        None,
+        &[
+            "failure_reporter".to_string(),
+            "default".to_string(),
+            "coder_api".to_string(),
+            "desktop_developer_mode".to_string(),
+        ],
+        &haystack,
+        Some(fingerprint),
+        limit,
+    )
+    .await?;
+    for governed in governed_matches {
+        let identity = governed
+            .get("candidate_id")
+            .and_then(Value::as_str)
+            .map(ToString::to_string)
+            .or_else(|| {
+                governed
+                    .get("memory_id")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string)
+            })
+            .or_else(|| {
+                governed
+                    .get("fingerprint")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string)
+            })
+            .unwrap_or_else(|| format!("governed-{}", matches.len()));
+        if !seen_match_ids.insert(identity) {
+            continue;
+        }
+        matches.push(governed);
     }
     matches.sort_by(|a, b| {
         b.get("score")
@@ -559,18 +606,6 @@ fn build_failure_pattern_payload(
         .next()
         .unwrap_or(record.repo_binding.repo_slug.as_str())
         .to_string();
-    let fingerprint = if let Some(issue) = record.github_ref.as_ref() {
-        format!(
-            "{}-issue-{}",
-            record.repo_binding.repo_slug.replace('/', "-"),
-            issue.number
-        )
-    } else {
-        format!(
-            "{}-failure-pattern",
-            record.repo_binding.repo_slug.replace('/', "-")
-        )
-    };
     let mut canonical_markers = summary_text
         .split(|ch: char| !ch.is_alphanumeric() && ch != '_' && ch != '-')
         .map(str::trim)
@@ -594,6 +629,12 @@ fn build_failure_pattern_payload(
     } else {
         affected_files.to_vec()
     };
+    let fingerprint = failure_pattern_fingerprint(
+        &record.repo_binding.repo_slug,
+        summary_text,
+        affected_files,
+        &canonical_markers,
+    );
     json!({
         "type": "failure.pattern",
         "repo_slug": record.repo_binding.repo_slug,
@@ -759,20 +800,6 @@ fn value_string(value: Option<&Value>) -> Option<String> {
         .map(ToString::to_string)
 }
 
-fn value_string_array(value: Option<&Value>) -> Vec<String> {
-    value
-        .and_then(Value::as_array)
-        .map(|rows| {
-            rows.iter()
-                .filter_map(|row| row.as_str())
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(ToString::to_string)
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default()
-}
-
 fn derive_failure_pattern_duplicate_matches(
     hits: &[Value],
     fingerprint: Option<&str>,
@@ -873,7 +900,8 @@ fn failure_pattern_fingerprint(
     for path in affected_files {
         parts.push_back(path.trim().to_string());
     }
-    crate::sha256_hex(&parts.into_iter().collect::<Vec<_>>().join("|"))
+    let joined = parts.into_iter().collect::<Vec<_>>().join("|");
+    crate::sha256_hex(&[joined.as_str()])
 }
 
 pub(crate) async fn find_failure_pattern_duplicates(
@@ -1496,12 +1524,14 @@ pub(super) async fn coder_run_create(
             );
             let memory_hits =
                 collect_issue_triage_memory_hits(&state, &record, &memory_query, 8).await?;
+            let duplicate_matches = derive_failure_pattern_duplicate_matches(&memory_hits, None, 3);
             let artifact_id = format!("memory-hits-{}", Uuid::new_v4().simple());
             let payload = json!({
                 "coder_run_id": record.coder_run_id,
                 "linked_context_run_id": record.linked_context_run_id,
                 "query": memory_query,
                 "hits": memory_hits,
+                "duplicate_candidates": duplicate_matches,
                 "created_at_ms": crate::now_ms(),
             });
             let artifact = write_coder_artifact(
@@ -1519,6 +1549,35 @@ pub(super) async fn coder_run_create(
                 extra.insert("query".to_string(), json!(memory_query));
                 extra
             });
+            if !duplicate_matches.is_empty() {
+                let duplicate_artifact = write_coder_artifact(
+                    &state,
+                    &record.linked_context_run_id,
+                    &format!("duplicate-matches-{}", Uuid::new_v4().simple()),
+                    "coder_duplicate_matches",
+                    "artifacts/duplicate_matches.json",
+                    &json!({
+                        "coder_run_id": record.coder_run_id,
+                        "linked_context_run_id": record.linked_context_run_id,
+                        "query": memory_query,
+                        "matches": duplicate_matches,
+                        "created_at_ms": crate::now_ms(),
+                    }),
+                )
+                .await?;
+                publish_coder_artifact_added(
+                    &state,
+                    &record,
+                    &duplicate_artifact,
+                    Some("memory_retrieval"),
+                    {
+                        let mut extra = serde_json::Map::new();
+                        extra.insert("kind".to_string(), json!("duplicate_matches"));
+                        extra.insert("query".to_string(), json!(memory_query));
+                        extra
+                    },
+                );
+            }
             let mut run = load_context_run_state(&state, &linked_context_run_id).await?;
             run.status = ContextRunStatus::Planning;
             run.why_next_step = Some(
@@ -1840,6 +1899,16 @@ pub(super) async fn coder_memory_candidate_promote(
                 "workflow_mode": record.workflow_mode,
                 "repo_slug": record.repo_binding.repo_slug,
                 "github_ref": record.github_ref,
+                "failure_pattern_fingerprint": candidate_payload
+                    .get("payload")
+                    .and_then(|row| row.get("fingerprint"))
+                    .cloned()
+                    .unwrap_or(Value::Null),
+                "linked_issue_numbers": candidate_payload
+                    .get("payload")
+                    .and_then(|row| row.get("linked_issue_numbers"))
+                    .cloned()
+                    .unwrap_or_else(|| json!([])),
             })),
         },
         Some(capability.clone()),

@@ -33,6 +33,7 @@ pub(super) fn apply(router: Router<AppState>) -> Router<AppState> {
             "/failure-reporter/drafts",
             get(list_failure_reporter_drafts),
         )
+        .route("/failure-reporter/posts", get(list_failure_reporter_posts))
         .route(
             "/failure-reporter/drafts/{id}",
             get(get_failure_reporter_draft),
@@ -52,5 +53,13 @@ pub(super) fn apply(router: Router<AppState>) -> Router<AppState> {
         .route(
             "/failure-reporter/drafts/{id}/triage-run",
             post(create_failure_reporter_triage_run),
+        )
+        .route(
+            "/failure-reporter/drafts/{id}/publish",
+            post(publish_failure_reporter_draft),
+        )
+        .route(
+            "/failure-reporter/drafts/{id}/recheck-match",
+            post(recheck_failure_reporter_draft_match),
         )
 }

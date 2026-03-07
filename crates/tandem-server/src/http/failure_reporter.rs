@@ -1,6 +1,9 @@
 use crate::capability_resolver::canonicalize_tool_name;
 use crate::http::AppState;
-use crate::{FailureReporterConfig, FailureReporterDraftRecord, FailureReporterSubmission};
+use crate::{
+    failure_reporter_github, FailureReporterConfig, FailureReporterDraftRecord,
+    FailureReporterSubmission,
+};
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
@@ -16,8 +19,8 @@ use super::context_runs::{
     save_context_run_state,
 };
 use super::context_types::{
-    ContextBlackboardTaskStatus, ContextRunCreateInput, ContextRunState, ContextRunStatus,
-    ContextTaskCreateBatchInput, ContextTaskCreateInput, ContextWorkspaceLease,
+    ContextBlackboardArtifact, ContextBlackboardTaskStatus, ContextRunCreateInput, ContextRunState,
+    ContextRunStatus, ContextTaskCreateBatchInput, ContextTaskCreateInput, ContextWorkspaceLease,
 };
 
 #[derive(Debug, Deserialize, Default)]
@@ -37,6 +40,11 @@ pub(super) struct FailureReporterIncidentsQuery {
 }
 
 #[derive(Debug, Deserialize, Default)]
+pub(super) struct FailureReporterPostsQuery {
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Deserialize, Default)]
 pub(super) struct FailureReporterSubmissionInput {
     #[serde(default)]
     pub report: Option<FailureReporterSubmission>,
@@ -46,6 +54,45 @@ pub(super) struct FailureReporterSubmissionInput {
 pub(super) struct FailureReporterDecisionInput {
     #[serde(default)]
     pub reason: Option<String>,
+}
+
+async fn write_failure_reporter_artifact(
+    state: &AppState,
+    linked_context_run_id: &str,
+    artifact_id: &str,
+    artifact_type: &str,
+    relative_path: &str,
+    payload: &serde_json::Value,
+) -> Result<(), StatusCode> {
+    let path =
+        super::context_runs::context_run_dir(state, linked_context_run_id).join(relative_path);
+    if let Some(parent) = path.parent() {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    }
+    let raw =
+        serde_json::to_string_pretty(payload).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    tokio::fs::write(&path, raw)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let artifact = ContextBlackboardArtifact {
+        id: artifact_id.to_string(),
+        ts_ms: crate::now_ms(),
+        path: path.to_string_lossy().to_string(),
+        artifact_type: artifact_type.to_string(),
+        step_id: None,
+        source_event_id: None,
+    };
+    super::context_runs::context_run_engine()
+        .commit_blackboard_patch(
+            state,
+            linked_context_run_id,
+            super::context_types::ContextBlackboardPatchOp::AddArtifact,
+            serde_json::to_value(&artifact).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+        )
+        .await?;
+    Ok(())
 }
 
 pub(super) async fn get_failure_reporter_config(
@@ -171,6 +218,19 @@ pub(super) async fn list_failure_reporter_drafts(
     Json(json!({
         "drafts": drafts,
         "count": drafts.len(),
+    }))
+}
+
+pub(super) async fn list_failure_reporter_posts(
+    State(state): State<AppState>,
+    Query(query): Query<FailureReporterPostsQuery>,
+) -> Json<serde_json::Value> {
+    let posts = state
+        .list_failure_reporter_posts(query.limit.unwrap_or(50))
+        .await;
+    Json(json!({
+        "posts": posts,
+        "count": posts.len(),
     }))
 }
 
@@ -325,8 +385,26 @@ pub(super) async fn report_failure_reporter_issue(
         )
             .into_response();
     };
+    let report_excerpt = report.excerpt.clone();
     match state.submit_failure_reporter_draft(report).await {
-        Ok(draft) => Json(json!({ "draft": draft })).into_response(),
+        Ok(draft) => {
+            let duplicate_matches = super::coder::query_failure_pattern_matches(
+                &state,
+                &draft.repo,
+                &draft.fingerprint,
+                draft.title.as_deref(),
+                draft.detail.as_deref(),
+                &report_excerpt,
+                3,
+            )
+            .await
+            .unwrap_or_default();
+            Json(json!({
+                "draft": draft,
+                "duplicate_matches": duplicate_matches,
+            }))
+            .into_response()
+        }
         Err(error) => (
             StatusCode::BAD_REQUEST,
             Json(json!({
@@ -348,7 +426,32 @@ pub(super) async fn approve_failure_reporter_draft(
         .update_failure_reporter_draft_status(&id, "draft_ready", input.reason.as_deref())
         .await
     {
-        Ok(draft) => Json(json!({ "ok": true, "draft": draft })).into_response(),
+        Ok(draft) => match failure_reporter_github::publish_draft(
+            &state,
+            &draft.draft_id,
+            None,
+            failure_reporter_github::PublishMode::Auto,
+        )
+        .await
+        {
+            Ok(outcome) => Json(json!({
+                "ok": true,
+                "draft": outcome.draft,
+                "action": outcome.action,
+                "post": outcome.post,
+            }))
+            .into_response(),
+            Err(error) => (
+                StatusCode::BAD_REQUEST,
+                Json(json!({
+                    "error": "Draft approved but GitHub publish failed",
+                    "code": "FAILURE_REPORTER_DRAFT_PUBLISH_FAILED",
+                    "draft_id": draft.draft_id,
+                    "detail": error.to_string(),
+                })),
+            )
+                .into_response(),
+        },
         Err(error) => map_failure_reporter_draft_update_error(id, error).into_response(),
     }
 }
@@ -407,6 +510,70 @@ pub(super) async fn create_failure_reporter_triage_run(
             )
                 .into_response()
         }
+    }
+}
+
+pub(super) async fn publish_failure_reporter_draft(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Response {
+    match failure_reporter_github::publish_draft(
+        &state,
+        &id,
+        None,
+        failure_reporter_github::PublishMode::ManualPublish,
+    )
+    .await
+    {
+        Ok(outcome) => Json(json!({
+            "ok": true,
+            "draft": outcome.draft,
+            "action": outcome.action,
+            "post": outcome.post,
+        }))
+        .into_response(),
+        Err(error) => (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "error": "Failed to publish Bug Monitor draft to GitHub",
+                "code": "FAILURE_REPORTER_DRAFT_PUBLISH_FAILED",
+                "draft_id": id,
+                "detail": error.to_string(),
+            })),
+        )
+            .into_response(),
+    }
+}
+
+pub(super) async fn recheck_failure_reporter_draft_match(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Response {
+    match failure_reporter_github::publish_draft(
+        &state,
+        &id,
+        None,
+        failure_reporter_github::PublishMode::RecheckOnly,
+    )
+    .await
+    {
+        Ok(outcome) => Json(json!({
+            "ok": true,
+            "draft": outcome.draft,
+            "action": outcome.action,
+            "post": outcome.post,
+        }))
+        .into_response(),
+        Err(error) => (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "error": "Failed to recheck Bug Monitor draft against GitHub",
+                "code": "FAILURE_REPORTER_DRAFT_RECHECK_FAILED",
+                "draft_id": id,
+                "detail": error.to_string(),
+            })),
+        )
+            .into_response(),
     }
 }
 
@@ -478,6 +645,20 @@ pub(crate) async fn ensure_failure_reporter_triage_run(
         .map(|row| vec![row.clone()])
         .filter(|row| !row.is_empty());
 
+    let duplicate_matches = super::coder::query_failure_pattern_matches(
+        &state,
+        &draft.repo,
+        &draft.fingerprint,
+        draft.title.as_deref(),
+        draft.detail.as_deref(),
+        &[],
+        3,
+    )
+    .await
+    .map_err(|status| {
+        anyhow::anyhow!("Failed to query duplicate failure patterns: HTTP {status}")
+    })?;
+
     let create_input = ContextRunCreateInput {
         run_id: Some(run_id.clone()),
         objective,
@@ -516,6 +697,7 @@ pub(crate) async fn ensure_failure_reporter_triage_run(
                     "repo": draft.repo,
                     "summary": draft.title,
                     "detail": draft.detail,
+                    "duplicate_matches": duplicate_matches,
                 }),
                 status: Some(ContextBlackboardTaskStatus::Runnable),
                 workflow_id: Some("failure_reporter_triage".to_string()),
@@ -558,6 +740,27 @@ pub(crate) async fn ensure_failure_reporter_triage_run(
     .await;
     if tasks_response.is_err() {
         anyhow::bail!("Failed to seed triage tasks");
+    }
+
+    if !duplicate_matches.is_empty() {
+        write_failure_reporter_artifact(
+            &state,
+            &run_id,
+            "failure-duplicate-matches",
+            "failure_duplicate_matches",
+            "artifacts/failure_duplicate_matches.json",
+            &json!({
+                "draft_id": draft.draft_id,
+                "repo": draft.repo,
+                "fingerprint": draft.fingerprint,
+                "matches": duplicate_matches,
+                "created_at_ms": crate::now_ms(),
+            }),
+        )
+        .await
+        .map_err(|status| {
+            anyhow::anyhow!("Failed to write duplicate matches artifact: HTTP {status}")
+        })?;
     }
 
     let mut updated_draft = draft.clone();

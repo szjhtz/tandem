@@ -73,8 +73,10 @@ type FailureReporterConfigRow = {
       model_id?: string | null;
     };
   } | null;
+  auto_create_new_issues?: boolean;
   require_approval_for_new_issues?: boolean;
   auto_comment_on_matched_open_issues?: boolean;
+  label_mode?: string | null;
 };
 
 type FailureReporterStatusRow = {
@@ -111,6 +113,7 @@ type FailureReporterStatusRow = {
     model_id?: string | null;
   } | null;
   pending_drafts?: number;
+  pending_posts?: number;
   last_activity_at_ms?: number | null;
   last_error?: string | null;
 };
@@ -143,6 +146,27 @@ type FailureReporterDraftRow = {
   issue_number?: number | null;
   title?: string | null;
   detail?: string | null;
+  github_status?: string | null;
+  github_issue_url?: string | null;
+  github_comment_url?: string | null;
+  github_posted_at_ms?: number | null;
+  matched_issue_number?: number | null;
+  matched_issue_state?: string | null;
+  evidence_digest?: string | null;
+  last_post_error?: string | null;
+};
+
+type FailureReporterPostRow = {
+  post_id: string;
+  draft_id: string;
+  repo: string;
+  operation: string;
+  status: string;
+  issue_number?: number | null;
+  issue_url?: string | null;
+  comment_url?: string | null;
+  error?: string | null;
+  updated_at_ms?: number | null;
 };
 
 type ChannelConfigRow = {
@@ -453,6 +477,9 @@ export function SettingsPage({
     useState("auto");
   const [failureReporterProviderId, setFailureReporterProviderId] = useState("");
   const [failureReporterModelId, setFailureReporterModelId] = useState("");
+  const [failureReporterAutoCreateIssues, setFailureReporterAutoCreateIssues] = useState(true);
+  const [failureReporterRequireApproval, setFailureReporterRequireApproval] = useState(false);
+  const [failureReporterAutoComment, setFailureReporterAutoComment] = useState(true);
   const [failureReporterWorkspaceBrowserOpen, setFailureReporterWorkspaceBrowserOpen] =
     useState(false);
   const [failureReporterWorkspaceBrowserDir, setFailureReporterWorkspaceBrowserDir] = useState("");
@@ -587,6 +614,14 @@ export function SettingsPage({
       })),
     refetchInterval: 10_000,
   });
+  const failureReporterPostsQuery = useQuery({
+    queryKey: ["settings", "failure-reporter", "posts"],
+    queryFn: () =>
+      api("/api/engine/failure-reporter/posts?limit=10", { method: "GET" }).catch(() => ({
+        posts: [],
+      })),
+    refetchInterval: 15_000,
+  });
   const failureReporterWorkspaceBrowserQuery = useQuery({
     queryKey: [
       "settings",
@@ -647,8 +682,10 @@ export function SettingsPage({
                     },
                   }
                 : null,
-            require_approval_for_new_issues: true,
-            auto_comment_on_matched_open_issues: true,
+            auto_create_new_issues: failureReporterAutoCreateIssues,
+            require_approval_for_new_issues: failureReporterRequireApproval,
+            auto_comment_on_matched_open_issues: failureReporterAutoComment,
+            label_mode: "reporter_only",
           },
         }),
       }),
@@ -755,6 +792,48 @@ export function SettingsPage({
         payload?.deduped
           ? `Bug Monitor triage run already exists: ${payload?.run?.run_id || "unknown"}`
           : `Bug Monitor replay queued triage: ${payload?.run?.run_id || "unknown"}`
+      );
+    },
+    onError: (error: any) => {
+      const detail =
+        error instanceof Error ? error.message : String(error?.detail || error?.error || error);
+      toast("err", detail);
+    },
+  });
+  const failureReporterPublishDraftMutation = useMutation({
+    mutationFn: async ({ draftId }: { draftId: string }) =>
+      api(`/api/engine/failure-reporter/drafts/${encodeURIComponent(draftId)}/publish`, {
+        method: "POST",
+      }),
+    onSuccess: async (payload: any) => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["settings", "failure-reporter"] }),
+      ]);
+      toast(
+        "ok",
+        payload?.action === "comment_issue"
+          ? `Bug Monitor commented on issue #${payload?.draft?.issue_number || "unknown"}.`
+          : `Bug Monitor published issue #${payload?.draft?.issue_number || "unknown"}.`
+      );
+    },
+    onError: (error: any) => {
+      const detail =
+        error instanceof Error ? error.message : String(error?.detail || error?.error || error);
+      toast("err", detail);
+    },
+  });
+  const failureReporterRecheckMatchMutation = useMutation({
+    mutationFn: async ({ draftId }: { draftId: string }) =>
+      api(`/api/engine/failure-reporter/drafts/${encodeURIComponent(draftId)}/recheck-match`, {
+        method: "POST",
+      }),
+    onSuccess: async (payload: any) => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["settings", "failure-reporter"] }),
+      ]);
+      toast(
+        "ok",
+        `GitHub match result: ${String(payload?.action || "rechecked").replaceAll("_", " ")}.`
       );
     },
     onError: (error: any) => {
@@ -1023,6 +1102,13 @@ export function SettingsPage({
         : [],
     [failureReporterIncidentsQuery.data]
   );
+  const failureReporterPosts = useMemo(
+    () =>
+      Array.isArray((failureReporterPostsQuery.data as any)?.posts)
+        ? ((failureReporterPostsQuery.data as any).posts as FailureReporterPostRow[]) || []
+        : [],
+    [failureReporterPostsQuery.data]
+  );
   const selectedFailureReporterServer = useMemo(
     () =>
       mcpServers.find(
@@ -1107,6 +1193,9 @@ export function SettingsPage({
       String(config.model_policy?.default_model?.provider_id || "").trim()
     );
     setFailureReporterModelId(String(config.model_policy?.default_model?.model_id || "").trim());
+    setFailureReporterAutoCreateIssues(config.auto_create_new_issues !== false);
+    setFailureReporterRequireApproval(!!config.require_approval_for_new_issues);
+    setFailureReporterAutoComment(config.auto_comment_on_matched_open_issues !== false);
   }, [failureReporterConfigQuery.data]);
 
   useEffect(() => {
@@ -1932,6 +2021,9 @@ export function SettingsPage({
                       <Badge tone="info">
                         {Number(failureReporterStatus.pending_drafts || 0)} pending drafts
                       </Badge>
+                      <Badge tone="info">
+                        {Number(failureReporterStatus.pending_posts || 0)} post attempts
+                      </Badge>
                       <button
                         className="tcp-icon-btn"
                         title="Reload status"
@@ -1941,6 +2033,7 @@ export function SettingsPage({
                             failureReporterStatusQuery.refetch(),
                             failureReporterDraftsQuery.refetch(),
                             failureReporterIncidentsQuery.refetch(),
+                            failureReporterPostsQuery.refetch(),
                           ]).then(() => toast("ok", "Bug Monitor status refreshed."))
                         }
                       >
@@ -2176,6 +2269,64 @@ export function SettingsPage({
                             : "Select a provider to load model suggestions."}
                         </div>
                       </label>
+
+                      <div className="grid gap-2 md:col-span-2">
+                        <span className="text-xs uppercase tracking-[0.24em] tcp-subtle">
+                          GitHub posting
+                        </span>
+                        <div className="grid gap-2 md:grid-cols-3">
+                          <button
+                            type="button"
+                            className={`tcp-list-item text-left ${failureReporterAutoCreateIssues && !failureReporterRequireApproval ? "ring-1 ring-emerald-400/40" : ""}`}
+                            onClick={() => {
+                              setFailureReporterAutoCreateIssues((prev) => !prev);
+                              if (
+                                failureReporterRequireApproval &&
+                                failureReporterAutoCreateIssues
+                              ) {
+                                setFailureReporterRequireApproval(false);
+                              }
+                            }}
+                          >
+                            <div className="font-medium">Auto-create new issues</div>
+                            <div className="tcp-subtle text-xs">
+                              {failureReporterAutoCreateIssues
+                                ? "New drafts post to GitHub automatically."
+                                : "New drafts stay internal until published manually."}
+                            </div>
+                          </button>
+                          <button
+                            type="button"
+                            className={`tcp-list-item text-left ${failureReporterRequireApproval ? "ring-1 ring-amber-400/40" : ""}`}
+                            onClick={() => {
+                              setFailureReporterRequireApproval((prev) => {
+                                const next = !prev;
+                                if (next) setFailureReporterAutoCreateIssues(false);
+                                return next;
+                              });
+                            }}
+                          >
+                            <div className="font-medium">Require approval</div>
+                            <div className="tcp-subtle text-xs">
+                              {failureReporterRequireApproval
+                                ? "New drafts wait for a manual publish click."
+                                : "Approval gate disabled."}
+                            </div>
+                          </button>
+                          <button
+                            type="button"
+                            className={`tcp-list-item text-left ${failureReporterAutoComment ? "ring-1 ring-sky-400/40" : ""}`}
+                            onClick={() => setFailureReporterAutoComment((prev) => !prev)}
+                          >
+                            <div className="font-medium">Auto-comment matches</div>
+                            <div className="tcp-subtle text-xs">
+                              {failureReporterAutoComment
+                                ? "Open matching GitHub issues receive new evidence comments."
+                                : "Matching issues are detected but not updated automatically."}
+                            </div>
+                          </button>
+                        </div>
+                      </div>
                     </div>
 
                     <div className="flex flex-wrap gap-2">
@@ -2410,9 +2561,20 @@ export function SettingsPage({
                       <div className="tcp-list-item">
                         <div className="font-medium">Posting policy</div>
                         <div className="tcp-subtle mt-2 grid gap-1 text-xs">
-                          <div>New issues: Draft + approval</div>
-                          <div>Matched open issues: Auto-comment</div>
+                          <div>
+                            New issues:{" "}
+                            {failureReporterRequireApproval
+                              ? "Manual publish"
+                              : failureReporterAutoCreateIssues
+                                ? "Auto-create"
+                                : "Internal draft only"}
+                          </div>
+                          <div>
+                            Matched open issues:{" "}
+                            {failureReporterAutoComment ? "Auto-comment" : "Detect only"}
+                          </div>
                           <div>Dedupe: Fingerprint marker + label</div>
+                          <div>Labels: bug-monitor</div>
                           <div>Workspace write tools: Disabled</div>
                           <div>Model fallback: Fail closed</div>
                         </div>
@@ -2506,8 +2668,21 @@ export function SettingsPage({
                                   ? new Date(draft.created_at_ms).toLocaleString()
                                   : "time unavailable"}
                               </div>
+                              {draft.github_status ? (
+                                <div className="tcp-subtle mt-1 text-xs">
+                                  GitHub: {draft.github_status}
+                                  {draft.matched_issue_number
+                                    ? ` · matched #${draft.matched_issue_number}${draft.matched_issue_state ? ` (${draft.matched_issue_state})` : ""}`
+                                    : ""}
+                                </div>
+                              ) : null}
                               {draft.detail ? (
                                 <div className="tcp-subtle mt-1 text-xs">{draft.detail}</div>
+                              ) : null}
+                              {draft.last_post_error ? (
+                                <div className="tcp-subtle mt-1 text-xs">
+                                  {draft.last_post_error}
+                                </div>
                               ) : null}
                               {draft.triage_run_id ? (
                                 <div className="tcp-subtle mt-2 text-xs">
@@ -2549,6 +2724,62 @@ export function SettingsPage({
                                   </button>
                                 </div>
                               ) : null}
+                              {!draft.issue_number ? (
+                                <div className="mt-3 flex flex-wrap gap-2">
+                                  <button
+                                    className="tcp-icon-btn"
+                                    title="Publish this draft to GitHub now"
+                                    aria-label="Publish this draft to GitHub now"
+                                    disabled={failureReporterPublishDraftMutation.isPending}
+                                    onClick={() =>
+                                      failureReporterPublishDraftMutation.mutate({
+                                        draftId: draft.draft_id,
+                                      })
+                                    }
+                                  >
+                                    <i data-lucide="bug-play"></i>
+                                  </button>
+                                  <button
+                                    className="tcp-icon-btn"
+                                    title="Recheck GitHub for an existing matching issue"
+                                    aria-label="Recheck GitHub for an existing matching issue"
+                                    disabled={failureReporterRecheckMatchMutation.isPending}
+                                    onClick={() =>
+                                      failureReporterRecheckMatchMutation.mutate({
+                                        draftId: draft.draft_id,
+                                      })
+                                    }
+                                  >
+                                    <i data-lucide="refresh-cw"></i>
+                                  </button>
+                                </div>
+                              ) : null}
+                              {(draft.github_issue_url || draft.github_comment_url) && (
+                                <div className="mt-3 flex flex-wrap gap-2 text-xs">
+                                  {draft.github_issue_url ? (
+                                    <a
+                                      className="tcp-btn"
+                                      href={draft.github_issue_url}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                    >
+                                      <i data-lucide="external-link"></i>
+                                      Open issue
+                                    </a>
+                                  ) : null}
+                                  {draft.github_comment_url ? (
+                                    <a
+                                      className="tcp-btn"
+                                      href={draft.github_comment_url}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                    >
+                                      <i data-lucide="message-square"></i>
+                                      Open comment
+                                    </a>
+                                  ) : null}
+                                </div>
+                              )}
                               {(draft.status === "draft_ready" ||
                                 draft.status === "triage_queued") &&
                               !draft.triage_run_id ? (
@@ -2573,6 +2804,60 @@ export function SettingsPage({
                         </div>
                       ) : (
                         <EmptyState text="No Bug Monitor drafts yet." />
+                      )}
+                    </div>
+
+                    <div className="rounded-xl border border-slate-700/60 bg-slate-900/20 p-3">
+                      <div className="mb-2 font-medium">Recent GitHub posts</div>
+                      {failureReporterPosts.length ? (
+                        <div className="grid gap-2">
+                          {failureReporterPosts.map((post) => (
+                            <div key={post.post_id} className="tcp-list-item">
+                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                <div className="font-medium">{post.operation}</div>
+                                <Badge tone={post.status === "posted" ? "ok" : "warn"}>
+                                  {post.status}
+                                </Badge>
+                              </div>
+                              <div className="tcp-subtle mt-1 text-xs">
+                                {post.repo}
+                                {post.issue_number ? ` · issue #${post.issue_number}` : ""}
+                                {post.updated_at_ms
+                                  ? ` · ${new Date(post.updated_at_ms).toLocaleString()}`
+                                  : ""}
+                              </div>
+                              {post.error ? (
+                                <div className="tcp-subtle mt-1 text-xs">{post.error}</div>
+                              ) : null}
+                              <div className="mt-3 flex flex-wrap gap-2">
+                                {post.issue_url ? (
+                                  <a
+                                    className="tcp-btn"
+                                    href={post.issue_url}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                  >
+                                    <i data-lucide="external-link"></i>
+                                    Open issue
+                                  </a>
+                                ) : null}
+                                {post.comment_url ? (
+                                  <a
+                                    className="tcp-btn"
+                                    href={post.comment_url}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                  >
+                                    <i data-lucide="message-square"></i>
+                                    Open comment
+                                  </a>
+                                ) : null}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <EmptyState text="No GitHub post attempts yet." />
                       )}
                     </div>
                   </div>

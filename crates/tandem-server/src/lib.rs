@@ -45,6 +45,7 @@ use tandem_workflows::{
 mod agent_teams;
 mod browser;
 mod capability_resolver;
+mod failure_reporter_github;
 mod http;
 mod mcp_catalog;
 mod pack_builder;
@@ -707,6 +708,18 @@ pub enum FailureReporterProviderPreference {
     Arcade,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum FailureReporterLabelMode {
+    ReporterOnly,
+}
+
+impl Default for FailureReporterLabelMode {
+    fn default() -> Self {
+        Self::ReporterOnly
+    }
+}
+
 impl Default for FailureReporterProviderPreference {
     fn default() -> Self {
         Self::Auto
@@ -730,9 +743,13 @@ pub struct FailureReporterConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_policy: Option<Value>,
     #[serde(default = "default_true")]
+    pub auto_create_new_issues: bool,
+    #[serde(default)]
     pub require_approval_for_new_issues: bool,
     #[serde(default = "default_true")]
     pub auto_comment_on_matched_open_issues: bool,
+    #[serde(default)]
+    pub label_mode: FailureReporterLabelMode,
     #[serde(default)]
     pub updated_at_ms: u64,
 }
@@ -747,8 +764,10 @@ impl Default for FailureReporterConfig {
             mcp_server: None,
             provider_preference: FailureReporterProviderPreference::Auto,
             model_policy: None,
-            require_approval_for_new_issues: true,
+            auto_create_new_issues: true,
+            require_approval_for_new_issues: false,
             auto_comment_on_matched_open_issues: true,
+            label_mode: FailureReporterLabelMode::ReporterOnly,
             updated_at_ms: 0,
         }
     }
@@ -769,6 +788,51 @@ pub struct FailureReporterDraftRecord {
     pub title: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub github_status: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub github_issue_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub github_comment_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub github_posted_at_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub matched_issue_number: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub matched_issue_state: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evidence_digest: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_post_error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct FailureReporterPostRecord {
+    pub post_id: String,
+    pub draft_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub incident_id: Option<String>,
+    pub fingerprint: String,
+    pub repo: String,
+    pub operation: String,
+    pub status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub issue_number: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub issue_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub comment_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub comment_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evidence_digest: Option<String>,
+    pub idempotency_key: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub response_excerpt: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    pub created_at_ms: u64,
+    pub updated_at_ms: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -828,6 +892,10 @@ pub struct FailureReporterRuntimeStatus {
     pub last_incident_event_type: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_runtime_error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_post_result: Option<String>,
+    #[serde(default)]
+    pub pending_posts: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -935,6 +1003,8 @@ pub struct FailureReporterStatus {
     pub selected_model: Option<ModelSpec>,
     #[serde(default)]
     pub pending_drafts: usize,
+    #[serde(default)]
+    pub pending_posts: usize,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_activity_at_ms: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1014,6 +1084,8 @@ pub struct AppState {
         Arc<RwLock<std::collections::HashMap<String, FailureReporterDraftRecord>>>,
     pub failure_reporter_incidents:
         Arc<RwLock<std::collections::HashMap<String, FailureReporterIncidentRecord>>>,
+    pub failure_reporter_posts:
+        Arc<RwLock<std::collections::HashMap<String, FailureReporterPostRecord>>>,
     pub failure_reporter_runtime_status: Arc<RwLock<FailureReporterRuntimeStatus>>,
     pub workflows: Arc<RwLock<WorkflowRegistry>>,
     pub workflow_runs: Arc<RwLock<std::collections::HashMap<String, WorkflowRunRecord>>>,
@@ -1031,6 +1103,7 @@ pub struct AppState {
     pub failure_reporter_config_path: PathBuf,
     pub failure_reporter_drafts_path: PathBuf,
     pub failure_reporter_incidents_path: PathBuf,
+    pub failure_reporter_posts_path: PathBuf,
     pub workflow_runs_path: PathBuf,
     pub workflow_hook_overrides_path: PathBuf,
     pub agent_teams: AgentTeamRuntime,
@@ -1079,6 +1152,7 @@ impl AppState {
             failure_reporter_config: Arc::new(RwLock::new(resolve_failure_reporter_env_config())),
             failure_reporter_drafts: Arc::new(RwLock::new(std::collections::HashMap::new())),
             failure_reporter_incidents: Arc::new(RwLock::new(std::collections::HashMap::new())),
+            failure_reporter_posts: Arc::new(RwLock::new(std::collections::HashMap::new())),
             failure_reporter_runtime_status: Arc::new(RwLock::new(
                 FailureReporterRuntimeStatus::default(),
             )),
@@ -1096,6 +1170,7 @@ impl AppState {
             failure_reporter_config_path: resolve_failure_reporter_config_path(),
             failure_reporter_drafts_path: resolve_failure_reporter_drafts_path(),
             failure_reporter_incidents_path: resolve_failure_reporter_incidents_path(),
+            failure_reporter_posts_path: resolve_failure_reporter_posts_path(),
             workflow_runs_path: resolve_workflow_runs_path(),
             workflow_hook_overrides_path: resolve_workflow_hook_overrides_path(),
             agent_teams: AgentTeamRuntime::new(resolve_agent_team_audit_path()),
@@ -1244,6 +1319,7 @@ impl AppState {
         let _ = self.load_failure_reporter_config().await;
         let _ = self.load_failure_reporter_drafts().await;
         let _ = self.load_failure_reporter_incidents().await;
+        let _ = self.load_failure_reporter_posts().await;
         let _ = self.load_workflow_runs().await;
         let _ = self.load_workflow_hook_overrides().await;
         let _ = self.reload_workflows().await;
@@ -2153,6 +2229,31 @@ impl AppState {
         Ok(())
     }
 
+    pub async fn load_failure_reporter_posts(&self) -> anyhow::Result<()> {
+        if !self.failure_reporter_posts_path.exists() {
+            return Ok(());
+        }
+        let raw = fs::read_to_string(&self.failure_reporter_posts_path).await?;
+        let parsed = serde_json::from_str::<
+            std::collections::HashMap<String, FailureReporterPostRecord>,
+        >(&raw)
+        .unwrap_or_default();
+        *self.failure_reporter_posts.write().await = parsed;
+        Ok(())
+    }
+
+    pub async fn persist_failure_reporter_posts(&self) -> anyhow::Result<()> {
+        if let Some(parent) = self.failure_reporter_posts_path.parent() {
+            fs::create_dir_all(parent).await?;
+        }
+        let payload = {
+            let guard = self.failure_reporter_posts.read().await;
+            serde_json::to_string_pretty(&*guard)?
+        };
+        fs::write(&self.failure_reporter_posts_path, payload).await?;
+        Ok(())
+    }
+
     pub async fn list_failure_reporter_incidents(
         &self,
         limit: usize,
@@ -2192,6 +2293,45 @@ impl AppState {
         Ok(incident)
     }
 
+    pub async fn list_failure_reporter_posts(
+        &self,
+        limit: usize,
+    ) -> Vec<FailureReporterPostRecord> {
+        let mut rows = self
+            .failure_reporter_posts
+            .read()
+            .await
+            .values()
+            .cloned()
+            .collect::<Vec<_>>();
+        rows.sort_by(|a, b| b.updated_at_ms.cmp(&a.updated_at_ms));
+        rows.truncate(limit.clamp(1, 200));
+        rows
+    }
+
+    pub async fn get_failure_reporter_post(
+        &self,
+        post_id: &str,
+    ) -> Option<FailureReporterPostRecord> {
+        self.failure_reporter_posts
+            .read()
+            .await
+            .get(post_id)
+            .cloned()
+    }
+
+    pub async fn put_failure_reporter_post(
+        &self,
+        post: FailureReporterPostRecord,
+    ) -> anyhow::Result<FailureReporterPostRecord> {
+        self.failure_reporter_posts
+            .write()
+            .await
+            .insert(post.post_id.clone(), post.clone());
+        self.persist_failure_reporter_posts().await?;
+        Ok(post)
+    }
+
     pub async fn update_failure_reporter_runtime_status(
         &self,
         update: impl FnOnce(&mut FailureReporterRuntimeStatus),
@@ -2226,6 +2366,18 @@ impl AppState {
             .await
             .get(draft_id)
             .cloned()
+    }
+
+    pub async fn put_failure_reporter_draft(
+        &self,
+        draft: FailureReporterDraftRecord,
+    ) -> anyhow::Result<FailureReporterDraftRecord> {
+        self.failure_reporter_drafts
+            .write()
+            .await
+            .insert(draft.draft_id.clone(), draft.clone());
+        self.persist_failure_reporter_drafts().await?;
+        Ok(draft)
     }
 
     pub async fn submit_failure_reporter_draft(
@@ -2373,6 +2525,14 @@ impl AppState {
             issue_number: None,
             title: Some(title),
             detail,
+            github_status: None,
+            github_issue_url: None,
+            github_comment_url: None,
+            github_posted_at_ms: None,
+            matched_issue_number: None,
+            matched_issue_state: None,
+            evidence_digest: None,
+            last_post_error: None,
         };
         drafts.insert(draft.draft_id.clone(), draft.clone());
         drop(drafts);
@@ -2441,6 +2601,7 @@ impl AppState {
         let config = self.failure_reporter_config().await;
         let drafts = self.failure_reporter_drafts.read().await;
         let incidents = self.failure_reporter_incidents.read().await;
+        let posts = self.failure_reporter_posts.read().await;
         let total_incidents = incidents.len();
         let pending_incidents = incidents
             .values()
@@ -2455,18 +2616,29 @@ impl AppState {
             .values()
             .filter(|row| row.status.eq_ignore_ascii_case("approval_required"))
             .count();
-        let last_activity_at_ms = drafts.values().map(|row| row.created_at_ms).max();
+        let pending_posts = posts
+            .values()
+            .filter(|row| matches!(row.status.as_str(), "queued" | "failed"))
+            .count();
+        let last_activity_at_ms = drafts
+            .values()
+            .map(|row| row.created_at_ms)
+            .chain(posts.values().map(|row| row.updated_at_ms))
+            .max();
         drop(drafts);
         drop(incidents);
+        drop(posts);
         let mut runtime = self.failure_reporter_runtime_status.read().await.clone();
         runtime.paused = config.paused;
         runtime.total_incidents = total_incidents;
         runtime.pending_incidents = pending_incidents;
+        runtime.pending_posts = pending_posts;
 
         let mut status = FailureReporterStatus {
             config: config.clone(),
             runtime,
             pending_drafts,
+            pending_posts,
             last_activity_at_ms,
             ..FailureReporterStatus::default()
         };
@@ -3339,14 +3511,19 @@ fn resolve_failure_reporter_env_config() -> FailureReporterConfig {
             .filter(|v| !v.is_empty()),
         provider_preference,
         model_policy,
+        auto_create_new_issues: parse_bool_env(
+            "TANDEM_FAILURE_REPORTER_AUTO_CREATE_NEW_ISSUES",
+            true,
+        ),
         require_approval_for_new_issues: parse_bool_env(
             "TANDEM_FAILURE_REPORTER_REQUIRE_APPROVAL_FOR_NEW_ISSUES",
-            true,
+            false,
         ),
         auto_comment_on_matched_open_issues: parse_bool_env(
             "TANDEM_FAILURE_REPORTER_AUTO_COMMENT_ON_MATCHED_OPEN_ISSUES",
             true,
         ),
+        label_mode: FailureReporterLabelMode::ReporterOnly,
         updated_at_ms: 0,
     }
 }
@@ -3464,6 +3641,16 @@ fn resolve_failure_reporter_incidents_path() -> PathBuf {
         }
     }
     default_state_dir().join("failure_reporter_incidents.json")
+}
+
+fn resolve_failure_reporter_posts_path() -> PathBuf {
+    if let Ok(root) = std::env::var("TANDEM_STATE_DIR") {
+        let trimmed = root.trim();
+        if !trimmed.is_empty() {
+            return PathBuf::from(trimmed).join("failure_reporter_posts.json");
+        }
+    }
+    default_state_dir().join("failure_reporter_posts.json")
 }
 
 fn resolve_workflow_hook_overrides_path() -> PathBuf {
@@ -4610,6 +4797,45 @@ async fn process_failure_reporter_event(
         Err(error) => {
             incident.status = "draft_created".to_string();
             incident.last_error = Some(truncate_text(&error.to_string(), 500));
+        }
+    }
+
+    if let Some(draft_id) = incident.draft_id.clone() {
+        let latest_draft = state
+            .get_failure_reporter_draft(&draft_id)
+            .await
+            .unwrap_or(draft.clone());
+        match crate::failure_reporter_github::publish_draft(
+            state,
+            &draft_id,
+            Some(&incident.incident_id),
+            crate::failure_reporter_github::PublishMode::Auto,
+        )
+        .await
+        {
+            Ok(outcome) => {
+                incident.status = outcome.action;
+                incident.last_error = None;
+            }
+            Err(error) => {
+                let detail = truncate_text(&error.to_string(), 500);
+                incident.last_error = Some(detail.clone());
+                let mut failed_draft = latest_draft;
+                failed_draft.status = "github_post_failed".to_string();
+                failed_draft.github_status = Some("github_post_failed".to_string());
+                failed_draft.last_post_error = Some(detail.clone());
+                let evidence_digest = failed_draft.evidence_digest.clone();
+                let _ = state.put_failure_reporter_draft(failed_draft.clone()).await;
+                let _ = crate::failure_reporter_github::record_post_failure(
+                    state,
+                    &failed_draft,
+                    Some(&incident.incident_id),
+                    "auto_post",
+                    evidence_digest.as_deref(),
+                    &detail,
+                )
+                .await;
+            }
         }
     }
 
