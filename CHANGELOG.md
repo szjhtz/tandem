@@ -52,6 +52,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - auto-publish now defers with `triage_pending` until a triage-backed issue draft exists, preventing premature low-signal issue creation
   - fixed Bug Monitor incident persistence so draft-creation failures record a visible incident error instead of leaving a half-created incident with no draft or explanation
   - approving a Bug Monitor draft no longer fails the operator action just because the follow-up GitHub publish step is blocked
+  - split Bug Monitor readiness into local ingest vs GitHub publish readiness so live tracker surfaces can report “watching locally” instead of incorrectly showing the monitor as fully blocked
 
 - **Initial Tandem Coder engine API foundation**:
   - added a first engine-owned coder API surface:

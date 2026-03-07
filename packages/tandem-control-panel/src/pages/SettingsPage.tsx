@@ -1973,15 +1973,19 @@ export function SettingsPage({
                       <Badge
                         tone={
                           bugMonitorStatus.runtime?.monitoring_active
-                            ? "ok"
-                            : bugMonitorStatus.readiness?.runtime_ready
+                            ? bugMonitorStatus.readiness?.publish_ready
+                              ? "ok"
+                              : "info"
+                            : bugMonitorStatus.readiness?.ingest_ready
                               ? "info"
                               : "warn"
                         }
                       >
                         {bugMonitorStatus.runtime?.monitoring_active
-                          ? "Monitoring"
-                          : bugMonitorStatus.readiness?.runtime_ready
+                          ? bugMonitorStatus.readiness?.publish_ready
+                            ? "Monitoring"
+                            : "Watching locally"
+                          : bugMonitorStatus.readiness?.ingest_ready
                             ? "Ready"
                             : "Not ready"}
                       </Badge>
@@ -2374,10 +2378,12 @@ export function SettingsPage({
                         <div className="text-sm font-medium">Readiness</div>
                         <div className="mt-1 text-sm">
                           {bugMonitorStatus.runtime?.monitoring_active
-                            ? "Monitoring"
+                            ? bugMonitorStatus.readiness?.publish_ready
+                              ? "Monitoring"
+                              : "Watching locally"
                             : bugMonitorStatus.runtime?.paused || bugMonitorPaused
                               ? "Paused"
-                              : bugMonitorStatus.readiness?.runtime_ready
+                              : bugMonitorStatus.readiness?.ingest_ready
                                 ? "Ready"
                                 : "Blocked"}
                         </div>
@@ -2386,7 +2392,7 @@ export function SettingsPage({
                             bugMonitorStatus.last_error ||
                             "No blocking issue reported."}
                         </div>
-                        {!bugMonitorStatus.readiness?.runtime_ready &&
+                        {!bugMonitorStatus.readiness?.publish_ready &&
                         Array.isArray(bugMonitorStatus.missing_required_capabilities) &&
                         bugMonitorStatus.missing_required_capabilities.length ? (
                           <div className="tcp-subtle mt-2 text-xs">

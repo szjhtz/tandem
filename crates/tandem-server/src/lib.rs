@@ -977,6 +977,10 @@ pub struct BugMonitorReadiness {
     #[serde(default)]
     pub selected_model_ready: bool,
     #[serde(default)]
+    pub ingest_ready: bool,
+    #[serde(default)]
+    pub publish_ready: bool,
+    #[serde(default)]
     pub runtime_ready: bool,
 }
 
@@ -2813,6 +2817,19 @@ impl AppState {
             github_write_ready: status.required_capabilities.github_create_issue
                 && status.required_capabilities.github_comment_on_issue,
             selected_model_ready,
+            ingest_ready: config.enabled && !config.paused && repo_valid,
+            publish_ready: config.enabled
+                && !config.paused
+                && repo_valid
+                && selected_server
+                    .as_ref()
+                    .map(|row| row.connected)
+                    .unwrap_or(false)
+                && status.required_capabilities.github_list_issues
+                && status.required_capabilities.github_get_issue
+                && status.required_capabilities.github_create_issue
+                && status.required_capabilities.github_comment_on_issue
+                && selected_model_ready,
             runtime_ready: config.enabled
                 && !config.paused
                 && repo_valid
@@ -2851,8 +2868,7 @@ impl AppState {
                 ));
             }
         }
-        status.runtime.monitoring_active =
-            status.config.enabled && !status.config.paused && status.readiness.repo_valid;
+        status.runtime.monitoring_active = status.readiness.ingest_ready;
         status
     }
 

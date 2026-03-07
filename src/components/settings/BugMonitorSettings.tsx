@@ -247,7 +247,13 @@ export function BugMonitorSettings({
               />
             </div>
             <p className="text-xs text-text-subtle">
-              {status?.readiness?.runtime_ready ? "Ready" : "Blocked"}{" "}
+              {status?.runtime?.monitoring_active
+                ? status?.readiness?.publish_ready
+                  ? "Watching live"
+                  : "Watching locally"
+                : status?.readiness?.ingest_ready
+                  ? "Ready"
+                  : "Blocked"}{" "}
               {status?.last_error ? `- ${status.last_error}` : ""}
             </p>
           </div>

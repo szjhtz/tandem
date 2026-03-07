@@ -350,7 +350,8 @@ function AppBody() {
   const bugMonitorPendingIncidents = Number(bugMonitorStatus?.runtime?.pending_incidents || 0);
   const bugMonitorMonitoringActive = !!bugMonitorStatus?.runtime?.monitoring_active;
   const bugMonitorPaused = !!bugMonitorStatus?.runtime?.paused;
-  const bugMonitorRuntimeReady = !!bugMonitorStatus?.readiness?.runtime_ready;
+  const bugMonitorIngestReady = !!bugMonitorStatus?.readiness?.ingest_ready;
+  const bugMonitorPublishReady = !!bugMonitorStatus?.readiness?.publish_ready;
   const bugMonitorLastError = String(
     bugMonitorStatus?.runtime?.last_runtime_error || bugMonitorStatus?.last_error || ""
   ).trim();
@@ -381,8 +382,11 @@ function AppBody() {
                 monitoringActive: bugMonitorMonitoringActive,
                 paused: bugMonitorPaused,
                 pendingIncidents: bugMonitorPendingIncidents,
-                blocked: !bugMonitorRuntimeReady,
-                lastError: bugMonitorLastError,
+                blocked: !bugMonitorIngestReady,
+                lastError:
+                  bugMonitorMonitoringActive && !bugMonitorPublishReady && bugMonitorLastError
+                    ? `Watching locally only. ${bugMonitorLastError}`
+                    : bugMonitorLastError,
               }
             : null,
         }}

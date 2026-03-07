@@ -1033,6 +1033,8 @@ export interface BugMonitorReadiness {
   github_read_ready?: boolean;
   github_write_ready?: boolean;
   selected_model_ready?: boolean;
+  ingest_ready?: boolean;
+  publish_ready?: boolean;
   runtime_ready?: boolean;
 }
 
@@ -1044,6 +1046,17 @@ export interface BugMonitorSelectedModel {
 export interface BugMonitorStatus {
   config: BugMonitorConfig;
   readiness?: BugMonitorReadiness;
+  runtime?: {
+    monitoring_active?: boolean;
+    paused?: boolean;
+    pending_incidents?: number;
+    total_incidents?: number;
+    last_processed_at_ms?: number | null;
+    last_incident_event_type?: string | null;
+    last_runtime_error?: string | null;
+    last_post_result?: string | null;
+    pending_posts?: number;
+  };
   required_capabilities?: BugMonitorCapabilityReadiness;
   missing_required_capabilities?: string[];
   resolved_capabilities?: BugMonitorCapabilityMatch[];

@@ -38,6 +38,7 @@
   - auto-publish now defers with `triage_pending` until a triage-backed issue draft exists, preventing premature low-signal issue creation
   - fixed Bug Monitor incident persistence so draft-creation failures leave a visible incident error instead of a half-created tracker row
   - approving a Bug Monitor draft no longer fails the operator action just because the follow-up GitHub publish step is blocked
+  - split Bug Monitor readiness into local ingest vs GitHub publish readiness so live tracker surfaces can show `watching locally` when incident capture is healthy but GitHub posting is blocked
 
 - **Initial Tandem Coder engine API foundation**:
   - added the first engine-owned coder endpoints:

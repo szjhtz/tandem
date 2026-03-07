@@ -239,6 +239,11 @@ function memoryKindLabel(value: unknown): string {
   return pickText(value) || "memory";
 }
 
+function runNeedsAttention(run: CoderRunRecord): boolean {
+  const status = (run.status ?? "").toLowerCase();
+  return status === "failed" || status === "blocked" || status === "awaiting_approval";
+}
+
 export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRunViewerProps) {
   const [runs, setRuns] = useState<CoderRunRecord[]>([]);
   const [runQuery, setRunQuery] = useState("");
@@ -800,8 +805,29 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
                         {run.status ?? "unknown"}
                       </span>
                     </div>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <span className="rounded-full border border-border bg-surface-elevated/40 px-2 py-0.5 text-[10px] uppercase tracking-[0.16em] text-text-muted">
+                        {run.phase ?? "analysis"}
+                      </span>
+                      {run.github_ref ? (
+                        <span className="rounded-full border border-border bg-surface-elevated/40 px-2 py-0.5 text-[10px] uppercase tracking-[0.16em] text-text-muted">
+                          {run.github_ref.kind === "pull_request" ? "PR" : "Issue"} #
+                          {run.github_ref.number}
+                        </span>
+                      ) : null}
+                      {run.source_client ? (
+                        <span className="rounded-full border border-border bg-surface-elevated/40 px-2 py-0.5 text-[10px] uppercase tracking-[0.16em] text-text-muted">
+                          {run.source_client}
+                        </span>
+                      ) : null}
+                      {runNeedsAttention(run) ? (
+                        <span className="rounded-full border border-amber-500/20 bg-amber-500/10 px-2 py-0.5 text-[10px] uppercase tracking-[0.16em] text-amber-100">
+                          Needs attention
+                        </span>
+                      ) : null}
+                    </div>
                     <div className="mt-3 flex items-center justify-between gap-3 text-[11px] text-text-muted">
-                      <span>{run.phase ?? "analysis"}</span>
+                      <span>{run.workflow_mode}</span>
                       <span>{formatTimestamp(run.updated_at_ms)}</span>
                     </div>
                   </button>
