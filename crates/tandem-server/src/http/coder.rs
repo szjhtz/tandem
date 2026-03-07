@@ -11,6 +11,7 @@ use super::*;
 use axum::extract::Path;
 use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::path::PathBuf;
 use tandem_memory::{types::MemoryTier, MemoryManager};
 
@@ -335,6 +336,67 @@ async fn list_project_memory_hits(
         .collect::<Vec<_>>()
 }
 
+fn governed_memory_subjects(record: &CoderRunRecord) -> Vec<String> {
+    let mut subjects = Vec::new();
+    if let Some(source_client) = record
+        .source_client
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        subjects.push(source_client.to_string());
+    }
+    subjects.push("default".to_string());
+    subjects.sort();
+    subjects.dedup();
+    subjects
+}
+
+async fn list_governed_memory_hits(
+    record: &CoderRunRecord,
+    query: &str,
+    limit: usize,
+) -> Vec<Value> {
+    let Some(db) = super::skills_memory::open_global_memory_db().await else {
+        return Vec::new();
+    };
+    let mut hits = Vec::<Value>::new();
+    let mut seen_ids = HashSet::<String>::new();
+    for subject in governed_memory_subjects(record) {
+        let Ok(results) = db
+            .search_global_memory(
+                &subject,
+                query,
+                limit.clamp(1, 20) as i64,
+                Some(&record.repo_binding.project_id),
+                None,
+                None,
+            )
+            .await
+        else {
+            continue;
+        };
+        for hit in results {
+            if !seen_ids.insert(hit.record.id.clone()) {
+                continue;
+            }
+            hits.push(json!({
+                "source": "governed_memory",
+                "memory_id": hit.record.id,
+                "score": hit.score,
+                "content": hit.record.content,
+                "memory_visibility": hit.record.visibility,
+                "source_type": hit.record.source_type,
+                "run_id": hit.record.run_id,
+                "project_tag": hit.record.project_tag,
+                "subject": subject,
+                "created_at_ms": hit.record.created_at_ms,
+            }));
+        }
+    }
+    hits
+}
+
 async fn collect_issue_triage_memory_hits(
     state: &AppState,
     record: &CoderRunRecord,
@@ -346,7 +408,9 @@ async fn collect_issue_triage_memory_hits(
         list_repo_memory_candidates(state, &record.repo_binding.repo_slug, issue_number, limit)
             .await?;
     let mut project_hits = list_project_memory_hits(&record.repo_binding, query, limit).await;
+    let mut governed_hits = list_governed_memory_hits(record, query, limit).await;
     hits.append(&mut project_hits);
+    hits.append(&mut governed_hits);
     hits.sort_by(|a, b| {
         let a_same_issue = a
             .get("same_issue")
