@@ -66,6 +66,20 @@ pub(super) async fn test_state() -> AppState {
                     "input_schema": {"type":"object"},
                     "fetched_at_ms": 1,
                     "schema_hash": "tool-github-get-issue"
+                },
+                {
+                    "tool_name": "mcp.github.list_pull_requests",
+                    "description": "List repository pull requests",
+                    "input_schema": {"type":"object"},
+                    "fetched_at_ms": 1,
+                    "schema_hash": "tool-github-list-pulls"
+                },
+                {
+                    "tool_name": "mcp.github.get_pull_request",
+                    "description": "Get a GitHub pull request",
+                    "input_schema": {"type":"object"},
+                    "fetched_at_ms": 1,
+                    "schema_hash": "tool-github-get-pull"
                 }
             ],
             "tools_fetched_at_ms": 1,

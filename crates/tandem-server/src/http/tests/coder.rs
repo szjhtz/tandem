@@ -200,6 +200,131 @@ async fn coder_issue_triage_run_create_get_and_list() {
 }
 
 #[tokio::test]
+async fn coder_pr_review_run_create_gets_seeded_review_tasks() {
+    let state = test_state().await;
+    state
+        .capability_resolver
+        .refresh_builtin_bindings()
+        .await
+        .expect("refresh builtin bindings");
+    let app = app_router(state.clone());
+
+    let create_req = Request::builder()
+        .method("POST")
+        .uri("/coder/runs")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "coder_run_id": "coder-pr-review-1",
+                "workflow_mode": "pr_review",
+                "repo_binding": {
+                    "project_id": "proj-engine",
+                    "workspace_id": "ws-tandem",
+                    "workspace_root": "/tmp/tandem-repo",
+                    "repo_slug": "evan/tandem",
+                    "default_branch": "main"
+                },
+                "github_ref": {
+                    "kind": "pull_request",
+                    "number": 88,
+                    "url": "https://github.com/evan/tandem/pull/88"
+                },
+                "source_client": "desktop_developer_mode"
+            })
+            .to_string(),
+        ))
+        .expect("create request");
+    let create_resp = app
+        .clone()
+        .oneshot(create_req)
+        .await
+        .expect("create response");
+    assert_eq!(create_resp.status(), StatusCode::OK);
+    let create_body = to_bytes(create_resp.into_body(), usize::MAX)
+        .await
+        .expect("create body");
+    let create_payload: Value = serde_json::from_slice(&create_body).expect("create json");
+    assert_eq!(
+        create_payload
+            .get("coder_run")
+            .and_then(|row| row.get("workflow_mode"))
+            .and_then(Value::as_str),
+        Some("pr_review")
+    );
+    let linked_context_run_id = create_payload
+        .get("coder_run")
+        .and_then(|row| row.get("linked_context_run_id"))
+        .and_then(Value::as_str)
+        .expect("linked context run id")
+        .to_string();
+
+    let get_req = Request::builder()
+        .method("GET")
+        .uri("/coder/runs/coder-pr-review-1")
+        .body(Body::empty())
+        .expect("get request");
+    let get_resp = app.clone().oneshot(get_req).await.expect("get response");
+    assert_eq!(get_resp.status(), StatusCode::OK);
+    let get_body = to_bytes(get_resp.into_body(), usize::MAX)
+        .await
+        .expect("get body");
+    let get_payload: Value = serde_json::from_slice(&get_body).expect("get json");
+    assert_eq!(
+        get_payload
+            .get("run")
+            .and_then(|row| row.get("run_type"))
+            .and_then(Value::as_str),
+        Some("coder_pr_review")
+    );
+    assert_eq!(
+        get_payload
+            .get("run")
+            .and_then(|row| row.get("tasks"))
+            .and_then(Value::as_array)
+            .map(|rows| rows.len())
+            .filter(|count| *count >= 3),
+        Some(
+            get_payload
+                .get("run")
+                .and_then(|row| row.get("tasks"))
+                .and_then(Value::as_array)
+                .map(|rows| rows.len())
+                .unwrap_or_default()
+        )
+    );
+    assert!(get_payload
+        .get("run")
+        .and_then(|row| row.get("tasks"))
+        .and_then(Value::as_array)
+        .map(|rows| rows.iter().any(|row| {
+            row.get("workflow_node_id").and_then(Value::as_str) == Some("inspect_pull_request")
+        }))
+        .unwrap_or(false));
+    assert!(get_payload
+        .get("run")
+        .and_then(|row| row.get("tasks"))
+        .and_then(Value::as_array)
+        .map(|rows| rows.iter().any(|row| {
+            row.get("workflow_node_id").and_then(Value::as_str) == Some("review_pull_request")
+        }))
+        .unwrap_or(false));
+    assert_eq!(
+        get_payload
+            .get("coder_run")
+            .and_then(|row| row.get("phase"))
+            .and_then(Value::as_str),
+        Some("bootstrapping")
+    );
+    assert_eq!(
+        get_payload
+            .get("coder_run")
+            .and_then(|row| row.get("linked_context_run_id"))
+            .and_then(Value::as_str),
+        Some(linked_context_run_id.as_str())
+    );
+}
+
+#[tokio::test]
 async fn coder_run_approve_and_cancel_project_context_run_controls() {
     let state = test_state().await;
     state

@@ -54,6 +54,7 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
   - Run-scoped governed-memory capability issuance is now shared through `skills_memory.rs` helpers, so coder workflows derive subject and tier policy through the same helper path as the generic memory routes.
   - Fixed cold-start global memory initialization so `/memory/*` routes create the memory DB parent directory before opening SQLite.
   - Coder lifecycle and artifact events now share a normalized payload shape, and `coder.artifact.added` includes explicit `kind` metadata so desktop and other clients can consume coder events without per-event special casing.
+  - Added the first `pr_review` coder workflow skeleton with GitHub PR readiness checks, seeded review task graphs, and direct MCP GitHub pull-request capability bindings.
 
 ## v0.4.1 (2026-03-07)
 

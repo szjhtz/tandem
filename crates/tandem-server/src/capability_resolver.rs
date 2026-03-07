@@ -739,10 +739,30 @@ fn default_spine_bindings() -> Vec<CapabilityBinding> {
             &["mcp.composio.github.list_pull_requests"],
         ),
         make_binding(
+            "github.list_pull_requests",
+            "mcp",
+            "mcp.github.list_pull_requests",
+            &[
+                "mcp.github_list_pull_requests",
+                "github_list_pull_requests",
+                "list_pull_requests",
+            ],
+        ),
+        make_binding(
             "github.get_pull_request",
             "composio",
             "mcp.composio.github_get_pull_request",
             &["mcp.composio.github.get_pull_request"],
+        ),
+        make_binding(
+            "github.get_pull_request",
+            "mcp",
+            "mcp.github.get_pull_request",
+            &[
+                "mcp.github_get_pull_request",
+                "github_get_pull_request",
+                "get_pull_request",
+            ],
         ),
         make_binding(
             "github.comment_on_issue",
@@ -778,6 +798,16 @@ fn default_spine_bindings() -> Vec<CapabilityBinding> {
             "composio",
             "mcp.composio.github_create_pull_request_review_comment",
             &["mcp.composio.github.comment_on_pull_request"],
+        ),
+        make_binding(
+            "github.comment_on_pull_request",
+            "mcp",
+            "mcp.github.comment_on_pull_request",
+            &[
+                "mcp.github_create_pull_request_review_comment",
+                "mcp.github.comment_pull_request",
+                "github_comment_on_pull_request",
+            ],
         ),
         make_binding(
             "github.list_repositories",

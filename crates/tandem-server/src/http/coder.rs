@@ -1107,8 +1107,11 @@ fn project_coder_phase(run: &ContextRunState) -> &'static str {
                 Some("ingest_reference") => "bootstrapping",
                 Some("retrieve_memory") => "memory_retrieval",
                 Some("inspect_repo") => "repo_inspection",
+                Some("inspect_pull_request") => "repo_inspection",
                 Some("attempt_reproduction") => "reproduction",
+                Some("review_pull_request") => "analysis",
                 Some("write_triage_artifact") => "artifact_write",
+                Some("write_review_artifact") => "artifact_write",
                 _ => "analysis",
             };
         }
@@ -1255,6 +1258,92 @@ async fn coder_issue_triage_readiness(
     Ok(readiness)
 }
 
+async fn coder_pr_review_readiness(
+    state: &AppState,
+    input: &CoderRunCreateInput,
+) -> Result<CapabilityReadinessOutput, StatusCode> {
+    let mut readiness = super::capabilities::evaluate_capability_readiness(
+        state,
+        &CapabilityReadinessInput {
+            workflow_id: Some("coder_pr_review".to_string()),
+            required_capabilities: vec![
+                "github.list_pull_requests".to_string(),
+                "github.get_pull_request".to_string(),
+            ],
+            optional_capabilities: vec!["github.comment_on_pull_request".to_string()],
+            provider_preference: input
+                .mcp_servers
+                .clone()
+                .unwrap_or_default()
+                .into_iter()
+                .map(|row| row.to_ascii_lowercase())
+                .collect(),
+            available_tools: Vec::new(),
+            allow_unbound: false,
+        },
+    )
+    .await?;
+    let mcp_servers = state.mcp.list().await;
+    let enabled_servers = mcp_servers
+        .values()
+        .filter(|server| server.enabled)
+        .collect::<Vec<_>>();
+    let connected_servers = enabled_servers
+        .iter()
+        .filter(|server| server.connected)
+        .map(|server| server.name.to_ascii_lowercase())
+        .collect::<HashSet<_>>();
+    let preferred_servers = input
+        .mcp_servers
+        .clone()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|row| row.to_ascii_lowercase())
+        .collect::<Vec<_>>();
+    let mut missing_preferred = Vec::new();
+    let mut disconnected_preferred = Vec::new();
+    for provider in preferred_servers {
+        let any_enabled = enabled_servers
+            .iter()
+            .any(|server| server.name.eq_ignore_ascii_case(&provider));
+        if !any_enabled {
+            missing_preferred.push(provider.clone());
+            continue;
+        }
+        if !connected_servers.contains(&provider) {
+            disconnected_preferred.push(provider);
+        }
+    }
+    if !missing_preferred.is_empty() {
+        readiness.blocking_issues.push(CapabilityBlockingIssue {
+            code: "missing_mcp_servers".to_string(),
+            message: "Preferred MCP servers are not configured.".to_string(),
+            capability_ids: Vec::new(),
+            providers: missing_preferred.clone(),
+            tools: Vec::new(),
+        });
+        readiness.missing_servers.extend(missing_preferred);
+    }
+    if !disconnected_preferred.is_empty() {
+        readiness.blocking_issues.push(CapabilityBlockingIssue {
+            code: "disconnected_mcp_servers".to_string(),
+            message: "Preferred MCP servers are configured but disconnected.".to_string(),
+            capability_ids: Vec::new(),
+            providers: disconnected_preferred.clone(),
+            tools: Vec::new(),
+        });
+        readiness
+            .disconnected_servers
+            .extend(disconnected_preferred);
+    }
+    readiness.missing_servers.sort();
+    readiness.missing_servers.dedup();
+    readiness.disconnected_servers.sort();
+    readiness.disconnected_servers.dedup();
+    readiness.runnable = readiness.blocking_issues.is_empty();
+    Ok(readiness)
+}
+
 fn compose_issue_triage_objective(input: &CoderRunCreateInput) -> String {
     if let Some(objective) = input
         .objective
@@ -1276,6 +1365,31 @@ fn compose_issue_triage_objective(input: &CoderRunCreateInput) -> String {
         None => format!(
             "Start {:?} workflow for {}",
             input.workflow_mode, input.repo_binding.repo_slug
+        ),
+    }
+}
+
+fn compose_pr_review_objective(input: &CoderRunCreateInput) -> String {
+    if let Some(objective) = input
+        .objective
+        .as_deref()
+        .map(str::trim)
+        .filter(|row| !row.is_empty())
+    {
+        return objective.to_string();
+    }
+    match input.github_ref.as_ref() {
+        Some(reference) if matches!(reference.kind, CoderGithubRefKind::PullRequest) => format!(
+            "Review GitHub pull request #{} for {}",
+            reference.number, input.repo_binding.repo_slug
+        ),
+        Some(reference) => format!(
+            "Start {:?} workflow for #{} in {}",
+            reference.kind, reference.number, input.repo_binding.repo_slug
+        ),
+        None => format!(
+            "Review pull request activity for {}",
+            input.repo_binding.repo_slug
         ),
     }
 }
@@ -1419,6 +1533,105 @@ async fn seed_issue_triage_tasks(
     .map(|_| ())
 }
 
+async fn seed_pr_review_tasks(
+    state: AppState,
+    coder_run: &CoderRunRecord,
+) -> Result<(), StatusCode> {
+    let run_id = coder_run.linked_context_run_id.clone();
+    let workflow_id = "coder_pr_review".to_string();
+    let tasks = vec![
+        ContextTaskCreateInput {
+            command_id: Some(format!("coder:{run_id}:inspect_pull_request")),
+            id: Some(format!("review-inspect-{}", Uuid::new_v4().simple())),
+            task_type: "inspection".to_string(),
+            payload: json!({
+                "task_kind": "inspection",
+                "title": "Inspect pull request metadata and changed files",
+                "repo_slug": coder_run.repo_binding.repo_slug,
+                "github_ref": coder_run.github_ref,
+            }),
+            status: Some(ContextBlackboardTaskStatus::Runnable),
+            workflow_id: Some(workflow_id.clone()),
+            workflow_node_id: Some("inspect_pull_request".to_string()),
+            parent_task_id: None,
+            depends_on_task_ids: Vec::new(),
+            decision_ids: Vec::new(),
+            artifact_ids: Vec::new(),
+            priority: Some(18),
+            max_attempts: Some(1),
+        },
+        ContextTaskCreateInput {
+            command_id: Some(format!("coder:{run_id}:retrieve_memory")),
+            id: Some(format!("review-memory-{}", Uuid::new_v4().simple())),
+            task_type: "research".to_string(),
+            payload: json!({
+                "task_kind": "research",
+                "title": "Retrieve regression and review memory",
+                "memory_recipe": "pr_review",
+                "repo_slug": coder_run.repo_binding.repo_slug,
+                "github_ref": coder_run.github_ref,
+            }),
+            status: Some(ContextBlackboardTaskStatus::Pending),
+            workflow_id: Some(workflow_id.clone()),
+            workflow_node_id: Some("retrieve_memory".to_string()),
+            parent_task_id: None,
+            depends_on_task_ids: Vec::new(),
+            decision_ids: Vec::new(),
+            artifact_ids: Vec::new(),
+            priority: Some(16),
+            max_attempts: Some(2),
+        },
+        ContextTaskCreateInput {
+            command_id: Some(format!("coder:{run_id}:review_pull_request")),
+            id: Some(format!("review-analyze-{}", Uuid::new_v4().simple())),
+            task_type: "analysis".to_string(),
+            payload: json!({
+                "task_kind": "analysis",
+                "title": "Review risk, regressions, and missing coverage",
+                "repo_slug": coder_run.repo_binding.repo_slug,
+                "github_ref": coder_run.github_ref,
+            }),
+            status: Some(ContextBlackboardTaskStatus::Pending),
+            workflow_id: Some(workflow_id.clone()),
+            workflow_node_id: Some("review_pull_request".to_string()),
+            parent_task_id: None,
+            depends_on_task_ids: Vec::new(),
+            decision_ids: Vec::new(),
+            artifact_ids: Vec::new(),
+            priority: Some(14),
+            max_attempts: Some(2),
+        },
+        ContextTaskCreateInput {
+            command_id: Some(format!("coder:{run_id}:write_review_artifact")),
+            id: Some(format!("review-artifact-{}", Uuid::new_v4().simple())),
+            task_type: "implementation".to_string(),
+            payload: json!({
+                "task_kind": "implementation",
+                "title": "Write structured PR review artifact",
+                "artifact_type": "coder_pr_review_summary",
+                "repo_slug": coder_run.repo_binding.repo_slug,
+                "github_ref": coder_run.github_ref,
+            }),
+            status: Some(ContextBlackboardTaskStatus::Pending),
+            workflow_id: Some(workflow_id),
+            workflow_node_id: Some("write_review_artifact".to_string()),
+            parent_task_id: None,
+            depends_on_task_ids: Vec::new(),
+            decision_ids: Vec::new(),
+            artifact_ids: Vec::new(),
+            priority: Some(12),
+            max_attempts: Some(2),
+        },
+    ];
+    context_run_tasks_create(
+        State(state),
+        Path(run_id),
+        Json(ContextTaskCreateBatchInput { tasks }),
+    )
+    .await
+    .map(|_| ())
+}
+
 fn normalize_source_client(input: Option<&str>) -> Option<String> {
     input
         .map(str::trim)
@@ -1469,6 +1682,14 @@ pub(super) async fn coder_run_create(
     {
         return Err(StatusCode::BAD_REQUEST);
     }
+    if matches!(input.workflow_mode, CoderWorkflowMode::PrReview)
+        && !matches!(
+            input.github_ref.as_ref().map(|row| &row.kind),
+            Some(CoderGithubRefKind::PullRequest)
+        )
+    {
+        return Err(StatusCode::BAD_REQUEST);
+    }
     if matches!(input.workflow_mode, CoderWorkflowMode::IssueTriage) {
         let readiness = coder_issue_triage_readiness(&state, &input).await?;
         if !readiness.runnable {
@@ -1476,6 +1697,20 @@ pub(super) async fn coder_run_create(
                 StatusCode::CONFLICT,
                 Json(json!({
                     "error": "Coder issue triage is not ready to run",
+                    "code": "CODER_READINESS_BLOCKED",
+                    "readiness": readiness,
+                })),
+            )
+                .into_response());
+        }
+    }
+    if matches!(input.workflow_mode, CoderWorkflowMode::PrReview) {
+        let readiness = coder_pr_review_readiness(&state, &input).await?;
+        if !readiness.runnable {
+            return Ok((
+                StatusCode::CONFLICT,
+                Json(json!({
+                    "error": "Coder PR review is not ready to run",
                     "code": "CODER_READINESS_BLOCKED",
                     "readiness": readiness,
                 })),
@@ -1492,7 +1727,11 @@ pub(super) async fn coder_run_create(
     let linked_context_run_id = format!("ctx-{coder_run_id}");
     let create_input = ContextRunCreateInput {
         run_id: Some(linked_context_run_id.clone()),
-        objective: compose_issue_triage_objective(&input),
+        objective: match input.workflow_mode {
+            CoderWorkflowMode::IssueTriage => compose_issue_triage_objective(&input),
+            CoderWorkflowMode::PrReview => compose_pr_review_objective(&input),
+            _ => compose_issue_triage_objective(&input),
+        },
         run_type: Some(input.workflow_mode.as_context_run_type().to_string()),
         workspace: Some(derive_workspace(&input)),
         source_client: normalize_source_client(input.source_client.as_deref())
@@ -1592,6 +1831,16 @@ pub(super) async fn coder_run_create(
             run.why_next_step = Some(
                 "Normalize the issue reference, retrieve relevant memory, then inspect the repo."
                     .to_string(),
+            );
+            ensure_context_run_dir(&state, &linked_context_run_id).await?;
+            save_context_run_state(&state, &run).await?;
+        }
+        CoderWorkflowMode::PrReview => {
+            seed_pr_review_tasks(state.clone(), &record).await?;
+            let mut run = load_context_run_state(&state, &linked_context_run_id).await?;
+            run.status = ContextRunStatus::Planning;
+            run.why_next_step = Some(
+                "Inspect the pull request, retrieve review memory, then analyze risk.".to_string(),
             );
             ensure_context_run_dir(&state, &linked_context_run_id).await?;
             save_context_run_state(&state, &run).await?;

@@ -87,6 +87,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - factored run-scoped governed-memory capability issuance into shared helpers in `skills_memory.rs`, so coder workflows now derive their subject and tier policy through the same helper path as the generic memory routes instead of hand-building a parallel token shape
   - fixed cold-start global memory initialization so `/memory/*` routes create the memory DB parent directory before opening SQLite, which also keeps the shared governed-memory path reliable for coder promotion
   - normalized coder event payloads so `coder.run.created`, `coder.run.phase_changed`, `coder.artifact.added`, `coder.memory.candidate_added`, and `coder.memory.promoted` now share the same base run metadata and artifact events carry explicit `kind` context for consumers
+  - added a first `pr_review` coder workflow skeleton on top of context runs, including fail-closed GitHub pull-request readiness checks, seeded PR review tasks, and direct MCP GitHub capability bindings for pull-request list/get/comment actions
 
 - **Setup-understanding across channels and chat surfaces**:
   - added a shared deterministic setup-intent resolver at `POST /setup/understand` in `tandem-server`
