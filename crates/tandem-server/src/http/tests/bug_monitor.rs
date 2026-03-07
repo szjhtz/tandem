@@ -928,6 +928,141 @@ async fn bug_monitor_issue_draft_renders_repo_template() {
 }
 
 #[tokio::test]
+async fn bug_monitor_publish_and_recheck_fail_with_issue_draft_context() {
+    let state = test_state().await;
+    state
+        .put_bug_monitor_config(crate::BugMonitorConfig {
+            enabled: true,
+            repo: Some("acme/platform".to_string()),
+            workspace_root: Some("/tmp/acme".to_string()),
+            ..Default::default()
+        })
+        .await
+        .expect("config");
+
+    let app = app_router(state.clone());
+    let create_req = Request::builder()
+        .method("POST")
+        .uri("/bug-monitor/report")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "report": {
+                    "source": "desktop_logs",
+                    "title": "Build failure in CI",
+                    "detail": "event: orchestrator.run_failed\nprocess: tandem-engine\ncomponent: orchestrator",
+                    "excerpt": ["boom", "stack trace"],
+                }
+            })
+            .to_string(),
+        ))
+        .expect("request");
+    let create_resp = app.clone().oneshot(create_req).await.expect("response");
+    assert_eq!(create_resp.status(), StatusCode::OK);
+    let create_payload: Value = serde_json::from_slice(
+        &to_bytes(create_resp.into_body(), usize::MAX)
+            .await
+            .expect("create body"),
+    )
+    .expect("create json");
+    let draft_id = create_payload
+        .get("draft")
+        .and_then(|row| row.get("draft_id"))
+        .and_then(Value::as_str)
+        .expect("draft id")
+        .to_string();
+
+    let triage_req = Request::builder()
+        .method("POST")
+        .uri(format!("/bug-monitor/drafts/{draft_id}/triage-run"))
+        .body(Body::empty())
+        .expect("triage request");
+    let triage_resp = app
+        .clone()
+        .oneshot(triage_req)
+        .await
+        .expect("triage response");
+    assert_eq!(triage_resp.status(), StatusCode::OK);
+
+    let publish_req = Request::builder()
+        .method("POST")
+        .uri(format!("/bug-monitor/drafts/{draft_id}/publish"))
+        .body(Body::empty())
+        .expect("publish request");
+    let publish_resp = app
+        .clone()
+        .oneshot(publish_req)
+        .await
+        .expect("publish response");
+    assert_eq!(publish_resp.status(), StatusCode::BAD_REQUEST);
+    let publish_payload: Value = serde_json::from_slice(
+        &to_bytes(publish_resp.into_body(), usize::MAX)
+            .await
+            .expect("publish body"),
+    )
+    .expect("publish json");
+    assert_eq!(
+        publish_payload.get("code").and_then(Value::as_str),
+        Some("BUG_MONITOR_DRAFT_PUBLISH_FAILED")
+    );
+    assert_eq!(
+        publish_payload
+            .get("draft")
+            .and_then(|row| row.get("draft_id"))
+            .and_then(Value::as_str),
+        Some(draft_id.as_str())
+    );
+    assert!(publish_payload
+        .get("issue_draft")
+        .and_then(|row| row.get("rendered_body"))
+        .and_then(Value::as_str)
+        .is_some_and(|body| body.contains("Build failure in CI")));
+    assert_eq!(
+        publish_payload
+            .get("issue_draft_artifact")
+            .and_then(|row| row.get("artifact_type"))
+            .and_then(Value::as_str),
+        Some("bug_monitor_issue_draft")
+    );
+
+    let recheck_req = Request::builder()
+        .method("POST")
+        .uri(format!("/bug-monitor/drafts/{draft_id}/recheck-match"))
+        .body(Body::empty())
+        .expect("recheck request");
+    let recheck_resp = app
+        .clone()
+        .oneshot(recheck_req)
+        .await
+        .expect("recheck response");
+    assert_eq!(recheck_resp.status(), StatusCode::BAD_REQUEST);
+    let recheck_payload: Value = serde_json::from_slice(
+        &to_bytes(recheck_resp.into_body(), usize::MAX)
+            .await
+            .expect("recheck body"),
+    )
+    .expect("recheck json");
+    assert_eq!(
+        recheck_payload.get("code").and_then(Value::as_str),
+        Some("BUG_MONITOR_DRAFT_RECHECK_FAILED")
+    );
+    assert_eq!(
+        recheck_payload
+            .get("draft")
+            .and_then(|row| row.get("draft_id"))
+            .and_then(Value::as_str),
+        Some(draft_id.as_str())
+    );
+    assert_eq!(
+        recheck_payload
+            .get("issue_draft_artifact")
+            .and_then(|row| row.get("artifact_type"))
+            .and_then(Value::as_str),
+        Some("bug_monitor_issue_draft")
+    );
+}
+
+#[tokio::test]
 async fn bug_monitor_issue_draft_prefers_structured_triage_summary() {
     let state = test_state().await;
     state
