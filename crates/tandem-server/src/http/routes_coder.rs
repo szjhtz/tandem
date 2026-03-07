@@ -17,6 +17,10 @@ pub(super) fn apply(router: Router<AppState>) -> Router<AppState> {
             post(coder_triage_summary_create),
         )
         .route(
+            "/coder/runs/{id}/pr-review-summary",
+            post(coder_pr_review_summary_create),
+        )
+        .route(
             "/coder/runs/{id}/memory-candidates",
             get(coder_memory_candidate_list).post(coder_memory_candidate_create),
         )

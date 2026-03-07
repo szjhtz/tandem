@@ -325,6 +325,149 @@ async fn coder_pr_review_run_create_gets_seeded_review_tasks() {
 }
 
 #[tokio::test]
+async fn coder_pr_review_summary_create_writes_artifact_and_outcome() {
+    let state = test_state().await;
+    state
+        .capability_resolver
+        .refresh_builtin_bindings()
+        .await
+        .expect("refresh builtin bindings");
+    let app = app_router(state.clone());
+
+    let create_req = Request::builder()
+        .method("POST")
+        .uri("/coder/runs")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "coder_run_id": "coder-pr-review-summary",
+                "workflow_mode": "pr_review",
+                "repo_binding": {
+                    "project_id": "proj-engine",
+                    "workspace_id": "ws-tandem",
+                    "workspace_root": "/tmp/tandem-repo",
+                    "repo_slug": "evan/tandem",
+                    "default_branch": "main"
+                },
+                "github_ref": {
+                    "kind": "pull_request",
+                    "number": 89,
+                    "url": "https://github.com/evan/tandem/pull/89"
+                }
+            })
+            .to_string(),
+        ))
+        .expect("create request");
+    let create_resp = app
+        .clone()
+        .oneshot(create_req)
+        .await
+        .expect("create response");
+    assert_eq!(create_resp.status(), StatusCode::OK);
+    let create_payload: Value = serde_json::from_slice(
+        &to_bytes(create_resp.into_body(), usize::MAX)
+            .await
+            .expect("create body"),
+    )
+    .expect("create json");
+    let linked_context_run_id = create_payload
+        .get("coder_run")
+        .and_then(|row| row.get("linked_context_run_id"))
+        .and_then(Value::as_str)
+        .expect("linked context run id")
+        .to_string();
+
+    let summary_req = Request::builder()
+        .method("POST")
+        .uri("/coder/runs/coder-pr-review-summary/pr-review-summary")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "verdict": "changes_requested",
+                "summary": "The PR introduces a migration risk and is missing rollback coverage.",
+                "risk_level": "high",
+                "changed_files": ["crates/tandem-server/src/http/coder.rs"],
+                "blockers": ["Missing rollback test"],
+                "requested_changes": ["Add rollback coverage for the migration path"],
+                "regression_signals": [{
+                    "kind": "historical_failure_pattern",
+                    "summary": "Similar rollout failed without rollback coverage"
+                }],
+                "memory_hits_used": ["memory-hit-1"],
+                "notes": "Review memory suggests prior migration regressions."
+            })
+            .to_string(),
+        ))
+        .expect("summary request");
+    let summary_resp = app
+        .clone()
+        .oneshot(summary_req)
+        .await
+        .expect("summary response");
+    assert_eq!(summary_resp.status(), StatusCode::OK);
+    let summary_payload: Value = serde_json::from_slice(
+        &to_bytes(summary_resp.into_body(), usize::MAX)
+            .await
+            .expect("summary body"),
+    )
+    .expect("summary json");
+    assert_eq!(
+        summary_payload
+            .get("artifact")
+            .and_then(|row| row.get("artifact_type"))
+            .and_then(Value::as_str),
+        Some("coder_pr_review_summary")
+    );
+    let summary_artifact_id = summary_payload
+        .get("artifact")
+        .and_then(|row| row.get("id"))
+        .and_then(Value::as_str)
+        .expect("summary artifact id")
+        .to_string();
+    assert_eq!(
+        summary_payload
+            .get("generated_candidates")
+            .and_then(Value::as_array)
+            .map(|rows| rows
+                .iter()
+                .any(|row| { row.get("kind").and_then(Value::as_str) == Some("run_outcome") })),
+        Some(true)
+    );
+
+    let artifacts_req = Request::builder()
+        .method("GET")
+        .uri("/coder/runs/coder-pr-review-summary/artifacts")
+        .body(Body::empty())
+        .expect("artifacts request");
+    let artifacts_resp = app
+        .clone()
+        .oneshot(artifacts_req)
+        .await
+        .expect("artifacts response");
+    assert_eq!(artifacts_resp.status(), StatusCode::OK);
+    let artifacts_payload: Value = serde_json::from_slice(
+        &to_bytes(artifacts_resp.into_body(), usize::MAX)
+            .await
+            .expect("artifacts body"),
+    )
+    .expect("artifacts json");
+    assert!(artifacts_payload
+        .get("artifacts")
+        .and_then(Value::as_array)
+        .map(|rows| rows.iter().any(|row| {
+            row.get("id").and_then(Value::as_str) == Some(summary_artifact_id.as_str())
+                && row.get("artifact_type").and_then(Value::as_str)
+                    == Some("coder_pr_review_summary")
+        }))
+        .unwrap_or(false));
+
+    let run = load_context_run_state(&state, &linked_context_run_id)
+        .await
+        .expect("context run state");
+    assert_eq!(run.run_type, "coder_pr_review");
+}
+
+#[tokio::test]
 async fn coder_run_approve_and_cancel_project_context_run_controls() {
     let state = test_state().await;
     state

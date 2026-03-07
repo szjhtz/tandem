@@ -159,6 +159,28 @@ pub(super) struct CoderTriageSummaryCreateInput {
 }
 
 #[derive(Debug, Deserialize, Default)]
+pub(super) struct CoderPrReviewSummaryCreateInput {
+    #[serde(default)]
+    pub(super) verdict: Option<String>,
+    #[serde(default)]
+    pub(super) summary: Option<String>,
+    #[serde(default)]
+    pub(super) risk_level: Option<String>,
+    #[serde(default)]
+    pub(super) changed_files: Vec<String>,
+    #[serde(default)]
+    pub(super) blockers: Vec<String>,
+    #[serde(default)]
+    pub(super) requested_changes: Vec<String>,
+    #[serde(default)]
+    pub(super) regression_signals: Vec<Value>,
+    #[serde(default)]
+    pub(super) memory_hits_used: Vec<String>,
+    #[serde(default)]
+    pub(super) notes: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Default)]
 pub(super) struct CoderMemoryHitsQuery {
     #[serde(default)]
     pub(super) q: Option<String>,
@@ -2495,6 +2517,102 @@ pub(super) async fn coder_triage_summary_create(
             "artifact_path": run_outcome_artifact.path,
         }));
     }
+    Ok(Json(json!({
+        "ok": true,
+        "artifact": artifact,
+        "generated_candidates": generated_candidates,
+    })))
+}
+
+pub(super) async fn coder_pr_review_summary_create(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(input): Json<CoderPrReviewSummaryCreateInput>,
+) -> Result<Json<Value>, StatusCode> {
+    let record = load_coder_run_record(&state, &id).await?;
+    if !matches!(record.workflow_mode, CoderWorkflowMode::PrReview) {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let summary_id = format!("pr-review-summary-{}", Uuid::new_v4().simple());
+    let payload = json!({
+        "coder_run_id": record.coder_run_id,
+        "linked_context_run_id": record.linked_context_run_id,
+        "workflow_mode": record.workflow_mode,
+        "repo_binding": record.repo_binding,
+        "github_ref": record.github_ref,
+        "verdict": input.verdict,
+        "summary": input.summary,
+        "risk_level": input.risk_level,
+        "changed_files": input.changed_files,
+        "blockers": input.blockers,
+        "requested_changes": input.requested_changes,
+        "regression_signals": input.regression_signals,
+        "memory_hits_used": input.memory_hits_used,
+        "notes": input.notes,
+        "created_at_ms": crate::now_ms(),
+    });
+    let artifact = write_coder_artifact(
+        &state,
+        &record.linked_context_run_id,
+        &summary_id,
+        "coder_pr_review_summary",
+        "artifacts/pr_review.summary.json",
+        &payload,
+    )
+    .await?;
+    publish_coder_artifact_added(&state, &record, &artifact, Some("artifact_write"), {
+        let mut extra = serde_json::Map::new();
+        extra.insert("kind".to_string(), json!("pr_review_summary"));
+        if let Some(verdict) = input.verdict.clone() {
+            extra.insert("verdict".to_string(), json!(verdict));
+        }
+        if let Some(risk_level) = input.risk_level.clone() {
+            extra.insert("risk_level".to_string(), json!(risk_level));
+        }
+        extra
+    });
+
+    let mut generated_candidates = Vec::<Value>::new();
+    if let Some(summary_text) = input
+        .summary
+        .as_deref()
+        .map(str::trim)
+        .filter(|row| !row.is_empty())
+        .map(ToString::to_string)
+    {
+        let verdict = input
+            .verdict
+            .as_deref()
+            .map(str::trim)
+            .filter(|row| !row.is_empty())
+            .unwrap_or("reviewed");
+        let (run_outcome_id, run_outcome_artifact) = write_coder_memory_candidate_artifact(
+            &state,
+            &record,
+            CoderMemoryCandidateKind::RunOutcome,
+            Some(format!("PR review completed: {verdict}")),
+            Some("write_review_artifact".to_string()),
+            json!({
+                "workflow_mode": "pr_review",
+                "result": verdict,
+                "summary": summary_text,
+                "risk_level": input.risk_level,
+                "changed_files": input.changed_files,
+                "blockers": input.blockers,
+                "requested_changes": input.requested_changes,
+                "regression_signals": input.regression_signals,
+                "memory_hits_used": input.memory_hits_used,
+                "summary_artifact_path": artifact.path,
+            }),
+        )
+        .await?;
+        generated_candidates.push(json!({
+            "candidate_id": run_outcome_id,
+            "kind": "run_outcome",
+            "artifact_path": run_outcome_artifact.path,
+        }));
+    }
+
     Ok(Json(json!({
         "ok": true,
         "artifact": artifact,
