@@ -58,6 +58,7 @@
   - explicit `mcp_servers` requested by coder runs still remain hard requirements on top of that shared readiness check
   - coder memory promotion now reuses the generic governed-memory `memory_put` / `memory_promote` path instead of a coder-specific direct DB bridge
   - fixed cold-start global memory initialization so `/memory/*` routes create the memory DB parent directory before opening SQLite
+  - coder lifecycle and artifact events now share a normalized payload shape, and `coder.artifact.added` includes explicit `kind` metadata so desktop and other clients can consume coder events without per-event special casing
 
 - **Setup understanding now routes setup asks instead of treating them as ordinary chat**:
   - added a shared backend setup-understanding endpoint at `POST /setup/understand`

@@ -52,6 +52,7 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
   - Explicit `mcp_servers` requested by coder runs still remain hard requirements on top of that shared readiness check.
   - Coder memory promotion now reuses the generic governed-memory `memory_put` / `memory_promote` path instead of a coder-specific direct DB bridge.
   - Fixed cold-start global memory initialization so `/memory/*` routes create the memory DB parent directory before opening SQLite.
+  - Coder lifecycle and artifact events now share a normalized payload shape, and `coder.artifact.added` includes explicit `kind` metadata so desktop and other clients can consume coder events without per-event special casing.
 
 ## v0.4.1 (2026-03-07)
 

@@ -9,6 +9,7 @@ async fn coder_issue_triage_run_create_get_and_list() {
         .refresh_builtin_bindings()
         .await
         .expect("refresh builtin bindings");
+    let mut rx = state.event_bus.subscribe();
     let app = app_router(state.clone());
 
     let create_req = Request::builder()
@@ -127,6 +128,53 @@ async fn coder_issue_triage_run_create_get_and_list() {
             .and_then(|row| row.get("linked_context_run_id"))
             .and_then(Value::as_str),
         Some(linked_context_run_id.as_str())
+    );
+
+    let artifact_event = next_event_of_type(&mut rx, "coder.artifact.added").await;
+    assert_eq!(
+        artifact_event
+            .properties
+            .get("workflow_mode")
+            .and_then(Value::as_str),
+        Some("issue_triage")
+    );
+    assert_eq!(
+        artifact_event
+            .properties
+            .get("kind")
+            .and_then(Value::as_str),
+        Some("memory_hits")
+    );
+    assert_eq!(
+        artifact_event
+            .properties
+            .get("phase")
+            .and_then(Value::as_str),
+        Some("memory_retrieval")
+    );
+
+    let created_event = next_event_of_type(&mut rx, "coder.run.created").await;
+    assert_eq!(
+        created_event
+            .properties
+            .get("workflow_mode")
+            .and_then(Value::as_str),
+        Some("issue_triage")
+    );
+    assert_eq!(
+        created_event
+            .properties
+            .get("repo_binding")
+            .and_then(|row| row.get("repo_slug"))
+            .and_then(Value::as_str),
+        Some("evan/tandem")
+    );
+    assert_eq!(
+        created_event
+            .properties
+            .get("phase")
+            .and_then(Value::as_str),
+        Some("bootstrapping")
     );
 }
 
@@ -860,6 +908,59 @@ async fn coder_triage_summary_write_adds_summary_artifact() {
         .await
         .expect("summary body");
     let summary_payload: Value = serde_json::from_slice(&summary_body).expect("summary json");
+    let generated_candidates = summary_payload
+        .get("generated_candidates")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    assert!(generated_candidates
+        .iter()
+        .any(|row| { row.get("kind").and_then(Value::as_str) == Some("triage_memory") }));
+    assert!(generated_candidates
+        .iter()
+        .any(|row| { row.get("kind").and_then(Value::as_str) == Some("failure_pattern") }));
+    assert!(generated_candidates
+        .iter()
+        .any(|row| { row.get("kind").and_then(Value::as_str) == Some("run_outcome") }));
+
+    let candidates_req = Request::builder()
+        .method("GET")
+        .uri("/coder/runs/coder-run-summary/memory-candidates")
+        .body(Body::empty())
+        .expect("candidates request");
+    let candidates_resp = app
+        .clone()
+        .oneshot(candidates_req)
+        .await
+        .expect("candidates response");
+    assert_eq!(candidates_resp.status(), StatusCode::OK);
+    let candidates_body = to_bytes(candidates_resp.into_body(), usize::MAX)
+        .await
+        .expect("candidates body");
+    let candidates_payload: Value =
+        serde_json::from_slice(&candidates_body).expect("candidates json");
+    let failure_pattern_payload = candidates_payload
+        .get("candidates")
+        .and_then(Value::as_array)
+        .and_then(|rows| {
+            rows.iter()
+                .find(|row| row.get("kind").and_then(Value::as_str) == Some("failure_pattern"))
+        })
+        .and_then(|row| row.get("payload"))
+        .cloned()
+        .expect("failure pattern payload");
+    assert_eq!(
+        failure_pattern_payload.get("type").and_then(Value::as_str),
+        Some("failure.pattern")
+    );
+    assert_eq!(
+        failure_pattern_payload
+            .get("linked_issue_numbers")
+            .and_then(Value::as_array)
+            .and_then(|rows| rows.first())
+            .and_then(Value::as_u64),
+        Some(91)
+    );
     assert_eq!(
         summary_payload
             .get("generated_candidates")

@@ -85,6 +85,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - the HTTP test harness now seeds a connected GitHub MCP server/tool cache so coder tests exercise the real readiness/discovery path rather than a reduced fallback
   - unified coder memory promotion with the generic governed-memory contract: the coder adapter now reuses the shared `memory_put` / `memory_promote` implementation path instead of writing directly to the global memory database
   - fixed cold-start global memory initialization so `/memory/*` routes create the memory DB parent directory before opening SQLite, which also keeps the shared governed-memory path reliable for coder promotion
+  - normalized coder event payloads so `coder.run.created`, `coder.run.phase_changed`, `coder.artifact.added`, `coder.memory.candidate_added`, and `coder.memory.promoted` now share the same base run metadata and artifact events carry explicit `kind` context for consumers
 
 - **Setup-understanding across channels and chat surfaces**:
   - added a shared deterministic setup-intent resolver at `POST /setup/understand` in `tandem-server`

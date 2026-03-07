@@ -11,12 +11,11 @@ use super::*;
 use axum::extract::Path;
 use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 use std::path::PathBuf;
 use tandem_memory::{
-    types::MemoryTier, GovernedMemoryTier, MemoryCapabilities, MemoryCapabilityToken,
-    MemoryClassification, MemoryContentKind, MemoryManager, MemoryPartition, MemoryPromoteRequest,
-    MemoryPutRequest, PromotionReview,
+    types::MemoryTier, GovernedMemoryTier, MemoryClassification, MemoryContentKind, MemoryManager,
+    MemoryPartition, MemoryPromoteRequest, MemoryPutRequest, PromotionReview,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -314,11 +313,13 @@ async fn list_repo_memory_candidates(
                 .unwrap_or_default()
                 .to_string();
             hits.push(json!({
+                "source": "coder_memory_candidate",
                 "candidate_id": candidate_payload.get("candidate_id").cloned().unwrap_or(Value::Null),
                 "kind": candidate_kind,
                 "repo_slug": repo_slug,
                 "same_issue": same_issue,
                 "summary": candidate_payload.get("summary").cloned().unwrap_or(Value::Null),
+                "payload": candidate_payload.get("payload").cloned().unwrap_or(Value::Null),
                 "path": candidate_entry.path(),
                 "source_coder_run_id": candidate_payload.get("coder_run_id").cloned().unwrap_or(Value::Null),
                 "created_at_ms": candidate_payload.get("created_at_ms").cloned().unwrap_or(Value::Null),
@@ -342,6 +343,271 @@ async fn list_repo_memory_candidates(
     });
     hits.truncate(limit.clamp(1, 20));
     Ok(hits)
+}
+
+async fn list_repo_memory_candidate_payloads(
+    state: &AppState,
+    repo_slug: &str,
+    kind: Option<CoderMemoryCandidateKind>,
+    limit: usize,
+) -> Result<Vec<Value>, StatusCode> {
+    let mut hits = Vec::<Value>::new();
+    let root = coder_runs_root(state);
+    if !root.exists() {
+        return Ok(hits);
+    }
+    let mut dir = tokio::fs::read_dir(root)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    while let Ok(Some(entry)) = dir.next_entry().await {
+        if !entry
+            .file_type()
+            .await
+            .map(|row| row.is_file())
+            .unwrap_or(false)
+        {
+            continue;
+        }
+        let raw = tokio::fs::read_to_string(entry.path())
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        let Ok(record) = serde_json::from_str::<CoderRunRecord>(&raw) else {
+            continue;
+        };
+        if record.repo_binding.repo_slug != repo_slug {
+            continue;
+        }
+        let candidates_dir = coder_memory_candidates_dir(state, &record.linked_context_run_id);
+        if !candidates_dir.exists() {
+            continue;
+        }
+        let mut candidate_dir = tokio::fs::read_dir(candidates_dir)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        while let Ok(Some(candidate_entry)) = candidate_dir.next_entry().await {
+            if !candidate_entry
+                .file_type()
+                .await
+                .map(|row| row.is_file())
+                .unwrap_or(false)
+            {
+                continue;
+            }
+            let candidate_raw = tokio::fs::read_to_string(candidate_entry.path())
+                .await
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+            let Ok(candidate_payload) = serde_json::from_str::<Value>(&candidate_raw) else {
+                continue;
+            };
+            let parsed_kind = candidate_payload
+                .get("kind")
+                .cloned()
+                .and_then(|value| serde_json::from_value::<CoderMemoryCandidateKind>(value).ok());
+            if kind.is_some() && parsed_kind.as_ref() != kind.as_ref() {
+                continue;
+            }
+            hits.push(json!({
+                "candidate": candidate_payload,
+                "artifact_path": candidate_entry.path(),
+                "source_coder_run_id": record.coder_run_id,
+                "linked_context_run_id": record.linked_context_run_id,
+            }));
+        }
+    }
+    hits.sort_by(|a, b| {
+        b.get("candidate")
+            .and_then(|row| row.get("created_at_ms"))
+            .and_then(Value::as_u64)
+            .cmp(
+                &a.get("candidate")
+                    .and_then(|row| row.get("created_at_ms"))
+                    .and_then(Value::as_u64),
+            )
+    });
+    hits.truncate(limit.clamp(1, 50));
+    Ok(hits)
+}
+
+fn normalize_failure_pattern_text(values: &[Option<&str>]) -> String {
+    values
+        .iter()
+        .filter_map(|value| value.map(str::trim))
+        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_ascii_lowercase()
+}
+
+pub(crate) async fn query_failure_pattern_matches(
+    state: &AppState,
+    repo_slug: &str,
+    fingerprint: &str,
+    title: Option<&str>,
+    detail: Option<&str>,
+    excerpt: &[String],
+    limit: usize,
+) -> Result<Vec<Value>, StatusCode> {
+    let excerpt_text = (!excerpt.is_empty()).then(|| excerpt.join(" "));
+    let haystack = normalize_failure_pattern_text(&[
+        Some(fingerprint),
+        title,
+        detail,
+        excerpt_text.as_deref(),
+    ]);
+    let candidates = list_repo_memory_candidate_payloads(
+        state,
+        repo_slug,
+        Some(CoderMemoryCandidateKind::FailurePattern),
+        limit.saturating_mul(4).max(8),
+    )
+    .await?;
+    let mut matches = Vec::<Value>::new();
+    for row in candidates {
+        let candidate = row.get("candidate").cloned().unwrap_or(Value::Null);
+        let payload = candidate.get("payload").cloned().unwrap_or(Value::Null);
+        let candidate_fingerprint = payload
+            .get("fingerprint")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let summary = candidate
+            .get("summary")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let canonical_markers = payload
+            .get("canonical_markers")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        let symptoms = payload
+            .get("symptoms")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        let mut score = 0.0_f64;
+        let mut reasons = Vec::<String>::new();
+        if !candidate_fingerprint.is_empty() && candidate_fingerprint == fingerprint {
+            score += 100.0;
+            reasons.push("exact_fingerprint".to_string());
+        }
+        let marker_matches = canonical_markers
+            .iter()
+            .filter_map(Value::as_str)
+            .filter(|marker| {
+                let marker = marker.trim().to_ascii_lowercase();
+                !marker.is_empty() && haystack.contains(&marker)
+            })
+            .count();
+        if marker_matches > 0 {
+            score += (marker_matches as f64) * 10.0;
+            reasons.push(format!("marker_overlap:{marker_matches}"));
+        }
+        let symptom_matches = symptoms
+            .iter()
+            .filter_map(Value::as_str)
+            .filter(|symptom| {
+                let symptom = symptom.trim().to_ascii_lowercase();
+                !symptom.is_empty() && haystack.contains(&symptom)
+            })
+            .count();
+        if symptom_matches > 0 {
+            score += (symptom_matches as f64) * 4.0;
+            reasons.push(format!("symptom_overlap:{symptom_matches}"));
+        }
+        if !summary.is_empty() && haystack.contains(&summary.to_ascii_lowercase()) {
+            score += 2.0;
+            reasons.push("summary_overlap".to_string());
+        }
+        if score <= 0.0 {
+            continue;
+        }
+        matches.push(json!({
+            "candidate_id": candidate.get("candidate_id").cloned().unwrap_or(Value::Null),
+            "summary": candidate.get("summary").cloned().unwrap_or(Value::Null),
+            "fingerprint": payload.get("fingerprint").cloned().unwrap_or(Value::Null),
+            "linked_issue_numbers": payload.get("linked_issue_numbers").cloned().unwrap_or_else(|| json!([])),
+            "linked_pr_numbers": payload.get("linked_pr_numbers").cloned().unwrap_or_else(|| json!([])),
+            "artifact_refs": payload.get("artifact_refs").cloned().unwrap_or_else(|| json!([])),
+            "source_coder_run_id": row.get("source_coder_run_id").cloned().unwrap_or(Value::Null),
+            "linked_context_run_id": row.get("linked_context_run_id").cloned().unwrap_or(Value::Null),
+            "artifact_path": row.get("artifact_path").cloned().unwrap_or(Value::Null),
+            "score": score,
+            "match_reasons": reasons,
+        }));
+    }
+    matches.sort_by(|a, b| {
+        b.get("score")
+            .and_then(Value::as_f64)
+            .partial_cmp(&a.get("score").and_then(Value::as_f64))
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    matches.truncate(limit.clamp(1, 10));
+    Ok(matches)
+}
+
+fn build_failure_pattern_payload(
+    record: &CoderRunRecord,
+    summary_artifact_path: &str,
+    summary_text: &str,
+    affected_files: &[String],
+    duplicate_candidates: &[Value],
+    notes: Option<&str>,
+) -> Value {
+    let fallback_component = record
+        .repo_binding
+        .repo_slug
+        .rsplit('/')
+        .next()
+        .unwrap_or(record.repo_binding.repo_slug.as_str())
+        .to_string();
+    let fingerprint = if let Some(issue) = record.github_ref.as_ref() {
+        format!(
+            "{}-issue-{}",
+            record.repo_binding.repo_slug.replace('/', "-"),
+            issue.number
+        )
+    } else {
+        format!(
+            "{}-failure-pattern",
+            record.repo_binding.repo_slug.replace('/', "-")
+        )
+    };
+    let mut canonical_markers = summary_text
+        .split(|ch: char| !ch.is_alphanumeric() && ch != '_' && ch != '-')
+        .map(str::trim)
+        .filter(|token| token.len() >= 5)
+        .map(ToString::to_string)
+        .take(5)
+        .collect::<Vec<_>>();
+    if let Some(note_text) = notes.map(str::trim).filter(|value| !value.is_empty()) {
+        canonical_markers.push(note_text.to_string());
+    }
+    canonical_markers.sort();
+    canonical_markers.dedup();
+    let linked_issue_numbers = record
+        .github_ref
+        .as_ref()
+        .filter(|reference| matches!(reference.kind, CoderGithubRefKind::Issue))
+        .map(|reference| vec![reference.number])
+        .unwrap_or_default();
+    let affected_components = if affected_files.is_empty() {
+        vec![fallback_component]
+    } else {
+        affected_files.to_vec()
+    };
+    json!({
+        "type": "failure.pattern",
+        "repo_slug": record.repo_binding.repo_slug,
+        "fingerprint": fingerprint,
+        "symptoms": [summary_text],
+        "canonical_markers": canonical_markers,
+        "linked_issue_numbers": linked_issue_numbers,
+        "linked_pr_numbers": duplicate_candidates
+            .iter()
+            .filter_map(|candidate| candidate.get("kind").and_then(Value::as_str).filter(|kind| *kind == "pull_request").and_then(|_| candidate.get("number")).and_then(Value::as_u64))
+            .collect::<Vec<_>>(),
+        "affected_components": affected_components,
+        "artifact_refs": [summary_artifact_path],
+    })
 }
 
 async fn list_project_memory_hits(
@@ -430,6 +696,7 @@ async fn list_governed_memory_hits(
                 "memory_id": hit.record.id,
                 "score": hit.score,
                 "content": hit.record.content,
+                "metadata": hit.record.metadata,
                 "memory_visibility": hit.record.visibility,
                 "source_type": hit.record.source_type,
                 "run_id": hit.record.run_id,
@@ -482,6 +749,185 @@ async fn collect_issue_triage_memory_hits(
     });
     hits.truncate(limit.clamp(1, 20));
     Ok(hits)
+}
+
+fn value_string(value: Option<&Value>) -> Option<String> {
+    value
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+}
+
+fn value_string_array(value: Option<&Value>) -> Vec<String> {
+    value
+        .and_then(Value::as_array)
+        .map(|rows| {
+            rows.iter()
+                .filter_map(|row| row.as_str())
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default()
+}
+
+fn derive_failure_pattern_duplicate_matches(
+    hits: &[Value],
+    fingerprint: Option<&str>,
+    limit: usize,
+) -> Vec<Value> {
+    let normalized_fingerprint = fingerprint
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string);
+    let mut duplicates = Vec::<Value>::new();
+    let mut seen = HashSet::<String>::new();
+    for hit in hits {
+        let kind = value_string(hit.get("kind"))
+            .or_else(|| value_string(hit.get("metadata").and_then(|row| row.get("kind"))))
+            .unwrap_or_default();
+        if kind != "failure_pattern" {
+            continue;
+        }
+        let hit_fingerprint =
+            value_string(hit.get("payload").and_then(|row| row.get("fingerprint"))).or_else(|| {
+                value_string(
+                    hit.get("metadata")
+                        .and_then(|row| row.get("failure_pattern_fingerprint")),
+                )
+            });
+        let exact_fingerprint =
+            normalized_fingerprint.is_some() && normalized_fingerprint == hit_fingerprint;
+        let score = hit.get("score").and_then(Value::as_f64).unwrap_or(0.0);
+        if !exact_fingerprint && score <= 0.0 {
+            continue;
+        }
+        let identity = value_string(hit.get("candidate_id"))
+            .or_else(|| value_string(hit.get("memory_id")))
+            .or_else(|| hit_fingerprint.clone())
+            .unwrap_or_else(|| format!("failure-pattern-{}", duplicates.len()));
+        if !seen.insert(identity) {
+            continue;
+        }
+        duplicates.push(json!({
+            "kind": "failure_pattern",
+            "source": hit.get("source").cloned().unwrap_or(Value::Null),
+            "match_reason": if exact_fingerprint { "exact_fingerprint" } else { "historical_failure_pattern" },
+            "score": if exact_fingerprint { Value::from(1.0) } else { Value::from(score) },
+            "fingerprint": hit_fingerprint,
+            "summary": hit.get("summary").cloned().unwrap_or_else(|| hit.get("content").cloned().unwrap_or(Value::Null)),
+            "linked_issue_numbers": hit
+                .get("payload")
+                .and_then(|row| row.get("linked_issue_numbers"))
+                .cloned()
+                .or_else(|| hit.get("metadata").and_then(|row| row.get("linked_issue_numbers")).cloned())
+                .unwrap_or_else(|| Value::Array(Vec::new())),
+            "affected_components": hit
+                .get("payload")
+                .and_then(|row| row.get("affected_components"))
+                .cloned()
+                .unwrap_or_else(|| Value::Array(Vec::new())),
+            "candidate_id": hit.get("candidate_id").cloned().unwrap_or(Value::Null),
+            "memory_id": hit.get("memory_id").cloned().unwrap_or(Value::Null),
+            "artifact_path": hit.get("path").cloned().unwrap_or(Value::Null),
+            "run_id": hit.get("run_id").cloned().unwrap_or_else(|| hit.get("source_coder_run_id").cloned().unwrap_or(Value::Null)),
+        }));
+    }
+    duplicates.sort_by(|a, b| {
+        let a_exact = a
+            .get("match_reason")
+            .and_then(Value::as_str)
+            .map(|value| value == "exact_fingerprint")
+            .unwrap_or(false);
+        let b_exact = b
+            .get("match_reason")
+            .and_then(Value::as_str)
+            .map(|value| value == "exact_fingerprint")
+            .unwrap_or(false);
+        let a_score = a.get("score").and_then(Value::as_f64).unwrap_or(0.0);
+        let b_score = b.get("score").and_then(Value::as_f64).unwrap_or(0.0);
+        b_exact.cmp(&a_exact).then_with(|| {
+            b_score
+                .partial_cmp(&a_score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
+    });
+    duplicates.truncate(limit.clamp(1, 8));
+    duplicates
+}
+
+fn failure_pattern_fingerprint(
+    repo_slug: &str,
+    summary: &str,
+    affected_files: &[String],
+    canonical_markers: &[String],
+) -> String {
+    let mut parts = VecDeque::<String>::new();
+    parts.push_back(repo_slug.to_string());
+    parts.push_back(summary.trim().to_string());
+    for marker in canonical_markers {
+        parts.push_back(marker.trim().to_string());
+    }
+    for path in affected_files {
+        parts.push_back(path.trim().to_string());
+    }
+    crate::sha256_hex(&parts.into_iter().collect::<Vec<_>>().join("|"))
+}
+
+pub(crate) async fn find_failure_pattern_duplicates(
+    state: &AppState,
+    repo_slug: &str,
+    project_id: Option<&str>,
+    subjects: &[String],
+    query: &str,
+    fingerprint: Option<&str>,
+    limit: usize,
+) -> Result<Vec<Value>, StatusCode> {
+    let mut hits =
+        list_repo_memory_candidates(state, repo_slug, None, limit.saturating_mul(3)).await?;
+    if let Some(db) = super::skills_memory::open_global_memory_db().await {
+        let mut seen_memory_ids = HashSet::<String>::new();
+        for subject in subjects {
+            let Ok(results) = db
+                .search_global_memory(
+                    subject,
+                    query,
+                    limit.clamp(1, 20) as i64,
+                    project_id,
+                    None,
+                    None,
+                )
+                .await
+            else {
+                continue;
+            };
+            for hit in results {
+                if !seen_memory_ids.insert(hit.record.id.clone()) {
+                    continue;
+                }
+                hits.push(json!({
+                    "source": "governed_memory",
+                    "memory_id": hit.record.id,
+                    "score": hit.score,
+                    "content": hit.record.content,
+                    "metadata": hit.record.metadata,
+                    "memory_visibility": hit.record.visibility,
+                    "source_type": hit.record.source_type,
+                    "run_id": hit.record.run_id,
+                    "project_tag": hit.record.project_tag,
+                    "subject": subject,
+                    "created_at_ms": hit.record.created_at_ms,
+                }));
+            }
+        }
+    }
+    Ok(derive_failure_pattern_duplicate_matches(
+        &hits,
+        fingerprint,
+        limit,
+    ))
 }
 
 async fn write_coder_artifact(
@@ -554,16 +1000,27 @@ async fn write_coder_memory_candidate_artifact(
         &stored_payload,
     )
     .await?;
-    state.event_bus.publish(EngineEvent::new(
+    publish_coder_artifact_added(state, record, &artifact, Some("artifact_write"), {
+        let mut extra = serde_json::Map::new();
+        extra.insert("kind".to_string(), json!("memory_candidate"));
+        extra.insert("candidate_id".to_string(), json!(candidate_id));
+        extra.insert("candidate_kind".to_string(), json!(kind));
+        extra
+    });
+    publish_coder_run_event(
+        state,
         "coder.memory.candidate_added",
-        json!({
-            "coder_run_id": record.coder_run_id,
-            "linked_context_run_id": record.linked_context_run_id,
-            "candidate_id": candidate_id,
-            "kind": kind,
-            "artifact_path": artifact.path,
-        }),
-    ));
+        record,
+        Some("artifact_write"),
+        {
+            let mut extra = serde_json::Map::new();
+            extra.insert("candidate_id".to_string(), json!(candidate_id));
+            extra.insert("candidate_kind".to_string(), json!(kind));
+            extra.insert("artifact_id".to_string(), json!(artifact.id));
+            extra.insert("artifact_path".to_string(), json!(artifact.path));
+            extra
+        },
+    );
     Ok((candidate_id, artifact))
 }
 
@@ -591,33 +1048,6 @@ fn coder_memory_partition(record: &CoderRunRecord, tier: GovernedMemoryTier) -> 
         workspace_id: record.repo_binding.workspace_id.clone(),
         project_id: record.repo_binding.project_id.clone(),
         tier,
-    }
-}
-
-fn coder_memory_capability(
-    record: &CoderRunRecord,
-    partition: &MemoryPartition,
-) -> MemoryCapabilityToken {
-    MemoryCapabilityToken {
-        run_id: record.linked_context_run_id.clone(),
-        subject: record
-            .source_client
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .unwrap_or("default")
-            .to_string(),
-        org_id: partition.org_id.clone(),
-        workspace_id: partition.workspace_id.clone(),
-        project_id: partition.project_id.clone(),
-        memory: MemoryCapabilities {
-            read_tiers: vec![GovernedMemoryTier::Session, GovernedMemoryTier::Project],
-            write_tiers: vec![GovernedMemoryTier::Session],
-            promote_targets: vec![GovernedMemoryTier::Project],
-            require_review_for_promote: true,
-            allow_auto_use_tiers: vec![GovernedMemoryTier::Curated],
-        },
-        expires_at: u64::MAX,
     }
 }
 
@@ -656,6 +1086,59 @@ fn project_coder_phase(run: &ContextRunState) -> &'static str {
         }
     }
     "analysis"
+}
+
+fn coder_event_base(record: &CoderRunRecord) -> serde_json::Map<String, Value> {
+    let mut payload = serde_json::Map::new();
+    payload.insert("coder_run_id".to_string(), json!(record.coder_run_id));
+    payload.insert(
+        "linked_context_run_id".to_string(),
+        json!(record.linked_context_run_id),
+    );
+    payload.insert("workflow_mode".to_string(), json!(record.workflow_mode));
+    payload.insert("repo_binding".to_string(), json!(record.repo_binding));
+    payload.insert("github_ref".to_string(), json!(record.github_ref));
+    if let Some(source_client) = record
+        .source_client
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        payload.insert("source_client".to_string(), json!(source_client));
+    }
+    payload
+}
+
+fn publish_coder_run_event(
+    state: &AppState,
+    event_type: &str,
+    record: &CoderRunRecord,
+    phase: Option<&str>,
+    extra: serde_json::Map<String, Value>,
+) {
+    let mut payload = coder_event_base(record);
+    if let Some(phase) = phase {
+        payload.insert("phase".to_string(), json!(phase));
+    }
+    payload.extend(extra);
+    state
+        .event_bus
+        .publish(EngineEvent::new(event_type, Value::Object(payload)));
+}
+
+fn publish_coder_artifact_added(
+    state: &AppState,
+    record: &CoderRunRecord,
+    artifact: &ContextBlackboardArtifact,
+    phase: Option<&str>,
+    extra: serde_json::Map<String, Value>,
+) {
+    let mut payload = serde_json::Map::new();
+    payload.insert("artifact_id".to_string(), json!(artifact.id));
+    payload.insert("artifact_type".to_string(), json!(artifact.artifact_type));
+    payload.insert("artifact_path".to_string(), json!(artifact.path));
+    payload.extend(extra);
+    publish_coder_run_event(state, "coder.artifact.added", record, phase, payload);
 }
 
 async fn coder_issue_triage_readiness(
@@ -1030,16 +1513,12 @@ pub(super) async fn coder_run_create(
                 &payload,
             )
             .await?;
-            state.event_bus.publish(EngineEvent::new(
-                "coder.artifact.added",
-                json!({
-                    "coder_run_id": record.coder_run_id,
-                    "linked_context_run_id": record.linked_context_run_id,
-                    "artifact_id": artifact.id,
-                    "artifact_type": artifact.artifact_type,
-                    "artifact_path": artifact.path,
-                }),
-            ));
+            publish_coder_artifact_added(&state, &record, &artifact, Some("memory_retrieval"), {
+                let mut extra = serde_json::Map::new();
+                extra.insert("kind".to_string(), json!("memory_hits"));
+                extra.insert("query".to_string(), json!(memory_query));
+                extra
+            });
             let mut run = load_context_run_state(&state, &linked_context_run_id).await?;
             run.status = ContextRunStatus::Planning;
             run.why_next_step = Some(
@@ -1053,16 +1532,13 @@ pub(super) async fn coder_run_create(
     }
 
     let final_run = load_context_run_state(&state, &linked_context_run_id).await?;
-    state.event_bus.publish(EngineEvent::new(
+    publish_coder_run_event(
+        &state,
         "coder.run.created",
-        json!({
-            "coder_run_id": record.coder_run_id,
-            "linked_context_run_id": record.linked_context_run_id,
-            "workflow_mode": record.workflow_mode,
-            "repo_slug": record.repo_binding.repo_slug,
-            "github_ref": record.github_ref,
-        }),
-    ));
+        &record,
+        Some(project_coder_phase(&final_run)),
+        serde_json::Map::new(),
+    );
 
     Ok(Json(json!({
         "ok": true,
@@ -1162,17 +1638,18 @@ async fn coder_run_transition(
         )
         .await?;
     let run = load_context_run_state(state, &record.linked_context_run_id).await?;
-    state.event_bus.publish(EngineEvent::new(
+    publish_coder_run_event(
+        state,
         "coder.run.phase_changed",
-        json!({
-            "coder_run_id": record.coder_run_id,
-            "linked_context_run_id": record.linked_context_run_id,
-            "workflow_mode": record.workflow_mode,
-            "phase": project_coder_phase(&run),
-            "status": run.status,
-            "event_type": event_type,
-        }),
-    ));
+        record,
+        Some(project_coder_phase(&run)),
+        {
+            let mut extra = serde_json::Map::new();
+            extra.insert("status".to_string(), json!(run.status));
+            extra.insert("event_type".to_string(), json!(event_type));
+            extra
+        },
+    );
     Ok(json!({
         "ok": true,
         "event": outcome.event,
@@ -1333,7 +1810,12 @@ pub(super) async fn coder_memory_candidate_promote(
         build_governed_memory_content(&candidate_payload).ok_or(StatusCode::BAD_REQUEST)?;
     let to_tier = input.to_tier.unwrap_or(GovernedMemoryTier::Project);
     let session_partition = coder_memory_partition(&record, GovernedMemoryTier::Session);
-    let capability = coder_memory_capability(&record, &session_partition);
+    let capability = super::skills_memory::issue_run_memory_capability(
+        &record.linked_context_run_id,
+        record.source_client.as_deref(),
+        &session_partition,
+        super::skills_memory::RunMemoryCapabilityPolicy::CoderWorkflow,
+    );
     let artifact_refs = vec![format!(
         "context_run:{}/coder_memory/{}.json",
         record.linked_context_run_id, candidate_id
@@ -1415,18 +1897,29 @@ pub(super) async fn coder_memory_candidate_promote(
         }),
     )
     .await?;
-    state.event_bus.publish(EngineEvent::new(
+    publish_coder_artifact_added(&state, &record, &artifact, Some("artifact_write"), {
+        let mut extra = serde_json::Map::new();
+        extra.insert("kind".to_string(), json!("memory_promotion"));
+        extra.insert("candidate_id".to_string(), json!(candidate_id));
+        extra.insert("memory_id".to_string(), json!(put_response.id));
+        extra
+    });
+    publish_coder_run_event(
+        &state,
         "coder.memory.promoted",
-        json!({
-            "coder_run_id": record.coder_run_id,
-            "linked_context_run_id": record.linked_context_run_id,
-            "candidate_id": candidate_id,
-            "memory_id": put_response.id,
-            "promoted": promoted,
-            "to_tier": to_tier,
-            "artifact_path": artifact.path,
-        }),
-    ));
+        &record,
+        Some("artifact_write"),
+        {
+            let mut extra = serde_json::Map::new();
+            extra.insert("candidate_id".to_string(), json!(candidate_id));
+            extra.insert("memory_id".to_string(), json!(put_response.id));
+            extra.insert("promoted".to_string(), json!(promoted));
+            extra.insert("to_tier".to_string(), json!(to_tier));
+            extra.insert("artifact_id".to_string(), json!(artifact.id));
+            extra.insert("artifact_path".to_string(), json!(artifact.path));
+            extra
+        },
+    );
     Ok(Json(json!({
         "ok": true,
         "memory_id": put_response.id,
@@ -1473,16 +1966,11 @@ pub(super) async fn coder_triage_summary_create(
         &payload,
     )
     .await?;
-    state.event_bus.publish(EngineEvent::new(
-        "coder.artifact.added",
-        json!({
-            "coder_run_id": record.coder_run_id,
-            "linked_context_run_id": record.linked_context_run_id,
-            "artifact_id": artifact.id,
-            "artifact_type": artifact.artifact_type,
-            "artifact_path": artifact.path,
-        }),
-    ));
+    publish_coder_artifact_added(&state, &record, &artifact, Some("artifact_write"), {
+        let mut extra = serde_json::Map::new();
+        extra.insert("kind".to_string(), json!("triage_summary"));
+        extra
+    });
     let triage_summary = input
         .summary
         .as_deref()
@@ -1513,6 +2001,28 @@ pub(super) async fn coder_triage_summary_create(
             "candidate_id": triage_memory_id,
             "kind": "triage_memory",
             "artifact_path": triage_memory_artifact.path,
+        }));
+
+        let (failure_pattern_id, failure_pattern_artifact) = write_coder_memory_candidate_artifact(
+            &state,
+            &record,
+            CoderMemoryCandidateKind::FailurePattern,
+            Some(format!("Failure pattern: {summary_text}")),
+            Some("write_triage_artifact".to_string()),
+            build_failure_pattern_payload(
+                &record,
+                &artifact.path,
+                &summary_text,
+                &input.affected_files,
+                &input.duplicate_candidates,
+                input.notes.as_deref(),
+            ),
+        )
+        .await?;
+        generated_candidates.push(json!({
+            "candidate_id": failure_pattern_id,
+            "kind": "failure_pattern",
+            "artifact_path": failure_pattern_artifact.path,
         }));
 
         let outcome = if input.duplicate_candidates.is_empty() {
