@@ -244,6 +244,30 @@ function runNeedsAttention(run: CoderRunRecord): boolean {
   return status === "failed" || status === "blocked" || status === "awaiting_approval";
 }
 
+function relatedArtifactsForEvent(
+  artifacts: CoderArtifactRecord[],
+  stepId: string,
+  sourceEventId: string
+): CoderArtifactRecord[] {
+  return artifacts.filter((artifact) => {
+    if (sourceEventId && artifact.source_event_id === sourceEventId) return true;
+    if (stepId && artifact.step_id === stepId) return true;
+    return false;
+  });
+}
+
+function relatedArtifactsForTask(
+  artifacts: CoderArtifactRecord[],
+  task: RunTaskRecord
+): CoderArtifactRecord[] {
+  const taskIds = [
+    pickText(task.id),
+    pickText(task.workflow_node_id),
+    pickText(task.task_type),
+  ].filter((value) => value.length > 0);
+  return artifacts.filter((artifact) => !!artifact.step_id && taskIds.includes(artifact.step_id));
+}
+
 export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRunViewerProps) {
   const [runs, setRuns] = useState<CoderRunRecord[]>([]);
   const [runQuery, setRunQuery] = useState("");
@@ -1298,6 +1322,11 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
                             const eventText = runEventText(event);
                             const stepId = pickText(event.step_id);
                             const sourceEventId = pickText(event.event_id);
+                            const relatedArtifacts = relatedArtifactsForEvent(
+                              artifacts,
+                              stepId,
+                              sourceEventId
+                            ).slice(0, 3);
                             return (
                               <div key={runEventId(event, index)} className="flex gap-3">
                                 <div className="flex w-10 flex-col items-center">
@@ -1334,6 +1363,43 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
                                       </span>
                                     ) : null}
                                   </div>
+                                  {relatedArtifacts.length > 0 ? (
+                                    <div className="mt-3 rounded-2xl border border-border bg-surface-elevated/40 p-3">
+                                      <div className="mb-2 flex items-center justify-between gap-3">
+                                        <p className="text-[11px] uppercase tracking-[0.2em] text-text-muted">
+                                          Related artifacts
+                                        </p>
+                                        <span className="text-[11px] text-text-muted">
+                                          {relatedArtifacts.length}
+                                        </span>
+                                      </div>
+                                      <div className="space-y-2">
+                                        {relatedArtifacts.map((artifact) => (
+                                          <button
+                                            key={artifact.id}
+                                            type="button"
+                                            onClick={() => {
+                                              setSelectedArtifactPath(artifact.path);
+                                              setDetailTab("artifacts");
+                                            }}
+                                            className="w-full rounded-2xl border border-border bg-surface px-3 py-2 text-left transition-colors hover:bg-surface-elevated"
+                                          >
+                                            <div className="flex items-center justify-between gap-3">
+                                              <span className="text-sm font-medium text-text">
+                                                {artifact.artifact_type}
+                                              </span>
+                                              <span className="text-[11px] text-text-muted">
+                                                {formatTimestamp(artifact.ts_ms)}
+                                              </span>
+                                            </div>
+                                            <p className="mt-1 break-all font-mono text-[11px] text-text-muted">
+                                              {artifact.path}
+                                            </p>
+                                          </button>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  ) : null}
                                 </div>
                               </div>
                             );
@@ -1683,29 +1749,54 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
                             No validation tasks are recorded for this run.
                           </p>
                         ) : (
-                          validationTasks.map((task, index) => (
-                            <div
-                              key={String(task.id ?? task.command_id ?? `validation-task-${index}`)}
-                              className="rounded-2xl border border-border bg-surface-elevated/40 p-3"
-                            >
-                              <div className="flex items-center justify-between gap-3">
-                                <p className="text-sm font-medium text-text">{taskLabel(task)}</p>
-                                <span
-                                  className={cn(
-                                    "rounded-full border px-2 py-1 text-[10px] font-medium uppercase tracking-[0.18em]",
-                                    statusTone(pickText(task.status))
-                                  )}
-                                >
-                                  {pickText(task.status) || "unknown"}
-                                </span>
+                          validationTasks.map((task, index) => {
+                            const relatedArtifacts = relatedArtifactsForTask(artifacts, task).slice(
+                              0,
+                              3
+                            );
+                            return (
+                              <div
+                                key={String(
+                                  task.id ?? task.command_id ?? `validation-task-${index}`
+                                )}
+                                className="rounded-2xl border border-border bg-surface-elevated/40 p-3"
+                              >
+                                <div className="flex items-center justify-between gap-3">
+                                  <p className="text-sm font-medium text-text">{taskLabel(task)}</p>
+                                  <span
+                                    className={cn(
+                                      "rounded-full border px-2 py-1 text-[10px] font-medium uppercase tracking-[0.18em]",
+                                      statusTone(pickText(task.status))
+                                    )}
+                                  >
+                                    {pickText(task.status) || "unknown"}
+                                  </span>
+                                </div>
+                                <p className="mt-2 text-[11px] text-text-muted">
+                                  {pickText(task.workflow_node_id) ||
+                                    pickText(task.task_type) ||
+                                    "validation"}
+                                </p>
+                                {relatedArtifacts.length > 0 ? (
+                                  <div className="mt-3 flex flex-wrap gap-2">
+                                    {relatedArtifacts.map((artifact) => (
+                                      <button
+                                        key={artifact.id}
+                                        type="button"
+                                        onClick={() => {
+                                          setSelectedArtifactPath(artifact.path);
+                                          setDetailTab("validation");
+                                        }}
+                                        className="rounded-full border border-violet-500/20 bg-violet-500/10 px-2 py-1 text-[10px] uppercase tracking-[0.16em] text-violet-200"
+                                      >
+                                        {artifact.artifact_type}
+                                      </button>
+                                    ))}
+                                  </div>
+                                ) : null}
                               </div>
-                              <p className="mt-2 text-[11px] text-text-muted">
-                                {pickText(task.workflow_node_id) ||
-                                  pickText(task.task_type) ||
-                                  "validation"}
-                              </p>
-                            </div>
-                          ))
+                            );
+                          })
                         )}
                       </div>
 
