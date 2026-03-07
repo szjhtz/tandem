@@ -350,6 +350,216 @@ async fn coder_pr_review_run_create_gets_seeded_review_tasks() {
 }
 
 #[tokio::test]
+async fn coder_issue_fix_run_create_gets_seeded_fix_tasks() {
+    let state = test_state().await;
+    state
+        .capability_resolver
+        .refresh_builtin_bindings()
+        .await
+        .expect("refresh builtin bindings");
+    let app = app_router(state.clone());
+
+    let create_req = Request::builder()
+        .method("POST")
+        .uri("/coder/runs")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "coder_run_id": "coder-issue-fix-1",
+                "workflow_mode": "issue_fix",
+                "repo_binding": {
+                    "project_id": "proj-engine",
+                    "workspace_id": "ws-tandem",
+                    "workspace_root": "/tmp/tandem-repo",
+                    "repo_slug": "evan/tandem"
+                },
+                "github_ref": {
+                    "kind": "issue",
+                    "number": 77
+                }
+            })
+            .to_string(),
+        ))
+        .expect("create request");
+    let create_resp = app
+        .clone()
+        .oneshot(create_req)
+        .await
+        .expect("create response");
+    assert_eq!(create_resp.status(), StatusCode::OK);
+
+    let get_req = Request::builder()
+        .method("GET")
+        .uri("/coder/runs/coder-issue-fix-1")
+        .body(Body::empty())
+        .expect("get request");
+    let get_resp = app.clone().oneshot(get_req).await.expect("get response");
+    assert_eq!(get_resp.status(), StatusCode::OK);
+    let get_payload: Value = serde_json::from_slice(
+        &to_bytes(get_resp.into_body(), usize::MAX)
+            .await
+            .expect("get body"),
+    )
+    .expect("get json");
+    assert_eq!(
+        get_payload
+            .get("run")
+            .and_then(|row| row.get("run_type"))
+            .and_then(Value::as_str),
+        Some("coder_issue_fix")
+    );
+    assert!(get_payload
+        .get("run")
+        .and_then(|row| row.get("tasks"))
+        .and_then(Value::as_array)
+        .map(|rows| rows.iter().any(|row| {
+            row.get("workflow_node_id").and_then(Value::as_str) == Some("prepare_fix")
+        }))
+        .unwrap_or(false));
+    assert!(get_payload
+        .get("run")
+        .and_then(|row| row.get("tasks"))
+        .and_then(Value::as_array)
+        .map(|rows| rows.iter().any(|row| {
+            row.get("workflow_node_id").and_then(Value::as_str) == Some("validate_fix")
+        }))
+        .unwrap_or(false));
+    assert!(get_payload
+        .get("artifacts")
+        .and_then(Value::as_array)
+        .map(|rows| rows.iter().any(|row| {
+            row.get("artifact_type").and_then(Value::as_str) == Some("coder_memory_hits")
+        }))
+        .unwrap_or(false));
+    assert_eq!(
+        get_payload
+            .get("memory_hits")
+            .and_then(|row| row.get("query"))
+            .and_then(Value::as_str),
+        Some("evan/tandem issue #77")
+    );
+}
+
+#[tokio::test]
+async fn coder_issue_fix_summary_create_writes_artifact() {
+    let state = test_state().await;
+    state
+        .capability_resolver
+        .refresh_builtin_bindings()
+        .await
+        .expect("refresh builtin bindings");
+    let app = app_router(state.clone());
+
+    let create_req = Request::builder()
+        .method("POST")
+        .uri("/coder/runs")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "coder_run_id": "coder-issue-fix-summary",
+                "workflow_mode": "issue_fix",
+                "repo_binding": {
+                    "project_id": "proj-engine",
+                    "workspace_id": "ws-tandem",
+                    "workspace_root": "/tmp/tandem-repo",
+                    "repo_slug": "evan/tandem"
+                },
+                "github_ref": {
+                    "kind": "issue",
+                    "number": 78
+                }
+            })
+            .to_string(),
+        ))
+        .expect("create request");
+    let create_resp = app
+        .clone()
+        .oneshot(create_req)
+        .await
+        .expect("create response");
+    assert_eq!(create_resp.status(), StatusCode::OK);
+
+    let summary_req = Request::builder()
+        .method("POST")
+        .uri("/coder/runs/coder-issue-fix-summary/issue-fix-summary")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "summary": "Guard the missing config branch and add a regression test for startup recovery.",
+                "root_cause": "Nil config fallback was skipped during startup recovery.",
+                "fix_strategy": "add startup fallback guard",
+                "changed_files": [
+                    "crates/tandem-server/src/http/coder.rs",
+                    "crates/tandem-server/src/http/tests/coder.rs"
+                ],
+                "validation_steps": ["cargo test -p tandem-server coder_issue_fix_summary_create_writes_artifact -- --test-threads=1"],
+                "validation_results": [{
+                    "kind": "test",
+                    "status": "passed",
+                    "summary": "targeted coder issue-fix regression passed"
+                }],
+                "memory_hits_used": ["memory-hit-fix-1"],
+                "notes": "Prior triage memory pointed to startup recovery flow."
+            })
+            .to_string(),
+        ))
+        .expect("summary request");
+    let summary_resp = app
+        .clone()
+        .oneshot(summary_req)
+        .await
+        .expect("summary response");
+    assert_eq!(summary_resp.status(), StatusCode::OK);
+    let summary_payload: Value = serde_json::from_slice(
+        &to_bytes(summary_resp.into_body(), usize::MAX)
+            .await
+            .expect("summary body"),
+    )
+    .expect("summary json");
+    assert_eq!(
+        summary_payload
+            .get("artifact")
+            .and_then(|row| row.get("artifact_type"))
+            .and_then(Value::as_str),
+        Some("coder_issue_fix_summary")
+    );
+    assert_eq!(
+        summary_payload
+            .get("generated_candidates")
+            .and_then(Value::as_array)
+            .map(|rows| rows
+                .iter()
+                .any(|row| { row.get("kind").and_then(Value::as_str) == Some("run_outcome") })),
+        Some(true)
+    );
+
+    let artifacts_req = Request::builder()
+        .method("GET")
+        .uri("/coder/runs/coder-issue-fix-summary/artifacts")
+        .body(Body::empty())
+        .expect("artifacts request");
+    let artifacts_resp = app
+        .clone()
+        .oneshot(artifacts_req)
+        .await
+        .expect("artifacts response");
+    assert_eq!(artifacts_resp.status(), StatusCode::OK);
+    let artifacts_payload: Value = serde_json::from_slice(
+        &to_bytes(artifacts_resp.into_body(), usize::MAX)
+            .await
+            .expect("artifacts body"),
+    )
+    .expect("artifacts json");
+    assert!(artifacts_payload
+        .get("artifacts")
+        .and_then(Value::as_array)
+        .map(|rows| rows.iter().any(|row| {
+            row.get("artifact_type").and_then(Value::as_str) == Some("coder_issue_fix_summary")
+        }))
+        .unwrap_or(false));
+}
+
+#[tokio::test]
 async fn coder_pr_review_summary_create_writes_artifact_and_outcome() {
     let state = test_state().await;
     state

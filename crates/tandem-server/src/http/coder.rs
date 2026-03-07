@@ -184,6 +184,26 @@ pub(super) struct CoderPrReviewSummaryCreateInput {
 }
 
 #[derive(Debug, Deserialize, Default)]
+pub(super) struct CoderIssueFixSummaryCreateInput {
+    #[serde(default)]
+    pub(super) summary: Option<String>,
+    #[serde(default)]
+    pub(super) root_cause: Option<String>,
+    #[serde(default)]
+    pub(super) fix_strategy: Option<String>,
+    #[serde(default)]
+    pub(super) changed_files: Vec<String>,
+    #[serde(default)]
+    pub(super) validation_steps: Vec<String>,
+    #[serde(default)]
+    pub(super) validation_results: Vec<Value>,
+    #[serde(default)]
+    pub(super) memory_hits_used: Vec<String>,
+    #[serde(default)]
+    pub(super) notes: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Default)]
 pub(super) struct CoderMergeRecommendationSummaryCreateInput {
     #[serde(default)]
     pub(super) recommendation: Option<String>,
@@ -1634,6 +1654,28 @@ fn compose_pr_review_objective(input: &CoderRunCreateInput) -> String {
     }
 }
 
+fn compose_issue_fix_objective(input: &CoderRunCreateInput) -> String {
+    if let Some(objective) = input
+        .objective
+        .as_deref()
+        .map(str::trim)
+        .filter(|row| !row.is_empty())
+    {
+        return objective.to_string();
+    }
+    match input.github_ref.as_ref() {
+        Some(reference) if matches!(reference.kind, CoderGithubRefKind::Issue) => format!(
+            "Prepare a fix for GitHub issue #{} in {}",
+            reference.number, input.repo_binding.repo_slug
+        ),
+        Some(reference) => format!(
+            "Start {:?} workflow for #{} in {}",
+            reference.kind, reference.number, input.repo_binding.repo_slug
+        ),
+        None => format!("Prepare an issue fix for {}", input.repo_binding.repo_slug),
+    }
+}
+
 fn compose_merge_recommendation_objective(input: &CoderRunCreateInput) -> String {
     if let Some(objective) = input
         .objective
@@ -1901,6 +1943,135 @@ async fn seed_pr_review_tasks(
     .map(|_| ())
 }
 
+async fn seed_issue_fix_tasks(
+    state: AppState,
+    coder_run: &CoderRunRecord,
+) -> Result<(), StatusCode> {
+    let run_id = coder_run.linked_context_run_id.clone();
+    let workflow_id = "coder_issue_fix".to_string();
+    let retrieval_query = default_coder_memory_query(coder_run);
+    let memory_hits =
+        collect_issue_triage_memory_hits(&state, coder_run, &retrieval_query, 6).await?;
+    let issue_number = coder_run.github_ref.as_ref().map(|row| row.number);
+    let tasks = vec![
+        ContextTaskCreateInput {
+            command_id: Some(format!("coder:{run_id}:inspect_issue_context")),
+            id: Some(format!("fix-inspect-{}", Uuid::new_v4().simple())),
+            task_type: "inspection".to_string(),
+            payload: json!({
+                "task_kind": "inspection",
+                "title": "Inspect issue context and likely affected files",
+                "repo_slug": coder_run.repo_binding.repo_slug,
+                "github_ref": coder_run.github_ref,
+            }),
+            status: Some(ContextBlackboardTaskStatus::Runnable),
+            workflow_id: Some(workflow_id.clone()),
+            workflow_node_id: Some("inspect_issue_context".to_string()),
+            parent_task_id: None,
+            depends_on_task_ids: Vec::new(),
+            decision_ids: Vec::new(),
+            artifact_ids: Vec::new(),
+            priority: Some(20),
+            max_attempts: Some(1),
+        },
+        ContextTaskCreateInput {
+            command_id: Some(format!("coder:{run_id}:retrieve_memory")),
+            id: Some(format!("fix-memory-{}", Uuid::new_v4().simple())),
+            task_type: "research".to_string(),
+            payload: json!({
+                "task_kind": "research",
+                "title": "Retrieve prior triage, fix, and validation memory",
+                "memory_recipe": "issue_fix",
+                "repo_slug": coder_run.repo_binding.repo_slug,
+                "github_issue_number": issue_number,
+                "memory_hits": memory_hits,
+            }),
+            status: Some(ContextBlackboardTaskStatus::Pending),
+            workflow_id: Some(workflow_id.clone()),
+            workflow_node_id: Some("retrieve_memory".to_string()),
+            parent_task_id: None,
+            depends_on_task_ids: Vec::new(),
+            decision_ids: Vec::new(),
+            artifact_ids: Vec::new(),
+            priority: Some(18),
+            max_attempts: Some(2),
+        },
+        ContextTaskCreateInput {
+            command_id: Some(format!("coder:{run_id}:prepare_fix")),
+            id: Some(format!("fix-prepare-{}", Uuid::new_v4().simple())),
+            task_type: "research".to_string(),
+            payload: json!({
+                "task_kind": "research",
+                "title": "Prepare constrained fix plan and code changes",
+                "repo_slug": coder_run.repo_binding.repo_slug,
+                "github_issue_number": issue_number,
+            }),
+            status: Some(ContextBlackboardTaskStatus::Pending),
+            workflow_id: Some(workflow_id.clone()),
+            workflow_node_id: Some("prepare_fix".to_string()),
+            parent_task_id: None,
+            depends_on_task_ids: Vec::new(),
+            decision_ids: Vec::new(),
+            artifact_ids: Vec::new(),
+            priority: Some(16),
+            max_attempts: Some(2),
+        },
+        ContextTaskCreateInput {
+            command_id: Some(format!("coder:{run_id}:validate_fix")),
+            id: Some(format!("fix-validate-{}", Uuid::new_v4().simple())),
+            task_type: "validation".to_string(),
+            payload: json!({
+                "task_kind": "validation",
+                "title": "Run targeted validation for the proposed fix",
+                "repo_slug": coder_run.repo_binding.repo_slug,
+                "github_issue_number": issue_number,
+            }),
+            status: Some(ContextBlackboardTaskStatus::Pending),
+            workflow_id: Some(workflow_id.clone()),
+            workflow_node_id: Some("validate_fix".to_string()),
+            parent_task_id: None,
+            depends_on_task_ids: Vec::new(),
+            decision_ids: Vec::new(),
+            artifact_ids: Vec::new(),
+            priority: Some(14),
+            max_attempts: Some(2),
+        },
+        ContextTaskCreateInput {
+            command_id: Some(format!("coder:{run_id}:write_fix_artifact")),
+            id: Some(format!("fix-artifact-{}", Uuid::new_v4().simple())),
+            task_type: "implementation".to_string(),
+            payload: json!({
+                "task_kind": "implementation",
+                "title": "Write structured fix summary artifact",
+                "artifact_type": "coder_issue_fix_summary",
+                "repo_slug": coder_run.repo_binding.repo_slug,
+                "github_ref": coder_run.github_ref,
+                "output_target": {
+                    "path": format!("artifacts/{run_id}/issue_fix.summary.json"),
+                    "kind": "artifact",
+                    "operation": "write"
+                }
+            }),
+            status: Some(ContextBlackboardTaskStatus::Pending),
+            workflow_id: Some(workflow_id),
+            workflow_node_id: Some("write_fix_artifact".to_string()),
+            parent_task_id: None,
+            depends_on_task_ids: Vec::new(),
+            decision_ids: Vec::new(),
+            artifact_ids: Vec::new(),
+            priority: Some(12),
+            max_attempts: Some(2),
+        },
+    ];
+    context_run_tasks_create(
+        State(state),
+        Path(run_id),
+        Json(ContextTaskCreateBatchInput { tasks }),
+    )
+    .await
+    .map(|_| ())
+}
+
 async fn seed_merge_recommendation_tasks(
     state: AppState,
     coder_run: &CoderRunRecord,
@@ -2045,6 +2216,14 @@ pub(super) async fn coder_run_create(
     {
         return Err(StatusCode::BAD_REQUEST);
     }
+    if matches!(input.workflow_mode, CoderWorkflowMode::IssueFix)
+        && !matches!(
+            input.github_ref.as_ref().map(|row| &row.kind),
+            Some(CoderGithubRefKind::Issue)
+        )
+    {
+        return Err(StatusCode::BAD_REQUEST);
+    }
     if matches!(input.workflow_mode, CoderWorkflowMode::PrReview)
         && !matches!(
             input.github_ref.as_ref().map(|row| &row.kind),
@@ -2061,13 +2240,20 @@ pub(super) async fn coder_run_create(
     {
         return Err(StatusCode::BAD_REQUEST);
     }
-    if matches!(input.workflow_mode, CoderWorkflowMode::IssueTriage) {
+    if matches!(
+        input.workflow_mode,
+        CoderWorkflowMode::IssueTriage | CoderWorkflowMode::IssueFix
+    ) {
         let readiness = coder_issue_triage_readiness(&state, &input).await?;
         if !readiness.runnable {
             return Ok((
                 StatusCode::CONFLICT,
                 Json(json!({
-                    "error": "Coder issue triage is not ready to run",
+                    "error": if matches!(input.workflow_mode, CoderWorkflowMode::IssueFix) {
+                        "Coder issue fix is not ready to run"
+                    } else {
+                        "Coder issue triage is not ready to run"
+                    },
                     "code": "CODER_READINESS_BLOCKED",
                     "readiness": readiness,
                 })),
@@ -2114,11 +2300,11 @@ pub(super) async fn coder_run_create(
         run_id: Some(linked_context_run_id.clone()),
         objective: match input.workflow_mode {
             CoderWorkflowMode::IssueTriage => compose_issue_triage_objective(&input),
+            CoderWorkflowMode::IssueFix => compose_issue_fix_objective(&input),
             CoderWorkflowMode::PrReview => compose_pr_review_objective(&input),
             CoderWorkflowMode::MergeRecommendation => {
                 compose_merge_recommendation_objective(&input)
             }
-            _ => compose_issue_triage_objective(&input),
         },
         run_type: Some(input.workflow_mode.as_context_run_type().to_string()),
         workspace: Some(derive_workspace(&input)),
@@ -2223,6 +2409,44 @@ pub(super) async fn coder_run_create(
             ensure_context_run_dir(&state, &linked_context_run_id).await?;
             save_context_run_state(&state, &run).await?;
         }
+        CoderWorkflowMode::IssueFix => {
+            seed_issue_fix_tasks(state.clone(), &record).await?;
+            let memory_query = default_coder_memory_query(&record);
+            let memory_hits =
+                collect_issue_triage_memory_hits(&state, &record, &memory_query, 8).await?;
+            let artifact = write_coder_artifact(
+                &state,
+                &record.linked_context_run_id,
+                &format!("issue-fix-memory-hits-{}", Uuid::new_v4().simple()),
+                "coder_memory_hits",
+                "artifacts/memory_hits.json",
+                &json!({
+                    "coder_run_id": record.coder_run_id,
+                    "linked_context_run_id": record.linked_context_run_id,
+                    "query": memory_query,
+                    "hits": memory_hits,
+                    "created_at_ms": crate::now_ms(),
+                }),
+            )
+            .await?;
+            publish_coder_artifact_added(&state, &record, &artifact, Some("memory_retrieval"), {
+                let mut extra = serde_json::Map::new();
+                extra.insert("kind".to_string(), json!("memory_hits"));
+                extra.insert(
+                    "query".to_string(),
+                    json!(default_coder_memory_query(&record)),
+                );
+                extra
+            });
+            let mut run = load_context_run_state(&state, &linked_context_run_id).await?;
+            run.status = ContextRunStatus::Planning;
+            run.why_next_step = Some(
+                "Inspect the issue context, retrieve fix memory, then prepare and validate a constrained patch."
+                    .to_string(),
+            );
+            ensure_context_run_dir(&state, &linked_context_run_id).await?;
+            save_context_run_state(&state, &run).await?;
+        }
         CoderWorkflowMode::PrReview => {
             seed_pr_review_tasks(state.clone(), &record).await?;
             let memory_query = default_coder_memory_query(&record);
@@ -2301,7 +2525,6 @@ pub(super) async fn coder_run_create(
             ensure_context_run_dir(&state, &linked_context_run_id).await?;
             save_context_run_state(&state, &run).await?;
         }
-        _ => {}
     }
 
     let final_run = load_context_run_state(&state, &linked_context_run_id).await?;
@@ -2387,6 +2610,7 @@ pub(super) async fn coder_run_get(
     let memory_hits = if matches!(
         record.workflow_mode,
         CoderWorkflowMode::IssueTriage
+            | CoderWorkflowMode::IssueFix
             | CoderWorkflowMode::PrReview
             | CoderWorkflowMode::MergeRecommendation
     ) {
@@ -3031,6 +3255,98 @@ pub(super) async fn coder_pr_review_summary_create(
                 "blockers": input.blockers,
                 "requested_changes": input.requested_changes,
                 "regression_signals": input.regression_signals,
+                "memory_hits_used": input.memory_hits_used,
+                "summary_artifact_path": artifact.path,
+            }),
+        )
+        .await?;
+        generated_candidates.push(json!({
+            "candidate_id": run_outcome_id,
+            "kind": "run_outcome",
+            "artifact_path": run_outcome_artifact.path,
+        }));
+    }
+
+    Ok(Json(json!({
+        "ok": true,
+        "artifact": artifact,
+        "generated_candidates": generated_candidates,
+    })))
+}
+
+pub(super) async fn coder_issue_fix_summary_create(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(input): Json<CoderIssueFixSummaryCreateInput>,
+) -> Result<Json<Value>, StatusCode> {
+    let record = load_coder_run_record(&state, &id).await?;
+    if !matches!(record.workflow_mode, CoderWorkflowMode::IssueFix) {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let summary_id = format!("issue-fix-summary-{}", Uuid::new_v4().simple());
+    let payload = json!({
+        "coder_run_id": record.coder_run_id,
+        "linked_context_run_id": record.linked_context_run_id,
+        "workflow_mode": record.workflow_mode,
+        "repo_binding": record.repo_binding,
+        "github_ref": record.github_ref,
+        "summary": input.summary,
+        "root_cause": input.root_cause,
+        "fix_strategy": input.fix_strategy,
+        "changed_files": input.changed_files,
+        "validation_steps": input.validation_steps,
+        "validation_results": input.validation_results,
+        "memory_hits_used": input.memory_hits_used,
+        "notes": input.notes,
+        "created_at_ms": crate::now_ms(),
+    });
+    let artifact = write_coder_artifact(
+        &state,
+        &record.linked_context_run_id,
+        &summary_id,
+        "coder_issue_fix_summary",
+        "artifacts/issue_fix.summary.json",
+        &payload,
+    )
+    .await?;
+    publish_coder_artifact_added(&state, &record, &artifact, Some("artifact_write"), {
+        let mut extra = serde_json::Map::new();
+        extra.insert("kind".to_string(), json!("issue_fix_summary"));
+        if let Some(fix_strategy) = input.fix_strategy.clone() {
+            extra.insert("fix_strategy".to_string(), json!(fix_strategy));
+        }
+        extra
+    });
+
+    let mut generated_candidates = Vec::<Value>::new();
+    if let Some(summary_text) = input
+        .summary
+        .as_deref()
+        .map(str::trim)
+        .filter(|row| !row.is_empty())
+        .map(ToString::to_string)
+    {
+        let strategy = input
+            .fix_strategy
+            .as_deref()
+            .map(str::trim)
+            .filter(|row| !row.is_empty())
+            .unwrap_or("applied");
+        let (run_outcome_id, run_outcome_artifact) = write_coder_memory_candidate_artifact(
+            &state,
+            &record,
+            CoderMemoryCandidateKind::RunOutcome,
+            Some(format!("Issue fix prepared: {strategy}")),
+            Some("write_fix_artifact".to_string()),
+            json!({
+                "workflow_mode": "issue_fix",
+                "result": strategy,
+                "summary": summary_text,
+                "root_cause": input.root_cause,
+                "fix_strategy": input.fix_strategy,
+                "changed_files": input.changed_files,
+                "validation_steps": input.validation_steps,
+                "validation_results": input.validation_results,
                 "memory_hits_used": input.memory_hits_used,
                 "summary_artifact_path": artifact.path,
             }),

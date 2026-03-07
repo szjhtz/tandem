@@ -21,6 +21,10 @@ pub(super) fn apply(router: Router<AppState>) -> Router<AppState> {
             post(coder_pr_review_summary_create),
         )
         .route(
+            "/coder/runs/{id}/issue-fix-summary",
+            post(coder_issue_fix_summary_create),
+        )
+        .route(
             "/coder/runs/{id}/merge-recommendation-summary",
             post(coder_merge_recommendation_summary_create),
         )

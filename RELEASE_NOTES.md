@@ -104,6 +104,7 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
   - Added the first `merge_recommendation` coder workflow skeleton with PR-backed readiness checks, seeded merge-assessment tasks, bootstrapped `coder_memory_hits`, and `POST /coder/runs/{id}/merge-recommendation-summary` for structured merge recommendation artifacts.
   - Merge recommendation summaries now emit reusable `merge_recommendation_memory` and `run_outcome` candidates so later runs can reuse prior merge guidance without needing a separate manual candidate write.
   - Added a dedicated `merge_recommendation_memory` candidate kind so merge guidance is stored as reusable recommendation knowledge instead of only a generic run outcome.
+  - Added the first `issue_fix` coder workflow skeleton with issue-backed readiness checks, seeded fix and validation tasks, bootstrapped `coder_memory_hits`, and `POST /coder/runs/{id}/issue-fix-summary` for structured fix summary artifacts that emit reusable `run_outcome` memory.
 
 ## v0.4.1 (2026-03-07)
 
