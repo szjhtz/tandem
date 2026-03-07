@@ -110,6 +110,7 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
   - `merge_recommendation` memory retrieval now ranks same-PR `merge_recommendation_memory`, merge run outcomes, and regression signals ahead of generic review memory so merge runs surface prior merge guidance first.
   - `pr_review` memory retrieval now ranks same-PR `review_memory`, `regression_signal`, and PR review outcomes ahead of generic triage memory so review runs surface prior review guidance first.
   - `issue_fix` summary writes now also emit a dedicated `coder_validation_report` artifact when validation steps or results are provided, so validation evidence is consumable without parsing the fix summary.
+  - Repo-scoped coder memory retrieval is now GitHub-ref-aware, so `pr_review` and `merge_recommendation` get a true same-PR boost instead of only issue-number or recency bias.
 
 ## v0.4.1 (2026-03-07)
 

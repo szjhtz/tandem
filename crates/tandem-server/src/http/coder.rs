@@ -315,7 +315,7 @@ async fn open_semantic_memory_manager() -> Option<MemoryManager> {
 async fn list_repo_memory_candidates(
     state: &AppState,
     repo_slug: &str,
-    github_issue_number: Option<u64>,
+    github_ref: Option<&CoderGithubRef>,
     limit: usize,
 ) -> Result<Vec<Value>, StatusCode> {
     let mut hits = Vec::<Value>::new();
@@ -366,13 +366,25 @@ async fn list_repo_memory_candidates(
             let Ok(candidate_payload) = serde_json::from_str::<Value>(&candidate_raw) else {
                 continue;
             };
-            let same_issue = github_issue_number.is_some_and(|issue_number| {
+            let same_ref = github_ref.is_some_and(|reference| {
                 candidate_payload
                     .get("github_ref")
                     .and_then(|row| row.get("number"))
                     .and_then(Value::as_u64)
-                    == Some(issue_number)
+                    == Some(reference.number)
+                    && candidate_payload
+                        .get("github_ref")
+                        .and_then(|row| row.get("kind"))
+                        .and_then(Value::as_str)
+                        == Some(match reference.kind {
+                            CoderGithubRefKind::Issue => "issue",
+                            CoderGithubRefKind::PullRequest => "pull_request",
+                        })
             });
+            let same_issue = same_ref
+                && github_ref
+                    .map(|reference| matches!(reference.kind, CoderGithubRefKind::Issue))
+                    .unwrap_or(false);
             let candidate_kind = candidate_payload
                 .get("kind")
                 .and_then(Value::as_str)
@@ -383,6 +395,7 @@ async fn list_repo_memory_candidates(
                 "candidate_id": candidate_payload.get("candidate_id").cloned().unwrap_or(Value::Null),
                 "kind": candidate_kind,
                 "repo_slug": repo_slug,
+                "same_ref": same_ref,
                 "same_issue": same_issue,
                 "summary": candidate_payload.get("summary").cloned().unwrap_or(Value::Null),
                 "payload": candidate_payload.get("payload").cloned().unwrap_or(Value::Null),
@@ -393,6 +406,8 @@ async fn list_repo_memory_candidates(
         }
     }
     hits.sort_by(|a, b| {
+        let a_same_ref = a.get("same_ref").and_then(Value::as_bool).unwrap_or(false);
+        let b_same_ref = b.get("same_ref").and_then(Value::as_bool).unwrap_or(false);
         let a_same_issue = a
             .get("same_issue")
             .and_then(Value::as_bool)
@@ -401,11 +416,14 @@ async fn list_repo_memory_candidates(
             .get("same_issue")
             .and_then(Value::as_bool)
             .unwrap_or(false);
-        b_same_issue.cmp(&a_same_issue).then_with(|| {
-            b.get("created_at_ms")
-                .and_then(Value::as_u64)
-                .cmp(&a.get("created_at_ms").and_then(Value::as_u64))
-        })
+        b_same_ref
+            .cmp(&a_same_ref)
+            .then_with(|| b_same_issue.cmp(&a_same_issue))
+            .then_with(|| {
+                b.get("created_at_ms")
+                    .and_then(Value::as_u64)
+                    .cmp(&a.get("created_at_ms").and_then(Value::as_u64))
+            })
     });
     hits.truncate(limit.clamp(1, 20));
     Ok(hits)
@@ -882,14 +900,13 @@ async fn collect_issue_triage_memory_hits(
     query: &str,
     limit: usize,
 ) -> Result<Vec<Value>, StatusCode> {
-    let issue_number = record
-        .github_ref
-        .as_ref()
-        .filter(|reference| matches!(reference.kind, CoderGithubRefKind::Issue))
-        .map(|row| row.number);
-    let mut hits =
-        list_repo_memory_candidates(state, &record.repo_binding.repo_slug, issue_number, limit)
-            .await?;
+    let mut hits = list_repo_memory_candidates(
+        state,
+        &record.repo_binding.repo_slug,
+        record.github_ref.as_ref(),
+        limit,
+    )
+    .await?;
     let mut project_hits = list_project_memory_hits(&record.repo_binding, query, limit).await;
     let mut governed_hits = list_governed_memory_hits(record, query, limit).await;
     hits.append(&mut project_hits);
@@ -900,6 +917,8 @@ async fn collect_issue_triage_memory_hits(
 }
 
 fn compare_coder_memory_hits(record: &CoderRunRecord, a: &Value, b: &Value) -> std::cmp::Ordering {
+    let a_same_ref = a.get("same_ref").and_then(Value::as_bool).unwrap_or(false);
+    let b_same_ref = b.get("same_ref").and_then(Value::as_bool).unwrap_or(false);
     let a_same_issue = a
         .get("same_issue")
         .and_then(Value::as_bool)
@@ -910,8 +929,9 @@ fn compare_coder_memory_hits(record: &CoderRunRecord, a: &Value, b: &Value) -> s
         .unwrap_or(false);
     let a_score = a.get("score").and_then(Value::as_f64).unwrap_or(0.0);
     let b_score = b.get("score").and_then(Value::as_f64).unwrap_or(0.0);
-    let base = b_same_issue
-        .cmp(&a_same_issue)
+    let base = b_same_ref
+        .cmp(&a_same_ref)
+        .then_with(|| b_same_issue.cmp(&a_same_issue))
         .then_with(|| {
             b_score
                 .partial_cmp(&a_score)
@@ -2691,14 +2711,13 @@ pub(super) async fn coder_run_get(
     } else {
         Vec::new()
     };
-    let issue_number = record
-        .github_ref
-        .as_ref()
-        .filter(|reference| matches!(reference.kind, CoderGithubRefKind::Issue))
-        .map(|row| row.number);
-    let memory_candidates =
-        list_repo_memory_candidates(&state, &record.repo_binding.repo_slug, issue_number, 20)
-            .await?;
+    let memory_candidates = list_repo_memory_candidates(
+        &state,
+        &record.repo_binding.repo_slug,
+        record.github_ref.as_ref(),
+        20,
+    )
+    .await?;
     Ok(Json(json!({
         "coder_run": coder_run_payload(&record, &run),
         "run": run,
@@ -2845,14 +2864,13 @@ pub(super) async fn coder_memory_candidate_list(
     Path(id): Path<String>,
 ) -> Result<Json<Value>, StatusCode> {
     let record = load_coder_run_record(&state, &id).await?;
-    let issue_number = record
-        .github_ref
-        .as_ref()
-        .filter(|reference| matches!(reference.kind, CoderGithubRefKind::Issue))
-        .map(|row| row.number);
-    let candidates =
-        list_repo_memory_candidates(&state, &record.repo_binding.repo_slug, issue_number, 20)
-            .await?;
+    let candidates = list_repo_memory_candidates(
+        &state,
+        &record.repo_binding.repo_slug,
+        record.github_ref.as_ref(),
+        20,
+    )
+    .await?;
     Ok(Json(json!({
         "coder_run_id": record.coder_run_id,
         "candidates": candidates,
@@ -3224,6 +3242,59 @@ pub(super) async fn coder_pr_review_summary_create(
         extra
     });
 
+    let review_evidence_artifact = if !input.changed_files.is_empty()
+        || !input.blockers.is_empty()
+        || !input.requested_changes.is_empty()
+        || !input.regression_signals.is_empty()
+    {
+        let evidence_id = format!("pr-review-evidence-{}", Uuid::new_v4().simple());
+        let evidence_payload = json!({
+            "coder_run_id": record.coder_run_id,
+            "linked_context_run_id": record.linked_context_run_id,
+            "workflow_mode": record.workflow_mode,
+            "repo_binding": record.repo_binding,
+            "github_ref": record.github_ref,
+            "verdict": input.verdict,
+            "risk_level": input.risk_level,
+            "changed_files": input.changed_files,
+            "blockers": input.blockers,
+            "requested_changes": input.requested_changes,
+            "regression_signals": input.regression_signals,
+            "memory_hits_used": input.memory_hits_used,
+            "summary_artifact_path": artifact.path,
+            "created_at_ms": crate::now_ms(),
+        });
+        let evidence_artifact = write_coder_artifact(
+            &state,
+            &record.linked_context_run_id,
+            &evidence_id,
+            "coder_review_evidence",
+            "artifacts/pr_review.evidence.json",
+            &evidence_payload,
+        )
+        .await?;
+        publish_coder_artifact_added(
+            &state,
+            &record,
+            &evidence_artifact,
+            Some("artifact_write"),
+            {
+                let mut extra = serde_json::Map::new();
+                extra.insert("kind".to_string(), json!("review_evidence"));
+                if let Some(verdict) = input.verdict.clone() {
+                    extra.insert("verdict".to_string(), json!(verdict));
+                }
+                if let Some(risk_level) = input.risk_level.clone() {
+                    extra.insert("risk_level".to_string(), json!(risk_level));
+                }
+                extra
+            },
+        );
+        Some(evidence_artifact)
+    } else {
+        None
+    };
+
     let mut generated_candidates = Vec::<Value>::new();
     if let Some(summary_text) = input
         .summary
@@ -3342,6 +3413,7 @@ pub(super) async fn coder_pr_review_summary_create(
     Ok(Json(json!({
         "ok": true,
         "artifact": artifact,
+        "review_evidence_artifact": review_evidence_artifact,
         "generated_candidates": generated_candidates,
     })))
 }

@@ -808,11 +808,31 @@ async fn coder_pr_review_summary_create_writes_artifact_and_outcome() {
             .and_then(Value::as_str),
         Some("coder_pr_review_summary")
     );
+    assert_eq!(
+        summary_payload
+            .get("review_evidence_artifact")
+            .and_then(|row| row.get("artifact_type"))
+            .and_then(Value::as_str),
+        Some("coder_review_evidence")
+    );
+    assert!(summary_payload
+        .get("review_evidence_artifact")
+        .and_then(|row| row.get("path"))
+        .and_then(Value::as_str)
+        .is_some_and(|path| path.ends_with(
+            "/context_runs/ctx-coder-pr-review-summary/artifacts/pr_review.evidence.json"
+        )));
     let summary_artifact_id = summary_payload
         .get("artifact")
         .and_then(|row| row.get("id"))
         .and_then(Value::as_str)
         .expect("summary artifact id")
+        .to_string();
+    let review_evidence_artifact_id = summary_payload
+        .get("review_evidence_artifact")
+        .and_then(|row| row.get("id"))
+        .and_then(Value::as_str)
+        .expect("review evidence artifact id")
         .to_string();
     assert_eq!(
         summary_payload
@@ -866,6 +886,14 @@ async fn coder_pr_review_summary_create_writes_artifact_and_outcome() {
             row.get("id").and_then(Value::as_str) == Some(summary_artifact_id.as_str())
                 && row.get("artifact_type").and_then(Value::as_str)
                     == Some("coder_pr_review_summary")
+        }))
+        .unwrap_or(false));
+    assert!(artifacts_payload
+        .get("artifacts")
+        .and_then(Value::as_array)
+        .map(|rows| rows.iter().any(|row| {
+            row.get("id").and_then(Value::as_str) == Some(review_evidence_artifact_id.as_str())
+                && row.get("artifact_type").and_then(Value::as_str) == Some("coder_review_evidence")
         }))
         .unwrap_or(false));
 
@@ -1020,6 +1048,15 @@ async fn coder_pr_review_reuses_prior_review_memory_hits() {
             .and_then(|row| row.get("kind"))
             .and_then(Value::as_str),
         Some("review_memory")
+    );
+    assert_eq!(
+        hits_payload
+            .get("hits")
+            .and_then(Value::as_array)
+            .and_then(|rows| rows.first())
+            .and_then(|row| row.get("same_ref"))
+            .and_then(Value::as_bool),
+        Some(true)
     );
     assert!(get_payload
         .get("memory_hits")
@@ -1379,6 +1416,15 @@ async fn coder_merge_recommendation_reuses_prior_memory_hits() {
             .and_then(|row| row.get("kind"))
             .and_then(Value::as_str),
         Some("merge_recommendation_memory")
+    );
+    assert_eq!(
+        hits_payload
+            .get("hits")
+            .and_then(Value::as_array)
+            .and_then(|rows| rows.first())
+            .and_then(|row| row.get("same_ref"))
+            .and_then(Value::as_bool),
+        Some(true)
     );
     assert!(hits_payload
         .get("hits")
