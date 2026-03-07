@@ -183,13 +183,16 @@ async fn coder_artifacts_endpoint_projects_context_blackboard_artifacts() {
         .await
         .expect("artifacts body");
     let artifacts_payload: Value = serde_json::from_slice(&artifacts_body).expect("artifacts json");
-    assert_eq!(
-        artifacts_payload
-            .get("artifacts")
-            .and_then(Value::as_array)
-            .map(|rows| rows.len()),
-        Some(0)
-    );
+    let contains_memory_hits = artifacts_payload
+        .get("artifacts")
+        .and_then(Value::as_array)
+        .map(|rows| {
+            rows.iter().any(|row| {
+                row.get("artifact_type").and_then(Value::as_str) == Some("coder_memory_hits")
+            })
+        })
+        .unwrap_or(false);
+    assert!(contains_memory_hits);
 }
 
 #[tokio::test]
@@ -329,7 +332,7 @@ async fn coder_memory_candidate_create_persists_artifact() {
 }
 
 #[tokio::test]
-async fn coder_issue_triage_seeds_prior_memory_candidate_hints() {
+async fn coder_issue_triage_seeds_ranked_memory_hits() {
     let state = test_state().await;
     state
         .capability_resolver
@@ -442,11 +445,119 @@ async fn coder_issue_triage_seeds_prior_memory_candidate_hints() {
         .expect("retrieve task");
     let hint_count = retrieve_task
         .get("payload")
-        .and_then(|row| row.get("candidate_hints"))
+        .and_then(|row| row.get("memory_hits"))
         .and_then(Value::as_array)
         .map(|rows| rows.len())
         .unwrap_or(0);
     assert!(hint_count >= 1);
+}
+
+#[tokio::test]
+async fn coder_memory_hits_endpoint_returns_ranked_hits() {
+    let state = test_state().await;
+    state
+        .capability_resolver
+        .refresh_builtin_bindings()
+        .await
+        .expect("refresh builtin bindings");
+    let app = app_router(state.clone());
+
+    let create_req = Request::builder()
+        .method("POST")
+        .uri("/coder/runs")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "coder_run_id": "coder-run-hits-a",
+                "workflow_mode": "issue_triage",
+                "repo_binding": {
+                    "project_id": "proj-engine",
+                    "workspace_id": "ws-tandem",
+                    "workspace_root": "/tmp/tandem-repo",
+                    "repo_slug": "evan/tandem"
+                },
+                "github_ref": {
+                    "kind": "issue",
+                    "number": 95
+                }
+            })
+            .to_string(),
+        ))
+        .expect("create request");
+    let create_resp = app
+        .clone()
+        .oneshot(create_req)
+        .await
+        .expect("create response");
+    assert_eq!(create_resp.status(), StatusCode::OK);
+
+    let candidate_req = Request::builder()
+        .method("POST")
+        .uri("/coder/runs/coder-run-hits-a/memory-candidates")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "kind": "triage_memory",
+                "summary": "Repeated issue near capability readiness",
+                "payload": {
+                    "tag": "known"
+                }
+            })
+            .to_string(),
+        ))
+        .expect("candidate request");
+    let candidate_resp = app
+        .clone()
+        .oneshot(candidate_req)
+        .await
+        .expect("candidate response");
+    assert_eq!(candidate_resp.status(), StatusCode::OK);
+
+    let second_req = Request::builder()
+        .method("POST")
+        .uri("/coder/runs")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "coder_run_id": "coder-run-hits-b",
+                "workflow_mode": "issue_triage",
+                "repo_binding": {
+                    "project_id": "proj-engine",
+                    "workspace_id": "ws-tandem",
+                    "workspace_root": "/tmp/tandem-repo",
+                    "repo_slug": "evan/tandem"
+                },
+                "github_ref": {
+                    "kind": "issue",
+                    "number": 95
+                }
+            })
+            .to_string(),
+        ))
+        .expect("second request");
+    let second_resp = app
+        .clone()
+        .oneshot(second_req)
+        .await
+        .expect("second response");
+    assert_eq!(second_resp.status(), StatusCode::OK);
+
+    let hits_req = Request::builder()
+        .method("GET")
+        .uri("/coder/runs/coder-run-hits-b/memory-hits")
+        .body(Body::empty())
+        .expect("hits request");
+    let hits_resp = app.clone().oneshot(hits_req).await.expect("hits response");
+    assert_eq!(hits_resp.status(), StatusCode::OK);
+    let hits_body = to_bytes(hits_resp.into_body(), usize::MAX)
+        .await
+        .expect("hits body");
+    let hits_payload: Value = serde_json::from_slice(&hits_body).expect("hits json");
+    assert!(hits_payload
+        .get("hits")
+        .and_then(Value::as_array)
+        .map(|rows| !rows.is_empty())
+        .unwrap_or(false));
 }
 
 #[tokio::test]
@@ -534,4 +645,15 @@ async fn coder_triage_summary_write_adds_summary_artifact() {
         })
         .unwrap_or(false);
     assert!(contains_summary);
+
+    let contains_memory_hits = artifacts_payload
+        .get("artifacts")
+        .and_then(Value::as_array)
+        .map(|rows| {
+            rows.iter().any(|row| {
+                row.get("artifact_type").and_then(Value::as_str) == Some("coder_memory_hits")
+            })
+        })
+        .unwrap_or(false);
+    assert!(contains_memory_hits);
 }

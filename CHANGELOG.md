@@ -70,6 +70,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - memory candidate writes now emit `coder.memory.candidate_added` and attach `coder_memory_candidate` artifacts to the linked context run
   - new `issue_triage` runs now seed their retrieval task with prior repo/issue memory candidate hints from earlier coder runs
   - added `POST /coder/runs/{id}/triage-summary` so the engine can write a concrete `triage.summary.json` artifact and attach it as `coder_triage_summary`
+  - added `GET /coder/runs/{id}/memory-hits` so clients can inspect ranked triage retrieval hits for the current coder run
+  - `issue_triage` bootstrap now combines prior `coder_memory_candidate` payloads with project semantic memory search and writes a `coder_memory_hits` artifact into the linked context run
 
 - **Setup-understanding across channels and chat surfaces**:
   - added a shared deterministic setup-intent resolver at `POST /setup/understand` in `tandem-server`

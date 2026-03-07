@@ -12,6 +12,7 @@ use axum::extract::Path;
 use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use tandem_memory::{types::MemoryTier, MemoryManager};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -141,6 +142,14 @@ pub(super) struct CoderTriageSummaryCreateInput {
     pub(super) notes: Option<String>,
 }
 
+#[derive(Debug, Deserialize, Default)]
+pub(super) struct CoderMemoryHitsQuery {
+    #[serde(default)]
+    pub(super) q: Option<String>,
+    #[serde(default)]
+    pub(super) limit: Option<usize>,
+}
+
 fn coder_runs_root(state: &AppState) -> PathBuf {
     state
         .shared_resources_path
@@ -185,6 +194,11 @@ async fn load_coder_run_record(
         .await
         .map_err(|_| StatusCode::NOT_FOUND)?;
     serde_json::from_str::<CoderRunRecord>(&raw).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+async fn open_semantic_memory_manager() -> Option<MemoryManager> {
+    let paths = tandem_core::resolve_shared_paths().ok()?;
+    MemoryManager::new(&paths.memory_db_path).await.ok()
 }
 
 async fn list_repo_memory_candidates(
@@ -279,6 +293,83 @@ async fn list_repo_memory_candidates(
                 .and_then(Value::as_u64)
                 .cmp(&a.get("created_at_ms").and_then(Value::as_u64))
         })
+    });
+    hits.truncate(limit.clamp(1, 20));
+    Ok(hits)
+}
+
+async fn list_project_memory_hits(
+    repo_binding: &CoderRepoBinding,
+    query: &str,
+    limit: usize,
+) -> Vec<Value> {
+    let Some(manager) = open_semantic_memory_manager().await else {
+        return Vec::new();
+    };
+    let Ok(results) = manager
+        .search(
+            query,
+            Some(MemoryTier::Project),
+            Some(&repo_binding.project_id),
+            None,
+            Some(limit.clamp(1, 20) as i64),
+        )
+        .await
+    else {
+        return Vec::new();
+    };
+    results
+        .into_iter()
+        .map(|hit| {
+            json!({
+                "source": "project_memory",
+                "memory_id": hit.chunk.id,
+                "score": hit.similarity,
+                "content": hit.chunk.content,
+                "memory_tier": hit.chunk.tier,
+                "content_source": hit.chunk.source,
+                "source_path": hit.chunk.source_path,
+                "created_at": hit.chunk.created_at,
+            })
+        })
+        .collect::<Vec<_>>()
+}
+
+async fn collect_issue_triage_memory_hits(
+    state: &AppState,
+    record: &CoderRunRecord,
+    query: &str,
+    limit: usize,
+) -> Result<Vec<Value>, StatusCode> {
+    let issue_number = record.github_ref.as_ref().map(|row| row.number);
+    let mut hits =
+        list_repo_memory_candidates(state, &record.repo_binding.repo_slug, issue_number, limit)
+            .await?;
+    let mut project_hits = list_project_memory_hits(&record.repo_binding, query, limit).await;
+    hits.append(&mut project_hits);
+    hits.sort_by(|a, b| {
+        let a_same_issue = a
+            .get("same_issue")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let b_same_issue = b
+            .get("same_issue")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let a_score = a.get("score").and_then(Value::as_f64).unwrap_or(0.0);
+        let b_score = b.get("score").and_then(Value::as_f64).unwrap_or(0.0);
+        b_same_issue
+            .cmp(&a_same_issue)
+            .then_with(|| {
+                b_score
+                    .partial_cmp(&a_score)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+            .then_with(|| {
+                b.get("created_at_ms")
+                    .and_then(Value::as_u64)
+                    .cmp(&a.get("created_at_ms").and_then(Value::as_u64))
+            })
     });
     hits.truncate(limit.clamp(1, 20));
     Ok(hits)
@@ -513,9 +604,13 @@ async fn seed_issue_triage_tasks(
     let run_id = coder_run.linked_context_run_id.clone();
     let issue_number = coder_run.github_ref.as_ref().map(|row| row.number);
     let workflow_id = "coder_issue_triage".to_string();
-    let candidate_hints =
-        list_repo_memory_candidates(&state, &coder_run.repo_binding.repo_slug, issue_number, 6)
-            .await?;
+    let retrieval_query = format!(
+        "{} issue #{}",
+        coder_run.repo_binding.repo_slug,
+        issue_number.unwrap_or_default()
+    );
+    let memory_hits =
+        collect_issue_triage_memory_hits(&state, coder_run, &retrieval_query, 6).await?;
     let tasks = vec![
         ContextTaskCreateInput {
             command_id: Some(format!("coder:{run_id}:ingest_reference")),
@@ -547,7 +642,7 @@ async fn seed_issue_triage_tasks(
                 "repo_slug": coder_run.repo_binding.repo_slug,
                 "github_issue_number": issue_number,
                 "memory_recipe": "issue_triage",
-                "candidate_hints": candidate_hints,
+                "memory_hits": memory_hits,
             }),
             status: Some(ContextBlackboardTaskStatus::Pending),
             workflow_id: Some(workflow_id.clone()),
@@ -727,6 +822,44 @@ pub(super) async fn coder_run_create(
     match record.workflow_mode {
         CoderWorkflowMode::IssueTriage => {
             seed_issue_triage_tasks(state.clone(), &record).await?;
+            let memory_query = format!(
+                "{} issue #{}",
+                record.repo_binding.repo_slug,
+                record
+                    .github_ref
+                    .as_ref()
+                    .map(|row| row.number)
+                    .unwrap_or_default()
+            );
+            let memory_hits =
+                collect_issue_triage_memory_hits(&state, &record, &memory_query, 8).await?;
+            let artifact_id = format!("memory-hits-{}", Uuid::new_v4().simple());
+            let payload = json!({
+                "coder_run_id": record.coder_run_id,
+                "linked_context_run_id": record.linked_context_run_id,
+                "query": memory_query,
+                "hits": memory_hits,
+                "created_at_ms": crate::now_ms(),
+            });
+            let artifact = write_coder_artifact(
+                &state,
+                &record.linked_context_run_id,
+                &artifact_id,
+                "coder_memory_hits",
+                "artifacts/memory_hits.json",
+                &payload,
+            )
+            .await?;
+            state.event_bus.publish(EngineEvent::new(
+                "coder.artifact.added",
+                json!({
+                    "coder_run_id": record.coder_run_id,
+                    "linked_context_run_id": record.linked_context_run_id,
+                    "artifact_id": artifact.id,
+                    "artifact_type": artifact.artifact_type,
+                    "artifact_path": artifact.path,
+                }),
+            ));
             let mut run = load_context_run_state(&state, &linked_context_run_id).await?;
             run.status = ContextRunStatus::Planning;
             run.why_next_step = Some(
@@ -836,6 +969,36 @@ pub(super) async fn coder_run_artifacts(
         "coder_run_id": record.coder_run_id,
         "linked_context_run_id": record.linked_context_run_id,
         "artifacts": blackboard.artifacts,
+    })))
+}
+
+pub(super) async fn coder_memory_hits_get(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(query): Query<CoderMemoryHitsQuery>,
+) -> Result<Json<Value>, StatusCode> {
+    let record = load_coder_run_record(&state, &id).await?;
+    let search_query = query
+        .q
+        .as_deref()
+        .map(str::trim)
+        .filter(|row| !row.is_empty())
+        .map(ToString::to_string)
+        .unwrap_or_else(|| {
+            let issue_number = record
+                .github_ref
+                .as_ref()
+                .map(|row| row.number)
+                .unwrap_or_default();
+            format!("{} issue #{}", record.repo_binding.repo_slug, issue_number)
+        });
+    let hits =
+        collect_issue_triage_memory_hits(&state, &record, &search_query, query.limit.unwrap_or(8))
+            .await?;
+    Ok(Json(json!({
+        "coder_run_id": record.coder_run_id,
+        "query": search_query,
+        "hits": hits,
     })))
 }
 
