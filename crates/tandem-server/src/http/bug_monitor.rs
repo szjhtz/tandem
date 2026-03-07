@@ -601,6 +601,30 @@ async fn persist_bug_monitor_failure_pattern_from_approved_draft(
     }
 
     let run_id = format!("bug-monitor-approval-{}", draft.draft_id);
+    ensure_context_run_dir(state, &run_id).await?;
+    let approval_artifact_path =
+        context_run_dir(state, &run_id).join("artifacts/bug_monitor.approval_failure_pattern.json");
+    if let Some(parent) = approval_artifact_path.parent() {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    }
+    let approval_artifact_payload = json!({
+        "draft_id": draft.draft_id,
+        "repo": draft.repo,
+        "fingerprint": draft.fingerprint,
+        "summary": summary_text.clone(),
+        "detail": detail,
+        "canonical_markers": canonical_markers.clone(),
+        "created_at_ms": crate::now_ms(),
+        "source": "bug_monitor_approval",
+    });
+    let approval_artifact_raw = serde_json::to_string_pretty(&approval_artifact_payload)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    tokio::fs::write(&approval_artifact_path, approval_artifact_raw)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let approval_artifact_path = approval_artifact_path.to_string_lossy().to_string();
     let partition = MemoryPartition {
         org_id: draft.repo.clone(),
         workspace_id: draft.repo.clone(),
@@ -624,7 +648,7 @@ async fn persist_bug_monitor_failure_pattern_from_approved_draft(
             .rsplit('/')
             .next()
             .unwrap_or(draft.repo.as_str())],
-        "artifact_refs": [],
+        "artifact_refs": [approval_artifact_path],
         "canonical_markers": canonical_markers,
         "symptoms": [summary_text],
         "draft_id": draft.draft_id,
@@ -637,7 +661,7 @@ async fn persist_bug_monitor_failure_pattern_from_approved_draft(
             partition: partition.clone(),
             kind: MemoryContentKind::Fact,
             content: summary_text.clone(),
-            artifact_refs: Vec::new(),
+            artifact_refs: vec![approval_artifact_path],
             classification: MemoryClassification::Internal,
             metadata: Some(metadata.clone()),
         },

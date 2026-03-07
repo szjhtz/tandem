@@ -709,6 +709,16 @@ async fn bug_monitor_draft_can_be_approved_and_denied() {
             .and_then(Value::as_u64),
         Some(1)
     );
+    assert!(approve_payload
+        .get("failure_pattern_memory")
+        .and_then(|row| row.get("metadata"))
+        .and_then(|row| row.get("artifact_refs"))
+        .and_then(Value::as_array)
+        .and_then(|rows| rows.first())
+        .and_then(Value::as_str)
+        .is_some_and(|path| {
+            path.ends_with("/artifacts/bug_monitor.approval_failure_pattern.json")
+        }));
 
     let duplicate_req = Request::builder()
         .method("POST")
