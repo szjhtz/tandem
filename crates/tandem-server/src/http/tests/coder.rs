@@ -276,6 +276,13 @@ async fn coder_pr_review_run_create_gets_seeded_review_tasks() {
             .and_then(Value::as_str),
         Some("coder_pr_review")
     );
+    assert!(get_payload
+        .get("artifacts")
+        .and_then(Value::as_array)
+        .map(|rows| rows.iter().any(|row| {
+            row.get("artifact_type").and_then(Value::as_str) == Some("coder_memory_hits")
+        }))
+        .unwrap_or(false));
     assert_eq!(
         get_payload
             .get("run")
@@ -321,6 +328,24 @@ async fn coder_pr_review_run_create_gets_seeded_review_tasks() {
             .and_then(|row| row.get("linked_context_run_id"))
             .and_then(Value::as_str),
         Some(linked_context_run_id.as_str())
+    );
+
+    let hits_req = Request::builder()
+        .method("GET")
+        .uri("/coder/runs/coder-pr-review-1/memory-hits")
+        .body(Body::empty())
+        .expect("hits request");
+    let hits_resp = app.clone().oneshot(hits_req).await.expect("hits response");
+    assert_eq!(hits_resp.status(), StatusCode::OK);
+    let hits_payload: Value = serde_json::from_slice(
+        &to_bytes(hits_resp.into_body(), usize::MAX)
+            .await
+            .expect("hits body"),
+    )
+    .expect("hits json");
+    assert_eq!(
+        hits_payload.get("query").and_then(Value::as_str),
+        Some("evan/tandem pull request #88")
     );
 }
 
@@ -465,6 +490,155 @@ async fn coder_pr_review_summary_create_writes_artifact_and_outcome() {
         .await
         .expect("context run state");
     assert_eq!(run.run_type, "coder_pr_review");
+}
+
+#[tokio::test]
+async fn coder_pr_review_reuses_prior_review_memory_hits() {
+    let state = test_state().await;
+    state
+        .capability_resolver
+        .refresh_builtin_bindings()
+        .await
+        .expect("refresh builtin bindings");
+    let app = app_router(state.clone());
+
+    let create_first_req = Request::builder()
+        .method("POST")
+        .uri("/coder/runs")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "coder_run_id": "coder-pr-review-a",
+                "workflow_mode": "pr_review",
+                "repo_binding": {
+                    "project_id": "proj-engine",
+                    "workspace_id": "ws-tandem",
+                    "workspace_root": "/tmp/tandem-repo",
+                    "repo_slug": "evan/tandem"
+                },
+                "github_ref": {
+                    "kind": "pull_request",
+                    "number": 90
+                }
+            })
+            .to_string(),
+        ))
+        .expect("first create request");
+    let create_first_resp = app
+        .clone()
+        .oneshot(create_first_req)
+        .await
+        .expect("first create response");
+    assert_eq!(create_first_resp.status(), StatusCode::OK);
+
+    let summary_req = Request::builder()
+        .method("POST")
+        .uri("/coder/runs/coder-pr-review-a/pr-review-summary")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "verdict": "changes_requested",
+                "summary": "Previous review flagged missing rollback coverage.",
+                "risk_level": "high",
+                "requested_changes": ["Add rollback coverage"]
+            })
+            .to_string(),
+        ))
+        .expect("summary request");
+    let summary_resp = app
+        .clone()
+        .oneshot(summary_req)
+        .await
+        .expect("summary response");
+    assert_eq!(summary_resp.status(), StatusCode::OK);
+
+    let create_second_req = Request::builder()
+        .method("POST")
+        .uri("/coder/runs")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "coder_run_id": "coder-pr-review-b",
+                "workflow_mode": "pr_review",
+                "repo_binding": {
+                    "project_id": "proj-engine",
+                    "workspace_id": "ws-tandem",
+                    "workspace_root": "/tmp/tandem-repo",
+                    "repo_slug": "evan/tandem"
+                },
+                "github_ref": {
+                    "kind": "pull_request",
+                    "number": 90
+                }
+            })
+            .to_string(),
+        ))
+        .expect("second create request");
+    let create_second_resp = app
+        .clone()
+        .oneshot(create_second_req)
+        .await
+        .expect("second create response");
+    assert_eq!(create_second_resp.status(), StatusCode::OK);
+    let _create_second_payload: Value = serde_json::from_slice(
+        &to_bytes(create_second_resp.into_body(), usize::MAX)
+            .await
+            .expect("second create body"),
+    )
+    .expect("second create json");
+
+    let get_req = Request::builder()
+        .method("GET")
+        .uri("/coder/runs/coder-pr-review-b")
+        .body(Body::empty())
+        .expect("get request");
+    let get_resp = app.clone().oneshot(get_req).await.expect("get response");
+    assert_eq!(get_resp.status(), StatusCode::OK);
+    let get_payload: Value = serde_json::from_slice(
+        &to_bytes(get_resp.into_body(), usize::MAX)
+            .await
+            .expect("get body"),
+    )
+    .expect("get json");
+    assert!(get_payload
+        .get("artifacts")
+        .and_then(Value::as_array)
+        .map(|rows| rows.iter().any(|row| {
+            row.get("artifact_type").and_then(Value::as_str) == Some("coder_memory_hits")
+        }))
+        .unwrap_or(false));
+
+    let hits_req = Request::builder()
+        .method("GET")
+        .uri("/coder/runs/coder-pr-review-b/memory-hits")
+        .body(Body::empty())
+        .expect("hits request");
+    let hits_resp = app.clone().oneshot(hits_req).await.expect("hits response");
+    assert_eq!(hits_resp.status(), StatusCode::OK);
+    let hits_payload: Value = serde_json::from_slice(
+        &to_bytes(hits_resp.into_body(), usize::MAX)
+            .await
+            .expect("hits body"),
+    )
+    .expect("hits json");
+    assert_eq!(
+        hits_payload.get("query").and_then(Value::as_str),
+        Some("evan/tandem pull request #90")
+    );
+    assert!(get_payload
+        .get("memory_hits")
+        .and_then(|row| row.get("hits"))
+        .and_then(Value::as_array)
+        .map(|rows| !rows.is_empty())
+        .unwrap_or(false));
+    assert!(hits_payload
+        .get("hits")
+        .and_then(Value::as_array)
+        .map(|rows| rows.iter().any(|row| {
+            row.get("source_coder_run_id").and_then(Value::as_str) == Some("coder-pr-review-a")
+                || row.get("run_id").and_then(Value::as_str) == Some("coder-pr-review-a")
+        }))
+        .unwrap_or(false));
 }
 
 #[tokio::test]

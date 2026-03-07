@@ -838,7 +838,11 @@ async fn collect_issue_triage_memory_hits(
     query: &str,
     limit: usize,
 ) -> Result<Vec<Value>, StatusCode> {
-    let issue_number = record.github_ref.as_ref().map(|row| row.number);
+    let issue_number = record
+        .github_ref
+        .as_ref()
+        .filter(|reference| matches!(reference.kind, CoderGithubRefKind::Issue))
+        .map(|row| row.number);
     let mut hits =
         list_repo_memory_candidates(state, &record.repo_binding.repo_slug, issue_number, limit)
             .await?;
@@ -872,6 +876,22 @@ async fn collect_issue_triage_memory_hits(
     });
     hits.truncate(limit.clamp(1, 20));
     Ok(hits)
+}
+
+fn default_coder_memory_query(record: &CoderRunRecord) -> String {
+    match record.github_ref.as_ref() {
+        Some(reference) if matches!(reference.kind, CoderGithubRefKind::PullRequest) => {
+            format!(
+                "{} pull request #{}",
+                record.repo_binding.repo_slug, reference.number
+            )
+        }
+        Some(reference) => format!(
+            "{} issue #{}",
+            record.repo_binding.repo_slug, reference.number
+        ),
+        None => record.repo_binding.repo_slug.clone(),
+    }
 }
 
 fn value_string(value: Option<&Value>) -> Option<String> {
@@ -1650,6 +1670,9 @@ async fn seed_pr_review_tasks(
 ) -> Result<(), StatusCode> {
     let run_id = coder_run.linked_context_run_id.clone();
     let workflow_id = "coder_pr_review".to_string();
+    let retrieval_query = default_coder_memory_query(coder_run);
+    let memory_hits =
+        collect_issue_triage_memory_hits(&state, coder_run, &retrieval_query, 6).await?;
     let tasks = vec![
         ContextTaskCreateInput {
             command_id: Some(format!("coder:{run_id}:inspect_pull_request")),
@@ -1681,6 +1704,7 @@ async fn seed_pr_review_tasks(
                 "memory_recipe": "pr_review",
                 "repo_slug": coder_run.repo_binding.repo_slug,
                 "github_ref": coder_run.github_ref,
+                "memory_hits": memory_hits,
             }),
             status: Some(ContextBlackboardTaskStatus::Pending),
             workflow_id: Some(workflow_id.clone()),
@@ -1763,15 +1787,6 @@ fn coder_run_payload(record: &CoderRunRecord, context_run: &ContextRunState) -> 
         "created_at_ms": record.created_at_ms,
         "updated_at_ms": context_run.updated_at_ms,
     })
-}
-
-fn default_coder_memory_query(record: &CoderRunRecord) -> String {
-    let issue_number = record
-        .github_ref
-        .as_ref()
-        .map(|row| row.number)
-        .unwrap_or_default();
-    format!("{} issue #{}", record.repo_binding.repo_slug, issue_number)
 }
 
 pub(super) async fn coder_run_create(
@@ -1948,6 +1963,33 @@ pub(super) async fn coder_run_create(
         }
         CoderWorkflowMode::PrReview => {
             seed_pr_review_tasks(state.clone(), &record).await?;
+            let memory_query = default_coder_memory_query(&record);
+            let memory_hits =
+                collect_issue_triage_memory_hits(&state, &record, &memory_query, 8).await?;
+            let artifact = write_coder_artifact(
+                &state,
+                &record.linked_context_run_id,
+                &format!("pr-review-memory-hits-{}", Uuid::new_v4().simple()),
+                "coder_memory_hits",
+                "artifacts/memory_hits.json",
+                &json!({
+                    "coder_run_id": record.coder_run_id,
+                    "linked_context_run_id": record.linked_context_run_id,
+                    "query": memory_query,
+                    "hits": memory_hits,
+                    "created_at_ms": crate::now_ms(),
+                }),
+            )
+            .await?;
+            publish_coder_artifact_added(&state, &record, &artifact, Some("memory_retrieval"), {
+                let mut extra = serde_json::Map::new();
+                extra.insert("kind".to_string(), json!("memory_hits"));
+                extra.insert(
+                    "query".to_string(),
+                    json!(default_coder_memory_query(&record)),
+                );
+                extra
+            });
             let mut run = load_context_run_state(&state, &linked_context_run_id).await?;
             run.status = ContextRunStatus::Planning;
             run.why_next_step = Some(
@@ -2039,12 +2081,19 @@ pub(super) async fn coder_run_get(
     let run = load_context_run_state(&state, &record.linked_context_run_id).await?;
     let blackboard = load_context_blackboard(&state, &record.linked_context_run_id);
     let memory_query = default_coder_memory_query(&record);
-    let memory_hits = if matches!(record.workflow_mode, CoderWorkflowMode::IssueTriage) {
+    let memory_hits = if matches!(
+        record.workflow_mode,
+        CoderWorkflowMode::IssueTriage | CoderWorkflowMode::PrReview
+    ) {
         collect_issue_triage_memory_hits(&state, &record, &memory_query, 8).await?
     } else {
         Vec::new()
     };
-    let issue_number = record.github_ref.as_ref().map(|row| row.number);
+    let issue_number = record
+        .github_ref
+        .as_ref()
+        .filter(|reference| matches!(reference.kind, CoderGithubRefKind::Issue))
+        .map(|row| row.number);
     let memory_candidates =
         list_repo_memory_candidates(&state, &record.repo_binding.repo_slug, issue_number, 20)
             .await?;
@@ -2178,14 +2227,7 @@ pub(super) async fn coder_memory_hits_get(
         .map(str::trim)
         .filter(|row| !row.is_empty())
         .map(ToString::to_string)
-        .unwrap_or_else(|| {
-            let issue_number = record
-                .github_ref
-                .as_ref()
-                .map(|row| row.number)
-                .unwrap_or_default();
-            format!("{} issue #{}", record.repo_binding.repo_slug, issue_number)
-        });
+        .unwrap_or_else(|| default_coder_memory_query(&record));
     let hits =
         collect_issue_triage_memory_hits(&state, &record, &search_query, query.limit.unwrap_or(8))
             .await?;
@@ -2201,7 +2243,11 @@ pub(super) async fn coder_memory_candidate_list(
     Path(id): Path<String>,
 ) -> Result<Json<Value>, StatusCode> {
     let record = load_coder_run_record(&state, &id).await?;
-    let issue_number = record.github_ref.as_ref().map(|row| row.number);
+    let issue_number = record
+        .github_ref
+        .as_ref()
+        .filter(|reference| matches!(reference.kind, CoderGithubRefKind::Issue))
+        .map(|row| row.number);
     let candidates =
         list_repo_memory_candidates(&state, &record.repo_binding.repo_slug, issue_number, 20)
             .await?;

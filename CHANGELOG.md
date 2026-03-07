@@ -115,6 +115,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - normalized coder event payloads so `coder.run.created`, `coder.run.phase_changed`, `coder.artifact.added`, `coder.memory.candidate_added`, and `coder.memory.promoted` now share the same base run metadata and artifact events carry explicit `kind` context for consumers
   - added `POST /coder/runs/{id}/pr-review-summary` so `pr_review` runs can write a structured `coder_pr_review_summary` artifact and emit a first `run_outcome` memory candidate
   - added a first `pr_review` coder workflow skeleton on top of context runs, including fail-closed GitHub pull-request readiness checks, seeded PR review tasks, and direct MCP GitHub capability bindings for pull-request list/get/comment actions
+  - `pr_review` now defaults to pull-request-specific memory queries, bootstraps a `coder_memory_hits` artifact at run creation, and reuses prior review `run_outcome` memory during later reviews of the same repo/PR
 
 - **Setup-understanding across channels and chat surfaces**:
   - added a shared deterministic setup-intent resolver at `POST /setup/understand` in `tandem-server`
