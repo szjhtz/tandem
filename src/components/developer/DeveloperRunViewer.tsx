@@ -441,6 +441,12 @@ function relatedArtifactsForBlackboardRow(
   );
 }
 
+function includesContextValue(value: unknown, candidates: string[]): boolean {
+  const text = pickText(value).toLowerCase();
+  if (!text) return false;
+  return candidates.some((candidate) => candidate && text.includes(candidate.toLowerCase()));
+}
+
 export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRunViewerProps) {
   const [runs, setRuns] = useState<CoderRunRecord[]>([]);
   const [runQuery, setRunQuery] = useState("");
@@ -901,6 +907,87 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
     return artifactPreview.files.find((file) => file.key === selectedDiffFileKey) ?? null;
   }, [artifactPreview, selectedDiffFileKey]);
 
+  const selectedArtifactContext = useMemo(() => {
+    if (!selectedArtifactRecord) return null;
+    return {
+      path: selectedArtifactRecord.path,
+      stepId: selectedArtifactRecord.step_id ?? "",
+      sourceEventId: selectedArtifactRecord.source_event_id ?? "",
+    };
+  }, [selectedArtifactRecord]);
+
+  const relatedBlackboardRows = useMemo(() => {
+    if (!selectedArtifactContext) return [];
+    const rows = [...decisions, ...openQuestions];
+    return rows
+      .filter((row) => {
+        const stepId = blackboardRowStepId(row) ?? "";
+        const sourceEventId = blackboardRowSourceEventId(row) ?? "";
+        return (
+          (selectedArtifactContext.stepId && stepId === selectedArtifactContext.stepId) ||
+          (selectedArtifactContext.sourceEventId &&
+            sourceEventId === selectedArtifactContext.sourceEventId)
+        );
+      })
+      .slice(0, 5);
+  }, [decisions, openQuestions, selectedArtifactContext]);
+
+  const relatedTimelineEvents = useMemo(() => {
+    if (!selectedArtifactContext) return [];
+    return eventTimeline
+      .filter((event) => {
+        const stepId = pickText(event.step_id);
+        const sourceEventId = pickText(event.event_id);
+        return (
+          (selectedArtifactContext.stepId && stepId === selectedArtifactContext.stepId) ||
+          (selectedArtifactContext.sourceEventId &&
+            sourceEventId === selectedArtifactContext.sourceEventId)
+        );
+      })
+      .slice(0, 5);
+  }, [eventTimeline, selectedArtifactContext]);
+
+  const relatedMemoryCandidates = useMemo(() => {
+    if (!selectedArtifactContext) return [];
+    return memoryCandidates
+      .filter((candidate) => {
+        const artifact = candidate.artifact;
+        if (!artifact) return false;
+        return (
+          artifact.path === selectedArtifactContext.path ||
+          (!!selectedArtifactContext.stepId &&
+            artifact.step_id === selectedArtifactContext.stepId) ||
+          (!!selectedArtifactContext.sourceEventId &&
+            artifact.source_event_id === selectedArtifactContext.sourceEventId)
+        );
+      })
+      .slice(0, 5);
+  }, [memoryCandidates, selectedArtifactContext]);
+
+  const relatedMemoryHits = useMemo(() => {
+    if (!selectedArtifactContext) return [];
+    const needles = [
+      selectedArtifactContext.path,
+      selectedArtifactContext.stepId,
+      selectedArtifactContext.sourceEventId,
+    ].filter(Boolean);
+    return memoryHits
+      .filter((hit) => {
+        if (needles.length === 0) return false;
+        return (
+          includesContextValue(hit.path, needles) ||
+          includesContextValue(hit.source_event_id, needles) ||
+          includesContextValue(hit.step_id, needles) ||
+          includesContextValue(hit.summary, needles) ||
+          includesContextValue(hit.content, needles) ||
+          includesContextValue(hit.memory_id, needles) ||
+          includesContextValue(hit.candidate_id, needles) ||
+          includesContextValue(hit.payload, needles)
+        );
+      })
+      .slice(0, 5);
+  }, [memoryHits, selectedArtifactContext]);
+
   const filteredMemoryHits = useMemo(() => {
     return memoryHitFilter === "scored"
       ? memoryHits.filter((hit) => typeof hit.score === "number")
@@ -1244,6 +1331,16 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
       if (!sourceEventId) return;
       setEventTypeFilter("all");
       setEventQuery(sourceEventId);
+      focusOverviewSection("timeline");
+    },
+    [focusOverviewSection]
+  );
+
+  const openRelatedEventContext = useCallback(
+    (eventId?: string | null) => {
+      if (!eventId) return;
+      setEventTypeFilter("all");
+      setEventQuery(eventId);
       focusOverviewSection("timeline");
     },
     [focusOverviewSection]
@@ -3028,6 +3125,265 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
                                   {selectedValidationSummary.validationsAttempted ?? 0}
                                 </p>
                               </button>
+                            </div>
+                          ) : null}
+                          {selectedArtifactContext ? (
+                            <div className="rounded-3xl border border-sky-500/20 bg-sky-500/5 p-4">
+                              <div className="flex items-start justify-between gap-3">
+                                <div>
+                                  <p className="text-sm font-medium text-text">Related lineage</p>
+                                  <p className="text-xs text-text-muted">
+                                    Blackboard rows, run events, and memory evidence sharing this
+                                    artifact context.
+                                  </p>
+                                </div>
+                                <span className="rounded-full border border-sky-500/20 bg-sky-500/10 px-2.5 py-1 text-[10px] uppercase tracking-[0.18em] text-sky-200">
+                                  {relatedBlackboardRows.length +
+                                    relatedTimelineEvents.length +
+                                    relatedMemoryCandidates.length +
+                                    relatedMemoryHits.length}{" "}
+                                  links
+                                </span>
+                              </div>
+                              <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                                <button
+                                  type="button"
+                                  onClick={() => focusBlackboardSection("lineage")}
+                                  className="rounded-2xl border border-border bg-surface p-3 text-left transition-colors hover:bg-surface-elevated"
+                                >
+                                  <p className="text-[11px] uppercase tracking-[0.2em] text-text-muted">
+                                    Blackboard
+                                  </p>
+                                  <p className="mt-1 text-sm font-medium text-text">
+                                    {relatedBlackboardRows.length}
+                                  </p>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    if (selectedArtifactContext.sourceEventId) {
+                                      openRelatedEventContext(
+                                        selectedArtifactContext.sourceEventId
+                                      );
+                                    } else {
+                                      focusOverviewSection("timeline");
+                                    }
+                                  }}
+                                  className="rounded-2xl border border-border bg-surface p-3 text-left transition-colors hover:bg-surface-elevated"
+                                >
+                                  <p className="text-[11px] uppercase tracking-[0.2em] text-text-muted">
+                                    Timeline
+                                  </p>
+                                  <p className="mt-1 text-sm font-medium text-text">
+                                    {relatedTimelineEvents.length}
+                                  </p>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => focusTabSection("memory", "memory_candidates")}
+                                  className="rounded-2xl border border-border bg-surface p-3 text-left transition-colors hover:bg-surface-elevated"
+                                >
+                                  <p className="text-[11px] uppercase tracking-[0.2em] text-text-muted">
+                                    Candidates
+                                  </p>
+                                  <p className="mt-1 text-sm font-medium text-text">
+                                    {relatedMemoryCandidates.length}
+                                  </p>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => focusTabSection("memory", "memory_hits")}
+                                  className="rounded-2xl border border-border bg-surface p-3 text-left transition-colors hover:bg-surface-elevated"
+                                >
+                                  <p className="text-[11px] uppercase tracking-[0.2em] text-text-muted">
+                                    Hits
+                                  </p>
+                                  <p className="mt-1 text-sm font-medium text-text">
+                                    {relatedMemoryHits.length}
+                                  </p>
+                                </button>
+                              </div>
+                              <div className="mt-3 space-y-3">
+                                {relatedBlackboardRows.length > 0 ? (
+                                  <div className="rounded-2xl border border-border bg-surface p-3">
+                                    <div className="mb-2 flex items-center justify-between gap-3">
+                                      <p className="text-[11px] uppercase tracking-[0.2em] text-text-muted">
+                                        Blackboard
+                                      </p>
+                                      <span className="text-[11px] text-text-muted">
+                                        {relatedBlackboardRows.length}
+                                      </span>
+                                    </div>
+                                    <div className="space-y-2">
+                                      {relatedBlackboardRows.map((row, index) => (
+                                        <button
+                                          key={String(row.id ?? row.source_event_id ?? index)}
+                                          type="button"
+                                          onClick={() => {
+                                            if (blackboardRowSourceEventId(row)) {
+                                              openBlackboardContext(
+                                                "event",
+                                                blackboardRowStepId(row),
+                                                blackboardRowSourceEventId(row)
+                                              );
+                                            } else {
+                                              focusBlackboardSection("lineage");
+                                            }
+                                          }}
+                                          className="w-full rounded-2xl border border-border bg-surface-elevated/40 p-3 text-left transition-colors hover:bg-surface-elevated"
+                                        >
+                                          <p className="text-sm font-medium text-text">
+                                            {blackboardRowText(row)}
+                                          </p>
+                                          <div className="mt-2 flex flex-wrap gap-2">
+                                            {blackboardRowStepId(row) ? (
+                                              <span className="rounded-full border border-border px-2 py-0.5 text-[10px] uppercase tracking-[0.16em] text-text-muted">
+                                                Step {blackboardRowStepId(row)}
+                                              </span>
+                                            ) : null}
+                                            {blackboardRowSourceEventId(row) ? (
+                                              <span className="rounded-full border border-border px-2 py-0.5 text-[10px] uppercase tracking-[0.16em] text-text-muted">
+                                                Event {blackboardRowSourceEventId(row)}
+                                              </span>
+                                            ) : null}
+                                          </div>
+                                        </button>
+                                      ))}
+                                    </div>
+                                  </div>
+                                ) : null}
+                                {relatedTimelineEvents.length > 0 ? (
+                                  <div className="rounded-2xl border border-border bg-surface p-3">
+                                    <div className="mb-2 flex items-center justify-between gap-3">
+                                      <p className="text-[11px] uppercase tracking-[0.2em] text-text-muted">
+                                        Timeline
+                                      </p>
+                                      <span className="text-[11px] text-text-muted">
+                                        {relatedTimelineEvents.length}
+                                      </span>
+                                    </div>
+                                    <div className="space-y-2">
+                                      {relatedTimelineEvents.map((event, index) => (
+                                        <button
+                                          key={runEventId(event, index)}
+                                          type="button"
+                                          onClick={() =>
+                                            openRelatedEventContext(pickText(event.event_id))
+                                          }
+                                          className="w-full rounded-2xl border border-border bg-surface-elevated/40 p-3 text-left transition-colors hover:bg-surface-elevated"
+                                        >
+                                          <div className="flex flex-wrap items-center gap-2">
+                                            <span className="rounded-full border border-sky-500/20 bg-sky-500/10 px-2 py-0.5 text-[10px] uppercase tracking-[0.16em] text-sky-200">
+                                              {runEventType(event).replace(/_/g, " ")}
+                                            </span>
+                                            <span className="text-[11px] text-text-muted">
+                                              {formatTimestamp(runEventTimestamp(event))}
+                                            </span>
+                                          </div>
+                                          {runEventText(event) ? (
+                                            <p className="mt-2 text-sm text-text">
+                                              {runEventText(event)}
+                                            </p>
+                                          ) : null}
+                                        </button>
+                                      ))}
+                                    </div>
+                                  </div>
+                                ) : null}
+                                {relatedMemoryCandidates.length > 0 ? (
+                                  <div className="rounded-2xl border border-border bg-surface p-3">
+                                    <div className="mb-2 flex items-center justify-between gap-3">
+                                      <p className="text-[11px] uppercase tracking-[0.2em] text-text-muted">
+                                        Memory candidates
+                                      </p>
+                                      <span className="text-[11px] text-text-muted">
+                                        {relatedMemoryCandidates.length}
+                                      </span>
+                                    </div>
+                                    <div className="space-y-2">
+                                      {relatedMemoryCandidates.map((candidate) => (
+                                        <button
+                                          key={candidate.candidate_id}
+                                          type="button"
+                                          onClick={() => {
+                                            if (candidate.artifact) {
+                                              openArtifactRecord(candidate.artifact);
+                                            } else {
+                                              focusTabSection("memory", "memory_candidates");
+                                            }
+                                          }}
+                                          className="w-full rounded-2xl border border-border bg-surface-elevated/40 p-3 text-left transition-colors hover:bg-surface-elevated"
+                                        >
+                                          <div className="flex items-center justify-between gap-3">
+                                            <p className="text-sm font-medium text-text">
+                                              {candidate.summary || candidate.kind}
+                                            </p>
+                                            <span className="text-[11px] text-text-muted">
+                                              {candidate.created_at_ms
+                                                ? formatTimestamp(candidate.created_at_ms)
+                                                : "candidate"}
+                                            </span>
+                                          </div>
+                                          <div className="mt-2 flex flex-wrap gap-2">
+                                            <span className="rounded-full border border-border px-2 py-0.5 text-[10px] uppercase tracking-[0.16em] text-text-muted">
+                                              {candidate.kind}
+                                            </span>
+                                            {candidate.artifact?.path ? (
+                                              <span className="rounded-full border border-border px-2 py-0.5 text-[10px] uppercase tracking-[0.16em] text-text-muted">
+                                                Artifact-backed
+                                              </span>
+                                            ) : null}
+                                          </div>
+                                        </button>
+                                      ))}
+                                    </div>
+                                  </div>
+                                ) : null}
+                                {relatedMemoryHits.length > 0 ? (
+                                  <div className="rounded-2xl border border-border bg-surface p-3">
+                                    <div className="mb-2 flex items-center justify-between gap-3">
+                                      <p className="text-[11px] uppercase tracking-[0.2em] text-text-muted">
+                                        Memory hits
+                                      </p>
+                                      <span className="text-[11px] text-text-muted">
+                                        {relatedMemoryHits.length}
+                                      </span>
+                                    </div>
+                                    <div className="space-y-2">
+                                      {relatedMemoryHits.map((hit, index) => (
+                                        <button
+                                          key={String(hit.candidate_id ?? hit.memory_id ?? index)}
+                                          type="button"
+                                          onClick={() => focusTabSection("memory", "memory_hits")}
+                                          className="w-full rounded-2xl border border-border bg-surface-elevated/40 p-3 text-left transition-colors hover:bg-surface-elevated"
+                                        >
+                                          <p className="text-sm font-medium text-text">
+                                            {pickText(hit.summary) ||
+                                              pickText(hit.memory_id) ||
+                                              pickText(hit.candidate_id) ||
+                                              "Memory hit"}
+                                          </p>
+                                          <pre className="mt-2 whitespace-pre-wrap break-words text-[11px] text-text-muted">
+                                            {renderValue(
+                                              hit.summary ?? hit.content ?? hit.payload ?? hit
+                                            )}
+                                          </pre>
+                                        </button>
+                                      ))}
+                                    </div>
+                                  </div>
+                                ) : null}
+                                {relatedBlackboardRows.length === 0 &&
+                                relatedTimelineEvents.length === 0 &&
+                                relatedMemoryCandidates.length === 0 &&
+                                relatedMemoryHits.length === 0 ? (
+                                  <div className="rounded-2xl border border-dashed border-border bg-surface-elevated/30 p-3">
+                                    <p className="text-sm text-text-muted">
+                                      No related lineage was found for the current artifact context.
+                                    </p>
+                                  </div>
+                                ) : null}
+                              </div>
                             </div>
                           ) : null}
                           {renderArtifactPreviewContent("No artifact preview available.")}
