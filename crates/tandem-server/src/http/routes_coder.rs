@@ -21,6 +21,10 @@ pub(super) fn apply(router: Router<AppState>) -> Router<AppState> {
             post(coder_triage_summary_create),
         )
         .route(
+            "/coder/runs/{id}/pr-review-evidence",
+            post(coder_pr_review_evidence_create),
+        )
+        .route(
             "/coder/runs/{id}/pr-review-summary",
             post(coder_pr_review_summary_create),
         )

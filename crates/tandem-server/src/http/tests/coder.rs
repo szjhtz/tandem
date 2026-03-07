@@ -1157,6 +1157,141 @@ async fn coder_issue_fix_reuses_prior_fix_pattern_memory_hits() {
 }
 
 #[tokio::test]
+async fn coder_pr_review_evidence_advances_review_run() {
+    let state = test_state().await;
+    state
+        .capability_resolver
+        .refresh_builtin_bindings()
+        .await
+        .expect("refresh builtin bindings");
+    let app = app_router(state.clone());
+
+    let create_req = Request::builder()
+        .method("POST")
+        .uri("/coder/runs")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "coder_run_id": "coder-pr-review-evidence",
+                "workflow_mode": "pr_review",
+                "repo_binding": {
+                    "project_id": "proj-engine",
+                    "workspace_id": "ws-tandem",
+                    "workspace_root": "/tmp/tandem-repo",
+                    "repo_slug": "evan/tandem",
+                    "default_branch": "main"
+                },
+                "github_ref": {
+                    "kind": "pull_request",
+                    "number": 87
+                }
+            })
+            .to_string(),
+        ))
+        .expect("create request");
+    let create_resp = app
+        .clone()
+        .oneshot(create_req)
+        .await
+        .expect("create response");
+    assert_eq!(create_resp.status(), StatusCode::OK);
+    let create_payload: Value = serde_json::from_slice(
+        &to_bytes(create_resp.into_body(), usize::MAX)
+            .await
+            .expect("create body"),
+    )
+    .expect("create json");
+    let linked_context_run_id = create_payload
+        .get("coder_run")
+        .and_then(|row| row.get("linked_context_run_id"))
+        .and_then(Value::as_str)
+        .expect("linked context run id")
+        .to_string();
+
+    let evidence_req = Request::builder()
+        .method("POST")
+        .uri("/coder/runs/coder-pr-review-evidence/pr-review-evidence")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "verdict": "changes_requested",
+                "summary": "Inspection found a risky migration path and missing rollback test.",
+                "risk_level": "high",
+                "changed_files": ["crates/tandem-server/src/http/coder.rs"],
+                "blockers": ["Rollback test missing"],
+                "requested_changes": ["Add rollback coverage"],
+                "regression_signals": [{
+                    "kind": "historical_failure_pattern",
+                    "summary": "Migrations without rollback have failed before"
+                }],
+                "memory_hits_used": ["memory-hit-pr-evidence-1"],
+                "notes": "Evidence recorded before final verdict summary."
+            })
+            .to_string(),
+        ))
+        .expect("evidence request");
+    let evidence_resp = app
+        .clone()
+        .oneshot(evidence_req)
+        .await
+        .expect("evidence response");
+    assert_eq!(evidence_resp.status(), StatusCode::OK);
+    let evidence_payload: Value = serde_json::from_slice(
+        &to_bytes(evidence_resp.into_body(), usize::MAX)
+            .await
+            .expect("evidence body"),
+    )
+    .expect("evidence json");
+    assert_eq!(
+        evidence_payload
+            .get("artifact")
+            .and_then(|row| row.get("artifact_type"))
+            .and_then(Value::as_str),
+        Some("coder_review_evidence")
+    );
+    assert_eq!(
+        evidence_payload
+            .get("run")
+            .and_then(|row| row.get("status"))
+            .and_then(Value::as_str),
+        Some("running")
+    );
+    assert_eq!(
+        evidence_payload
+            .get("coder_run")
+            .and_then(|row| row.get("phase"))
+            .and_then(Value::as_str),
+        Some("artifact_write")
+    );
+
+    let run = load_context_run_state(&state, &linked_context_run_id)
+        .await
+        .expect("context run state");
+    assert_eq!(run.status, ContextRunStatus::Running);
+    for workflow_node_id in [
+        "inspect_pull_request",
+        "retrieve_memory",
+        "review_pull_request",
+    ] {
+        assert_eq!(
+            run.tasks
+                .iter()
+                .find(|task| task.workflow_node_id.as_deref() == Some(workflow_node_id))
+                .map(|task| &task.status),
+            Some(&ContextBlackboardTaskStatus::Done),
+            "expected {workflow_node_id} to be done"
+        );
+    }
+    assert_eq!(
+        run.tasks
+            .iter()
+            .find(|task| task.workflow_node_id.as_deref() == Some("write_review_artifact"))
+            .map(|task| &task.status),
+        Some(&ContextBlackboardTaskStatus::Runnable)
+    );
+}
+
+#[tokio::test]
 async fn coder_pr_review_summary_create_writes_artifact_and_outcome() {
     let state = test_state().await;
     state

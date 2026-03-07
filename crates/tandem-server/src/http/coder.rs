@@ -204,6 +204,28 @@ pub(super) struct CoderPrReviewSummaryCreateInput {
 }
 
 #[derive(Debug, Deserialize, Default)]
+pub(super) struct CoderPrReviewEvidenceCreateInput {
+    #[serde(default)]
+    pub(super) verdict: Option<String>,
+    #[serde(default)]
+    pub(super) summary: Option<String>,
+    #[serde(default)]
+    pub(super) risk_level: Option<String>,
+    #[serde(default)]
+    pub(super) changed_files: Vec<String>,
+    #[serde(default)]
+    pub(super) blockers: Vec<String>,
+    #[serde(default)]
+    pub(super) requested_changes: Vec<String>,
+    #[serde(default)]
+    pub(super) regression_signals: Vec<Value>,
+    #[serde(default)]
+    pub(super) memory_hits_used: Vec<String>,
+    #[serde(default)]
+    pub(super) notes: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Default)]
 pub(super) struct CoderIssueFixSummaryCreateInput {
     #[serde(default)]
     pub(super) summary: Option<String>,
@@ -1761,6 +1783,98 @@ async fn advance_coder_workflow_run(
             task.updated_ts = now;
             task.task_rev = task.task_rev.saturating_add(1);
         }
+    }
+    for workflow_node_id in completed_workflow_node_ids {
+        if run
+            .tasks
+            .iter()
+            .any(|task| task.workflow_node_id.as_deref() == Some(*workflow_node_id))
+        {
+            continue;
+        }
+        let task_type = match *workflow_node_id {
+            "retrieve_memory" => "research",
+            "inspect_repo" | "inspect_pull_request" | "inspect_issue_context" => "inspection",
+            "attempt_reproduction"
+            | "review_pull_request"
+            | "prepare_fix"
+            | "assess_merge_readiness" => "analysis",
+            _ => "implementation",
+        };
+        run.tasks.push(super::context_types::ContextBlackboardTask {
+            id: format!("coder-progress-complete-{}", Uuid::new_v4().simple()),
+            task_type: task_type.to_string(),
+            payload: json!({
+                "task_kind": task_type,
+                "title": format!("Complete workflow step: {workflow_node_id}"),
+                "source": "coder_progress_advance",
+            }),
+            status: ContextBlackboardTaskStatus::Done,
+            workflow_id: Some(run.run_type.clone()),
+            workflow_node_id: Some((*workflow_node_id).to_string()),
+            parent_task_id: None,
+            depends_on_task_ids: Vec::new(),
+            decision_ids: Vec::new(),
+            artifact_ids: Vec::new(),
+            assigned_agent: None,
+            priority: 0,
+            attempt: 0,
+            max_attempts: 1,
+            last_error: None,
+            next_retry_at_ms: None,
+            lease_owner: None,
+            lease_token: None,
+            lease_expires_at_ms: None,
+            task_rev: 1,
+            created_ts: now,
+            updated_ts: now,
+        });
+    }
+    for workflow_node_id in runnable_workflow_node_ids {
+        if run
+            .tasks
+            .iter()
+            .any(|task| task.workflow_node_id.as_deref() == Some(*workflow_node_id))
+        {
+            continue;
+        }
+        let task_type = match *workflow_node_id {
+            "retrieve_memory" => "research",
+            "inspect_repo" | "inspect_pull_request" | "inspect_issue_context" => "inspection",
+            "attempt_reproduction"
+            | "review_pull_request"
+            | "prepare_fix"
+            | "assess_merge_readiness" => "analysis",
+            _ => "implementation",
+        };
+        run.tasks.push(super::context_types::ContextBlackboardTask {
+            id: format!("coder-progress-runnable-{}", Uuid::new_v4().simple()),
+            task_type: task_type.to_string(),
+            payload: json!({
+                "task_kind": task_type,
+                "title": format!("Continue workflow step: {workflow_node_id}"),
+                "source": "coder_progress_advance",
+            }),
+            status: ContextBlackboardTaskStatus::Runnable,
+            workflow_id: Some(run.run_type.clone()),
+            workflow_node_id: Some((*workflow_node_id).to_string()),
+            parent_task_id: None,
+            depends_on_task_ids: Vec::new(),
+            decision_ids: Vec::new(),
+            artifact_ids: Vec::new(),
+            assigned_agent: None,
+            priority: 0,
+            attempt: 0,
+            max_attempts: 1,
+            last_error: None,
+            next_retry_at_ms: None,
+            lease_owner: None,
+            lease_token: None,
+            lease_expires_at_ms: None,
+            task_rev: 1,
+            created_ts: now,
+            updated_ts: now,
+        });
     }
     run.status = ContextRunStatus::Running;
     run.started_at_ms.get_or_insert(now);
@@ -3864,58 +3978,22 @@ pub(super) async fn coder_pr_review_summary_create(
         extra
     });
 
-    let review_evidence_artifact = if !input.changed_files.is_empty()
-        || !input.blockers.is_empty()
-        || !input.requested_changes.is_empty()
-        || !input.regression_signals.is_empty()
-    {
-        let evidence_id = format!("pr-review-evidence-{}", Uuid::new_v4().simple());
-        let evidence_payload = json!({
-            "coder_run_id": record.coder_run_id,
-            "linked_context_run_id": record.linked_context_run_id,
-            "workflow_mode": record.workflow_mode,
-            "repo_binding": record.repo_binding,
-            "github_ref": record.github_ref,
-            "verdict": input.verdict,
-            "risk_level": input.risk_level,
-            "changed_files": input.changed_files,
-            "blockers": input.blockers,
-            "requested_changes": input.requested_changes,
-            "regression_signals": input.regression_signals,
-            "memory_hits_used": input.memory_hits_used,
-            "summary_artifact_path": artifact.path,
-            "created_at_ms": crate::now_ms(),
-        });
-        let evidence_artifact = write_coder_artifact(
-            &state,
-            &record.linked_context_run_id,
-            &evidence_id,
-            "coder_review_evidence",
-            "artifacts/pr_review.evidence.json",
-            &evidence_payload,
-        )
-        .await?;
-        publish_coder_artifact_added(
-            &state,
-            &record,
-            &evidence_artifact,
-            Some("artifact_write"),
-            {
-                let mut extra = serde_json::Map::new();
-                extra.insert("kind".to_string(), json!("review_evidence"));
-                if let Some(verdict) = input.verdict.clone() {
-                    extra.insert("verdict".to_string(), json!(verdict));
-                }
-                if let Some(risk_level) = input.risk_level.clone() {
-                    extra.insert("risk_level".to_string(), json!(risk_level));
-                }
-                extra
-            },
-        );
-        Some(evidence_artifact)
-    } else {
-        None
-    };
+    let review_evidence_artifact = write_pr_review_evidence_artifact(
+        &state,
+        &record,
+        input.verdict.as_deref(),
+        input.summary.as_deref(),
+        input.risk_level.as_deref(),
+        &input.changed_files,
+        &input.blockers,
+        &input.requested_changes,
+        &input.regression_signals,
+        &input.memory_hits_used,
+        input.notes.as_deref(),
+        Some(&artifact.path),
+        Some("artifact_write"),
+    )
+    .await?;
 
     let mut generated_candidates = Vec::<Value>::new();
     if let Some(summary_text) = input
@@ -4054,6 +4132,122 @@ pub(super) async fn coder_pr_review_summary_create(
         "artifact": artifact,
         "review_evidence_artifact": review_evidence_artifact,
         "generated_candidates": generated_candidates,
+        "coder_run": coder_run_payload(&record, &final_run),
+        "run": final_run,
+    })))
+}
+
+async fn write_pr_review_evidence_artifact(
+    state: &AppState,
+    record: &CoderRunRecord,
+    verdict: Option<&str>,
+    summary: Option<&str>,
+    risk_level: Option<&str>,
+    changed_files: &[String],
+    blockers: &[String],
+    requested_changes: &[String],
+    regression_signals: &[Value],
+    memory_hits_used: &[String],
+    notes: Option<&str>,
+    summary_artifact_path: Option<&str>,
+    phase: Option<&str>,
+) -> Result<Option<ContextBlackboardArtifact>, StatusCode> {
+    if changed_files.is_empty()
+        && blockers.is_empty()
+        && requested_changes.is_empty()
+        && regression_signals.is_empty()
+        && summary.map(str::trim).unwrap_or("").is_empty()
+        && notes.map(str::trim).unwrap_or("").is_empty()
+    {
+        return Ok(None);
+    }
+    let evidence_id = format!("pr-review-evidence-{}", Uuid::new_v4().simple());
+    let evidence_payload = json!({
+        "coder_run_id": record.coder_run_id,
+        "linked_context_run_id": record.linked_context_run_id,
+        "workflow_mode": record.workflow_mode,
+        "repo_binding": record.repo_binding,
+        "github_ref": record.github_ref,
+        "verdict": verdict,
+        "summary": summary,
+        "risk_level": risk_level,
+        "changed_files": changed_files,
+        "blockers": blockers,
+        "requested_changes": requested_changes,
+        "regression_signals": regression_signals,
+        "memory_hits_used": memory_hits_used,
+        "notes": notes,
+        "summary_artifact_path": summary_artifact_path,
+        "created_at_ms": crate::now_ms(),
+    });
+    let evidence_artifact = write_coder_artifact(
+        state,
+        &record.linked_context_run_id,
+        &evidence_id,
+        "coder_review_evidence",
+        "artifacts/pr_review.evidence.json",
+        &evidence_payload,
+    )
+    .await?;
+    publish_coder_artifact_added(state, record, &evidence_artifact, phase, {
+        let mut extra = serde_json::Map::new();
+        extra.insert("kind".to_string(), json!("review_evidence"));
+        if let Some(verdict) = verdict {
+            extra.insert("verdict".to_string(), json!(verdict));
+        }
+        if let Some(risk_level) = risk_level {
+            extra.insert("risk_level".to_string(), json!(risk_level));
+        }
+        extra
+    });
+    Ok(Some(evidence_artifact))
+}
+
+pub(super) async fn coder_pr_review_evidence_create(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(input): Json<CoderPrReviewEvidenceCreateInput>,
+) -> Result<Json<Value>, StatusCode> {
+    let mut record = load_coder_run_record(&state, &id).await?;
+    if !matches!(record.workflow_mode, CoderWorkflowMode::PrReview) {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let artifact = write_pr_review_evidence_artifact(
+        &state,
+        &record,
+        input.verdict.as_deref(),
+        input.summary.as_deref(),
+        input.risk_level.as_deref(),
+        &input.changed_files,
+        &input.blockers,
+        &input.requested_changes,
+        &input.regression_signals,
+        &input.memory_hits_used,
+        input.notes.as_deref(),
+        None,
+        Some("analysis"),
+    )
+    .await?;
+    let Some(artifact) = artifact else {
+        return Err(StatusCode::BAD_REQUEST);
+    };
+    let final_run = advance_coder_workflow_run(
+        &state,
+        &record,
+        &[
+            "inspect_pull_request",
+            "retrieve_memory",
+            "review_pull_request",
+        ],
+        &["write_review_artifact"],
+        "Write the PR review summary and verdict.",
+    )
+    .await?;
+    record.updated_at_ms = final_run.updated_at_ms;
+    save_coder_run_record(&state, &record).await?;
+    Ok(Json(json!({
+        "ok": true,
+        "artifact": artifact,
         "coder_run": coder_run_payload(&record, &final_run),
         "run": final_run,
     })))
