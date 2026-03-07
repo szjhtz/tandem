@@ -49,6 +49,27 @@ type RunEventRow = Record<string, unknown>;
 
 type ArtifactCategory = "duplicate" | "triage" | "memory" | "validation" | "other";
 
+type ArtifactDiffFile = {
+  key: string;
+  label: string;
+  oldValue: string;
+  newValue: string;
+  lineCountBefore: number;
+  lineCountAfter: number;
+  extensionLabel: string;
+};
+
+type ArtifactPreview =
+  | {
+      kind: "raw";
+      value: string;
+    }
+  | {
+      kind: "diff";
+      rawValue: string;
+      files: ArtifactDiffFile[];
+    };
+
 type ArtifactGroup = {
   key: ArtifactCategory;
   label: string;
@@ -105,6 +126,11 @@ function renderValue(value: unknown): string {
   return JSON.stringify(value, null, 2) ?? "";
 }
 
+function lineCount(value: string): number {
+  if (!value) return 0;
+  return value.split("\n").length;
+}
+
 function pickText(value: unknown): string {
   if (typeof value === "string" && value.trim().length > 0) return value.trim();
   if (typeof value === "number" || typeof value === "boolean") return String(value);
@@ -115,6 +141,105 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : null;
+}
+
+function fileExtensionLabel(path: string): string {
+  const segment = path.split("/").pop() ?? path;
+  const extension = segment.includes(".") ? (segment.split(".").pop() ?? "") : "";
+  return extension ? extension.toUpperCase() : "TEXT";
+}
+
+function nestedContent(value: unknown): string | null {
+  if (typeof value === "string") return value;
+  const record = asRecord(value);
+  if (!record) return null;
+  for (const candidate of [
+    record.content,
+    record.text,
+    record.body,
+    record.value,
+    record.snapshot,
+  ]) {
+    if (typeof candidate === "string") return candidate;
+  }
+  return null;
+}
+
+function diffSide(record: Record<string, unknown>, side: "old" | "new"): string | null {
+  const directKeys =
+    side === "old"
+      ? ["old", "before", "old_content", "before_text", "previous_content", "original"]
+      : ["new", "after", "new_content", "after_text", "updated_content", "proposed_content"];
+  for (const key of directKeys) {
+    const value = record[key];
+    if (typeof value === "string") return value;
+  }
+  const nestedKeys =
+    side === "old"
+      ? ["before_snapshot", "before_state", "old_snapshot"]
+      : ["after_snapshot", "after_state", "new_snapshot"];
+  for (const key of nestedKeys) {
+    const value = nestedContent(record[key]);
+    if (value !== null) return value;
+  }
+  return null;
+}
+
+function diffPath(record: Record<string, unknown>, fallbackPath?: string | null): string {
+  for (const candidate of [
+    record.path,
+    record.file,
+    record.file_path,
+    record.target_file,
+    record.relative_path,
+    record.filename,
+  ]) {
+    const text = pickText(candidate);
+    if (text) return text;
+  }
+  return fallbackPath || "Artifact preview";
+}
+
+function buildDiffFile(
+  record: Record<string, unknown>,
+  index: number,
+  fallbackPath?: string | null
+): ArtifactDiffFile | null {
+  const oldValue = diffSide(record, "old");
+  const newValue = diffSide(record, "new");
+  if (oldValue === null || newValue === null) return null;
+  const label = diffPath(record, fallbackPath);
+  return {
+    key: `${label}-${index}`,
+    label,
+    oldValue,
+    newValue,
+    lineCountBefore: lineCount(oldValue),
+    lineCountAfter: lineCount(newValue),
+    extensionLabel: fileExtensionLabel(label),
+  };
+}
+
+function extractArtifactDiffFiles(
+  parsed: Record<string, unknown>,
+  fallbackPath?: string | null
+): ArtifactDiffFile[] {
+  const files: ArtifactDiffFile[] = [];
+  for (const key of ["files", "changes", "edits", "diffs", "file_diffs"]) {
+    const items = parsed[key];
+    if (!Array.isArray(items)) continue;
+    items.forEach((item, index) => {
+      const record = asRecord(item);
+      if (!record) return;
+      const file = buildDiffFile(record, index, fallbackPath);
+      if (file) files.push(file);
+    });
+  }
+  const topLevelFile = buildDiffFile(parsed, files.length, fallbackPath);
+  if (topLevelFile) files.push(topLevelFile);
+  return files.filter(
+    (file, index, all) => all.findIndex((candidate) => candidate.key === file.key) === index
+  );
 }
 
 function artifactCategory(artifact: CoderArtifactRecord): ArtifactCategory {
@@ -340,6 +465,9 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
   const [memoryCandidates, setMemoryCandidates] = useState<CoderMemoryCandidateRecord[]>([]);
   const [selectedArtifactPath, setSelectedArtifactPath] = useState<string | null>(null);
   const [selectedArtifactContent, setSelectedArtifactContent] = useState<string>("");
+  const [selectedDiffFileKey, setSelectedDiffFileKey] = useState<string | null>(null);
+  const [artifactPreviewMode, setArtifactPreviewMode] = useState<"diff" | "raw">("diff");
+  const [artifactDiffSplitView, setArtifactDiffSplitView] = useState(true);
   const [loadingArtifact, setLoadingArtifact] = useState(false);
   const [loadingRuns, setLoadingRuns] = useState(false);
   const [loadingDetail, setLoadingDetail] = useState(false);
@@ -447,6 +575,12 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
     return () => {
       cancelled = true;
     };
+  }, [selectedArtifactPath]);
+
+  useEffect(() => {
+    setSelectedDiffFileKey(null);
+    setArtifactPreviewMode("diff");
+    setArtifactDiffSplitView(true);
   }, [selectedArtifactPath]);
 
   const selectedTaskRows = useMemo(() => {
@@ -717,30 +851,32 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
     return artifacts.find((artifact) => artifact.path === selectedArtifactPath) ?? null;
   }, [artifacts, selectedArtifactPath]);
 
-  const artifactPreview = useMemo(() => {
+  const artifactPreview = useMemo<ArtifactPreview | null>(() => {
     if (!selectedArtifactContent) return null;
     try {
       const parsed = JSON.parse(selectedArtifactContent) as Record<string, unknown>;
-      const oldValue =
-        typeof parsed.old === "string"
-          ? parsed.old
-          : typeof parsed.before === "string"
-            ? parsed.before
-            : null;
-      const newValue =
-        typeof parsed.new === "string"
-          ? parsed.new
-          : typeof parsed.after === "string"
-            ? parsed.after
-            : null;
-      if (oldValue !== null && newValue !== null) {
-        return { kind: "diff" as const, oldValue, newValue };
+      const files = extractArtifactDiffFiles(parsed, selectedArtifactRecord?.path);
+      if (files.length > 0) {
+        return {
+          kind: "diff",
+          rawValue: selectedArtifactContent,
+          files,
+        };
       }
-      return { kind: "raw" as const, value: selectedArtifactContent };
+      return { kind: "raw", value: selectedArtifactContent };
     } catch {
-      return { kind: "raw" as const, value: selectedArtifactContent };
+      return { kind: "raw", value: selectedArtifactContent };
     }
-  }, [selectedArtifactContent]);
+  }, [selectedArtifactContent, selectedArtifactRecord?.path]);
+
+  useEffect(() => {
+    if (artifactPreview?.kind !== "diff") return;
+    setSelectedDiffFileKey((current) =>
+      artifactPreview.files.some((file) => file.key === current)
+        ? current
+        : (artifactPreview.files[0]?.key ?? null)
+    );
+  }, [artifactPreview]);
 
   const selectedArtifactJson = useMemo(() => {
     if (!selectedArtifactContent) return null;
@@ -759,6 +895,11 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
           .filter((item): item is Record<string, unknown> => !!item)
       : [];
   }, [selectedArtifactJson]);
+
+  const selectedDiffFile = useMemo(() => {
+    if (artifactPreview?.kind !== "diff") return null;
+    return artifactPreview.files.find((file) => file.key === selectedDiffFileKey) ?? null;
+  }, [artifactPreview, selectedDiffFileKey]);
 
   const filteredMemoryHits = useMemo(() => {
     return memoryHitFilter === "scored"
@@ -1106,6 +1247,138 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
       focusOverviewSection("timeline");
     },
     [focusOverviewSection]
+  );
+
+  const renderArtifactPreviewContent = useCallback(
+    (emptyLabel: string) => {
+      if (loadingArtifact) {
+        return <p className="text-sm text-text-muted">Loading artifact preview…</p>;
+      }
+      if (artifactPreview?.kind === "diff" && selectedDiffFile) {
+        return (
+          <div className="space-y-3">
+            <div className="rounded-2xl border border-border bg-surface-elevated/30 p-3">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p className="text-[11px] uppercase tracking-[0.2em] text-text-muted">
+                    Code-aware diff
+                  </p>
+                  <p className="mt-1 break-all font-mono text-[11px] text-text-muted">
+                    {selectedDiffFile.label}
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <span className="rounded-full border border-border px-2.5 py-1 text-[10px] uppercase tracking-[0.18em] text-text-muted">
+                    {selectedDiffFile.extensionLabel}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setArtifactPreviewMode("diff")}
+                    className={cn(
+                      "rounded-full border px-2.5 py-1 text-[10px] uppercase tracking-[0.18em] transition-colors",
+                      artifactPreviewMode === "diff"
+                        ? "border-primary/40 bg-primary/10 text-text"
+                        : "border-border text-text-muted hover:bg-surface-elevated hover:text-text"
+                    )}
+                  >
+                    Diff
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setArtifactPreviewMode("raw")}
+                    className={cn(
+                      "rounded-full border px-2.5 py-1 text-[10px] uppercase tracking-[0.18em] transition-colors",
+                      artifactPreviewMode === "raw"
+                        ? "border-primary/40 bg-primary/10 text-text"
+                        : "border-border text-text-muted hover:bg-surface-elevated hover:text-text"
+                    )}
+                  >
+                    Raw
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setArtifactDiffSplitView((current) => !current)}
+                    className="rounded-full border border-border px-2.5 py-1 text-[10px] uppercase tracking-[0.18em] text-text-muted transition-colors hover:bg-surface-elevated hover:text-text"
+                  >
+                    {artifactDiffSplitView ? "Split" : "Unified"}
+                  </button>
+                </div>
+              </div>
+              <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                <div className="rounded-2xl border border-border bg-surface px-3 py-2">
+                  <p className="text-[11px] uppercase tracking-[0.2em] text-text-muted">Files</p>
+                  <p className="mt-1 text-sm font-medium text-text">
+                    {artifactPreview.files.length}
+                  </p>
+                </div>
+                <div className="rounded-2xl border border-border bg-surface px-3 py-2">
+                  <p className="text-[11px] uppercase tracking-[0.2em] text-text-muted">Before</p>
+                  <p className="mt-1 text-sm font-medium text-text">
+                    {selectedDiffFile.lineCountBefore} lines
+                  </p>
+                </div>
+                <div className="rounded-2xl border border-border bg-surface px-3 py-2">
+                  <p className="text-[11px] uppercase tracking-[0.2em] text-text-muted">After</p>
+                  <p className="mt-1 text-sm font-medium text-text">
+                    {selectedDiffFile.lineCountAfter} lines
+                  </p>
+                </div>
+                <div className="rounded-2xl border border-border bg-surface px-3 py-2">
+                  <p className="text-[11px] uppercase tracking-[0.2em] text-text-muted">Delta</p>
+                  <p className="mt-1 text-sm font-medium text-text">
+                    {selectedDiffFile.lineCountAfter - selectedDiffFile.lineCountBefore >= 0
+                      ? "+"
+                      : ""}
+                    {selectedDiffFile.lineCountAfter - selectedDiffFile.lineCountBefore} lines
+                  </p>
+                </div>
+              </div>
+              {artifactPreview.files.length > 1 ? (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {artifactPreview.files.map((file) => (
+                    <button
+                      key={file.key}
+                      type="button"
+                      onClick={() => {
+                        setSelectedDiffFileKey(file.key);
+                        setArtifactPreviewMode("diff");
+                      }}
+                      className={cn(
+                        "rounded-full border px-2.5 py-1 text-[10px] uppercase tracking-[0.18em] transition-colors",
+                        selectedDiffFile.key === file.key
+                          ? "border-primary/40 bg-primary/10 text-text"
+                          : "border-border text-text-muted hover:bg-surface-elevated hover:text-text"
+                      )}
+                    >
+                      {file.label}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+            {artifactPreviewMode === "raw" ? (
+              <pre className="max-h-[420px] overflow-auto rounded-2xl border border-border bg-surface-elevated/40 p-3 text-[11px] text-text-muted">
+                {artifactPreview.rawValue}
+              </pre>
+            ) : (
+              <DiffViewer
+                oldValue={selectedDiffFile.oldValue}
+                newValue={selectedDiffFile.newValue}
+                oldTitle={`Before (${selectedDiffFile.lineCountBefore} lines)`}
+                newTitle={`After (${selectedDiffFile.lineCountAfter} lines)`}
+                splitView={artifactDiffSplitView}
+              />
+            )}
+          </div>
+        );
+      }
+      return (
+        <pre className="max-h-[420px] overflow-auto rounded-2xl border border-border bg-surface-elevated/40 p-3 text-[11px] text-text-muted">
+          {artifactPreview?.kind === "raw" ? artifactPreview.value : emptyLabel}
+        </pre>
+      );
+    },
+    [artifactDiffSplitView, artifactPreview, artifactPreviewMode, loadingArtifact, selectedDiffFile]
   );
 
   return (
@@ -2757,20 +3030,7 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
                               </button>
                             </div>
                           ) : null}
-                          {loadingArtifact ? (
-                            <p className="text-sm text-text-muted">Loading artifact preview…</p>
-                          ) : artifactPreview?.kind === "diff" ? (
-                            <DiffViewer
-                              oldValue={artifactPreview.oldValue}
-                              newValue={artifactPreview.newValue}
-                              oldTitle="Before"
-                              newTitle="After"
-                            />
-                          ) : (
-                            <pre className="max-h-[420px] overflow-auto rounded-2xl border border-border bg-surface-elevated/40 p-3 text-[11px] text-text-muted">
-                              {artifactPreview?.value ?? "No artifact preview available."}
-                            </pre>
-                          )}
+                          {renderArtifactPreviewContent("No artifact preview available.")}
                         </>
                       ) : (
                         <p className="text-sm text-text-muted">
@@ -3043,20 +3303,7 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
                               </p>
                             </button>
                           </div>
-                          {loadingArtifact ? (
-                            <p className="text-sm text-text-muted">Loading validation preview…</p>
-                          ) : artifactPreview?.kind === "diff" ? (
-                            <DiffViewer
-                              oldValue={artifactPreview.oldValue}
-                              newValue={artifactPreview.newValue}
-                              oldTitle="Before"
-                              newTitle="After"
-                            />
-                          ) : (
-                            <pre className="max-h-[420px] overflow-auto rounded-2xl border border-border bg-surface-elevated/40 p-3 text-[11px] text-text-muted">
-                              {artifactPreview?.value ?? "No validation preview available."}
-                            </pre>
-                          )}
+                          {renderArtifactPreviewContent("No validation preview available.")}
                         </>
                       ) : (
                         <p className="text-sm text-text-muted">
