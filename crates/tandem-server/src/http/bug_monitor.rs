@@ -1589,15 +1589,17 @@ pub(super) async fn draft_bug_monitor_issue(
 ) -> Response {
     match ensure_bug_monitor_issue_draft(state.clone(), &id, true).await {
         Ok(issue_draft) => {
-            let issue_draft_artifact = issue_draft
-                .get("triage_run_id")
-                .and_then(Value::as_str)
-                .and_then(|triage_run_id| {
-                    latest_bug_monitor_artifact(&state, triage_run_id, "bug_monitor_issue_draft")
-                });
+            let triage_run_id = issue_draft.get("triage_run_id").and_then(Value::as_str);
+            let triage_summary_artifact = triage_run_id.and_then(|triage_run_id| {
+                latest_bug_monitor_artifact(&state, triage_run_id, "bug_monitor_triage_summary")
+            });
+            let issue_draft_artifact = triage_run_id.and_then(|triage_run_id| {
+                latest_bug_monitor_artifact(&state, triage_run_id, "bug_monitor_issue_draft")
+            });
             Json(json!({
                 "ok": true,
                 "issue_draft": issue_draft,
+                "triage_summary_artifact": triage_summary_artifact,
                 "issue_draft_artifact": issue_draft_artifact,
             }))
             .into_response()
