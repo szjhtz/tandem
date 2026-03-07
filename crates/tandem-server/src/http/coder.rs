@@ -534,6 +534,7 @@ pub(crate) async fn query_failure_pattern_matches(
             "summary": candidate.get("summary").cloned().unwrap_or(Value::Null),
             "fingerprint": payload.get("fingerprint").cloned().unwrap_or(Value::Null),
             "linked_issue_numbers": payload.get("linked_issue_numbers").cloned().unwrap_or_else(|| json!([])),
+            "recurrence_count": payload.get("recurrence_count").cloned().unwrap_or_else(|| Value::from(1_u64)),
             "linked_pr_numbers": payload.get("linked_pr_numbers").cloned().unwrap_or_else(|| json!([])),
             "artifact_refs": payload.get("artifact_refs").cloned().unwrap_or_else(|| json!([])),
             "source_coder_run_id": row.get("source_coder_run_id").cloned().unwrap_or(Value::Null),

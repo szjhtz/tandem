@@ -4838,10 +4838,9 @@ async fn process_bug_monitor_event(
 
     if !duplicate_matches.is_empty() {
         incident.status = "duplicate_suppressed".to_string();
-        incident.duplicate_summary = Some(serde_json::json!({
-            "reason": "duplicate_failure_pattern",
-            "matches": duplicate_matches,
-        }));
+        let duplicate_summary =
+            crate::http::bug_monitor::build_bug_monitor_duplicate_summary(&duplicate_matches);
+        incident.duplicate_summary = Some(duplicate_summary.clone());
         incident.updated_at_ms = now_ms();
         state.put_bug_monitor_incident(incident.clone()).await?;
         state.event_bus.publish(EngineEvent::new(
@@ -4851,7 +4850,7 @@ async fn process_bug_monitor_event(
                 "fingerprint": incident.fingerprint,
                 "eventType": incident.event_type,
                 "status": incident.status,
-                "duplicate_matches": duplicate_matches,
+                "duplicate_summary": duplicate_summary,
             }),
         ));
         return Ok(incident);

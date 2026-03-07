@@ -725,6 +725,46 @@ pub(crate) async fn bug_monitor_failure_pattern_matches(
     .unwrap_or_default()
 }
 
+pub(crate) fn build_bug_monitor_duplicate_summary(matches: &[Value]) -> Value {
+    let normalized_matches = matches
+        .iter()
+        .map(|row| {
+            json!({
+                "fingerprint": row.get("fingerprint").cloned().unwrap_or(Value::Null),
+                "summary": row.get("summary").cloned().unwrap_or(Value::Null),
+                "match_reason": row.get("match_reason").cloned().unwrap_or(Value::Null),
+                "score": row.get("score").cloned().unwrap_or(Value::Null),
+                "recurrence_count": row.get("recurrence_count").cloned().unwrap_or_else(|| Value::from(1_u64)),
+                "linked_issue_numbers": row.get("linked_issue_numbers").cloned().unwrap_or_else(|| json!([])),
+                "run_id": row.get("run_id").cloned().unwrap_or(Value::Null),
+                "memory_id": row.get("memory_id").cloned().unwrap_or(Value::Null),
+            })
+        })
+        .collect::<Vec<_>>();
+    let best_match = normalized_matches.first().cloned().unwrap_or(Value::Null);
+    let max_recurrence_count = normalized_matches
+        .iter()
+        .filter_map(|row| row.get("recurrence_count").and_then(Value::as_u64))
+        .max()
+        .unwrap_or(1);
+    let mut linked_issue_numbers = normalized_matches
+        .iter()
+        .filter_map(|row| row.get("linked_issue_numbers").and_then(Value::as_array))
+        .flatten()
+        .filter_map(Value::as_u64)
+        .collect::<Vec<_>>();
+    linked_issue_numbers.sort_unstable();
+    linked_issue_numbers.dedup();
+    json!({
+        "reason": "duplicate_failure_pattern",
+        "match_count": normalized_matches.len(),
+        "max_recurrence_count": max_recurrence_count,
+        "linked_issue_numbers": linked_issue_numbers,
+        "best_match": best_match,
+        "matches": normalized_matches,
+    })
+}
+
 pub(crate) async fn load_bug_monitor_issue_draft_artifact(
     state: &AppState,
     triage_run_id: &str,

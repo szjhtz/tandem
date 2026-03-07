@@ -412,6 +412,7 @@ async fn bug_monitor_runtime_suppresses_duplicate_failure_patterns() {
                     "symptoms": ["session.error"],
                     "canonical_markers": ["Prompt retry failed", "swarm-orchestrator"],
                     "linked_issue_numbers": [401],
+                    "recurrence_count": 5,
                     "linked_pr_numbers": [],
                     "affected_components": ["orchestrator"],
                     "artifact_refs": ["artifact://ctx/manual/triage.summary.json"]
@@ -466,6 +467,33 @@ async fn bug_monitor_runtime_suppresses_duplicate_failure_patterns() {
         .cloned()
         .unwrap_or_default();
     assert_eq!(duplicate_summary.len(), 1);
+    assert_eq!(
+        incident
+            .duplicate_summary
+            .as_ref()
+            .and_then(|value| value.get("match_count"))
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        incident
+            .duplicate_summary
+            .as_ref()
+            .and_then(|value| value.get("best_match"))
+            .and_then(|value| value.get("recurrence_count"))
+            .and_then(Value::as_u64),
+        Some(5)
+    );
+    assert_eq!(
+        incident
+            .duplicate_summary
+            .as_ref()
+            .and_then(|value| value.get("best_match"))
+            .and_then(|value| value.get("linked_issue_numbers"))
+            .and_then(Value::as_array)
+            .cloned(),
+        Some(vec![Value::from(401_u64)])
+    );
     assert!(incident.draft_id.is_none());
     assert!(state.list_bug_monitor_drafts(10).await.is_empty());
 
