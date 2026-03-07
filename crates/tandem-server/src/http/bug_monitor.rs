@@ -1531,6 +1531,9 @@ pub(super) async fn approve_bug_monitor_draft(
             let issue_draft = ensure_bug_monitor_issue_draft(state.clone(), &draft.draft_id, true)
                 .await
                 .ok();
+            let issue_draft_artifact = draft.triage_run_id.as_deref().and_then(|triage_run_id| {
+                latest_bug_monitor_artifact(&state, triage_run_id, "bug_monitor_issue_draft")
+            });
             match bug_monitor_github::publish_draft(
                 &state,
                 &draft.draft_id,
@@ -1545,6 +1548,7 @@ pub(super) async fn approve_bug_monitor_draft(
                     "action": outcome.action,
                     "failure_pattern_memory": approval_failure_pattern_memory,
                     "issue_draft": issue_draft,
+                    "issue_draft_artifact": issue_draft_artifact,
                     "post": outcome.post,
                 }))
                 .into_response(),
@@ -1568,6 +1572,7 @@ pub(super) async fn approve_bug_monitor_draft(
                         "action": "approved",
                         "failure_pattern_memory": approval_failure_pattern_memory,
                         "issue_draft": issue_draft,
+                        "issue_draft_artifact": issue_draft_artifact,
                         "publish_error": detail,
                     }))
                     .into_response()
