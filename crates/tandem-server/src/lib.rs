@@ -873,6 +873,8 @@ pub struct BugMonitorIncidentRecord {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_error: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duplicate_summary: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub event_payload: Option<Value>,
 }
 
@@ -4828,6 +4830,7 @@ async fn process_bug_monitor_event(
             draft_id: None,
             triage_run_id: None,
             last_error: None,
+            duplicate_summary: None,
             event_payload: Some(event.properties.clone()),
         }
     };
@@ -4835,6 +4838,10 @@ async fn process_bug_monitor_event(
 
     if !duplicate_matches.is_empty() {
         incident.status = "duplicate_suppressed".to_string();
+        incident.duplicate_summary = Some(serde_json::json!({
+            "reason": "duplicate_failure_pattern",
+            "matches": duplicate_matches,
+        }));
         incident.updated_at_ms = now_ms();
         state.put_bug_monitor_incident(incident.clone()).await?;
         state.event_bus.publish(EngineEvent::new(

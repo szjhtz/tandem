@@ -42,6 +42,7 @@
   - added `POST /bug-monitor/drafts/{id}/triage-summary` so Bug Monitor triage can persist a structured summary artifact for issue drafting
   - Bug Monitor issue-draft generation now prefers that structured triage summary over raw incident detail when rendering the repo issue template
   - Bug Monitor now suppresses duplicate incidents earlier in both runtime ingest and manual `POST /bug-monitor/report` flows by consulting stored `failure_pattern` memory before opening a fresh draft
+  - Bug Monitor incidents now persist a compact duplicate summary when suppression happens so tracker UIs can explain duplicate suppression after reload/reconnect without overloading the raw source-event payload
 
 - **Initial Tandem Coder engine API foundation**:
   - added the first engine-owned coder endpoints:

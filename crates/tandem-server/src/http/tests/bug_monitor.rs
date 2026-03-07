@@ -458,6 +458,14 @@ async fn bug_monitor_runtime_suppresses_duplicate_failure_patterns() {
     assert_eq!(incidents.len(), 1);
     let incident = &incidents[0];
     assert_eq!(incident.status, "duplicate_suppressed");
+    let duplicate_summary = incident
+        .duplicate_summary
+        .as_ref()
+        .and_then(|value| value.get("matches"))
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    assert_eq!(duplicate_summary.len(), 1);
     assert!(incident.draft_id.is_none());
     assert!(state.list_bug_monitor_drafts(10).await.is_empty());
 

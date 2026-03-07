@@ -56,6 +56,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - added `POST /bug-monitor/drafts/{id}/triage-summary` so Bug Monitor triage can write a structured summary artifact with `what_happened`, `expected_behavior`, `steps_to_reproduce`, `environment`, and `logs`
   - Bug Monitor issue-draft generation now prefers that structured triage summary artifact over raw incident detail when rendering the repo issue template
   - Bug Monitor now suppresses duplicate incidents earlier in both runtime ingest and manual `POST /bug-monitor/report` flows by consulting stored `failure_pattern` memory before opening a fresh draft
+  - Bug Monitor incidents now persist a compact duplicate summary when suppression happens so tracker UIs can explain duplicate suppression after reload/reconnect without overloading the raw source-event payload
 
 - **Initial Tandem Coder engine API foundation**:
   - added a first engine-owned coder API surface:
