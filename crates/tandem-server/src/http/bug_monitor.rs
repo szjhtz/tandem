@@ -1427,6 +1427,7 @@ pub(super) async fn report_bug_monitor_issue(
             "suppressed": true,
             "reason": "duplicate_failure_pattern",
             "duplicate_summary": duplicate_summary,
+            "duplicate_matches": duplicate_matches,
         }))
         .into_response();
     }

@@ -436,6 +436,13 @@ async fn bug_monitor_report_surfaces_duplicate_failure_patterns() {
             .cloned(),
         Some(vec![Value::from(301_u64)])
     );
+    assert_eq!(
+        report_payload
+            .get("duplicate_matches")
+            .and_then(Value::as_array)
+            .map(|rows| rows.len()),
+        Some(2)
+    );
     assert!(state.list_bug_monitor_drafts(10).await.is_empty());
 }
 
@@ -737,6 +744,13 @@ async fn bug_monitor_draft_can_be_approved_and_denied() {
     assert_eq!(
         duplicate_payload.get("suppressed").and_then(Value::as_bool),
         Some(true)
+    );
+    assert_eq!(
+        duplicate_payload
+            .get("duplicate_matches")
+            .and_then(Value::as_array)
+            .map(|rows| rows.len()),
+        Some(1)
     );
 
     let deny_req = Request::builder()
