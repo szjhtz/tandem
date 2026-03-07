@@ -530,6 +530,18 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
     });
   }, [eventQuery, eventTimeline, eventTypeFilter]);
 
+  const timelineContextArtifact = useMemo(() => {
+    for (const event of filteredEventTimeline) {
+      const relatedArtifacts = relatedArtifactsForEvent(
+        artifacts,
+        pickText(event.step_id),
+        pickText(event.event_id)
+      );
+      if (relatedArtifacts.length > 0) return relatedArtifacts[0] ?? null;
+    }
+    return null;
+  }, [artifacts, filteredEventTimeline]);
+
   const readinessHint = useMemo(() => {
     if (!error) return null;
     const normalized = error.toLowerCase();
@@ -2094,7 +2106,13 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
                             <Button
                               variant="secondary"
                               size="sm"
-                              onClick={() => setDetailTab("artifacts")}
+                              onClick={() => {
+                                if (timelineContextArtifact) {
+                                  openArtifactRecord(timelineContextArtifact);
+                                } else {
+                                  setDetailTab("artifacts");
+                                }
+                              }}
                             >
                               <Database className="h-4 w-4" />
                               Open artifacts
