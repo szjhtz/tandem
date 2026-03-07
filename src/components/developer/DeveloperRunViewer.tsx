@@ -46,6 +46,15 @@ type BlackboardTimelineItem = {
   sourceEventId: string | null;
 };
 
+type ArtifactCategory = "duplicate" | "triage" | "memory" | "validation" | "other";
+
+type ArtifactGroup = {
+  key: ArtifactCategory;
+  label: string;
+  description: string;
+  artifacts: CoderArtifactRecord[];
+};
+
 const TASK_COLUMNS = [
   { key: "runnable", label: "Runnable" },
   { key: "in_progress", label: "In Progress" },
@@ -99,6 +108,63 @@ function pickText(value: unknown): string {
   if (typeof value === "string" && value.trim().length > 0) return value.trim();
   if (typeof value === "number" || typeof value === "boolean") return String(value);
   return "";
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function artifactCategory(artifact: CoderArtifactRecord): ArtifactCategory {
+  const type = artifact.artifact_type.toLowerCase();
+  const path = artifact.path.toLowerCase();
+  if (type.includes("duplicate") || path.includes("duplicate")) return "duplicate";
+  if (type.includes("triage") || path.includes("triage")) return "triage";
+  if (type.includes("memory") || path.includes("memory")) return "memory";
+  if (type.includes("validation") || path.includes("validation")) return "validation";
+  return "other";
+}
+
+function artifactCategoryTone(category: ArtifactCategory): string {
+  switch (category) {
+    case "duplicate":
+      return "border-amber-500/30 bg-amber-500/10 text-amber-100";
+    case "triage":
+      return "border-sky-500/30 bg-sky-500/10 text-sky-200";
+    case "memory":
+      return "border-emerald-500/30 bg-emerald-500/10 text-emerald-200";
+    case "validation":
+      return "border-violet-500/30 bg-violet-500/10 text-violet-200";
+    default:
+      return "border-border bg-surface text-text-muted";
+  }
+}
+
+function duplicateMatchLabel(match: Record<string, unknown>): string {
+  return (
+    pickText(match.summary) ||
+    pickText(match.title) ||
+    pickText(match.issue_title) ||
+    pickText(match.fingerprint) ||
+    pickText(match.candidate_id) ||
+    "Historical match"
+  );
+}
+
+function duplicateMatchBadges(match: Record<string, unknown>): string[] {
+  const badges: string[] = [];
+  const issueNumber = pickText(match.issue_number);
+  const prNumber = pickText(match.pr_number);
+  const score = match.score;
+  const confidence = match.confidence;
+  const component = pickText(match.component ?? match.affected_component);
+  if (issueNumber) badges.push(`Issue #${issueNumber}`);
+  if (prNumber) badges.push(`PR #${prNumber}`);
+  if (typeof score === "number") badges.push(`score ${score.toFixed(2)}`);
+  if (typeof confidence === "number") badges.push(`confidence ${confidence.toFixed(2)}`);
+  if (component) badges.push(component);
+  return badges;
 }
 
 function blackboardRowText(row: BlackboardRow): string {
@@ -325,6 +391,20 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
     });
   }, [runQuery, runs, statusFilter, workflowFilter]);
 
+  const runSummary = useMemo(() => {
+    return filteredRuns.reduce(
+      (summary, run) => {
+        const normalized = (run.status ?? "unknown").toLowerCase();
+        summary.total += 1;
+        if (normalized === "running" || normalized === "planning") summary.active += 1;
+        if (normalized === "awaiting_approval") summary.awaitingApproval += 1;
+        if (normalized === "failed" || normalized === "blocked") summary.needsAttention += 1;
+        return summary;
+      },
+      { total: 0, active: 0, awaitingApproval: 0, needsAttention: 0 }
+    );
+  }, [filteredRuns]);
+
   const runStatuses = useMemo(() => {
     return ["all", ...new Set(runs.map((run) => run.status ?? "unknown"))];
   }, [runs]);
@@ -352,19 +432,53 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
     }));
   }, [selectedTaskRows]);
 
-  const artifactHighlights = useMemo(() => {
-    return artifacts.filter((artifact) => {
-      const type = artifact.artifact_type.toLowerCase();
-      const path = artifact.path.toLowerCase();
-      return (
-        type.includes("memory") ||
-        type.includes("triage") ||
-        type.includes("validation") ||
-        path.includes("duplicate") ||
-        path.includes("diff")
-      );
-    });
+  const artifactGroups = useMemo<ArtifactGroup[]>(() => {
+    const buckets = new Map<ArtifactCategory, CoderArtifactRecord[]>();
+    for (const key of ["duplicate", "triage", "memory", "validation", "other"] as const) {
+      buckets.set(key, []);
+    }
+    for (const artifact of artifacts) {
+      buckets.get(artifactCategory(artifact))?.push(artifact);
+    }
+    const groups: ArtifactGroup[] = [
+      {
+        key: "duplicate",
+        label: "Duplicate History",
+        description: "Historical matches and duplicate candidate artifacts.",
+        artifacts: buckets.get("duplicate") ?? [],
+      },
+      {
+        key: "triage",
+        label: "Triage",
+        description: "Run summaries and diagnosis artifacts.",
+        artifacts: buckets.get("triage") ?? [],
+      },
+      {
+        key: "memory",
+        label: "Memory",
+        description: "Retrieved memory evidence and memory-backed outputs.",
+        artifacts: buckets.get("memory") ?? [],
+      },
+      {
+        key: "validation",
+        label: "Validation",
+        description: "Validation outcomes and follow-up checks.",
+        artifacts: buckets.get("validation") ?? [],
+      },
+      {
+        key: "other",
+        label: "Other",
+        description: "Remaining artifacts emitted by the run.",
+        artifacts: buckets.get("other") ?? [],
+      },
+    ];
+    return groups.filter((group) => group.artifacts.length > 0);
   }, [artifacts]);
+
+  const selectedArtifactRecord = useMemo(() => {
+    if (!selectedArtifactPath) return null;
+    return artifacts.find((artifact) => artifact.path === selectedArtifactPath) ?? null;
+  }, [artifacts, selectedArtifactPath]);
 
   const artifactPreview = useMemo(() => {
     if (!selectedArtifactContent) return null;
@@ -390,6 +504,56 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
       return { kind: "raw" as const, value: selectedArtifactContent };
     }
   }, [selectedArtifactContent]);
+
+  const selectedArtifactJson = useMemo(() => {
+    if (!selectedArtifactContent) return null;
+    try {
+      return asRecord(JSON.parse(selectedArtifactContent));
+    } catch {
+      return null;
+    }
+  }, [selectedArtifactContent]);
+
+  const selectedDuplicateMatches = useMemo(() => {
+    const matches = selectedArtifactJson?.matches ?? selectedArtifactJson?.duplicate_candidates;
+    return Array.isArray(matches)
+      ? matches
+          .map((item) => asRecord(item))
+          .filter((item): item is Record<string, unknown> => !!item)
+      : [];
+  }, [selectedArtifactJson]);
+
+  const selectedValidationSummary = useMemo(() => {
+    if (!selectedArtifactJson) return null;
+    const validation = asRecord(selectedArtifactJson.validation);
+    const validationsAttempted = Array.isArray(selectedArtifactJson.validations_attempted)
+      ? selectedArtifactJson.validations_attempted.length
+      : null;
+    const outcome = pickText(
+      selectedArtifactJson.outcome ??
+        selectedArtifactJson.result ??
+        validation?.outcome ??
+        validation?.result
+    );
+    const passed =
+      typeof selectedArtifactJson.passed === "boolean"
+        ? selectedArtifactJson.passed
+        : typeof validation?.passed === "boolean"
+          ? validation.passed
+          : null;
+    if (!outcome && passed === null && validationsAttempted === null) return null;
+    return { outcome, passed, validationsAttempted };
+  }, [selectedArtifactJson]);
+
+  const selectedRunOverview = useMemo(() => {
+    return {
+      tasks: selectedTaskRows.length,
+      decisions: decisions.length,
+      artifacts: artifacts.length,
+      duplicateArtifacts:
+        artifactGroups.find((group) => group.key === "duplicate")?.artifacts.length ?? 0,
+    };
+  }, [artifactGroups, artifacts.length, decisions.length, selectedTaskRows.length]);
 
   const handleAction = useCallback(
     async (action: "approve" | "cancel") => {
@@ -436,6 +600,24 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
           </CardHeader>
           <CardContent className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
             <div className="mb-3 space-y-2">
+              <div className="grid grid-cols-2 gap-2">
+                {[
+                  ["Visible runs", runSummary.total],
+                  ["Active", runSummary.active],
+                  ["Awaiting approval", runSummary.awaitingApproval],
+                  ["Needs attention", runSummary.needsAttention],
+                ].map(([label, value]) => (
+                  <div
+                    key={label}
+                    className="rounded-2xl border border-border bg-surface-elevated/40 px-3 py-2"
+                  >
+                    <p className="text-[10px] uppercase tracking-[0.2em] text-text-muted">
+                      {label}
+                    </p>
+                    <p className="mt-1 text-sm font-semibold text-text">{String(value)}</p>
+                  </div>
+                ))}
+              </div>
               <div className="flex items-center gap-2 rounded-2xl border border-border bg-surface-elevated/40 px-3 py-2">
                 <Search className="h-4 w-4 text-text-muted" />
                 <input
@@ -599,6 +781,26 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
                       <p className="mt-1 text-sm font-medium text-text">{value}</p>
                     </div>
                   ))}
+                </CardContent>
+                <CardContent className="pt-0">
+                  <div className="grid gap-3 md:grid-cols-4">
+                    {[
+                      ["Tasks", selectedRunOverview.tasks],
+                      ["Decisions", selectedRunOverview.decisions],
+                      ["Artifacts", selectedRunOverview.artifacts],
+                      ["Duplicate artifacts", selectedRunOverview.duplicateArtifacts],
+                    ].map(([label, value]) => (
+                      <div
+                        key={label}
+                        className="rounded-2xl border border-border bg-surface-elevated/30 p-3"
+                      >
+                        <p className="text-[11px] uppercase tracking-[0.2em] text-text-muted">
+                          {label}
+                        </p>
+                        <p className="mt-1 text-lg font-semibold text-text">{String(value)}</p>
+                      </div>
+                    ))}
+                  </div>
                 </CardContent>
               </Card>
 
@@ -964,37 +1166,107 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
                         Includes duplicate and memory-backed history from engine artifacts.
                       </CardDescription>
                     </CardHeader>
-                    <CardContent className="space-y-2">
+                    <CardContent className="space-y-4">
                       {artifacts.length === 0 ? (
                         <p className="text-sm text-text-muted">No artifacts yet.</p>
                       ) : (
-                        (artifactHighlights.length > 0 ? artifactHighlights : artifacts).map(
-                          (artifact) => (
-                            <button
-                              key={artifact.id}
-                              type="button"
-                              onClick={() => setSelectedArtifactPath(artifact.path)}
-                              className={cn(
-                                "w-full rounded-2xl border p-3 text-left",
-                                selectedArtifactPath === artifact.path
-                                  ? "border-primary/40 bg-primary/10"
-                                  : "border-border bg-surface-elevated/40"
-                              )}
-                            >
-                              <div className="flex items-center justify-between gap-3">
-                                <p className="text-sm font-medium text-text">
-                                  {artifact.artifact_type}
+                        <>
+                          <div className="grid gap-3 md:grid-cols-2">
+                            {[
+                              {
+                                label: "Duplicate",
+                                group: artifactGroups.find((group) => group.key === "duplicate"),
+                              },
+                              {
+                                label: "Triage",
+                                group: artifactGroups.find((group) => group.key === "triage"),
+                              },
+                              {
+                                label: "Memory",
+                                group: artifactGroups.find((group) => group.key === "memory"),
+                              },
+                              {
+                                label: "Validation",
+                                group: artifactGroups.find((group) => group.key === "validation"),
+                              },
+                            ].map(({ label, group }) => (
+                              <div
+                                key={label}
+                                className="rounded-2xl border border-border bg-surface-elevated/40 p-3"
+                              >
+                                <p className="text-[11px] uppercase tracking-[0.2em] text-text-muted">
+                                  {label}
                                 </p>
-                                <span className="text-xs text-text-muted">
-                                  {formatTimestamp(artifact.ts_ms)}
-                                </span>
+                                <p className="mt-1 text-lg font-semibold text-text">
+                                  {String(group?.artifacts.length ?? 0)}
+                                </p>
                               </div>
-                              <p className="mt-2 break-all font-mono text-[11px] text-text-muted">
-                                {artifact.path}
-                              </p>
-                            </button>
-                          )
-                        )
+                            ))}
+                          </div>
+
+                          <div className="space-y-4">
+                            {(artifactGroups.length > 0 ? artifactGroups : []).map((group) => (
+                              <div
+                                key={group.key}
+                                className="rounded-3xl border border-border bg-surface-elevated/20 p-3"
+                              >
+                                <div className="mb-3 flex items-start justify-between gap-3">
+                                  <div>
+                                    <p className="text-sm font-medium text-text">{group.label}</p>
+                                    <p className="text-xs text-text-muted">{group.description}</p>
+                                  </div>
+                                  <span
+                                    className={cn(
+                                      "rounded-full border px-2.5 py-1 text-[10px] uppercase tracking-[0.18em]",
+                                      artifactCategoryTone(group.key)
+                                    )}
+                                  >
+                                    {group.artifacts.length}
+                                  </span>
+                                </div>
+                                <div className="space-y-2">
+                                  {group.artifacts.map((artifact) => (
+                                    <button
+                                      key={artifact.id}
+                                      type="button"
+                                      onClick={() => setSelectedArtifactPath(artifact.path)}
+                                      className={cn(
+                                        "w-full rounded-2xl border p-3 text-left",
+                                        selectedArtifactPath === artifact.path
+                                          ? "border-primary/40 bg-primary/10"
+                                          : "border-border bg-surface"
+                                      )}
+                                    >
+                                      <div className="flex items-center justify-between gap-3">
+                                        <p className="text-sm font-medium text-text">
+                                          {artifact.artifact_type}
+                                        </p>
+                                        <span className="text-xs text-text-muted">
+                                          {formatTimestamp(artifact.ts_ms)}
+                                        </span>
+                                      </div>
+                                      <div className="mt-2 flex flex-wrap gap-2">
+                                        {artifact.step_id ? (
+                                          <span className="rounded-full border border-border px-2 py-0.5 text-[10px] uppercase tracking-[0.16em] text-text-muted">
+                                            Step {artifact.step_id}
+                                          </span>
+                                        ) : null}
+                                        {artifact.source_event_id ? (
+                                          <span className="rounded-full border border-border px-2 py-0.5 text-[10px] uppercase tracking-[0.16em] text-text-muted">
+                                            Event {artifact.source_event_id}
+                                          </span>
+                                        ) : null}
+                                      </div>
+                                      <p className="mt-2 break-all font-mono text-[11px] text-text-muted">
+                                        {artifact.path}
+                                      </p>
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </>
                       )}
                     </CardContent>
                   </Card>
@@ -1010,13 +1282,98 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
                       {selectedArtifactPath ? (
                         <>
                           <div className="rounded-2xl border border-border bg-surface-elevated/40 p-3">
-                            <p className="text-[11px] uppercase tracking-[0.2em] text-text-muted">
-                              Selected
-                            </p>
-                            <p className="mt-2 break-all font-mono text-[11px] text-text-muted">
-                              {selectedArtifactPath}
-                            </p>
+                            <div className="flex items-start justify-between gap-3">
+                              <div>
+                                <p className="text-[11px] uppercase tracking-[0.2em] text-text-muted">
+                                  Selected
+                                </p>
+                                <p className="mt-2 break-all font-mono text-[11px] text-text-muted">
+                                  {selectedArtifactPath}
+                                </p>
+                              </div>
+                              {selectedArtifactRecord ? (
+                                <span
+                                  className={cn(
+                                    "rounded-full border px-2.5 py-1 text-[10px] uppercase tracking-[0.18em]",
+                                    artifactCategoryTone(artifactCategory(selectedArtifactRecord))
+                                  )}
+                                >
+                                  {artifactCategory(selectedArtifactRecord)}
+                                </span>
+                              ) : null}
+                            </div>
                           </div>
+
+                          {selectedDuplicateMatches.length > 0 ? (
+                            <div className="rounded-3xl border border-amber-500/20 bg-amber-500/5 p-4">
+                              <div className="flex items-center justify-between gap-3">
+                                <div>
+                                  <p className="text-sm font-medium text-text">Duplicate history</p>
+                                  <p className="text-xs text-text-muted">
+                                    Parsed directly from the selected artifact payload.
+                                  </p>
+                                </div>
+                                <span className="rounded-full border border-amber-500/20 bg-amber-500/10 px-2.5 py-1 text-[10px] uppercase tracking-[0.18em] text-amber-100">
+                                  {selectedDuplicateMatches.length} matches
+                                </span>
+                              </div>
+                              <div className="mt-3 space-y-2">
+                                {selectedDuplicateMatches.slice(0, 5).map((match, index) => (
+                                  <div
+                                    key={String(match.id ?? match.candidate_id ?? index)}
+                                    className="rounded-2xl border border-amber-500/20 bg-surface p-3"
+                                  >
+                                    <p className="text-sm font-medium text-text">
+                                      {duplicateMatchLabel(match)}
+                                    </p>
+                                    <div className="mt-2 flex flex-wrap gap-2">
+                                      {duplicateMatchBadges(match).map((badge) => (
+                                        <span
+                                          key={badge}
+                                          className="rounded-full border border-border px-2 py-0.5 text-[10px] uppercase tracking-[0.16em] text-text-muted"
+                                        >
+                                          {badge}
+                                        </span>
+                                      ))}
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          ) : null}
+
+                          {selectedValidationSummary ? (
+                            <div className="grid gap-3 md:grid-cols-3">
+                              <div className="rounded-2xl border border-border bg-surface-elevated/40 p-3">
+                                <p className="text-[11px] uppercase tracking-[0.2em] text-text-muted">
+                                  Outcome
+                                </p>
+                                <p className="mt-1 text-sm font-medium text-text">
+                                  {selectedValidationSummary.outcome || "Unknown"}
+                                </p>
+                              </div>
+                              <div className="rounded-2xl border border-border bg-surface-elevated/40 p-3">
+                                <p className="text-[11px] uppercase tracking-[0.2em] text-text-muted">
+                                  Passed
+                                </p>
+                                <p className="mt-1 text-sm font-medium text-text">
+                                  {selectedValidationSummary.passed === null
+                                    ? "Unknown"
+                                    : selectedValidationSummary.passed
+                                      ? "Yes"
+                                      : "No"}
+                                </p>
+                              </div>
+                              <div className="rounded-2xl border border-border bg-surface-elevated/40 p-3">
+                                <p className="text-[11px] uppercase tracking-[0.2em] text-text-muted">
+                                  Checks
+                                </p>
+                                <p className="mt-1 text-sm font-medium text-text">
+                                  {selectedValidationSummary.validationsAttempted ?? 0}
+                                </p>
+                              </div>
+                            </div>
+                          ) : null}
                           {loadingArtifact ? (
                             <p className="text-sm text-text-muted">Loading artifact preview…</p>
                           ) : artifactPreview?.kind === "diff" ? (
