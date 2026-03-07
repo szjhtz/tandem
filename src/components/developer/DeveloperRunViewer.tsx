@@ -2052,14 +2052,25 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
                                 </p>
                               </div>
                               {selectedArtifactRecord ? (
-                                <span
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const category = artifactCategory(selectedArtifactRecord);
+                                    const artifact = latestArtifactByCategory.get(category);
+                                    if (artifact) {
+                                      setSelectedArtifactPath(artifact.path);
+                                    }
+                                    setDetailTab(
+                                      category === "validation" ? "validation" : "artifacts"
+                                    );
+                                  }}
                                   className={cn(
-                                    "rounded-full border px-2.5 py-1 text-[10px] uppercase tracking-[0.18em]",
+                                    "rounded-full border px-2.5 py-1 text-[10px] uppercase tracking-[0.18em] transition-colors hover:opacity-90",
                                     artifactCategoryTone(artifactCategory(selectedArtifactRecord))
                                   )}
                                 >
                                   {artifactCategory(selectedArtifactRecord)}
-                                </span>
+                                </button>
                               ) : null}
                             </div>
                           </div>
