@@ -4941,6 +4941,143 @@ async fn coder_merge_submit_blocks_when_execution_request_is_not_merge_ready() {
 }
 
 #[tokio::test]
+async fn coder_merge_submit_blocks_auto_mode_without_opt_in() {
+    let (endpoint, server) = spawn_fake_github_mcp_server().await;
+
+    let state = test_state().await;
+    state
+        .mcp
+        .add_or_update(
+            "github".to_string(),
+            endpoint,
+            std::collections::HashMap::new(),
+            true,
+        )
+        .await;
+    assert!(state.mcp.connect("github").await);
+    state
+        .capability_resolver
+        .refresh_builtin_bindings()
+        .await
+        .expect("refresh builtin bindings");
+    let app = app_router(state.clone());
+
+    let create_req = Request::builder()
+        .method("POST")
+        .uri("/coder/runs")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "coder_run_id": "coder-merge-submit-auto-blocked",
+                "workflow_mode": "merge_recommendation",
+                "repo_binding": {
+                    "project_id": "proj-engine",
+                    "workspace_id": "ws-tandem",
+                    "workspace_root": "/tmp/tandem-repo",
+                    "repo_slug": "evan/tandem"
+                },
+                "github_ref": {
+                    "kind": "pull_request",
+                    "number": 316
+                },
+                "mcp_servers": ["github"]
+            })
+            .to_string(),
+        ))
+        .expect("create request");
+    let create_resp = app
+        .clone()
+        .oneshot(create_req)
+        .await
+        .expect("create response");
+    assert_eq!(create_resp.status(), StatusCode::OK);
+
+    let summary_req = Request::builder()
+        .method("POST")
+        .uri("/coder/runs/coder-merge-submit-auto-blocked/merge-recommendation-summary")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "recommendation": "merge",
+                "summary": "Checks and approvals are complete.",
+                "blockers": [],
+                "required_checks": [],
+                "required_approvals": []
+            })
+            .to_string(),
+        ))
+        .expect("summary request");
+    let summary_resp = app
+        .clone()
+        .oneshot(summary_req)
+        .await
+        .expect("summary response");
+    assert_eq!(summary_resp.status(), StatusCode::OK);
+
+    let approve_req = Request::builder()
+        .method("POST")
+        .uri("/coder/runs/coder-merge-submit-auto-blocked/approve")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "reason": "Operator approved merge execution."
+            })
+            .to_string(),
+        ))
+        .expect("approve request");
+    let approve_resp = app
+        .clone()
+        .oneshot(approve_req)
+        .await
+        .expect("approve response");
+    assert_eq!(approve_resp.status(), StatusCode::OK);
+
+    let submit_req = Request::builder()
+        .method("POST")
+        .uri("/coder/runs/coder-merge-submit-auto-blocked/merge-submit")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "approved_by": "evan",
+                "reason": "Try to auto-execute the merge",
+                "submit_mode": "auto",
+                "dry_run": false,
+                "mcp_server": "github"
+            })
+            .to_string(),
+        ))
+        .expect("submit request");
+    let submit_resp = app
+        .clone()
+        .oneshot(submit_req)
+        .await
+        .expect("submit response");
+    server.abort();
+    assert_eq!(submit_resp.status(), StatusCode::OK);
+    let submit_payload: Value = serde_json::from_slice(
+        &to_bytes(submit_resp.into_body(), usize::MAX)
+            .await
+            .expect("submit body"),
+    )
+    .expect("submit json");
+    assert_eq!(
+        submit_payload.get("ok").and_then(Value::as_bool),
+        Some(false)
+    );
+    assert_eq!(
+        submit_payload.get("code").and_then(Value::as_str),
+        Some("CODER_MERGE_SUBMIT_POLICY_BLOCKED")
+    );
+    assert_eq!(
+        submit_payload
+            .get("policy")
+            .and_then(|row| row.get("reason"))
+            .and_then(Value::as_str),
+        Some("requires_explicit_auto_merge_submit_opt_in")
+    );
+}
+
+#[tokio::test]
 async fn coder_merge_recommendation_reuses_prior_memory_hits() {
     let state = test_state().await;
     state

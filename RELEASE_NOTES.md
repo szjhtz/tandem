@@ -111,6 +111,7 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
   - That approval step now also writes a `coder_merge_execution_request` artifact and emits `coder.merge.recommended`, giving the engine a concrete post-approval merge handoff before a real merge MCP path exists.
   - Added `POST /coder/runs/{id}/merge-submit`, which reuses that handoff artifact, gates on `github.merge_pull_request`, persists `coder_merge_submission`, and can execute a real MCP-backed merge for approved merge recommendations.
   - `merge-submit` now also blocks on the handoff artifact itself, so it will not merge unless the latest `coder_merge_execution_request` still says `recommendation = merge` and has no remaining blockers, required checks, or required approvals.
+  - `merge-submit` now defaults to `submit_mode = manual` and blocks `submit_mode = auto` unless the follow-on run's origin policy explicitly opted into auto merge execution, keeping merge execution manual-by-default even after recommendation approval.
   - Auto-follow-on merge chaining now normalizes through review first, so requesting `merge_recommendation` auto-spawn implicitly schedules `pr_review` ahead of merge instead of trusting the client to order those runs correctly.
   - `issue_triage` coder run creation now seeds a deterministic context-run task template for issue normalization, memory retrieval, repo inspection, reproduction, and triage artifact writing.
   - Added initial `coder.run.created` engine event emission and backend regression coverage for coder create/get/list/artifact behavior.

@@ -366,6 +366,8 @@ pub(super) struct CoderMergeSubmitInput {
     pub(super) mcp_server: Option<String>,
     #[serde(default)]
     pub(super) dry_run: Option<bool>,
+    #[serde(default)]
+    pub(super) submit_mode: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -6278,6 +6280,34 @@ pub(super) async fn coder_merge_submit(
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .ok_or(StatusCode::BAD_REQUEST)?;
+    let submit_mode = input
+        .submit_mode
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("manual")
+        .to_ascii_lowercase();
+    if !matches!(submit_mode.as_str(), "manual" | "auto") {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    if submit_mode == "auto"
+        && !record
+            .origin_policy
+            .as_ref()
+            .and_then(|row| row.get("merge_auto_spawn_opted_in"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+    {
+        return Ok(Json(json!({
+            "ok": false,
+            "code": "CODER_MERGE_SUBMIT_POLICY_BLOCKED",
+            "policy": {
+                "reason": "requires_explicit_auto_merge_submit_opt_in",
+                "submit_mode": submit_mode,
+                "merge_auto_spawn_opted_in": false,
+            }
+        })));
+    }
     let readiness = coder_merge_submit_readiness(&state, input.mcp_server.as_deref()).await?;
     if !readiness.runnable {
         return Ok(Json(json!({
@@ -6335,6 +6365,7 @@ pub(super) async fn coder_merge_submit(
         "github_ref": record.github_ref,
         "approved_by": approved_by,
         "approval_reason": input.reason,
+        "submit_mode": submit_mode,
         "dry_run": dry_run,
         "owner": owner,
         "repo": repo_name,
@@ -6419,6 +6450,13 @@ pub(super) async fn coder_merge_submit(
                         .get("merged_github_ref")
                         .cloned()
                         .unwrap_or(Value::Null),
+                );
+                extra.insert(
+                    "submit_mode".to_string(),
+                    submission_payload
+                        .get("submit_mode")
+                        .cloned()
+                        .unwrap_or_else(|| json!("manual")),
                 );
                 extra
             },
