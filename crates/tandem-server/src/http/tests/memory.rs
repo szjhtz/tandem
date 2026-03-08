@@ -1919,6 +1919,38 @@ async fn memory_delete_missing_memory_writes_not_found_audit() {
     );
     assert!(delete_event
         .properties
+        .get("kind")
+        .is_some_and(Value::is_null));
+    assert!(delete_event
+        .properties
+        .get("classification")
+        .is_some_and(Value::is_null));
+    assert_eq!(
+        delete_event
+            .properties
+            .get("artifactRefs")
+            .and_then(Value::as_array)
+            .map(|rows| rows.len()),
+        Some(0)
+    );
+    assert!(delete_event
+        .properties
+        .get("visibility")
+        .is_some_and(Value::is_null));
+    assert!(delete_event
+        .properties
+        .get("tier")
+        .is_some_and(Value::is_null));
+    assert!(delete_event
+        .properties
+        .get("partitionKey")
+        .is_some_and(Value::is_null));
+    assert!(delete_event
+        .properties
+        .get("demoted")
+        .is_some_and(Value::is_null));
+    assert!(delete_event
+        .properties
         .get("runID")
         .is_some_and(Value::is_null));
     assert!(delete_event
@@ -2273,6 +2305,41 @@ async fn memory_demote_missing_memory_writes_not_found_audit() {
             .and_then(Value::as_str),
         Some("not_found")
     );
+    assert!(demote_event
+        .properties
+        .get("kind")
+        .is_some_and(Value::is_null));
+    assert!(demote_event
+        .properties
+        .get("classification")
+        .is_some_and(Value::is_null));
+    assert_eq!(
+        demote_event
+            .properties
+            .get("artifactRefs")
+            .and_then(Value::as_array)
+            .map(|rows| rows.len()),
+        Some(0)
+    );
+    assert!(demote_event
+        .properties
+        .get("visibility")
+        .is_some_and(Value::is_null));
+    assert!(demote_event
+        .properties
+        .get("tier")
+        .is_some_and(Value::is_null));
+    assert_eq!(
+        demote_event
+            .properties
+            .get("partitionKey")
+            .and_then(Value::as_str),
+        Some("demoted")
+    );
+    assert!(demote_event
+        .properties
+        .get("demoted")
+        .is_some_and(Value::is_null));
     assert!(demote_event
         .properties
         .get("detail")
