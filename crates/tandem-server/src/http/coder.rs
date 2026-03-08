@@ -7102,6 +7102,14 @@ fn blocked_merge_submit_policy(mode: &str, policy: Value) -> Value {
     })
 }
 
+fn allowed_merge_submit_policy(mode: &str) -> Value {
+    json!({
+        "blocked": false,
+        "submit_mode": mode,
+        "eligible": true,
+    })
+}
+
 async fn coder_merge_submit_policy_summary(
     state: &AppState,
     record: &CoderRunRecord,
@@ -7125,12 +7133,14 @@ async fn coder_merge_submit_policy_summary(
                     .cloned()
                     .unwrap_or_else(|| json!(false)),
             })),
+            "preferred_submit_mode": "manual",
         }));
     };
     if let Some(policy) = merge_submit_request_readiness_block(&merge_request_payload) {
         return Ok(json!({
             "manual": blocked_merge_submit_policy("manual", policy.clone()),
             "auto": blocked_merge_submit_policy("auto", policy),
+            "preferred_submit_mode": "manual",
         }));
     }
     if let Some(policy) = merge_submit_review_policy_block(state, record).await? {
@@ -7139,22 +7149,27 @@ async fn coder_merge_submit_policy_summary(
         return Ok(json!({
             "manual": blocked_merge_submit_policy("manual", policy),
             "auto": blocked_merge_submit_policy("auto", auto_policy),
+            "preferred_submit_mode": "manual",
         }));
     }
     let auto = if let Some(policy) = merge_submit_auto_mode_policy_block(record) {
         blocked_merge_submit_policy("auto", policy)
     } else {
-        json!({
-            "blocked": false,
-            "submit_mode": "auto",
-        })
+        allowed_merge_submit_policy("auto")
+    };
+    let preferred_submit_mode = if auto
+        .get("blocked")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        "manual"
+    } else {
+        "auto"
     };
     Ok(json!({
-        "manual": {
-            "blocked": false,
-            "submit_mode": "manual",
-        },
+        "manual": allowed_merge_submit_policy("manual"),
         "auto": auto,
+        "preferred_submit_mode": preferred_submit_mode,
     }))
 }
 
