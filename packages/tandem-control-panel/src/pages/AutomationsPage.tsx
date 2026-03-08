@@ -2284,19 +2284,19 @@ function CreateWizard({
         <div className="flex justify-between gap-2">
           <button
             className="tcp-btn"
-            disabled={step === 1}
+            disabled={step === 1 || compileMutation.isPending}
             onClick={() => setStep((s) => (s - 1) as WizardStep)}
           >
             ← Back
           </button>
           <button
             className="tcp-btn-primary"
-            disabled={!canAdvance}
+            disabled={!canAdvance || compileMutation.isPending}
             onClick={() => {
               void goToNextStep();
             }}
           >
-            Next →
+            {compileMutation.isPending ? "Generating Plan..." : "Next →"}
           </button>
         </div>
       ) : null}

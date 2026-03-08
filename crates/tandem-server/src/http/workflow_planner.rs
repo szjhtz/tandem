@@ -615,7 +615,7 @@ struct PlannerBuildPayload {
     #[serde(default)]
     clarifier: Option<PlannerClarifier>,
     #[serde(default)]
-    plan: Option<crate::WorkflowPlan>,
+    plan: Option<Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -636,7 +636,7 @@ struct PlannerRevisionPayload {
     #[serde(default)]
     clarifier: Option<PlannerClarifier>,
     #[serde(default)]
-    plan: Option<crate::WorkflowPlan>,
+    plan: Option<Value>,
 }
 
 enum PlannerPlanMode {
@@ -705,7 +705,7 @@ async fn build_workflow_plan(
             {
                 match payload.action {
                     PlannerBuildAction::Build => {
-                        if let Some(candidate) = payload.plan {
+                        if let Some(candidate) = payload.plan.and_then(decode_planner_plan_value) {
                             if let Ok(plan) =
                                 normalize_and_validate_planner_plan(candidate, &normalization_ctx)
                             {
@@ -995,6 +995,119 @@ fn normalize_and_validate_planner_plan(
     Ok(candidate)
 }
 
+fn decode_planner_plan_value(value: Value) -> Option<crate::WorkflowPlan> {
+    serde_json::from_value::<crate::WorkflowPlan>(value.clone())
+        .ok()
+        .or_else(|| decode_planner_plan_value_relaxed(value))
+}
+
+fn decode_planner_plan_value_relaxed(mut value: Value) -> Option<crate::WorkflowPlan> {
+    let plan = value.as_object_mut()?;
+    let steps = plan.get_mut("steps")?.as_array_mut()?;
+    for step in steps.iter_mut() {
+        let Some(step_obj) = step.as_object_mut() else {
+            continue;
+        };
+        if !step_obj.contains_key("step_id") {
+            if let Some(id) = step_obj.get("id").cloned() {
+                step_obj.insert("step_id".to_string(), id);
+            }
+        }
+        if !step_obj.contains_key("kind") {
+            if let Some(kind) = step_obj.get("type").cloned() {
+                step_obj.insert("kind".to_string(), kind);
+            }
+        }
+        if !step_obj.contains_key("objective") {
+            let objective = step_obj
+                .get("objective")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+                .or_else(|| {
+                    step_obj
+                        .get("config")
+                        .and_then(|row| row.get("objective"))
+                        .and_then(Value::as_str)
+                        .map(str::to_string)
+                })
+                .or_else(|| {
+                    step_obj
+                        .get("label")
+                        .and_then(Value::as_str)
+                        .map(str::to_string)
+                });
+            if let Some(objective) = objective {
+                step_obj.insert("objective".to_string(), Value::String(objective));
+            }
+        }
+        if !step_obj.contains_key("agent_role") {
+            let agent_role = step_obj
+                .get("agent_role")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+                .or_else(|| {
+                    step_obj
+                        .get("config")
+                        .and_then(|row| row.get("agent_role"))
+                        .and_then(Value::as_str)
+                        .map(str::to_string)
+                })
+                .unwrap_or_else(|| "worker".to_string());
+            step_obj.insert("agent_role".to_string(), Value::String(agent_role));
+        }
+        if let Some(input_refs) = step_obj.get_mut("input_refs").and_then(Value::as_array_mut) {
+            for input_ref in input_refs.iter_mut() {
+                match input_ref {
+                    Value::String(from_step_id) => {
+                        *input_ref = json!({
+                            "from_step_id": from_step_id,
+                            "alias": from_step_id,
+                        });
+                    }
+                    Value::Object(map) => {
+                        if !map.contains_key("from_step_id") {
+                            if let Some(value) = map
+                                .get("from")
+                                .cloned()
+                                .or_else(|| map.get("step_id").cloned())
+                                .or_else(|| map.get("id").cloned())
+                            {
+                                map.insert("from_step_id".to_string(), value);
+                            }
+                        }
+                        if !map.contains_key("alias") {
+                            if let Some(from_step_id) = map
+                                .get("from_step_id")
+                                .and_then(Value::as_str)
+                                .map(str::to_string)
+                            {
+                                map.insert("alias".to_string(), Value::String(from_step_id));
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        if !step_obj.contains_key("output_contract") {
+            let inferred_kind = step_obj
+                .get("config")
+                .and_then(|row| row.get("format"))
+                .and_then(Value::as_str)
+                .and_then(|format| match format.trim().to_ascii_lowercase().as_str() {
+                    "markdown" | "md" => Some("report_markdown".to_string()),
+                    "json" => Some("structured_json".to_string()),
+                    "text" | "summary" => Some("text_summary".to_string()),
+                    _ => None,
+                });
+            if let Some(kind) = inferred_kind {
+                step_obj.insert("output_contract".to_string(), json!({ "kind": kind }));
+            }
+        }
+    }
+    serde_json::from_value::<crate::WorkflowPlan>(value).ok()
+}
+
 fn merge_create_operator_preferences(
     explicit: Option<&Value>,
     candidate: Option<Value>,
@@ -1158,9 +1271,11 @@ async fn invoke_planner_llm(
     };
     let run_result = tokio::time::timeout(
         std::time::Duration::from_millis(timeout_ms),
-        state
-            .engine_loop
-            .run_prompt_async_with_context(session_id.clone(), request, Some(run_key.clone())),
+        state.engine_loop.run_prompt_async_with_context(
+            session_id.clone(),
+            request,
+            Some(run_key.clone()),
+        ),
     )
     .await;
     match run_result {
@@ -1233,7 +1348,7 @@ fn parse_llm_revision_payload(
             Value::Null,
         )),
         PlannerRevisionAction::Revise => {
-            let candidate = payload.plan?;
+            let candidate = decode_planner_plan_value(payload.plan?)?;
             let revised_plan = normalize_and_validate_planner_plan(candidate, ctx).ok()?;
             if workflow_steps_equal(&revised_plan.steps, &current_plan.steps)
                 && revised_plan.title == current_plan.title
@@ -1363,6 +1478,11 @@ fn build_llm_workflow_creation_prompt(
             "- keep the graph minimal but sufficient\n",
             "- steps must form a valid DAG\n",
             "- input_refs and depends_on must reference existing steps\n",
+            "WorkflowPlan.step schema:\n",
+            "- each step must use fields: step_id, kind, objective, agent_role, depends_on, input_refs, output_contract\n",
+            "- do not use alternate keys like id, type, label, or config as the primary step schema\n",
+            "- input_refs must be objects shaped like {{\"from_step_id\":\"...\",\"alias\":\"...\"}}\n",
+            "- output_contract must be either null or {{\"kind\":\"structured_json|report_markdown|text_summary|urls|citations\"}}\n",
             "Schedule schema:\n",
             "- manual: {{\"type\":\"manual\",\"timezone\":\"UTC\",\"misfire_policy\":{{\"type\":\"run_once\"}}}}\n",
             "- cron: {{\"type\":\"cron\",\"cron_expression\":\"...\",\"timezone\":\"UTC\",\"misfire_policy\":{{\"type\":\"run_once\"}}}}\n",
@@ -1423,6 +1543,11 @@ fn build_llm_workflow_revision_prompt(
             "- steps must form a valid DAG\n",
             "- input_refs and depends_on must reference existing steps\n",
             "- keep the workflow graph minimal but sufficient\n",
+            "WorkflowPlan.step schema:\n",
+            "- each step must use fields: step_id, kind, objective, agent_role, depends_on, input_refs, output_contract\n",
+            "- do not use alternate keys like id, type, label, or config as the primary step schema\n",
+            "- input_refs must be objects shaped like {{\"from_step_id\":\"...\",\"alias\":\"...\"}}\n",
+            "- output_contract must be either null or {{\"kind\":\"structured_json|report_markdown|text_summary|urls|citations\"}}\n",
             "You may revise title, description, schedule, workspace_root, allowed_mcp_servers, operator_preferences, steps, dependencies, input_refs, and output_contracts.\n",
             "Schedule schema:\n",
             "- manual | cron | interval using the same shape already present on WorkflowPlan.schedule\n",
