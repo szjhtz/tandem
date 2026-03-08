@@ -72,6 +72,7 @@ It is not a wishlist for future planner features.
   - execution mode / max parallel updates
   - model override set/clear
   - planner model override set/clear
+- [x] Bound planner LLM fallback with a backend timeout and return a specific clarifier when broader planner revision cannot produce a valid workflow update
 
 ## Deferred After This Slice
 - [~] Replace deterministic planner-chat rules with a true LLM-backed revision loop

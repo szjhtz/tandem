@@ -242,6 +242,15 @@ pub(super) async fn workflow_plan_chat_message(
                 assistant_text = llm_revision.assistant_text;
                 change_summary = llm_revision.change_summary;
                 clarifier = llm_revision.clarifier;
+            } else {
+                clarifier = json!({
+                    "field": "general",
+                    "question": planner_llm_attempt_failed_hint(),
+                });
+                assistant_text = format!(
+                    "I kept the current plan. Clarification needed: {}",
+                    planner_llm_attempt_failed_hint()
+                );
             }
         } else {
             clarifier = json!({
@@ -850,6 +859,10 @@ fn planner_llm_unavailable_hint() -> &'static str {
     "This revision needs planner model settings before Tandem can attempt a broader workflow rewrite. Add planner model preferences or revise using the supported deterministic edits in this slice."
 }
 
+fn planner_llm_attempt_failed_hint() -> &'static str {
+    "Tandem tried a broader planner-model revision but could not produce a valid workflow update. Try a more specific planning note or use the supported deterministic edits in this slice."
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum WorkflowPlanShape {
     Single,
@@ -1367,15 +1380,17 @@ async fn try_llm_revise_workflow_plan(
         context_mode: None,
         write_required: None,
     };
-    state
-        .engine_loop
-        .run_prompt_async_with_context(
+    tokio::time::timeout(
+        std::time::Duration::from_millis(planner_revision_timeout_ms()),
+        state.engine_loop.run_prompt_async_with_context(
             session_id.clone(),
             request,
             Some(format!("workflow-plan-revision:{}", current_plan.plan_id)),
-        )
-        .await
-        .ok()?;
+        ),
+    )
+    .await
+    .ok()?
+    .ok()?;
     let session = state.storage.get_session(&session_id).await?;
     let output = extract_planner_session_text_output(&session);
     let payload = extract_json_value_from_text(&output)?;
@@ -1461,6 +1476,14 @@ async fn try_llm_revise_workflow_plan(
         change_summary,
         clarifier: Value::Null,
     })
+}
+
+fn planner_revision_timeout_ms() -> u64 {
+    std::env::var("TANDEM_WORKFLOW_PLANNER_REVISION_TIMEOUT_MS")
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .map(|value| value.clamp(250, 60_000))
+        .unwrap_or(5_000)
 }
 
 pub(crate) fn planner_model_spec(
