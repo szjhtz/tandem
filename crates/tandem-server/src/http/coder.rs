@@ -6612,6 +6612,36 @@ async fn coder_execution_policy_summary(
     }))
 }
 
+async fn emit_coder_execution_policy_block(
+    state: &AppState,
+    record: &CoderRunRecord,
+    blocked: &Value,
+) -> Result<(), StatusCode> {
+    publish_coder_run_event(
+        state,
+        "coder.run.phase_changed",
+        record,
+        Some("policy_blocked"),
+        {
+            let mut extra = serde_json::Map::new();
+            extra.insert("event_type".to_string(), json!("execution_policy_blocked"));
+            extra.insert(
+                "code".to_string(),
+                blocked
+                    .get("code")
+                    .cloned()
+                    .unwrap_or_else(|| json!("CODER_EXECUTION_POLICY_BLOCKED")),
+            );
+            extra.insert(
+                "policy".to_string(),
+                blocked.get("policy").cloned().unwrap_or_else(|| json!({})),
+            );
+            extra
+        },
+    );
+    Ok(())
+}
+
 fn follow_on_execution_policy_preview(
     workflow_mode: &CoderWorkflowMode,
     required_completed_workflow_modes: &[Value],
@@ -7198,6 +7228,7 @@ pub(super) async fn coder_run_execute_next(
 ) -> Result<Json<Value>, StatusCode> {
     let mut record = load_coder_run_record(&state, &id).await?;
     if let Some(blocked) = coder_execution_policy_block(&state, &record).await? {
+        emit_coder_execution_policy_block(&state, &record, &blocked).await?;
         let run = load_context_run_state(&state, &record.linked_context_run_id).await?;
         let mut payload = blocked;
         if let Some(obj) = payload.as_object_mut() {
@@ -7223,6 +7254,7 @@ pub(super) async fn coder_run_execute_all(
 ) -> Result<Json<Value>, StatusCode> {
     let mut record = load_coder_run_record(&state, &id).await?;
     if let Some(blocked) = coder_execution_policy_block(&state, &record).await? {
+        emit_coder_execution_policy_block(&state, &record, &blocked).await?;
         let run = load_context_run_state(&state, &record.linked_context_run_id).await?;
         let mut payload = blocked;
         if let Some(obj) = payload.as_object_mut() {

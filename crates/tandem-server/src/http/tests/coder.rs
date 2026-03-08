@@ -118,7 +118,6 @@ async fn coder_issue_triage_run_create_get_and_list() {
         .refresh_builtin_bindings()
         .await
         .expect("refresh builtin bindings");
-    let mut rx = state.event_bus.subscribe();
     let app = app_router(state.clone());
 
     let create_req = Request::builder()
@@ -291,31 +290,67 @@ async fn coder_issue_triage_run_create_get_and_list() {
             .and_then(Value::as_str),
         Some(linked_context_run_id.as_str())
     );
+}
 
-    let artifact_event = next_event_of_type(&mut rx, "coder.artifact.added").await;
-    assert_eq!(
-        artifact_event
-            .properties
-            .get("workflow_mode")
-            .and_then(Value::as_str),
-        Some("issue_triage")
-    );
-    assert_eq!(
-        artifact_event
-            .properties
-            .get("kind")
-            .and_then(Value::as_str),
-        Some("memory_hits")
-    );
-    assert_eq!(
-        artifact_event
-            .properties
-            .get("phase")
-            .and_then(Value::as_str),
-        Some("memory_retrieval")
-    );
+#[tokio::test]
+async fn coder_issue_triage_events_emit_stable_base_schema() {
+    let state = test_state().await;
+    state
+        .capability_resolver
+        .refresh_builtin_bindings()
+        .await
+        .expect("refresh builtin bindings");
+    let mut rx = state.event_bus.subscribe();
+    let app = app_router(state.clone());
+
+    let create_req = Request::builder()
+        .method("POST")
+        .uri("/coder/runs")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "coder_run_id": "coder-run-events-1",
+                "workflow_mode": "issue_triage",
+                "repo_binding": {
+                    "project_id": "proj-engine",
+                    "workspace_id": "ws-tandem",
+                    "workspace_root": "/tmp/tandem-repo",
+                    "repo_slug": "evan/tandem",
+                    "default_branch": "main"
+                },
+                "github_ref": {
+                    "kind": "issue",
+                    "number": 1201,
+                    "url": "https://github.com/evan/tandem/issues/1201"
+                },
+                "source_client": "desktop_developer_mode"
+            })
+            .to_string(),
+        ))
+        .expect("create request");
+    let create_resp = app
+        .clone()
+        .oneshot(create_req)
+        .await
+        .expect("create response");
+    assert_eq!(create_resp.status(), StatusCode::OK);
 
     let created_event = next_event_of_type(&mut rx, "coder.run.created").await;
+    assert_eq!(
+        created_event
+            .properties
+            .get("coder_run_id")
+            .and_then(Value::as_str),
+        Some("coder-run-events-1")
+    );
+    assert_eq!(
+        created_event
+            .properties
+            .get("linked_context_run_id")
+            .and_then(Value::as_str)
+            .is_some(),
+        true
+    );
     assert_eq!(
         created_event
             .properties
@@ -334,8 +369,75 @@ async fn coder_issue_triage_run_create_get_and_list() {
     assert_eq!(
         created_event
             .properties
+            .get("github_ref")
+            .and_then(|row| row.get("kind"))
+            .and_then(Value::as_str),
+        Some("issue")
+    );
+    assert_eq!(
+        created_event
+            .properties
+            .get("source_client")
+            .and_then(Value::as_str),
+        Some("desktop_developer_mode")
+    );
+    assert_eq!(
+        created_event
+            .properties
             .get("phase")
             .and_then(Value::as_str),
+        Some("repo_inspection")
+    );
+
+    let artifact_event = next_event_of_type(&mut rx, "coder.artifact.added").await;
+    assert_eq!(
+        artifact_event
+            .properties
+            .get("coder_run_id")
+            .and_then(Value::as_str),
+        Some("coder-run-events-1")
+    );
+    assert_eq!(
+        artifact_event
+            .properties
+            .get("artifact_id")
+            .and_then(Value::as_str)
+            .is_some(),
+        true
+    );
+    assert_eq!(
+        artifact_event
+            .properties
+            .get("artifact_path")
+            .and_then(Value::as_str)
+            .is_some(),
+        true
+    );
+    assert_eq!(
+        artifact_event
+            .properties
+            .get("artifact_type")
+            .and_then(Value::as_str),
+        Some("coder_memory_hits")
+    );
+
+    let phase_event = next_event_of_type(&mut rx, "coder.run.phase_changed").await;
+    assert_eq!(
+        phase_event
+            .properties
+            .get("coder_run_id")
+            .and_then(Value::as_str),
+        Some("coder-run-events-1")
+    );
+    assert_eq!(
+        phase_event
+            .properties
+            .get("event_type")
+            .and_then(Value::as_str),
+        Some("task_state_advanced")
+    );
+    assert_eq!(
+        phase_event.properties.get("phase").and_then(Value::as_str),
         Some("repo_inspection")
     );
 }
@@ -2335,6 +2437,7 @@ async fn coder_merge_follow_on_execution_waits_for_completed_review() {
         .refresh_builtin_bindings()
         .await
         .expect("refresh builtin bindings");
+    let mut rx = state.event_bus.subscribe();
     let app = app_router(state.clone());
 
     let create_req = Request::builder()
@@ -2498,7 +2601,43 @@ async fn coder_merge_follow_on_execution_waits_for_completed_review() {
             .and_then(Value::as_str),
         Some("requires_completed_pr_review_follow_on")
     );
-
+    assert_eq!(
+        blocked_execute_payload
+            .get("execution_policy")
+            .and_then(|row| row.get("blocked"))
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        blocked_execute_payload
+            .get("coder_run")
+            .and_then(|row| row.get("coder_run_id"))
+            .and_then(Value::as_str),
+        Some("coder-follow-on-merge")
+    );
+    assert_eq!(
+        blocked_execute_payload
+            .get("run")
+            .and_then(|row| row.get("status"))
+            .and_then(Value::as_str),
+        Some("running")
+    );
+    let blocked_event = loop {
+        let event = next_event_of_type(&mut rx, "coder.run.phase_changed").await;
+        if event.properties.get("event_type").and_then(Value::as_str)
+            == Some("execution_policy_blocked")
+        {
+            break event;
+        }
+    };
+    assert_eq!(
+        blocked_event
+            .properties
+            .get("policy")
+            .and_then(|row| row.get("reason"))
+            .and_then(Value::as_str),
+        Some("requires_completed_pr_review_follow_on")
+    );
     let merge_run_req = Request::builder()
         .method("GET")
         .uri("/coder/runs/coder-follow-on-merge")
