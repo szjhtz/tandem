@@ -4554,6 +4554,36 @@ async fn coder_merge_recommendation_summary_ready_to_merge_awaits_approval() {
             .and_then(Value::as_str),
         Some("merge_recommendation_approved")
     );
+    assert_eq!(
+        approve_payload
+            .get("merge_execution_request")
+            .and_then(|row| row.get("recommendation"))
+            .and_then(Value::as_str),
+        Some("merge")
+    );
+    assert_eq!(
+        approve_payload
+            .get("merge_execution_artifact")
+            .and_then(|row| row.get("artifact_type"))
+            .and_then(Value::as_str),
+        Some("coder_merge_execution_request")
+    );
+
+    let merge_event = next_event_of_type(&mut rx, "coder.merge.recommended").await;
+    assert_eq!(
+        merge_event
+            .properties
+            .get("event_type")
+            .and_then(Value::as_str),
+        Some("merge_execution_request_ready")
+    );
+    assert_eq!(
+        merge_event
+            .properties
+            .get("recommendation")
+            .and_then(Value::as_str),
+        Some("merge")
+    );
 }
 
 #[tokio::test]

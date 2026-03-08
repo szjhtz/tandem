@@ -4469,14 +4469,23 @@ async fn load_latest_coder_artifact_payload(
     record: &CoderRunRecord,
     artifact_type: &str,
 ) -> Option<Value> {
+    let artifact = latest_coder_artifact(state, record, artifact_type)?;
+    let raw = tokio::fs::read_to_string(&artifact.path).await.ok()?;
+    serde_json::from_str::<Value>(&raw).ok()
+}
+
+fn latest_coder_artifact(
+    state: &AppState,
+    record: &CoderRunRecord,
+    artifact_type: &str,
+) -> Option<ContextBlackboardArtifact> {
     let blackboard = load_context_blackboard(state, &record.linked_context_run_id);
-    let artifact = blackboard
+    blackboard
         .artifacts
         .iter()
         .rev()
-        .find(|artifact| artifact.artifact_type == artifact_type)?;
-    let raw = tokio::fs::read_to_string(&artifact.path).await.ok()?;
-    serde_json::from_str::<Value>(&raw).ok()
+        .find(|artifact| artifact.artifact_type == artifact_type)
+        .cloned()
 }
 
 async fn serialize_coder_artifacts(artifacts: &[ContextBlackboardArtifact]) -> Vec<Value> {
@@ -7378,14 +7387,102 @@ pub(super) async fn coder_run_approve(
     let why = input
         .reason
         .unwrap_or_else(|| "plan approved by operator".to_string());
-    let (event_type, next_status) =
-        if record.workflow_mode == CoderWorkflowMode::MergeRecommendation {
-            ("merge_recommendation_approved", ContextRunStatus::Completed)
-        } else {
-            ("plan_approved", ContextRunStatus::Running)
-        };
+    if record.workflow_mode == CoderWorkflowMode::MergeRecommendation {
+        let summary_artifact =
+            latest_coder_artifact(&state, &record, "coder_merge_recommendation_summary");
+        let readiness_artifact =
+            latest_coder_artifact(&state, &record, "coder_merge_readiness_report");
+        let summary_payload = load_latest_coder_artifact_payload(
+            &state,
+            &record,
+            "coder_merge_recommendation_summary",
+        )
+        .await;
+        let recommendation = summary_payload
+            .as_ref()
+            .and_then(|row| row.get("recommendation"))
+            .cloned()
+            .unwrap_or_else(|| json!("merge"));
+        let merge_execution_payload = json!({
+            "coder_run_id": record.coder_run_id,
+            "linked_context_run_id": record.linked_context_run_id,
+            "workflow_mode": record.workflow_mode,
+            "repo_binding": record.repo_binding,
+            "github_ref": record.github_ref,
+            "approved_by_reason": why,
+            "recommendation": recommendation,
+            "summary": summary_payload.as_ref().and_then(|row| row.get("summary")).cloned().unwrap_or(Value::Null),
+            "risk_level": summary_payload.as_ref().and_then(|row| row.get("risk_level")).cloned().unwrap_or(Value::Null),
+            "blockers": summary_payload.as_ref().and_then(|row| row.get("blockers")).cloned().unwrap_or_else(|| json!([])),
+            "required_checks": summary_payload.as_ref().and_then(|row| row.get("required_checks")).cloned().unwrap_or_else(|| json!([])),
+            "required_approvals": summary_payload.as_ref().and_then(|row| row.get("required_approvals")).cloned().unwrap_or_else(|| json!([])),
+            "summary_artifact_path": summary_artifact.as_ref().map(|artifact| artifact.path.clone()),
+            "readiness_artifact_path": readiness_artifact.as_ref().map(|artifact| artifact.path.clone()),
+            "created_at_ms": crate::now_ms(),
+        });
+        let artifact = write_coder_artifact(
+            &state,
+            &record.linked_context_run_id,
+            &format!("merge-execution-request-{}", Uuid::new_v4().simple()),
+            "coder_merge_execution_request",
+            "artifacts/merge_recommendation.merge_execution_request.json",
+            &merge_execution_payload,
+        )
+        .await?;
+        publish_coder_artifact_added(&state, &record, &artifact, Some("approval"), {
+            let mut extra = serde_json::Map::new();
+            extra.insert("kind".to_string(), json!("merge_execution_request"));
+            extra.insert("recommendation".to_string(), recommendation.clone());
+            extra
+        });
+        publish_coder_run_event(
+            &state,
+            "coder.merge.recommended",
+            &record,
+            Some("approval"),
+            {
+                let mut extra = serde_json::Map::new();
+                extra.insert(
+                    "event_type".to_string(),
+                    json!("merge_execution_request_ready"),
+                );
+                extra.insert("artifact_id".to_string(), json!(artifact.id));
+                extra.insert("recommendation".to_string(), recommendation);
+                extra
+            },
+        );
+        let mut response = coder_run_transition(
+            &state,
+            &record,
+            "merge_recommendation_approved",
+            ContextRunStatus::Completed,
+            Some(
+                merge_execution_payload
+                    .get("approved_by_reason")
+                    .and_then(Value::as_str)
+                    .unwrap_or("merge recommendation approved by operator")
+                    .to_string(),
+            ),
+        )
+        .await?;
+        if let Some(obj) = response.as_object_mut() {
+            obj.insert(
+                "merge_execution_request".to_string(),
+                merge_execution_payload,
+            );
+            obj.insert("merge_execution_artifact".to_string(), json!(artifact));
+        }
+        return Ok(Json(response));
+    }
     Ok(Json(
-        coder_run_transition(&state, &record, event_type, next_status, Some(why)).await?,
+        coder_run_transition(
+            &state,
+            &record,
+            "plan_approved",
+            ContextRunStatus::Running,
+            Some(why),
+        )
+        .await?,
     ))
 }
 

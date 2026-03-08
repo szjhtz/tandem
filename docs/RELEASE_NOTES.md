@@ -114,6 +114,7 @@
   - blocked `execute-next` / `execute-all` now also emit `coder.run.phase_changed` with `event_type = execution_policy_blocked`, so streaming clients can react to follow-on policy blocks without polling
   - merge-recommendation summaries that come back `merge` with no remaining blockers/checks/approvals now stop in `awaiting_approval` and emit `coder.approval.required`, instead of looking fully completed before an operator approves the recommendation
   - approving a merge-ready recommendation through `POST /coder/runs/{id}/approve` now completes the run cleanly with `merge_recommendation_approved` instead of sending it back to `running`
+  - that approval step now also writes a `coder_merge_execution_request` artifact and emits `coder.merge.recommended`, giving the engine a concrete post-approval merge handoff before a real merge MCP path exists
   - coder runs now persist as thin metadata records linked to engine context runs instead of a frontend-owned workflow store
   - creating an `issue_triage` coder run now seeds a deterministic context-run task graph for issue normalization, memory retrieval, repo inspection, reproduction, and triage artifact writing
   - added initial `coder.run.created` engine event emission and backend regression coverage for coder create/get/list/artifact behavior
