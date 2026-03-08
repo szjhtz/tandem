@@ -2216,6 +2216,7 @@ async fn dispatch_issue_fix_task(
             }))
         }
         Some("prepare_fix") => {
+            let memory_hits_used = summarize_workflow_memory_hits(record, &run, "retrieve_memory");
             let worker_result = run_issue_fix_prepare_worker(&state, record, &run).await;
             let (worker_artifact, worker_payload) = match worker_result {
                 Ok(result) => result,
@@ -2249,6 +2250,14 @@ async fn dispatch_issue_fix_task(
                     }));
                 }
             };
+            let plan_artifact = write_issue_fix_plan_artifact(
+                &state,
+                record,
+                &worker_payload,
+                &memory_hits_used,
+                Some("analysis"),
+            )
+            .await?;
             let final_run = advance_coder_workflow_run(
                 &state,
                 record,
@@ -2260,6 +2269,7 @@ async fn dispatch_issue_fix_task(
             Ok(json!({
                 "ok": true,
                 "worker_artifact": worker_artifact,
+                "plan_artifact": plan_artifact,
                 "worker_session": worker_payload,
                 "run": final_run,
                 "coder_run": coder_run_payload(record, &final_run),
@@ -2275,6 +2285,8 @@ async fn dispatch_issue_fix_task(
                 "coder_issue_fix_worker_session",
             )
             .await;
+            let fix_plan =
+                load_latest_coder_artifact_payload(&state, record, "coder_issue_fix_plan").await;
             let worker_summary = worker_session
                 .as_ref()
                 .and_then(|payload| payload.get("assistant_text"))
@@ -2286,22 +2298,59 @@ async fn dispatch_issue_fix_task(
                 State(state),
                 Path(record.coder_run_id.clone()),
                 Json(CoderIssueFixValidationReportCreateInput {
-                    summary: Some(format!(
-                        "Engine worker validated a constrained fix proposal for {} issue #{}.",
-                        record.repo_binding.repo_slug, issue_number
-                    )),
-                    root_cause: Some(
-                        "Issue-fix worker used prior context and reusable memory.".to_string(),
-                    ),
-                    fix_strategy: Some(
-                        "Apply a constrained patch after issue-context inspection.".to_string(),
-                    ),
-                    changed_files: Vec::new(),
-                    validation_steps: vec![
-                        "Review constrained fix plan".to_string(),
-                        "Inspect coder worker session output".to_string(),
-                        "Record validation outcome for follow-up artifact writing".to_string(),
-                    ],
+                    summary: fix_plan
+                        .as_ref()
+                        .and_then(|payload| payload.get("summary"))
+                        .and_then(Value::as_str)
+                        .map(ToString::to_string)
+                        .or_else(|| Some(format!(
+                            "Engine worker validated a constrained fix proposal for {} issue #{}.",
+                            record.repo_binding.repo_slug, issue_number
+                        ))),
+                    root_cause: fix_plan
+                        .as_ref()
+                        .and_then(|payload| payload.get("root_cause"))
+                        .and_then(Value::as_str)
+                        .map(ToString::to_string)
+                        .or_else(|| Some(
+                            "Issue-fix worker used prior context and reusable memory.".to_string(),
+                        )),
+                    fix_strategy: fix_plan
+                        .as_ref()
+                        .and_then(|payload| payload.get("fix_strategy"))
+                        .and_then(Value::as_str)
+                        .map(ToString::to_string)
+                        .or_else(|| Some(
+                            "Apply a constrained patch after issue-context inspection."
+                                .to_string(),
+                        )),
+                    changed_files: fix_plan
+                        .as_ref()
+                        .and_then(|payload| payload.get("changed_files"))
+                        .and_then(Value::as_array)
+                        .map(|rows| {
+                            rows.iter()
+                                .filter_map(Value::as_str)
+                                .map(ToString::to_string)
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_default(),
+                    validation_steps: {
+                        let mut steps = fix_plan
+                            .as_ref()
+                            .and_then(|payload| payload.get("validation_steps"))
+                            .and_then(Value::as_array)
+                            .map(|rows| {
+                                rows.iter()
+                                    .filter_map(Value::as_str)
+                                    .map(ToString::to_string)
+                                    .collect::<Vec<_>>()
+                            })
+                            .unwrap_or_default();
+                        steps.push("Inspect coder worker session output".to_string());
+                        steps.push("Record validation outcome for follow-up artifact writing".to_string());
+                        steps
+                    },
                     validation_results: vec![json!({
                         "kind": "engine_worker_validation",
                         "status": "needs_follow_up",
@@ -2312,12 +2361,13 @@ async fn dispatch_issue_fix_task(
                     })],
                     memory_hits_used,
                     notes: Some(format!(
-                        "Auto-generated by coder engine worker dispatch. Worker session: {}",
+                        "Auto-generated by coder engine worker dispatch. Worker session: {}. Plan artifact available: {}",
                         worker_session
                             .as_ref()
                             .and_then(|payload| payload.get("session_id"))
                             .and_then(Value::as_str)
-                            .unwrap_or("unknown")
+                            .unwrap_or("unknown"),
+                        fix_plan.is_some()
                     )),
                 }),
             )
@@ -2326,34 +2376,75 @@ async fn dispatch_issue_fix_task(
         }
         Some("write_fix_artifact") => {
             let memory_hits_used = summarize_workflow_memory_hits(record, &run, "retrieve_memory");
+            let fix_plan =
+                load_latest_coder_artifact_payload(&state, record, "coder_issue_fix_plan").await;
             let response = coder_issue_fix_summary_create(
                 State(state),
                 Path(record.coder_run_id.clone()),
                 Json(CoderIssueFixSummaryCreateInput {
-                    summary: Some(format!(
-                        "Engine worker completed an initial issue-fix pass for {} issue #{}.",
-                        record.repo_binding.repo_slug, issue_number
-                    )),
-                    root_cause: Some(
-                        "Issue context and prior reusable memory were inspected before fix generation."
-                            .to_string(),
-                    ),
-                    fix_strategy: Some(
-                        "Use a constrained patch flow with recorded validation evidence."
-                            .to_string(),
-                    ),
-                    changed_files: Vec::new(),
-                    validation_steps: vec![
-                        "Review constrained fix plan".to_string(),
-                        "Record validation outcome for follow-up artifact writing".to_string(),
-                    ],
+                    summary: fix_plan
+                        .as_ref()
+                        .and_then(|payload| payload.get("summary"))
+                        .and_then(Value::as_str)
+                        .map(ToString::to_string)
+                        .or_else(|| Some(format!(
+                            "Engine worker completed an initial issue-fix pass for {} issue #{}.",
+                            record.repo_binding.repo_slug, issue_number
+                        ))),
+                    root_cause: fix_plan
+                        .as_ref()
+                        .and_then(|payload| payload.get("root_cause"))
+                        .and_then(Value::as_str)
+                        .map(ToString::to_string)
+                        .or_else(|| Some(
+                            "Issue context and prior reusable memory were inspected before fix generation."
+                                .to_string(),
+                        )),
+                    fix_strategy: fix_plan
+                        .as_ref()
+                        .and_then(|payload| payload.get("fix_strategy"))
+                        .and_then(Value::as_str)
+                        .map(ToString::to_string)
+                        .or_else(|| Some(
+                            "Use a constrained patch flow with recorded validation evidence."
+                                .to_string(),
+                        )),
+                    changed_files: fix_plan
+                        .as_ref()
+                        .and_then(|payload| payload.get("changed_files"))
+                        .and_then(Value::as_array)
+                        .map(|rows| {
+                            rows.iter()
+                                .filter_map(Value::as_str)
+                                .map(ToString::to_string)
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_default(),
+                    validation_steps: fix_plan
+                        .as_ref()
+                        .and_then(|payload| payload.get("validation_steps"))
+                        .and_then(Value::as_array)
+                        .map(|rows| {
+                            rows.iter()
+                                .filter_map(Value::as_str)
+                                .map(ToString::to_string)
+                                .collect::<Vec<_>>()
+                        })
+                        .filter(|rows| !rows.is_empty())
+                        .unwrap_or_else(|| vec![
+                            "Review constrained fix plan".to_string(),
+                            "Record validation outcome for follow-up artifact writing".to_string(),
+                        ]),
                     validation_results: vec![json!({
                         "kind": "engine_worker_validation",
                         "status": "needs_follow_up",
                         "summary": "Validation completed through the coder engine worker bridge."
                     })],
                     memory_hits_used,
-                    notes: Some("Auto-generated by coder engine worker dispatch.".to_string()),
+                    notes: Some(format!(
+                        "Auto-generated by coder engine worker dispatch. Plan artifact available: {}",
+                        fix_plan.is_some()
+                    )),
                 }),
             )
             .await?;
@@ -3684,6 +3775,119 @@ fn build_issue_fix_worker_prompt(
         context_run_id = run.run_id,
         memory_hint = memory_hint,
     )
+}
+
+fn extract_labeled_section(text: &str, label: &str) -> Option<String> {
+    let marker = format!("{label}:");
+    let start = text.find(&marker)?;
+    let after = &text[start + marker.len()..];
+    let known_labels = [
+        "Summary:",
+        "Root Cause:",
+        "Fix Strategy:",
+        "Changed Files:",
+        "Validation:",
+    ];
+    let end = known_labels
+        .iter()
+        .filter_map(|candidate| {
+            if *candidate == marker {
+                return None;
+            }
+            after.find(candidate)
+        })
+        .min()
+        .unwrap_or(after.len());
+    let section = after[..end].trim();
+    if section.is_empty() {
+        return None;
+    }
+    Some(section.to_string())
+}
+
+fn parse_issue_fix_plan_from_worker_payload(worker_payload: &Value) -> Value {
+    let assistant_text = worker_payload
+        .get("assistant_text")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    let summary = extract_labeled_section(assistant_text, "Summary").or_else(|| {
+        (!assistant_text.trim().is_empty()).then(|| crate::truncate_text(assistant_text, 240))
+    });
+    let root_cause = extract_labeled_section(assistant_text, "Root Cause");
+    let fix_strategy = extract_labeled_section(assistant_text, "Fix Strategy");
+    let changed_files = extract_labeled_section(assistant_text, "Changed Files")
+        .map(|section| {
+            section
+                .lines()
+                .map(str::trim)
+                .map(|line| line.trim_start_matches("-").trim())
+                .filter(|line| !line.is_empty())
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let validation_steps = extract_labeled_section(assistant_text, "Validation")
+        .map(|section| {
+            section
+                .lines()
+                .map(str::trim)
+                .map(|line| line.trim_start_matches("-").trim())
+                .filter(|line| !line.is_empty())
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    json!({
+        "summary": summary,
+        "root_cause": root_cause,
+        "fix_strategy": fix_strategy,
+        "changed_files": changed_files,
+        "validation_steps": validation_steps,
+        "worker_session_id": worker_payload.get("session_id").cloned(),
+        "worker_session_run_id": worker_payload.get("session_run_id").cloned(),
+        "worker_model": worker_payload.get("model").cloned(),
+        "assistant_text": worker_payload.get("assistant_text").cloned(),
+    })
+}
+
+async fn write_issue_fix_plan_artifact(
+    state: &AppState,
+    record: &CoderRunRecord,
+    worker_payload: &Value,
+    memory_hits_used: &[String],
+    phase: Option<&str>,
+) -> Result<ContextBlackboardArtifact, StatusCode> {
+    let mut payload = parse_issue_fix_plan_from_worker_payload(worker_payload);
+    if let Some(obj) = payload.as_object_mut() {
+        obj.insert("coder_run_id".to_string(), json!(record.coder_run_id));
+        obj.insert(
+            "linked_context_run_id".to_string(),
+            json!(record.linked_context_run_id),
+        );
+        obj.insert("workflow_mode".to_string(), json!(record.workflow_mode));
+        obj.insert("repo_binding".to_string(), json!(record.repo_binding));
+        obj.insert("github_ref".to_string(), json!(record.github_ref));
+        obj.insert("memory_hits_used".to_string(), json!(memory_hits_used));
+        obj.insert("created_at_ms".to_string(), json!(crate::now_ms()));
+    }
+    let artifact = write_coder_artifact(
+        state,
+        &record.linked_context_run_id,
+        &format!("issue-fix-plan-{}", Uuid::new_v4().simple()),
+        "coder_issue_fix_plan",
+        "artifacts/issue_fix.plan.json",
+        &payload,
+    )
+    .await?;
+    publish_coder_artifact_added(state, record, &artifact, phase, {
+        let mut extra = serde_json::Map::new();
+        extra.insert("kind".to_string(), json!("issue_fix_plan"));
+        if let Some(summary) = payload.get("summary").cloned() {
+            extra.insert("summary".to_string(), summary);
+        }
+        extra
+    });
+    Ok(artifact)
 }
 
 async fn run_issue_fix_prepare_worker(

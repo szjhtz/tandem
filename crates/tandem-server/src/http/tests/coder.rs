@@ -778,6 +778,14 @@ async fn coder_issue_fix_execute_next_drives_task_runtime_to_completion() {
             assert_eq!(
                 execute_payload
                     .get("dispatch_result")
+                    .and_then(|row| row.get("plan_artifact"))
+                    .and_then(|row| row.get("artifact_type"))
+                    .and_then(Value::as_str),
+                Some("coder_issue_fix_plan")
+            );
+            assert_eq!(
+                execute_payload
+                    .get("dispatch_result")
                     .and_then(|row| row.get("worker_session"))
                     .and_then(|row| row.get("status"))
                     .and_then(Value::as_str),
@@ -826,6 +834,10 @@ async fn coder_issue_fix_execute_next_drives_task_runtime_to_completion() {
         .artifacts
         .iter()
         .any(|artifact| { artifact.artifact_type == "coder_issue_fix_worker_session" }));
+    assert!(blackboard
+        .artifacts
+        .iter()
+        .any(|artifact| { artifact.artifact_type == "coder_issue_fix_plan" }));
 }
 
 #[tokio::test]
