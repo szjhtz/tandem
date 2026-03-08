@@ -635,8 +635,8 @@ function Step1Goal({
           </div>
         </div>
         <p className="mt-1 text-slate-400">
-          This does not power the default automation path. Use it only if you want to export the
-          planned workflow into a reusable skill scaffold.
+          This does not power the default automation path. Use it only if you want to generate a
+          reusable skill scaffold from this prompt.
         </p>
         {advancedMode ? (
           <div className="mt-2 grid gap-2">
@@ -716,8 +716,7 @@ function Step1Goal({
           </div>
         ) : (
           <p className="mt-1 text-slate-400">
-            Generate a reusable skill draft after planning if you want to save this workflow for
-            later reuse.
+            Generate a reusable skill draft from this prompt if you want to save it for later reuse.
           </p>
         )}
         {installStatus ? <p className="mt-2 text-slate-300">{installStatus}</p> : null}

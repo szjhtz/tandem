@@ -6351,6 +6351,13 @@ pub(super) async fn coder_merge_submit(
             }
         })));
     }
+    if let Some(review_policy) = merge_submit_review_policy_block(&state, &record).await? {
+        return Ok(Json(json!({
+            "ok": false,
+            "code": "CODER_MERGE_SUBMIT_POLICY_BLOCKED",
+            "policy": review_policy,
+        })));
+    }
     let github_ref = record.github_ref.clone().ok_or(StatusCode::CONFLICT)?;
     if !matches!(github_ref.kind, CoderGithubRefKind::PullRequest) {
         return Err(StatusCode::CONFLICT);
@@ -6942,8 +6949,17 @@ async fn has_completed_follow_on_pr_review(
     state: &AppState,
     record: &CoderRunRecord,
 ) -> Result<bool, StatusCode> {
+    Ok(find_completed_follow_on_pr_review(state, record)
+        .await?
+        .is_some())
+}
+
+async fn find_completed_follow_on_pr_review(
+    state: &AppState,
+    record: &CoderRunRecord,
+) -> Result<Option<CoderRunRecord>, StatusCode> {
     let Some(parent_coder_run_id) = record.parent_coder_run_id.as_deref() else {
-        return Ok(false);
+        return Ok(None);
     };
     ensure_coder_runs_dir(state).await?;
     let mut dir = tokio::fs::read_dir(coder_runs_root(state))
@@ -6975,10 +6991,70 @@ async fn has_completed_follow_on_pr_review(
             continue;
         };
         if matches!(run.status, ContextRunStatus::Completed) {
-            return Ok(true);
+            return Ok(Some(candidate));
         }
     }
-    Ok(false)
+    Ok(None)
+}
+
+async fn merge_submit_review_policy_block(
+    state: &AppState,
+    record: &CoderRunRecord,
+) -> Result<Option<Value>, StatusCode> {
+    let source = record
+        .origin_policy
+        .as_ref()
+        .and_then(|row| row.get("source"))
+        .and_then(Value::as_str);
+    if source != Some("issue_fix_pr_submit") {
+        return Ok(None);
+    }
+    let Some(review_record) = find_completed_follow_on_pr_review(state, record).await? else {
+        return Ok(Some(json!({
+            "reason": "requires_approved_pr_review_follow_on",
+            "required_workflow_mode": "pr_review",
+            "parent_coder_run_id": record.parent_coder_run_id,
+            "review_completed": false,
+        })));
+    };
+    let Some(review_summary) =
+        load_latest_coder_artifact_payload(state, &review_record, "coder_pr_review_summary").await
+    else {
+        return Ok(Some(json!({
+            "reason": "requires_approved_pr_review_follow_on",
+            "required_workflow_mode": "pr_review",
+            "parent_coder_run_id": record.parent_coder_run_id,
+            "review_completed": true,
+            "review_summary_present": false,
+        })));
+    };
+    let verdict = review_summary
+        .get("verdict")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    let has_blockers = review_summary
+        .get("blockers")
+        .and_then(Value::as_array)
+        .is_some_and(|rows| !rows.is_empty());
+    let has_requested_changes = review_summary
+        .get("requested_changes")
+        .and_then(Value::as_array)
+        .is_some_and(|rows| !rows.is_empty());
+    if verdict == "approve" && !has_blockers && !has_requested_changes {
+        return Ok(None);
+    }
+    Ok(Some(json!({
+        "reason": "requires_approved_pr_review_follow_on",
+        "required_workflow_mode": "pr_review",
+        "parent_coder_run_id": record.parent_coder_run_id,
+        "review_completed": true,
+        "review_summary_present": true,
+        "review_verdict": review_summary.get("verdict").cloned().unwrap_or(Value::Null),
+        "has_blockers": has_blockers,
+        "has_requested_changes": has_requested_changes,
+    })))
 }
 
 async fn coder_execution_policy_block(
