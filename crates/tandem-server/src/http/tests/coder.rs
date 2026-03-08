@@ -851,6 +851,10 @@ async fn coder_issue_fix_execute_next_drives_task_runtime_to_completion() {
         .artifacts
         .iter()
         .any(|artifact| { artifact.artifact_type == "coder_issue_fix_validation_session" }));
+    assert!(blackboard
+        .artifacts
+        .iter()
+        .any(|artifact| { artifact.artifact_type == "coder_patch_summary" }));
 }
 
 #[tokio::test]

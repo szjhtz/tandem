@@ -4077,6 +4077,62 @@ async fn write_issue_fix_changed_file_evidence_artifact(
     Ok(Some(artifact))
 }
 
+async fn write_issue_fix_patch_summary_artifact(
+    state: &AppState,
+    record: &CoderRunRecord,
+    summary: Option<&str>,
+    root_cause: Option<&str>,
+    fix_strategy: Option<&str>,
+    changed_files: &[String],
+    validation_results: &[Value],
+    worker_session: Option<&Value>,
+    validation_session: Option<&Value>,
+    phase: Option<&str>,
+) -> Result<Option<ContextBlackboardArtifact>, StatusCode> {
+    if changed_files.is_empty()
+        && summary.map(str::trim).unwrap_or("").is_empty()
+        && fix_strategy.map(str::trim).unwrap_or("").is_empty()
+    {
+        return Ok(None);
+    }
+    let payload = json!({
+        "coder_run_id": record.coder_run_id,
+        "linked_context_run_id": record.linked_context_run_id,
+        "workflow_mode": record.workflow_mode,
+        "repo_binding": record.repo_binding,
+        "github_ref": record.github_ref,
+        "summary": summary,
+        "root_cause": root_cause,
+        "fix_strategy": fix_strategy,
+        "changed_files": changed_files,
+        "validation_results": validation_results,
+        "worker_session_id": worker_session.and_then(|payload| payload.get("session_id")).cloned(),
+        "worker_session_run_id": worker_session.and_then(|payload| payload.get("session_run_id")).cloned(),
+        "validation_session_id": validation_session.and_then(|payload| payload.get("session_id")).cloned(),
+        "validation_session_run_id": validation_session.and_then(|payload| payload.get("session_run_id")).cloned(),
+        "created_at_ms": crate::now_ms(),
+    });
+    let artifact = write_coder_artifact(
+        state,
+        &record.linked_context_run_id,
+        &format!("issue-fix-patch-summary-{}", Uuid::new_v4().simple()),
+        "coder_patch_summary",
+        "artifacts/issue_fix.patch_summary.json",
+        &payload,
+    )
+    .await?;
+    publish_coder_artifact_added(state, record, &artifact, phase, {
+        let mut extra = serde_json::Map::new();
+        extra.insert("kind".to_string(), json!("patch_summary"));
+        extra.insert("changed_file_count".to_string(), json!(changed_files.len()));
+        if let Some(fix_strategy) = fix_strategy {
+            extra.insert("fix_strategy".to_string(), json!(fix_strategy));
+        }
+        extra
+    });
+    Ok(Some(artifact))
+}
+
 async fn run_issue_fix_worker_session(
     state: &AppState,
     record: &CoderRunRecord,
@@ -5942,6 +5998,24 @@ pub(super) async fn coder_issue_fix_summary_create(
         Some(&artifact.path),
     )
     .await?;
+    let worker_session =
+        load_latest_coder_artifact_payload(&state, &record, "coder_issue_fix_worker_session").await;
+    let validation_session =
+        load_latest_coder_artifact_payload(&state, &record, "coder_issue_fix_validation_session")
+            .await;
+    let patch_summary_artifact = write_issue_fix_patch_summary_artifact(
+        &state,
+        &record,
+        input.summary.as_deref(),
+        input.root_cause.as_deref(),
+        input.fix_strategy.as_deref(),
+        &input.changed_files,
+        &input.validation_results,
+        worker_session.as_ref(),
+        validation_session.as_ref(),
+        Some("artifact_write"),
+    )
+    .await?;
 
     if let Some(summary_text) = input
         .summary
@@ -6028,6 +6102,7 @@ pub(super) async fn coder_issue_fix_summary_create(
         "ok": true,
         "artifact": artifact,
         "validation_artifact": validation_artifact,
+        "patch_summary_artifact": patch_summary_artifact,
         "generated_candidates": generated_candidates,
         "coder_run": coder_run_payload(&record, &final_run),
         "run": final_run,
