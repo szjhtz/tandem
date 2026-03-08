@@ -4761,6 +4761,23 @@ fn build_follow_on_run_templates(
     .collect::<Vec<_>>()
 }
 
+fn normalize_follow_on_workflow_modes(requested: &[CoderWorkflowMode]) -> Vec<CoderWorkflowMode> {
+    let wants_review = requested
+        .iter()
+        .any(|mode| matches!(mode, CoderWorkflowMode::PrReview));
+    let wants_merge = requested
+        .iter()
+        .any(|mode| matches!(mode, CoderWorkflowMode::MergeRecommendation));
+    let mut normalized = Vec::new();
+    if wants_review || wants_merge {
+        normalized.push(CoderWorkflowMode::PrReview);
+    }
+    if wants_merge {
+        normalized.push(CoderWorkflowMode::MergeRecommendation);
+    }
+    normalized
+}
+
 fn build_follow_on_run_create_input(
     record: &CoderRunRecord,
     workflow_mode: CoderWorkflowMode,
@@ -5012,7 +5029,9 @@ pub(super) async fn coder_issue_fix_pr_submit(
         .filter(|value| !value.trim().is_empty())
         .unwrap_or("coder/issue-fix");
     let dry_run = input.dry_run.unwrap_or(true);
-    for workflow_mode in &input.spawn_follow_on_runs {
+    let normalized_follow_on_modes =
+        normalize_follow_on_workflow_modes(&input.spawn_follow_on_runs);
+    for workflow_mode in &normalized_follow_on_modes {
         if !matches!(
             workflow_mode,
             CoderWorkflowMode::PrReview | CoderWorkflowMode::MergeRecommendation
@@ -5101,7 +5120,7 @@ pub(super) async fn coder_issue_fix_pr_submit(
             .get("submitted_github_ref")
             .and_then(parse_coder_github_ref);
         if let Some(submitted_github_ref) = submitted_github_ref {
-            for workflow_mode in &input.spawn_follow_on_runs {
+            for workflow_mode in &normalized_follow_on_modes {
                 let create_input = build_follow_on_run_create_input(
                     &record,
                     workflow_mode.clone(),
@@ -6858,6 +6877,28 @@ mod tests {
                 "number": 77,
                 "url": "https://github.com/evan/tandem/pull/77",
             })
+        );
+    }
+
+    #[test]
+    fn normalize_follow_on_workflow_modes_adds_review_before_merge() {
+        assert_eq!(
+            normalize_follow_on_workflow_modes(&[CoderWorkflowMode::MergeRecommendation]),
+            vec![
+                CoderWorkflowMode::PrReview,
+                CoderWorkflowMode::MergeRecommendation,
+            ]
+        );
+        assert_eq!(
+            normalize_follow_on_workflow_modes(&[
+                CoderWorkflowMode::PrReview,
+                CoderWorkflowMode::MergeRecommendation,
+                CoderWorkflowMode::PrReview,
+            ]),
+            vec![
+                CoderWorkflowMode::PrReview,
+                CoderWorkflowMode::MergeRecommendation,
+            ]
         );
     }
 }
