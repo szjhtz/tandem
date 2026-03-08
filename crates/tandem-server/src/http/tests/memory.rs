@@ -405,6 +405,22 @@ async fn memory_put_rejects_expired_capability_and_emits_blocked_audit() {
             .and_then(Value::as_str),
         Some("blocked")
     );
+    assert_eq!(
+        blocked_event
+            .properties
+            .get("linkage")
+            .and_then(|v| v.get("origin_run_id"))
+            .and_then(Value::as_str),
+        Some("run-1-expired")
+    );
+    assert_eq!(
+        blocked_event
+            .properties
+            .get("linkage")
+            .and_then(|v| v.get("project_id"))
+            .and_then(Value::as_str),
+        Some("proj-1")
+    );
     assert!(blocked_event
         .properties
         .get("detail")
@@ -436,7 +452,11 @@ async fn memory_put_rejects_expired_capability_and_emits_blocked_audit() {
                     && row
                         .get("detail")
                         .and_then(Value::as_str)
-                        .is_some_and(|detail| detail.contains("capability expired"))
+                        .is_some_and(|detail| {
+                            detail.contains("capability expired")
+                                && detail.contains("origin_run_id=run-1-expired")
+                                && detail.contains("project_id=proj-1")
+                        })
             })
         })
         .unwrap_or(false);
