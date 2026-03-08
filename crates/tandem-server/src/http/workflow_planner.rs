@@ -1003,6 +1003,26 @@ fn decode_planner_plan_value(value: Value) -> Option<crate::WorkflowPlan> {
 
 fn decode_planner_plan_value_relaxed(mut value: Value) -> Option<crate::WorkflowPlan> {
     let plan = value.as_object_mut()?;
+    plan.entry("plan_id".to_string())
+        .or_insert_with(|| Value::String(String::new()));
+    plan.entry("planner_version".to_string())
+        .or_insert_with(|| Value::String(String::new()));
+    plan.entry("plan_source".to_string())
+        .or_insert_with(|| Value::String(String::new()));
+    plan.entry("original_prompt".to_string())
+        .or_insert_with(|| Value::String(String::new()));
+    plan.entry("normalized_prompt".to_string())
+        .or_insert_with(|| Value::String(String::new()));
+    plan.entry("confidence".to_string())
+        .or_insert_with(|| Value::String("medium".to_string()));
+    plan.entry("title".to_string())
+        .or_insert_with(|| Value::String(String::new()));
+    plan.entry("save_options".to_string())
+        .or_insert_with(|| json!({}));
+    plan.entry("requires_integrations".to_string())
+        .or_insert_with(|| json!([]));
+    plan.entry("allowed_mcp_servers".to_string())
+        .or_insert_with(|| json!([]));
     let steps = plan.get_mut("steps")?.as_array_mut()?;
     for step in steps.iter_mut() {
         let Some(step_obj) = step.as_object_mut() else {

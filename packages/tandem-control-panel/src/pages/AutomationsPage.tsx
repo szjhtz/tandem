@@ -1312,7 +1312,9 @@ function Step4Review({
             <span className="text-sm font-medium text-slate-200">
               {effectivePlannerModelProvider || effectivePlannerModelId
                 ? `${effectivePlannerModelProvider || "default provider"} / ${effectivePlannerModelId || "default model"}`
-                : "Disabled"}
+                : effectiveModelProvider || effectiveModelId
+                  ? `Using model override: ${effectiveModelProvider || "default provider"} / ${effectiveModelId || "default model"}`
+                  : "Workspace default"}
             </span>
           </div>
         ) : null}
@@ -1322,8 +1324,8 @@ function Step4Review({
           </span>
           <span className="text-sm font-medium text-slate-200">
             {plannerFallbackEnabled
-              ? "Enabled when the selected planner or model-override provider is configured on the engine"
-              : "Disabled unless a planner model or model override is configured"}
+              ? "Enabled. Tandem will use the planner model if set, otherwise it falls back to the selected model override."
+              : "Disabled unless a planner model, model override, or workspace default model is configured"}
           </span>
         </div>
         <div className="grid gap-1">
