@@ -47,6 +47,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - issue-fix validation failures now also emit `regression_signal` memory with failed validation evidence
   - issue-fix worker-session failures now also emit rich `run_outcome` memory instead of relying only on generic terminal backfill
   - triage, review, and merge worker-session failures now also fail runs truthfully and emit rich `run_outcome` memory with worker artifact/session context
+  - issue-fix retrieval now prioritizes `regression_signal` memory so failed validation history can influence later fixes across related issues
     - `GET /coder/projects/{project_id}`
     - `GET /coder/projects/{project_id}/runs`
     - `POST /coder/projects/{project_id}/runs`

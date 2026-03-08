@@ -1447,6 +1447,7 @@ fn coder_memory_retrieval_policy(record: &CoderRunRecord, query: &str, limit: us
             vec![
                 "fix_pattern",
                 "validation_memory",
+                "regression_signal",
                 "duplicate_linkage",
                 "run_outcome",
                 "triage_memory",
@@ -1565,6 +1566,11 @@ fn compare_coder_memory_hits(record: &CoderRunRecord, a: &Value, b: &Value) -> s
         {
             3_u8
         }
+        Some("regression_signal")
+            if matches!(record.workflow_mode, CoderWorkflowMode::IssueFix) =>
+        {
+            3_u8
+        }
         Some("run_outcome")
             if matches!(record.workflow_mode, CoderWorkflowMode::IssueFix)
                 && memory_hit_workflow_mode(hit).as_deref() == Some("issue_fix") =>
@@ -1640,6 +1646,9 @@ fn compare_coder_memory_hits(record: &CoderRunRecord, a: &Value, b: &Value) -> s
                 .unwrap_or(0_u8)
         };
         match record.workflow_mode {
+            CoderWorkflowMode::IssueFix => {
+                list_weight("validation_results") + list_weight("regression_signals")
+            }
             CoderWorkflowMode::MergeRecommendation => {
                 list_weight("blockers")
                     + list_weight("required_checks")
@@ -1657,7 +1666,7 @@ fn compare_coder_memory_hits(record: &CoderRunRecord, a: &Value, b: &Value) -> s
         (matches!(record.workflow_mode, CoderWorkflowMode::IssueFix)
             && matches!(
                 memory_hit_kind(hit).as_deref(),
-                Some("fix_pattern") | Some("validation_memory")
+                Some("fix_pattern") | Some("validation_memory") | Some("regression_signal")
             )
             && hit.get("source").and_then(Value::as_str) == Some("governed_memory")) as u8
     };

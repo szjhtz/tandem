@@ -49,6 +49,7 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
   - Failed issue-fix validation now also emits `regression_signal` memory with the failing validation evidence.
   - Issue-fix worker-session failures now also emit rich `run_outcome` memory with worker artifact and session context.
   - Issue-triage, PR-review, and merge-recommendation worker-session failures now also emit rich `run_outcome` memory with worker artifact and session context.
+  - Issue-fix retrieval now prioritizes `regression_signal` memory so failed validation history can influence later fixes across related issues.
     - `PATCH /config/bug-monitor`
     - `GET /bug-monitor/status`
     - `GET /bug-monitor/drafts`
