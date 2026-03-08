@@ -5625,6 +5625,276 @@ async fn coder_merge_submit_blocks_auto_mode_for_manual_follow_on() {
 }
 
 #[tokio::test]
+async fn coder_merge_policy_reports_auto_execute_eligibility_when_project_enabled() {
+    let (endpoint, server) = spawn_fake_github_mcp_server().await;
+
+    let state = test_state().await;
+    state
+        .mcp
+        .add_or_update(
+            "github".to_string(),
+            endpoint,
+            std::collections::HashMap::new(),
+            true,
+        )
+        .await;
+    assert!(state.mcp.connect("github").await);
+    state
+        .capability_resolver
+        .refresh_builtin_bindings()
+        .await
+        .expect("refresh builtin bindings");
+    let app = app_router(state.clone());
+
+    let policy_req = Request::builder()
+        .method("PUT")
+        .uri("/coder/projects/proj-engine/policy")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "auto_merge_enabled": true
+            })
+            .to_string(),
+        ))
+        .expect("policy request");
+    let policy_resp = app
+        .clone()
+        .oneshot(policy_req)
+        .await
+        .expect("policy response");
+    assert_eq!(policy_resp.status(), StatusCode::OK);
+
+    let create_req = Request::builder()
+        .method("POST")
+        .uri("/coder/runs")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "coder_run_id": "coder-merge-auto-eligible-parent",
+                "workflow_mode": "issue_fix",
+                "repo_binding": {
+                    "project_id": "proj-engine",
+                    "workspace_id": "ws-tandem",
+                    "workspace_root": "/tmp/tandem-repo",
+                    "repo_slug": "evan/tandem"
+                },
+                "github_ref": {
+                    "kind": "issue",
+                    "number": 320
+                },
+                "mcp_servers": ["github"]
+            })
+            .to_string(),
+        ))
+        .expect("create request");
+    let create_resp = app
+        .clone()
+        .oneshot(create_req)
+        .await
+        .expect("create response");
+    assert_eq!(create_resp.status(), StatusCode::OK);
+
+    let summary_req = Request::builder()
+        .method("POST")
+        .uri("/coder/runs/coder-merge-auto-eligible-parent/issue-fix-summary")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "summary": "Add missing fallback to startup recovery.",
+                "root_cause": "Recovery skipped the nil-config guard.",
+                "fix_strategy": "restore startup fallback and add a targeted regression",
+                "changed_files": ["crates/tandem-server/src/http/coder.rs"],
+                "validation_results": [{
+                    "kind": "test",
+                    "status": "passed",
+                    "summary": "startup recovery regression passed"
+                }]
+            })
+            .to_string(),
+        ))
+        .expect("summary request");
+    let summary_resp = app
+        .clone()
+        .oneshot(summary_req)
+        .await
+        .expect("summary response");
+    assert_eq!(summary_resp.status(), StatusCode::OK);
+
+    let draft_req = Request::builder()
+        .method("POST")
+        .uri("/coder/runs/coder-merge-auto-eligible-parent/pr-draft")
+        .header("content-type", "application/json")
+        .body(Body::from(json!({}).to_string()))
+        .expect("draft request");
+    let draft_resp = app
+        .clone()
+        .oneshot(draft_req)
+        .await
+        .expect("draft response");
+    assert_eq!(draft_resp.status(), StatusCode::OK);
+
+    let submit_pr_req = Request::builder()
+        .method("POST")
+        .uri("/coder/runs/coder-merge-auto-eligible-parent/pr-submit")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "approved_by": "evan",
+                "reason": "Open the draft PR and queue review plus merge follow-ons",
+                "dry_run": false,
+                "mcp_server": "github",
+                "allow_auto_merge_recommendation": true,
+                "spawn_follow_on_runs": ["merge_recommendation"]
+            })
+            .to_string(),
+        ))
+        .expect("submit pr request");
+    let submit_pr_resp = app
+        .clone()
+        .oneshot(submit_pr_req)
+        .await
+        .expect("submit pr response");
+    assert_eq!(submit_pr_resp.status(), StatusCode::OK);
+    let submit_pr_payload: Value = serde_json::from_slice(
+        &to_bytes(submit_pr_resp.into_body(), usize::MAX)
+            .await
+            .expect("submit pr body"),
+    )
+    .expect("submit pr json");
+    let spawned_runs = submit_pr_payload
+        .get("spawned_follow_on_runs")
+        .and_then(Value::as_array)
+        .expect("spawned follow-on runs");
+    assert_eq!(spawned_runs.len(), 2);
+    let review_run_id = spawned_runs[0]
+        .get("coder_run")
+        .and_then(|row| row.get("coder_run_id"))
+        .and_then(Value::as_str)
+        .expect("review run id");
+    let merge_run_id = spawned_runs[1]
+        .get("coder_run")
+        .and_then(|row| row.get("coder_run_id"))
+        .and_then(Value::as_str)
+        .expect("merge run id");
+
+    let review_summary_req = Request::builder()
+        .method("POST")
+        .uri(&format!("/coder/runs/{review_run_id}/pr-review-summary"))
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "verdict": "approve",
+                "summary": "Looks good to merge.",
+                "risk_level": "low",
+                "changed_files": ["crates/tandem-server/src/http/coder.rs"],
+                "blockers": [],
+                "requested_changes": [],
+                "regression_signals": []
+            })
+            .to_string(),
+        ))
+        .expect("review summary request");
+    let review_summary_resp = app
+        .clone()
+        .oneshot(review_summary_req)
+        .await
+        .expect("review summary response");
+    assert_eq!(review_summary_resp.status(), StatusCode::OK);
+
+    let merge_summary_req = Request::builder()
+        .method("POST")
+        .uri(&format!(
+            "/coder/runs/{merge_run_id}/merge-recommendation-summary"
+        ))
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "recommendation": "merge",
+                "summary": "Everything looks ready from the merge side.",
+                "blockers": [],
+                "required_checks": [],
+                "required_approvals": []
+            })
+            .to_string(),
+        ))
+        .expect("merge summary request");
+    let merge_summary_resp = app
+        .clone()
+        .oneshot(merge_summary_req)
+        .await
+        .expect("merge summary response");
+    assert_eq!(merge_summary_resp.status(), StatusCode::OK);
+
+    let approve_req = Request::builder()
+        .method("POST")
+        .uri(&format!("/coder/runs/{merge_run_id}/approve"))
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "reason": "Operator approved merge execution."
+            })
+            .to_string(),
+        ))
+        .expect("approve request");
+    let approve_resp = app
+        .clone()
+        .oneshot(approve_req)
+        .await
+        .expect("approve response");
+    server.abort();
+    assert_eq!(approve_resp.status(), StatusCode::OK);
+    let approve_payload: Value = serde_json::from_slice(
+        &to_bytes(approve_resp.into_body(), usize::MAX)
+            .await
+            .expect("approve body"),
+    )
+    .expect("approve json");
+    assert_eq!(
+        approve_payload
+            .get("merge_submit_policy")
+            .and_then(|row| row.get("preferred_submit_mode"))
+            .and_then(Value::as_str),
+        Some("auto")
+    );
+    assert_eq!(
+        approve_payload
+            .get("merge_submit_policy")
+            .and_then(|row| row.get("auto_execute_policy_enabled"))
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        approve_payload
+            .get("merge_submit_policy")
+            .and_then(|row| row.get("auto_execute_eligible"))
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        approve_payload
+            .get("merge_submit_policy")
+            .and_then(|row| row.get("auto_execute_after_approval"))
+            .and_then(Value::as_bool),
+        Some(false)
+    );
+    assert_eq!(
+        approve_payload
+            .get("merge_submit_policy")
+            .and_then(|row| row.get("auto_execute_block_reason"))
+            .and_then(Value::as_str),
+        Some("explicit_submit_required_policy")
+    );
+    assert_eq!(
+        approve_payload
+            .get("merge_submit_policy")
+            .and_then(|row| row.get("auto"))
+            .and_then(|row| row.get("blocked"))
+            .and_then(Value::as_bool),
+        Some(false)
+    );
+}
+
+#[tokio::test]
 async fn coder_merge_submit_blocks_without_approved_sibling_pr_review() {
     let (endpoint, server) = spawn_fake_github_mcp_server().await;
 

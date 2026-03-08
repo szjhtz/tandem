@@ -7185,6 +7185,7 @@ fn merge_submit_policy_envelope(
     manual: Value,
     auto: Value,
     preferred_submit_mode: &str,
+    auto_execute_eligible: bool,
     auto_execute_policy_enabled: bool,
     auto_execute_block_reason: &str,
 ) -> Value {
@@ -7194,7 +7195,7 @@ fn merge_submit_policy_envelope(
         "preferred_submit_mode": preferred_submit_mode,
         "explicit_submit_required": true,
         "auto_execute_after_approval": false,
-        "auto_execute_eligible": false,
+        "auto_execute_eligible": auto_execute_eligible,
         "auto_execute_policy_enabled": auto_execute_policy_enabled,
         "auto_execute_block_reason": auto_execute_block_reason,
     })
@@ -7231,6 +7232,7 @@ async fn coder_merge_submit_policy_summary(
                 }),
             ),
             "manual",
+            false,
             project_policy.auto_merge_enabled,
             "preferred_submit_mode_manual",
         ));
@@ -7240,6 +7242,7 @@ async fn coder_merge_submit_policy_summary(
             blocked_merge_submit_policy("manual", policy.clone()),
             blocked_merge_submit_policy("auto", policy),
             "manual",
+            false,
             project_policy.auto_merge_enabled,
             "preferred_submit_mode_manual",
         ));
@@ -7251,6 +7254,7 @@ async fn coder_merge_submit_policy_summary(
             blocked_merge_submit_policy("manual", policy),
             blocked_merge_submit_policy("auto", auto_policy),
             "manual",
+            false,
             project_policy.auto_merge_enabled,
             "preferred_submit_mode_manual",
         ));
@@ -7269,6 +7273,8 @@ async fn coder_merge_submit_policy_summary(
     } else {
         "auto"
     };
+    let auto_execute_eligible =
+        project_policy.auto_merge_enabled && preferred_submit_mode == "auto";
     let auto_execute_block_reason = if !project_policy.auto_merge_enabled {
         "project_auto_merge_policy_disabled"
     } else {
@@ -7278,6 +7284,7 @@ async fn coder_merge_submit_policy_summary(
         allowed_merge_submit_policy("manual"),
         auto,
         preferred_submit_mode,
+        auto_execute_eligible,
         project_policy.auto_merge_enabled,
         auto_execute_block_reason,
     ))
