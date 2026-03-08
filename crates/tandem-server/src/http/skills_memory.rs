@@ -2154,10 +2154,11 @@ pub(super) async fn memory_search(
         "ok"
     };
     let search_detail = format!(
-        "query={} result_count={} result_ids={} requested_scopes={} blocked_scopes={}",
+        "query={} result_count={} result_ids={} result_kinds={} requested_scopes={} blocked_scopes={}",
         request.query,
         results.len(),
         result_ids.join(","),
+        result_kinds.join(","),
         requested_scopes
             .iter()
             .map(|scope| scope.to_string())

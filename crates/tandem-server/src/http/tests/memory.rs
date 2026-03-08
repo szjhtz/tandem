@@ -229,6 +229,7 @@ async fn memory_put_then_search_in_session_scope() {
                         .is_some_and(|detail| {
                             detail.contains("query=budget extension")
                                 && detail.contains("result_count=")
+                                && detail.contains("result_kinds=solution_capsule")
                                 && detail.contains("requested_scopes=session")
                         })
             })
@@ -1719,6 +1720,7 @@ async fn memory_search_returns_empty_when_all_requested_scopes_are_blocked() {
                         .is_some_and(|detail| {
                             detail.contains("query=blocked scopes should return no results")
                                 && detail.contains("result_count=0")
+                                && detail.contains("result_kinds=")
                                 && detail.contains("blocked_scopes=team")
                         })
             })
