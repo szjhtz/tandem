@@ -175,6 +175,7 @@ pub(super) enum CoderMemoryCandidateKind {
     ValidationMemory,
     ReviewMemory,
     MergeRecommendationMemory,
+    DuplicateLinkage,
     RegressionSignal,
     FailurePattern,
     RunOutcome,
@@ -770,6 +771,20 @@ async fn list_repo_memory_candidates(
                 && github_ref
                     .map(|reference| matches!(reference.kind, CoderGithubRefKind::Issue))
                     .unwrap_or(false);
+            let same_linked_issue = github_ref
+                .filter(|reference| matches!(reference.kind, CoderGithubRefKind::Issue))
+                .map(|reference| {
+                    candidate_linked_numbers(&candidate_payload, "linked_issue_numbers")
+                        .contains(&reference.number)
+                })
+                .unwrap_or(false);
+            let same_linked_pr = github_ref
+                .filter(|reference| matches!(reference.kind, CoderGithubRefKind::PullRequest))
+                .map(|reference| {
+                    candidate_linked_numbers(&candidate_payload, "linked_pr_numbers")
+                        .contains(&reference.number)
+                })
+                .unwrap_or(false);
             let candidate_kind = candidate_payload
                 .get("kind")
                 .and_then(Value::as_str)
@@ -782,6 +797,8 @@ async fn list_repo_memory_candidates(
                 "repo_slug": repo_slug,
                 "same_ref": same_ref,
                 "same_issue": same_issue,
+                "same_linked_issue": same_linked_issue,
+                "same_linked_pr": same_linked_pr,
                 "summary": candidate_payload.get("summary").cloned().unwrap_or(Value::Null),
                 "payload": candidate_payload.get("payload").cloned().unwrap_or(Value::Null),
                 "path": candidate_entry.path(),
@@ -1180,6 +1197,36 @@ fn build_failure_pattern_payload(
     })
 }
 
+fn build_duplicate_linkage_payload(
+    record: &CoderRunRecord,
+    submitted_github_ref: &CoderGithubRef,
+    pull_request: &GithubPullRequestSummary,
+    submission_artifact_path: &str,
+) -> Value {
+    let issue_number = record
+        .github_ref
+        .as_ref()
+        .filter(|reference| matches!(reference.kind, CoderGithubRefKind::Issue))
+        .map(|reference| reference.number);
+    json!({
+        "type": "duplicate.issue_pr_linkage",
+        "repo_slug": record.repo_binding.repo_slug,
+        "project_id": record.repo_binding.project_id,
+        "summary": issue_number.map(|number| format!(
+            "{} issue #{} is linked to pull request #{}",
+            record.repo_binding.repo_slug, number, pull_request.number
+        )),
+        "issue_ref": record.github_ref,
+        "pull_request_ref": submitted_github_ref,
+        "linked_issue_numbers": issue_number.into_iter().collect::<Vec<_>>(),
+        "linked_pr_numbers": [pull_request.number],
+        "relationship": "issue_fix_pr_submit",
+        "pull_request_title": pull_request.title,
+        "pull_request_url": pull_request.html_url,
+        "artifact_refs": [submission_artifact_path],
+    })
+}
+
 async fn list_project_memory_hits(
     repo_binding: &CoderRepoBinding,
     query: &str,
@@ -1233,6 +1280,20 @@ fn governed_memory_subjects(record: &CoderRunRecord) -> Vec<String> {
     subjects
 }
 
+fn candidate_linked_numbers(candidate_payload: &Value, key: &str) -> Vec<u64> {
+    candidate_payload
+        .get("payload")
+        .and_then(|row| row.get(key))
+        .or_else(|| {
+            candidate_payload
+                .get("metadata")
+                .and_then(|row| row.get(key))
+        })
+        .and_then(Value::as_array)
+        .map(|rows| rows.iter().filter_map(Value::as_u64).collect::<Vec<_>>())
+        .unwrap_or_default()
+}
+
 async fn list_governed_memory_hits(
     record: &CoderRunRecord,
     query: &str,
@@ -1261,12 +1322,38 @@ async fn list_governed_memory_hits(
             if !seen_ids.insert(hit.record.id.clone()) {
                 continue;
             }
+            let same_linked_issue = record
+                .github_ref
+                .as_ref()
+                .filter(|reference| matches!(reference.kind, CoderGithubRefKind::Issue))
+                .map(|reference| {
+                    candidate_linked_numbers(
+                        &json!({ "metadata": hit.record.metadata.clone() }),
+                        "linked_issue_numbers",
+                    )
+                    .contains(&reference.number)
+                })
+                .unwrap_or(false);
+            let same_linked_pr = record
+                .github_ref
+                .as_ref()
+                .filter(|reference| matches!(reference.kind, CoderGithubRefKind::PullRequest))
+                .map(|reference| {
+                    candidate_linked_numbers(
+                        &json!({ "metadata": hit.record.metadata.clone() }),
+                        "linked_pr_numbers",
+                    )
+                    .contains(&reference.number)
+                })
+                .unwrap_or(false);
             hits.push(json!({
                 "source": "governed_memory",
                 "memory_id": hit.record.id,
                 "score": hit.score,
                 "content": hit.record.content,
                 "metadata": hit.record.metadata,
+                "same_linked_issue": same_linked_issue,
+                "same_linked_pr": same_linked_pr,
                 "memory_visibility": hit.record.visibility,
                 "source_type": hit.record.source_type,
                 "run_id": hit.record.run_id,
@@ -1282,22 +1369,34 @@ async fn list_governed_memory_hits(
 fn coder_memory_retrieval_policy(record: &CoderRunRecord, query: &str, limit: usize) -> Value {
     let prioritized_kinds = match record.workflow_mode {
         CoderWorkflowMode::IssueTriage => {
-            vec!["failure_pattern", "triage_memory", "run_outcome"]
+            vec![
+                "failure_pattern",
+                "duplicate_linkage",
+                "triage_memory",
+                "run_outcome",
+            ]
         }
         CoderWorkflowMode::IssueFix => {
             vec![
                 "fix_pattern",
                 "validation_memory",
+                "duplicate_linkage",
                 "run_outcome",
                 "triage_memory",
             ]
         }
         CoderWorkflowMode::PrReview => {
-            vec!["review_memory", "regression_signal", "run_outcome"]
+            vec![
+                "review_memory",
+                "duplicate_linkage",
+                "regression_signal",
+                "run_outcome",
+            ]
         }
         CoderWorkflowMode::MergeRecommendation => {
             vec![
                 "merge_recommendation_memory",
+                "duplicate_linkage",
                 "run_outcome",
                 "regression_signal",
             ]
@@ -1355,11 +1454,29 @@ fn compare_coder_memory_hits(record: &CoderRunRecord, a: &Value, b: &Value) -> s
         .get("same_issue")
         .and_then(Value::as_bool)
         .unwrap_or(false);
+    let a_same_linked_issue = a
+        .get("same_linked_issue")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let b_same_linked_issue = b
+        .get("same_linked_issue")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let a_same_linked_pr = a
+        .get("same_linked_pr")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let b_same_linked_pr = b
+        .get("same_linked_pr")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
     let a_score = a.get("score").and_then(Value::as_f64).unwrap_or(0.0);
     let b_score = b.get("score").and_then(Value::as_f64).unwrap_or(0.0);
     let ref_order = b_same_ref
         .cmp(&a_same_ref)
-        .then_with(|| b_same_issue.cmp(&a_same_issue));
+        .then_with(|| b_same_issue.cmp(&a_same_issue))
+        .then_with(|| b_same_linked_issue.cmp(&a_same_linked_issue))
+        .then_with(|| b_same_linked_pr.cmp(&a_same_linked_pr));
     let kind_weight = |hit: &Value| match memory_hit_kind(hit).as_deref() {
         Some("failure_pattern")
             if matches!(record.workflow_mode, CoderWorkflowMode::IssueTriage) =>
@@ -1390,6 +1507,16 @@ fn compare_coder_memory_hits(record: &CoderRunRecord, a: &Value, b: &Value) -> s
         Some("triage_memory") if matches!(record.workflow_mode, CoderWorkflowMode::IssueFix) => {
             1_u8
         }
+        Some("duplicate_linkage")
+            if matches!(record.workflow_mode, CoderWorkflowMode::IssueTriage) =>
+        {
+            2_u8
+        }
+        Some("duplicate_linkage")
+            if matches!(record.workflow_mode, CoderWorkflowMode::IssueFix) =>
+        {
+            2_u8
+        }
         Some("merge_recommendation_memory")
             if matches!(record.workflow_mode, CoderWorkflowMode::MergeRecommendation) =>
         {
@@ -1409,10 +1536,20 @@ fn compare_coder_memory_hits(record: &CoderRunRecord, a: &Value, b: &Value) -> s
         Some("review_memory") if matches!(record.workflow_mode, CoderWorkflowMode::PrReview) => {
             4_u8
         }
+        Some("duplicate_linkage")
+            if matches!(record.workflow_mode, CoderWorkflowMode::PrReview) =>
+        {
+            3_u8
+        }
         Some("regression_signal")
             if matches!(record.workflow_mode, CoderWorkflowMode::PrReview) =>
         {
             3_u8
+        }
+        Some("duplicate_linkage")
+            if matches!(record.workflow_mode, CoderWorkflowMode::MergeRecommendation) =>
+        {
+            2_u8
         }
         Some("run_outcome")
             if matches!(record.workflow_mode, CoderWorkflowMode::PrReview)
@@ -1595,10 +1732,20 @@ fn derive_failure_pattern_duplicate_matches(
 fn default_coder_memory_query(record: &CoderRunRecord) -> String {
     match record.github_ref.as_ref() {
         Some(reference) if matches!(reference.kind, CoderGithubRefKind::PullRequest) => {
-            format!(
-                "{} pull request #{}",
-                record.repo_binding.repo_slug, reference.number
-            )
+            match record.workflow_mode {
+                CoderWorkflowMode::PrReview => format!(
+                    "{} pull request #{} review regressions blockers requested changes",
+                    record.repo_binding.repo_slug, reference.number
+                ),
+                CoderWorkflowMode::MergeRecommendation => format!(
+                    "{} pull request #{} merge recommendation regressions blockers required checks approvals",
+                    record.repo_binding.repo_slug, reference.number
+                ),
+                _ => format!(
+                    "{} pull request #{}",
+                    record.repo_binding.repo_slug, reference.number
+                ),
+            }
         }
         Some(reference) => format!(
             "{} issue #{}",
@@ -6762,6 +6909,63 @@ pub(super) async fn coder_issue_fix_pr_submit(
         );
         extra
     });
+    let mut duplicate_linkage_candidate = Value::Null;
+    if !dry_run {
+        if let (Some(submitted_github_ref), Some(pull_request)) = (
+            submission_payload
+                .get("submitted_github_ref")
+                .and_then(parse_coder_github_ref),
+            submission_payload
+                .get("pull_request")
+                .cloned()
+                .and_then(|row| serde_json::from_value::<GithubPullRequestSummary>(row).ok()),
+        ) {
+            let summary = record
+                .github_ref
+                .as_ref()
+                .filter(|reference| matches!(reference.kind, CoderGithubRefKind::Issue))
+                .map(|reference| {
+                    format!(
+                        "{} issue #{} is linked to pull request #{}",
+                        record.repo_binding.repo_slug, reference.number, pull_request.number
+                    )
+                });
+            let (candidate_id, candidate_artifact) = write_coder_memory_candidate_artifact(
+                &state,
+                &record,
+                CoderMemoryCandidateKind::DuplicateLinkage,
+                summary,
+                Some("submit_pr".to_string()),
+                build_duplicate_linkage_payload(
+                    &record,
+                    &submitted_github_ref,
+                    &pull_request,
+                    &artifact.path,
+                ),
+            )
+            .await?;
+            duplicate_linkage_candidate = json!({
+                "candidate_id": candidate_id,
+                "kind": "duplicate_linkage",
+                "artifact_path": candidate_artifact.path,
+            });
+        }
+    }
+    if let Some(obj) = submission_payload.as_object_mut() {
+        obj.insert(
+            "duplicate_linkage_candidate".to_string(),
+            duplicate_linkage_candidate.clone(),
+        );
+    }
+    if !duplicate_linkage_candidate.is_null() {
+        tokio::fs::write(
+            &artifact.path,
+            serde_json::to_vec_pretty(&submission_payload)
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+        )
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    }
     if !dry_run {
         publish_coder_run_event(&state, "coder.pr.submitted", &record, Some("approval"), {
             let mut extra = serde_json::Map::new();
@@ -6794,6 +6998,10 @@ pub(super) async fn coder_issue_fix_pr_submit(
                     .get("skipped_follow_on_runs")
                     .cloned()
                     .unwrap_or_else(|| json!([])),
+            );
+            extra.insert(
+                "duplicate_linkage_candidate".to_string(),
+                duplicate_linkage_candidate.clone(),
             );
             if let Some(number) = submission_payload
                 .get("pull_request")
@@ -6834,6 +7042,7 @@ pub(super) async fn coder_issue_fix_pr_submit(
             .get("skipped_follow_on_runs")
             .cloned()
             .unwrap_or_else(|| json!([])),
+        "duplicate_linkage_candidate": duplicate_linkage_candidate,
         "coder_run": coder_run_payload(&record, &run),
         "run": run,
     })))
@@ -9338,6 +9547,7 @@ pub(super) async fn coder_memory_candidate_promote(
                 CoderMemoryCandidateKind::MergeRecommendationMemory => {
                     MemoryContentKind::SolutionCapsule
                 }
+                CoderMemoryCandidateKind::DuplicateLinkage => MemoryContentKind::Fact,
                 CoderMemoryCandidateKind::RegressionSignal => MemoryContentKind::Fact,
                 CoderMemoryCandidateKind::FailurePattern => MemoryContentKind::Fact,
                 CoderMemoryCandidateKind::RunOutcome => MemoryContentKind::Note,
@@ -9360,6 +9570,11 @@ pub(super) async fn coder_memory_candidate_promote(
                 "linked_issue_numbers": candidate_payload
                     .get("payload")
                     .and_then(|row| row.get("linked_issue_numbers"))
+                    .cloned()
+                    .unwrap_or_else(|| json!([])),
+                "linked_pr_numbers": candidate_payload
+                    .get("payload")
+                    .and_then(|row| row.get("linked_pr_numbers"))
                     .cloned()
                     .unwrap_or_else(|| json!([])),
             })),

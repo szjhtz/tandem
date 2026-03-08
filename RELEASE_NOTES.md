@@ -91,6 +91,7 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
   - `GET /coder/projects/{project_id}/runs` now returns project-scoped coder runs with execution policy and merge policy summaries already attached.
   - `POST /coder/projects/{project_id}/runs` now creates coder runs from a saved project binding and fails closed with `CODER_PROJECT_BINDING_REQUIRED` until that binding exists.
   - Shared coder memory retrieval is now explicit in the engine contract: run detail and `GET /coder/runs/{id}/memory-hits` now include `retrieval_policy`, and the underlying helper now combines repo candidates, project memory, and governed memory with workflow-specific ranking.
+  - Real issue-fix PR submit now writes `duplicate_linkage` memory linking issue and pull-request numbers, returns that candidate in submit responses/events/artifacts, and makes it reusable in follow-on PR review retrieval.
   - Explicit project bindings can now be stored independently of runs, and `/coder/projects` now prefers those saved bindings over derived run bindings when both exist.
   - Coder runs now persist as thin metadata records linked to engine context runs rather than introducing a frontend-owned workflow store.
   - Added structured intermediate and final artifacts for triage inspection/reproduction, issue-fix validation and patch evidence, PR review evidence, and merge readiness.

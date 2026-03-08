@@ -500,7 +500,7 @@ async fn coder_pr_review_run_create_gets_seeded_review_tasks() {
     .expect("hits json");
     assert_eq!(
         hits_payload.get("query").and_then(Value::as_str),
-        Some("evan/tandem pull request #88")
+        Some("evan/tandem pull request #88 review regressions blockers requested changes")
     );
 }
 
@@ -1526,6 +1526,13 @@ async fn coder_issue_fix_pr_submit_dry_run_writes_submission_artifact() {
         Some("coder_pr_submission")
     );
     assert_eq!(
+        submit_payload
+            .get("duplicate_linkage_candidate")
+            .and_then(|row| row.get("kind"))
+            .and_then(Value::as_str),
+        Some("duplicate_linkage")
+    );
+    assert_eq!(
         submit_payload.get("submitted").and_then(Value::as_bool),
         Some(false)
     );
@@ -1966,6 +1973,53 @@ async fn coder_issue_fix_pr_submit_real_submit_writes_canonical_pr_identity() {
             .and_then(Value::as_bool),
         Some(false)
     );
+    assert_eq!(
+        artifact_payload
+            .get("duplicate_linkage_candidate")
+            .and_then(|row| row.get("kind"))
+            .and_then(Value::as_str),
+        Some("duplicate_linkage")
+    );
+
+    let candidates_req = Request::builder()
+        .method("GET")
+        .uri("/coder/runs/coder-issue-fix-pr-submit-real/memory-candidates")
+        .body(Body::empty())
+        .expect("candidates request");
+    let candidates_resp = app
+        .clone()
+        .oneshot(candidates_req)
+        .await
+        .expect("candidates response");
+    assert_eq!(candidates_resp.status(), StatusCode::OK);
+    let candidates_payload: Value = serde_json::from_slice(
+        &to_bytes(candidates_resp.into_body(), usize::MAX)
+            .await
+            .expect("candidates body"),
+    )
+    .expect("candidates json");
+    let duplicate_linkage = candidates_payload
+        .get("candidates")
+        .and_then(Value::as_array)
+        .and_then(|rows| {
+            rows.iter()
+                .find(|row| row.get("kind").and_then(Value::as_str) == Some("duplicate_linkage"))
+        })
+        .expect("duplicate linkage candidate");
+    assert_eq!(
+        duplicate_linkage
+            .get("payload")
+            .and_then(|row| row.get("linked_issue_numbers"))
+            .cloned(),
+        Some(json!([313]))
+    );
+    assert_eq!(
+        duplicate_linkage
+            .get("payload")
+            .and_then(|row| row.get("linked_pr_numbers"))
+            .cloned(),
+        Some(json!([314]))
+    );
 
     let follow_on_req = Request::builder()
         .method("POST")
@@ -2060,6 +2114,50 @@ async fn coder_issue_fix_pr_submit_real_submit_writes_canonical_pr_identity() {
         Some(false)
     );
 
+    let review_hits_req = Request::builder()
+        .method("GET")
+        .uri("/coder/runs/coder-follow-on-pr-review/memory-hits")
+        .body(Body::empty())
+        .expect("review hits request");
+    let review_hits_resp = app
+        .clone()
+        .oneshot(review_hits_req)
+        .await
+        .expect("review hits response");
+    assert_eq!(review_hits_resp.status(), StatusCode::OK);
+    let review_hits_payload: Value = serde_json::from_slice(
+        &to_bytes(review_hits_resp.into_body(), usize::MAX)
+            .await
+            .expect("review hits body"),
+    )
+    .expect("review hits json");
+    let review_duplicate_linkage = review_hits_payload
+        .get("hits")
+        .and_then(Value::as_array)
+        .and_then(|rows| {
+            rows.iter()
+                .find(|row| row.get("kind").and_then(Value::as_str) == Some("duplicate_linkage"))
+        })
+        .expect("review duplicate linkage hit");
+    assert_eq!(
+        review_duplicate_linkage
+            .get("same_linked_pr")
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        review_hits_payload
+            .get("retrieval_policy")
+            .and_then(|row| row.get("prioritized_kinds"))
+            .cloned(),
+        Some(json!([
+            "review_memory",
+            "duplicate_linkage",
+            "regression_signal",
+            "run_outcome"
+        ]))
+    );
+
     let submitted_event = next_event_of_type(&mut rx, "coder.pr.submitted").await;
     assert_eq!(
         submitted_event
@@ -2113,6 +2211,14 @@ async fn coder_issue_fix_pr_submit_real_submit_writes_canonical_pr_identity() {
             .and_then(Value::as_array)
             .map(|rows| rows.len()),
         Some(1)
+    );
+    assert_eq!(
+        submitted_event
+            .properties
+            .get("duplicate_linkage_candidate")
+            .and_then(|row| row.get("kind"))
+            .and_then(Value::as_str),
+        Some("duplicate_linkage")
     );
     assert_eq!(
         submitted_event
@@ -3882,7 +3988,7 @@ async fn coder_pr_review_reuses_prior_review_memory_hits() {
     .expect("hits json");
     assert_eq!(
         hits_payload.get("query").and_then(Value::as_str),
-        Some("evan/tandem pull request #90")
+        Some("evan/tandem pull request #90 review regressions blockers requested changes")
     );
     assert_eq!(
         hits_payload
@@ -4065,7 +4171,7 @@ async fn coder_merge_recommendation_run_create_gets_seeded_tasks() {
             .get("memory_hits")
             .and_then(|row| row.get("query"))
             .and_then(Value::as_str),
-        Some("evan/tandem pull request #91")
+        Some("evan/tandem pull request #91 merge recommendation regressions blockers required checks approvals")
     );
 }
 
@@ -7680,7 +7786,7 @@ async fn coder_merge_recommendation_reuses_prior_memory_hits() {
     .expect("hits json");
     assert_eq!(
         hits_payload.get("query").and_then(Value::as_str),
-        Some("evan/tandem pull request #93")
+        Some("evan/tandem pull request #93 merge recommendation regressions blockers required checks approvals")
     );
     assert_eq!(
         hits_payload
@@ -9235,7 +9341,12 @@ async fn coder_memory_hits_endpoint_returns_ranked_hits() {
             .get("retrieval_policy")
             .and_then(|row| row.get("prioritized_kinds"))
             .cloned(),
-        Some(json!(["failure_pattern", "triage_memory", "run_outcome"]))
+        Some(json!([
+            "failure_pattern",
+            "duplicate_linkage",
+            "triage_memory",
+            "run_outcome"
+        ]))
     );
 }
 
@@ -11077,6 +11188,199 @@ async fn coder_promoted_regression_signal_reuses_across_pull_requests() {
         promote_payload.get("memory_id").and_then(Value::as_str)
     );
     assert_eq!(first_hit.get("same_ref").and_then(Value::as_bool), None);
+}
+
+#[tokio::test]
+async fn coder_merge_recommendation_reuses_promoted_regression_signal_across_pull_requests() {
+    let state = test_state().await;
+    state
+        .capability_resolver
+        .refresh_builtin_bindings()
+        .await
+        .expect("refresh builtin bindings");
+    let app = app_router(state.clone());
+
+    let create_review_req = Request::builder()
+        .method("POST")
+        .uri("/coder/runs")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "coder_run_id": "coder-merge-regression-source",
+                "workflow_mode": "pr_review",
+                "repo_binding": {
+                    "project_id": "proj-engine",
+                    "workspace_id": "ws-tandem",
+                    "workspace_root": "/tmp/tandem-repo",
+                    "repo_slug": "evan/tandem"
+                },
+                "github_ref": {
+                    "kind": "pull_request",
+                    "number": 601
+                },
+                "source_client": "desktop_developer_mode"
+            })
+            .to_string(),
+        ))
+        .expect("create review request");
+    let create_review_resp = app
+        .clone()
+        .oneshot(create_review_req)
+        .await
+        .expect("create review response");
+    assert_eq!(create_review_resp.status(), StatusCode::OK);
+
+    let review_summary_req = Request::builder()
+        .method("POST")
+        .uri("/coder/runs/coder-merge-regression-source/pr-review-summary")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "verdict": "changes_requested",
+                "summary": "This PR repeats the rollback-free deploy regression pattern and should not merge yet.",
+                "regression_signals": [{
+                    "kind": "historical_failure_pattern",
+                    "summary": "Rollback-free deploys regressed previously during release cutovers."
+                }]
+            })
+            .to_string(),
+        ))
+        .expect("review summary request");
+    let review_summary_resp = app
+        .clone()
+        .oneshot(review_summary_req)
+        .await
+        .expect("review summary response");
+    assert_eq!(review_summary_resp.status(), StatusCode::OK);
+    let review_summary_payload: Value = serde_json::from_slice(
+        &to_bytes(review_summary_resp.into_body(), usize::MAX)
+            .await
+            .expect("review summary body"),
+    )
+    .expect("review summary json");
+    let regression_candidate_id = review_summary_payload
+        .get("generated_candidates")
+        .and_then(Value::as_array)
+        .and_then(|rows| {
+            rows.iter().find_map(|row| {
+                (row.get("kind").and_then(Value::as_str) == Some("regression_signal")).then(
+                    || {
+                        row.get("candidate_id")
+                            .and_then(Value::as_str)
+                            .map(ToString::to_string)
+                    },
+                )?
+            })
+        })
+        .expect("regression candidate id");
+
+    let promote_req = Request::builder()
+        .method("POST")
+        .uri(format!(
+            "/coder/runs/coder-merge-regression-source/memory-candidates/{regression_candidate_id}/promote"
+        ))
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "to_tier": "project",
+                "reviewer_id": "reviewer-1",
+                "approval_id": "approval-1",
+                "reason": "approved reusable merge regression history"
+            })
+            .to_string(),
+        ))
+        .expect("promote request");
+    let promote_resp = app
+        .clone()
+        .oneshot(promote_req)
+        .await
+        .expect("promote response");
+    assert_eq!(promote_resp.status(), StatusCode::OK);
+    let promote_payload: Value = serde_json::from_slice(
+        &to_bytes(promote_resp.into_body(), usize::MAX)
+            .await
+            .expect("promote body"),
+    )
+    .expect("promote json");
+
+    let create_merge_req = Request::builder()
+        .method("POST")
+        .uri("/coder/runs")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "coder_run_id": "coder-merge-regression-target",
+                "workflow_mode": "merge_recommendation",
+                "repo_binding": {
+                    "project_id": "proj-engine",
+                    "workspace_id": "ws-tandem",
+                    "workspace_root": "/tmp/tandem-repo",
+                    "repo_slug": "evan/tandem"
+                },
+                "github_ref": {
+                    "kind": "pull_request",
+                    "number": 602
+                },
+                "source_client": "desktop_developer_mode"
+            })
+            .to_string(),
+        ))
+        .expect("create merge request");
+    let create_merge_resp = app
+        .clone()
+        .oneshot(create_merge_req)
+        .await
+        .expect("create merge response");
+    assert_eq!(create_merge_resp.status(), StatusCode::OK);
+
+    let hits_req = Request::builder()
+        .method("GET")
+        .uri("/coder/runs/coder-merge-regression-target/memory-hits")
+        .body(Body::empty())
+        .expect("hits request");
+    let hits_resp = app.clone().oneshot(hits_req).await.expect("hits response");
+    assert_eq!(hits_resp.status(), StatusCode::OK);
+    let hits_payload: Value = serde_json::from_slice(
+        &to_bytes(hits_resp.into_body(), usize::MAX)
+            .await
+            .expect("hits body"),
+    )
+    .expect("hits json");
+    assert_eq!(
+        hits_payload.get("query").and_then(Value::as_str),
+        Some("evan/tandem pull request #602 merge recommendation regressions blockers required checks approvals")
+    );
+    let promoted_hit = hits_payload
+        .get("hits")
+        .and_then(Value::as_array)
+        .and_then(|rows| {
+            rows.iter().find(|row| {
+                row.get("source").and_then(Value::as_str) == Some("governed_memory")
+                    && row.get("memory_id").and_then(Value::as_str)
+                        == promote_payload.get("memory_id").and_then(Value::as_str)
+            })
+        })
+        .cloned()
+        .expect("promoted regression hit");
+    assert_eq!(
+        promoted_hit
+            .get("metadata")
+            .and_then(|row| row.get("kind"))
+            .and_then(Value::as_str),
+        Some("regression_signal")
+    );
+    assert_eq!(
+        promoted_hit
+            .get("metadata")
+            .and_then(|row| row.get("workflow_mode"))
+            .and_then(Value::as_str),
+        Some("pr_review")
+    );
+    assert_eq!(promoted_hit.get("same_ref").and_then(Value::as_bool), None);
+    assert!(promoted_hit
+        .get("content")
+        .and_then(Value::as_str)
+        .is_some_and(|content| content.contains("Rollback-free deploys regressed previously")));
 }
 
 #[tokio::test]
