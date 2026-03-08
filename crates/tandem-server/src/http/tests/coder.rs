@@ -3493,6 +3493,12 @@ async fn coder_pr_review_summary_create_writes_artifact_and_outcome() {
                     "kind": "historical_failure_pattern",
                     "summary": "Similar rollout failed without rollback coverage"
                 }],
+                "validation_steps": ["cargo test -p tandem-server coder_pr_review_summary_create_writes_artifact_and_outcome -- --test-threads=1"],
+                "validation_results": [{
+                    "kind": "targeted_review_validation",
+                    "status": "passed",
+                    "summary": "Targeted review validation passed"
+                }],
                 "memory_hits_used": ["memory-hit-1"],
                 "notes": "Review memory suggests prior migration regressions."
             })
@@ -3525,12 +3531,26 @@ async fn coder_pr_review_summary_create_writes_artifact_and_outcome() {
             .and_then(Value::as_str),
         Some("coder_review_evidence")
     );
+    assert_eq!(
+        summary_payload
+            .get("validation_artifact")
+            .and_then(|row| row.get("artifact_type"))
+            .and_then(Value::as_str),
+        Some("coder_validation_report")
+    );
     assert!(summary_payload
         .get("review_evidence_artifact")
         .and_then(|row| row.get("path"))
         .and_then(Value::as_str)
         .is_some_and(|path| path.ends_with(
             "/context_runs/ctx-coder-pr-review-summary/artifacts/pr_review.evidence.json"
+        )));
+    assert!(summary_payload
+        .get("validation_artifact")
+        .and_then(|row| row.get("path"))
+        .and_then(Value::as_str)
+        .is_some_and(|path| path.ends_with(
+            "/context_runs/ctx-coder-pr-review-summary/artifacts/pr_review.validation.json"
         )));
     let summary_artifact_id = summary_payload
         .get("artifact")
@@ -3543,6 +3563,12 @@ async fn coder_pr_review_summary_create_writes_artifact_and_outcome() {
         .and_then(|row| row.get("id"))
         .and_then(Value::as_str)
         .expect("review evidence artifact id")
+        .to_string();
+    let validation_artifact_id = summary_payload
+        .get("validation_artifact")
+        .and_then(|row| row.get("id"))
+        .and_then(Value::as_str)
+        .expect("validation artifact id")
         .to_string();
     assert_eq!(
         summary_payload
@@ -3604,6 +3630,15 @@ async fn coder_pr_review_summary_create_writes_artifact_and_outcome() {
         .map(|rows| rows.iter().any(|row| {
             row.get("id").and_then(Value::as_str) == Some(review_evidence_artifact_id.as_str())
                 && row.get("artifact_type").and_then(Value::as_str) == Some("coder_review_evidence")
+        }))
+        .unwrap_or(false));
+    assert!(artifacts_payload
+        .get("artifacts")
+        .and_then(Value::as_array)
+        .map(|rows| rows.iter().any(|row| {
+            row.get("id").and_then(Value::as_str) == Some(validation_artifact_id.as_str())
+                && row.get("artifact_type").and_then(Value::as_str)
+                    == Some("coder_validation_report")
         }))
         .unwrap_or(false));
 
@@ -4349,6 +4384,12 @@ async fn coder_merge_recommendation_summary_create_writes_artifact() {
                 "blockers": ["Required reviewer approval missing"],
                 "required_checks": ["ci / test", "ci / lint"],
                 "required_approvals": ["codeowners"],
+                "validation_steps": ["gh pr checks 92"],
+                "validation_results": [{
+                    "kind": "merge_gate_validation",
+                    "status": "pending",
+                    "summary": "Required approval still pending"
+                }],
                 "memory_hits_used": ["memory-hit-merge-1"],
                 "notes": "Wait for CODEOWNERS approval before merge."
             })
@@ -4380,6 +4421,13 @@ async fn coder_merge_recommendation_summary_create_writes_artifact() {
             .and_then(|row| row.get("artifact_type"))
             .and_then(Value::as_str),
         Some("coder_merge_readiness_report")
+    );
+    assert_eq!(
+        summary_payload
+            .get("validation_artifact")
+            .and_then(|row| row.get("artifact_type"))
+            .and_then(Value::as_str),
+        Some("coder_validation_report")
     );
     assert_eq!(
         summary_payload
@@ -4431,6 +4479,12 @@ async fn coder_merge_recommendation_summary_create_writes_artifact() {
         .and_then(Value::as_str)
         .expect("readiness artifact id")
         .to_string();
+    let validation_artifact_id = summary_payload
+        .get("validation_artifact")
+        .and_then(|row| row.get("id"))
+        .and_then(Value::as_str)
+        .expect("validation artifact id")
+        .to_string();
 
     let artifacts_req = Request::builder()
         .method("GET")
@@ -4464,6 +4518,15 @@ async fn coder_merge_recommendation_summary_create_writes_artifact() {
             row.get("id").and_then(Value::as_str) == Some(readiness_artifact_id.as_str())
                 && row.get("artifact_type").and_then(Value::as_str)
                     == Some("coder_merge_readiness_report")
+        }))
+        .unwrap_or(false));
+    assert!(artifacts_payload
+        .get("artifacts")
+        .and_then(Value::as_array)
+        .map(|rows| rows.iter().any(|row| {
+            row.get("id").and_then(Value::as_str) == Some(validation_artifact_id.as_str())
+                && row.get("artifact_type").and_then(Value::as_str)
+                    == Some("coder_validation_report")
         }))
         .unwrap_or(false));
 
