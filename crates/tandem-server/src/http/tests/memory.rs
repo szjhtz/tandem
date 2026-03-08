@@ -643,6 +643,37 @@ async fn memory_promote_preserves_artifact_refs_and_shared_visibility() {
         promoted_hit.get("artifact_refs").and_then(Value::as_array),
         Some(&artifact_refs)
     );
+    assert_eq!(
+        promoted_hit
+            .get("metadata")
+            .and_then(|row| row.get("promotion"))
+            .and_then(|row| row.get("review"))
+            .and_then(|row| row.get("approval_id"))
+            .and_then(Value::as_str),
+        Some("appr-1")
+    );
+    assert_eq!(
+        promoted_hit
+            .get("provenance")
+            .and_then(|row| row.get("promotion"))
+            .and_then(|row| row.get("promote_run_id"))
+            .and_then(Value::as_str),
+        Some("run-3-ok")
+    );
+    assert_eq!(
+        promoted_hit
+            .get("linkage")
+            .and_then(|row| row.get("promote_run_id"))
+            .and_then(Value::as_str),
+        Some("run-3-ok")
+    );
+    assert_eq!(
+        promoted_hit
+            .get("linkage")
+            .and_then(|row| row.get("approval_id"))
+            .and_then(Value::as_str),
+        Some("appr-1")
+    );
 }
 
 #[tokio::test]

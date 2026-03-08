@@ -1837,6 +1837,34 @@ impl MemoryDatabase {
         Ok(changed > 0)
     }
 
+    pub async fn update_global_memory_context(
+        &self,
+        id: &str,
+        visibility: &str,
+        demoted: bool,
+        metadata: Option<&serde_json::Value>,
+        provenance: Option<&serde_json::Value>,
+    ) -> MemoryResult<bool> {
+        let conn = self.conn.lock().await;
+        let now_ms = chrono::Utc::now().timestamp_millis();
+        let metadata = metadata.map(ToString::to_string).unwrap_or_default();
+        let provenance = provenance.map(ToString::to_string).unwrap_or_default();
+        let changed = conn.execute(
+            "UPDATE memory_records
+             SET visibility = ?2, demoted = ?3, metadata = ?4, provenance = ?5, updated_at_ms = ?6
+             WHERE id = ?1",
+            params![
+                id,
+                visibility,
+                if demoted { 1i64 } else { 0i64 },
+                metadata,
+                provenance,
+                now_ms,
+            ],
+        )?;
+        Ok(changed > 0)
+    }
+
     pub async fn get_global_memory(&self, id: &str) -> MemoryResult<Option<GlobalMemoryRecord>> {
         let conn = self.conn.lock().await;
         let mut stmt = conn.prepare(

@@ -967,6 +967,59 @@ fn memory_put_provenance(
     })
 }
 
+fn memory_promote_metadata(
+    metadata: Option<&Value>,
+    request: &MemoryPromoteRequest,
+    promoted_at_ms: u64,
+) -> Option<Value> {
+    let mut obj = metadata
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    obj.insert(
+        "promotion".to_string(),
+        json!({
+            "promoted_at_ms": promoted_at_ms,
+            "promote_run_id": request.run_id,
+            "source_memory_id": request.source_memory_id,
+            "from_tier": request.from_tier,
+            "to_tier": request.to_tier,
+            "reason": request.reason,
+            "review": {
+                "required": request.review.required,
+                "reviewer_id": request.review.reviewer_id,
+                "approval_id": request.review.approval_id,
+            },
+        }),
+    );
+    Some(Value::Object(obj))
+}
+
+fn memory_promote_provenance(
+    provenance: Option<&Value>,
+    request: &MemoryPromoteRequest,
+    partition_key: &str,
+    promoted_at_ms: u64,
+) -> Value {
+    let mut obj = provenance
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    obj.insert(
+        "promotion".to_string(),
+        json!({
+            "promoted_at_ms": promoted_at_ms,
+            "promote_run_id": request.run_id,
+            "source_memory_id": request.source_memory_id,
+            "partition_key": partition_key,
+            "to_tier": request.to_tier,
+            "reviewer_id": request.review.reviewer_id,
+            "approval_id": request.review.approval_id,
+        }),
+    );
+    Value::Object(obj)
+}
+
 fn memory_linkage(record: &GlobalMemoryRecord) -> Value {
     let artifact_refs = memory_artifact_refs(record.metadata.as_ref());
     let provenance = record.provenance.as_ref();
@@ -988,6 +1041,14 @@ fn memory_linkage(record: &GlobalMemoryRecord) -> Value {
             .and_then(Value::as_str),
         "partition_key": provenance
             .and_then(|row| row.get("partition_key"))
+            .and_then(Value::as_str),
+        "promote_run_id": provenance
+            .and_then(|row| row.get("promotion"))
+            .and_then(|row| row.get("promote_run_id"))
+            .and_then(Value::as_str),
+        "approval_id": provenance
+            .and_then(|row| row.get("promotion"))
+            .and_then(|row| row.get("approval_id"))
             .and_then(Value::as_str),
         "artifact_refs": artifact_refs,
     })
@@ -1874,9 +1935,18 @@ pub(super) async fn memory_promote_impl(
         });
     }
     let new_id = source.id.clone();
-    db.set_global_memory_visibility(&new_id, "shared", false)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let next_metadata = memory_promote_metadata(source.metadata.as_ref(), &request, now);
+    let next_provenance =
+        memory_promote_provenance(source.provenance.as_ref(), &request, &partition_key, now);
+    db.update_global_memory_context(
+        &new_id,
+        "shared",
+        false,
+        next_metadata.as_ref(),
+        Some(&next_provenance),
+    )
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     append_memory_audit(
         &state,
         crate::MemoryAuditEvent {
