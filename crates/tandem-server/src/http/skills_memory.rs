@@ -1026,6 +1026,12 @@ async fn emit_blocked_memory_put_guardrail(
 ) -> Result<(), StatusCode> {
     let audit_id = Uuid::new_v4().to_string();
     let partition_key = request.partition.key();
+    let metadata = memory_metadata_with_storage_fields(
+        request.metadata.clone(),
+        &request.artifact_refs,
+        request.classification,
+    );
+    let provenance = memory_put_provenance(request, &partition_key, &request.artifact_refs);
     append_memory_audit(
         state,
         crate::MemoryAuditEvent {
@@ -1053,6 +1059,12 @@ async fn emit_blocked_memory_put_guardrail(
             "visibility": Value::Null,
             "tier": request.partition.tier,
             "partitionKey": partition_key,
+            "linkage": memory_linkage_from_parts(
+                &request.run_id,
+                Some(&request.partition.project_id),
+                metadata.as_ref(),
+                Some(&provenance),
+            ),
             "status": "blocked",
             "detail": detail,
             "auditID": audit_id,
@@ -2162,6 +2174,12 @@ pub(super) async fn memory_put_impl(
         updated_at_ms: now,
         expires_at_ms: None,
     };
+    let memory_linkage_value = memory_linkage_from_parts(
+        &request.run_id,
+        Some(&request.partition.project_id),
+        record.metadata.as_ref(),
+        record.provenance.as_ref(),
+    );
     let put_detail = format!(
         "kind={} classification={} artifact_refs={} visibility=private tier={} partition_key={}{}",
         kind,
@@ -2169,13 +2187,7 @@ pub(super) async fn memory_put_impl(
         artifact_ref_labels,
         request.partition.tier,
         partition_key,
-        memory_linkage_detail(&linkage)
-    );
-    let linkage = memory_linkage_from_parts(
-        &request.run_id,
-        Some(&request.partition.project_id),
-        record.metadata.as_ref(),
-        record.provenance.as_ref(),
+        memory_linkage_detail(&memory_linkage_value)
     );
     persist_global_memory_record(&state, &db, record).await;
     append_memory_audit(
@@ -2206,7 +2218,7 @@ pub(super) async fn memory_put_impl(
             "visibility": "private",
             "tier": request.partition.tier,
             "partitionKey": partition_key,
-            "linkage": linkage.clone(),
+            "linkage": memory_linkage_value.clone(),
             "auditID": audit_id,
         }),
     ));
@@ -2222,7 +2234,7 @@ pub(super) async fn memory_put_impl(
             "visibility": "private",
             "tier": request.partition.tier,
             "partitionKey": partition_key,
-            "linkage": linkage,
+            "linkage": memory_linkage_value,
             "auditID": audit_id,
         }),
     ));
@@ -2377,6 +2389,7 @@ pub(super) async fn memory_promote_impl(
                 "artifactRefs": memory_artifact_refs(source.metadata.as_ref()),
                 "visibility": source.visibility,
                 "scrubStatus": scrub_report.status,
+                "linkage": memory_linkage(&source),
                 "detail": scrub_report.block_reason.clone(),
                 "auditID": audit_id,
             }),

@@ -62,6 +62,22 @@ async fn memory_put_enforces_default_write_scope() {
         blocked_event.properties.get("tier").and_then(Value::as_str),
         Some("project")
     );
+    assert_eq!(
+        blocked_event
+            .properties
+            .get("linkage")
+            .and_then(|v| v.get("origin_run_id"))
+            .and_then(Value::as_str),
+        Some("run-1")
+    );
+    assert_eq!(
+        blocked_event
+            .properties
+            .get("linkage")
+            .and_then(|v| v.get("project_id"))
+            .and_then(Value::as_str),
+        Some("proj-1")
+    );
     assert!(blocked_event
         .properties
         .get("detail")
@@ -631,6 +647,22 @@ async fn memory_promote_blocks_sensitive_content_and_emits_audit() {
             .get("scrubStatus")
             .and_then(Value::as_str),
         Some("blocked")
+    );
+    assert_eq!(
+        blocked_event
+            .properties
+            .get("linkage")
+            .and_then(|v| v.get("origin_run_id"))
+            .and_then(Value::as_str),
+        Some("run-3")
+    );
+    assert_eq!(
+        blocked_event
+            .properties
+            .get("linkage")
+            .and_then(|v| v.get("project_id"))
+            .and_then(Value::as_str),
+        Some("proj-1")
     );
     assert!(blocked_event
         .properties
