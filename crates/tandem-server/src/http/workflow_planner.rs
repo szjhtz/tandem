@@ -234,23 +234,34 @@ pub(super) async fn workflow_plan_chat_message(
             .and_then(Value::as_str)
             .is_some_and(|field| field == "general")
     {
-        if planner_model_spec(draft.current_plan.operator_preferences.as_ref()).is_some() {
-            if let Some(llm_revision) =
-                try_llm_revise_workflow_plan(&state, &draft.current_plan, message).await
-            {
-                revised_plan = llm_revision.plan;
-                assistant_text = llm_revision.assistant_text;
-                change_summary = llm_revision.change_summary;
-                clarifier = llm_revision.clarifier;
-            } else {
+        if let Some(model) = planner_model_spec(draft.current_plan.operator_preferences.as_ref()) {
+            if !planner_model_provider_is_configured(&state, &model).await {
                 clarifier = json!({
                     "field": "general",
-                    "question": planner_llm_attempt_failed_hint(),
+                    "question": planner_llm_provider_unconfigured_hint(&model.provider_id),
                 });
                 assistant_text = format!(
                     "I kept the current plan. Clarification needed: {}",
-                    planner_llm_attempt_failed_hint()
+                    planner_llm_provider_unconfigured_hint(&model.provider_id)
                 );
+            } else {
+                if let Some(llm_revision) =
+                    try_llm_revise_workflow_plan(&state, &draft.current_plan, message).await
+                {
+                    revised_plan = llm_revision.plan;
+                    assistant_text = llm_revision.assistant_text;
+                    change_summary = llm_revision.change_summary;
+                    clarifier = llm_revision.clarifier;
+                } else {
+                    clarifier = json!({
+                        "field": "general",
+                        "question": planner_llm_attempt_failed_hint(),
+                    });
+                    assistant_text = format!(
+                        "I kept the current plan. Clarification needed: {}",
+                        planner_llm_attempt_failed_hint()
+                    );
+                }
             }
         } else {
             clarifier = json!({
@@ -889,6 +900,12 @@ fn planner_llm_unavailable_hint() -> &'static str {
 
 fn planner_llm_attempt_failed_hint() -> &'static str {
     "Tandem tried a broader planner-model revision but could not produce a valid workflow update. Try a more specific planning note or use the supported deterministic edits in this slice."
+}
+
+fn planner_llm_provider_unconfigured_hint(provider_id: &str) -> String {
+    format!(
+        "The configured planner model uses provider `{provider_id}`, but that provider is not configured on this engine. Configure the provider first or revise using the supported deterministic edits in this slice."
+    )
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -1549,6 +1566,18 @@ pub(crate) fn planner_model_spec(
         provider_id: provider_id.to_string(),
         model_id: model_id.to_string(),
     })
+}
+
+async fn planner_model_provider_is_configured(
+    state: &AppState,
+    model: &tandem_types::ModelSpec,
+) -> bool {
+    state
+        .providers
+        .list()
+        .await
+        .into_iter()
+        .any(|provider| provider.id == model.provider_id)
 }
 
 fn build_llm_workflow_revision_prompt(current_plan: &crate::WorkflowPlan, message: &str) -> String {

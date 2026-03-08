@@ -1506,7 +1506,7 @@ async fn workflow_plan_chat_message_returns_planner_model_hint_for_broad_revisio
 }
 
 #[tokio::test]
-async fn workflow_plan_chat_message_returns_planner_attempt_hint_when_llm_revision_fails() {
+async fn workflow_plan_chat_message_returns_provider_hint_for_unconfigured_planner_model() {
     let state = test_state().await;
     let app = app_router(state);
 
@@ -1581,12 +1581,12 @@ async fn workflow_plan_chat_message_returns_planner_attempt_hint_when_llm_revisi
         .get("clarifier")
         .and_then(|row| row.get("question"))
         .and_then(Value::as_str)
-        .is_some_and(|text| text.contains("tried a broader planner-model revision")));
+        .is_some_and(|text| text.contains("provider `openai`") && text.contains("not configured")));
     assert!(message_payload
         .get("assistant_message")
         .and_then(|row| row.get("text"))
         .and_then(Value::as_str)
-        .is_some_and(|text| text.contains("tried a broader planner-model revision")));
+        .is_some_and(|text| text.contains("provider `openai`") && text.contains("not configured")));
 }
 
 #[tokio::test]
