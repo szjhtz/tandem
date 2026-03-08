@@ -587,6 +587,12 @@ async fn bug_monitor_runtime_suppresses_duplicate_failure_patterns() {
             .cloned(),
         Some(vec![Value::from(401_u64)])
     );
+    let duplicate_matches = incident.duplicate_matches.clone().unwrap_or_default();
+    assert_eq!(duplicate_matches.len(), 1);
+    assert_eq!(
+        duplicate_matches[0].get("source").and_then(Value::as_str),
+        Some("coder_candidate")
+    );
     assert!(incident.draft_id.is_none());
     assert!(state.list_bug_monitor_drafts(10).await.is_empty());
 
@@ -1192,6 +1198,7 @@ async fn bug_monitor_issue_draft_prefers_structured_triage_summary() {
             triage_run_id: enriched_draft.triage_run_id.clone(),
             last_error: None,
             duplicate_summary: None,
+            duplicate_matches: None,
             event_payload: None,
         })
         .await
@@ -1576,6 +1583,7 @@ async fn bug_monitor_triage_run_created_from_approved_draft() {
             triage_run_id: Some(run_id.clone()),
             last_error: None,
             duplicate_summary: None,
+            duplicate_matches: None,
             event_payload: None,
         })
         .await

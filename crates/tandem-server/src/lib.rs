@@ -875,6 +875,8 @@ pub struct BugMonitorIncidentRecord {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub duplicate_summary: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duplicate_matches: Option<Vec<Value>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub event_payload: Option<Value>,
 }
 
@@ -4831,6 +4833,7 @@ async fn process_bug_monitor_event(
             triage_run_id: None,
             last_error: None,
             duplicate_summary: None,
+            duplicate_matches: None,
             event_payload: Some(event.properties.clone()),
         }
     };
@@ -4841,6 +4844,7 @@ async fn process_bug_monitor_event(
         let duplicate_summary =
             crate::http::bug_monitor::build_bug_monitor_duplicate_summary(&duplicate_matches);
         incident.duplicate_summary = Some(duplicate_summary.clone());
+        incident.duplicate_matches = Some(duplicate_matches.clone());
         incident.updated_at_ms = now_ms();
         state.put_bug_monitor_incident(incident.clone()).await?;
         state.event_bus.publish(EngineEvent::new(
@@ -4851,6 +4855,7 @@ async fn process_bug_monitor_event(
                 "eventType": incident.event_type,
                 "status": incident.status,
                 "duplicate_summary": duplicate_summary,
+                "duplicate_matches": duplicate_matches,
             }),
         ));
         return Ok(incident);
