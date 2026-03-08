@@ -1227,6 +1227,73 @@ fn build_duplicate_linkage_payload(
     })
 }
 
+async fn maybe_write_follow_on_duplicate_linkage_candidate(
+    state: &AppState,
+    record: &CoderRunRecord,
+) -> Result<Option<Value>, StatusCode> {
+    if !matches!(
+        record.workflow_mode,
+        CoderWorkflowMode::PrReview | CoderWorkflowMode::MergeRecommendation
+    ) {
+        return Ok(None);
+    }
+    let Some(parent_coder_run_id) = record.parent_coder_run_id.as_deref() else {
+        return Ok(None);
+    };
+    let Ok(parent_record) = load_coder_run_record(state, parent_coder_run_id).await else {
+        return Ok(None);
+    };
+    if !matches!(parent_record.workflow_mode, CoderWorkflowMode::IssueFix) {
+        return Ok(None);
+    }
+    let Some(issue_ref) = parent_record
+        .github_ref
+        .as_ref()
+        .filter(|reference| matches!(reference.kind, CoderGithubRefKind::Issue))
+    else {
+        return Ok(None);
+    };
+    let Some(pull_request_ref) = record
+        .github_ref
+        .as_ref()
+        .filter(|reference| matches!(reference.kind, CoderGithubRefKind::PullRequest))
+    else {
+        return Ok(None);
+    };
+    let payload = json!({
+        "type": "duplicate.issue_pr_linkage",
+        "repo_slug": record.repo_binding.repo_slug,
+        "project_id": record.repo_binding.project_id,
+        "summary": format!(
+            "{} issue #{} is linked to pull request #{}",
+            record.repo_binding.repo_slug, issue_ref.number, pull_request_ref.number
+        ),
+        "issue_ref": issue_ref,
+        "pull_request_ref": pull_request_ref,
+        "linked_issue_numbers": [issue_ref.number],
+        "linked_pr_numbers": [pull_request_ref.number],
+        "relationship": "issue_fix_follow_on",
+        "artifact_refs": Vec::<String>::new(),
+    });
+    let (candidate_id, artifact) = write_coder_memory_candidate_artifact(
+        state,
+        record,
+        CoderMemoryCandidateKind::DuplicateLinkage,
+        Some(format!(
+            "{} issue #{} linked to PR #{}",
+            record.repo_binding.repo_slug, issue_ref.number, pull_request_ref.number
+        )),
+        Some("retrieve_memory".to_string()),
+        payload,
+    )
+    .await?;
+    Ok(Some(json!({
+        "candidate_id": candidate_id,
+        "kind": "duplicate_linkage",
+        "artifact_path": artifact.path,
+    })))
+}
+
 async fn list_project_memory_hits(
     repo_binding: &CoderRepoBinding,
     query: &str,
@@ -8421,6 +8488,9 @@ async fn coder_run_create_inner(
     };
     save_coder_run_record(&state, &record).await?;
 
+    let follow_on_duplicate_linkage =
+        maybe_write_follow_on_duplicate_linkage_candidate(&state, &record).await?;
+
     match record.workflow_mode {
         CoderWorkflowMode::IssueTriage => {
             seed_issue_triage_tasks(state.clone(), &record).await?;
@@ -8633,6 +8703,9 @@ async fn coder_run_create_inner(
     Ok(Json(json!({
         "ok": true,
         "coder_run": coder_run_payload(&record, &final_run),
+        "generated_candidates": follow_on_duplicate_linkage
+            .map(|candidate| vec![candidate])
+            .unwrap_or_default(),
         "execution_policy": coder_execution_policy_summary(&state, &record).await?,
         "merge_submit_policy": coder_merge_submit_policy_summary(&state, &record).await?,
         "run": final_run,

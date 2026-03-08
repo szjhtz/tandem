@@ -44,6 +44,7 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
   - `duplicate_linkage` promotion now requires both linked issue and linked PR numbers.
   - `regression_signal` promotion now requires structured regression entries plus supporting evidence artifacts.
   - Generic terminal `run_outcome` backfills are no longer promotable without workflow evidence artifacts.
+  - PR review and merge follow-on runs now persist their own `duplicate_linkage` candidates from parent issue-fix runs instead of relying only on the original PR submit artifact.
     - `PATCH /config/bug-monitor`
     - `GET /bug-monitor/status`
     - `GET /bug-monitor/drafts`

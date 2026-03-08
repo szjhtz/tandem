@@ -2187,6 +2187,55 @@ async fn coder_issue_fix_pr_submit_real_submit_writes_canonical_pr_identity() {
             .and_then(Value::as_bool),
         Some(false)
     );
+    assert_eq!(
+        follow_on_payload
+            .get("generated_candidates")
+            .and_then(Value::as_array)
+            .and_then(|rows| rows.first())
+            .and_then(|row| row.get("kind"))
+            .and_then(Value::as_str),
+        Some("duplicate_linkage")
+    );
+
+    let follow_on_candidates_req = Request::builder()
+        .method("GET")
+        .uri("/coder/runs/coder-follow-on-pr-review/memory-candidates")
+        .body(Body::empty())
+        .expect("follow-on candidates request");
+    let follow_on_candidates_resp = app
+        .clone()
+        .oneshot(follow_on_candidates_req)
+        .await
+        .expect("follow-on candidates response");
+    assert_eq!(follow_on_candidates_resp.status(), StatusCode::OK);
+    let follow_on_candidates_payload: Value = serde_json::from_slice(
+        &to_bytes(follow_on_candidates_resp.into_body(), usize::MAX)
+            .await
+            .expect("follow-on candidates body"),
+    )
+    .expect("follow-on candidates json");
+    let follow_on_duplicate_linkage = follow_on_candidates_payload
+        .get("candidates")
+        .and_then(Value::as_array)
+        .and_then(|rows| {
+            rows.iter()
+                .find(|row| row.get("kind").and_then(Value::as_str) == Some("duplicate_linkage"))
+        })
+        .expect("follow-on duplicate linkage candidate");
+    assert_eq!(
+        follow_on_duplicate_linkage
+            .get("payload")
+            .and_then(|row| row.get("linked_issue_numbers"))
+            .cloned(),
+        Some(json!([313]))
+    );
+    assert_eq!(
+        follow_on_duplicate_linkage
+            .get("payload")
+            .and_then(|row| row.get("linked_pr_numbers"))
+            .cloned(),
+        Some(json!([314]))
+    );
 
     let review_hits_req = Request::builder()
         .method("GET")
