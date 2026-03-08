@@ -8,6 +8,10 @@ pub(super) fn apply(router: Router<AppState>) -> Router<AppState> {
     router
         .route("/coder/runs", post(coder_run_create).get(coder_run_list))
         .route("/coder/runs/{id}", get(coder_run_get))
+        .route(
+            "/coder/runs/{id}/execute-next",
+            post(coder_run_execute_next),
+        )
         .route("/coder/runs/{id}/approve", post(coder_run_approve))
         .route("/coder/runs/{id}/cancel", post(coder_run_cancel))
         .route("/coder/runs/{id}/artifacts", get(coder_run_artifacts))

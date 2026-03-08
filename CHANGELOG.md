@@ -96,6 +96,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - `GET /coder/runs`
     - `GET /coder/runs/{id}`
     - `GET /coder/runs/{id}/artifacts`
+    - `POST /coder/runs/{id}/execute-next`
   - coder runs are persisted as thin metadata records linked to engine context runs instead of a frontend-owned workflow store
   - `POST /coder/runs` now creates a linked `coder_issue_triage` context run for `issue_triage` workflows and seeds the first deterministic task template:
     - normalize issue reference
@@ -104,6 +105,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - attempt reproduction
     - write triage artifact
   - added initial `coder.run.created` event emission so clients can observe coder run creation through the engine event bus
+  - `issue_triage` now has a first real worker bridge: `execute-next` claims the next runnable context task through the shared lease/claim runtime and dispatches deterministic inspection, reproduction, and final summary actions so the run can complete end to end without frontend-owned orchestration
   - added backend regression coverage for coder run creation, retrieval, list projection, context-run linkage, and artifact projection
   - added the first fail-closed readiness gate for `issue_triage` coder runs:
     - required GitHub issue capability bindings must exist

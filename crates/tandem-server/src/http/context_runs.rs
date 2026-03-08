@@ -2261,41 +2261,60 @@ pub(super) async fn context_run_tasks_claim(
     Path(run_id): Path<String>,
     Json(input): Json<ContextTaskClaimInput>,
 ) -> Result<Json<Value>, StatusCode> {
+    let task = claim_next_context_task(
+        &state,
+        &run_id,
+        &input.agent_id,
+        input.task_type.as_deref(),
+        input.workflow_id.as_deref(),
+        input.lease_ms,
+        input.command_id.clone(),
+    )
+    .await?;
+    Ok(Json(json!({
+        "ok": true,
+        "task": task,
+        "blackboard": load_projected_context_blackboard(&state, &run_id),
+    })))
+}
+
+pub(super) async fn claim_next_context_task(
+    state: &AppState,
+    run_id: &str,
+    agent_id: &str,
+    task_type: Option<&str>,
+    workflow_id: Option<&str>,
+    lease_ms: Option<u64>,
+    command_id: Option<String>,
+) -> Result<Option<ContextBlackboardTask>, StatusCode> {
     let lock = context_run_lock_for(&run_id).await;
     let _guard = lock.lock().await;
-    let command_id = input.command_id.clone();
-    if input.agent_id.trim().is_empty() {
+    if agent_id.trim().is_empty() {
         return Err(StatusCode::BAD_REQUEST);
     }
     if let Some(command_id) = command_id.as_deref() {
-        if context_run_events_have_command_id(&state, &run_id, command_id) {
-            let blackboard = load_projected_context_blackboard(&state, &run_id);
-            return Ok(Json(json!({
-                "ok": true,
-                "deduped": true,
-                "task": null,
-                "blackboard": blackboard,
-            })));
+        if context_run_events_have_command_id(state, run_id, command_id) {
+            return Ok(None);
         }
     }
-    let run_status = load_context_run_state(&state, &run_id)
+    let run_status = load_context_run_state(state, run_id)
         .await
         .ok()
         .map(|run| run.status)
         .unwrap_or(ContextRunStatus::Running);
-    let run = load_context_run_state(&state, &run_id).await?;
+    let run = load_context_run_state(state, run_id).await?;
     let now = crate::now_ms();
     let mut task_idx = run
         .tasks
         .iter()
         .enumerate()
         .filter(|(_, task)| {
-            if let Some(task_type) = input.task_type.as_deref() {
+            if let Some(task_type) = task_type {
                 if task.task_type != task_type {
                     return false;
                 }
             }
-            if let Some(workflow_id) = input.workflow_id.as_deref() {
+            if let Some(workflow_id) = workflow_id {
                 if task.workflow_id.as_deref() != Some(workflow_id) {
                     return false;
                 }
@@ -2325,29 +2344,25 @@ pub(super) async fn context_run_tasks_claim(
             .then_with(|| left.created_ts.cmp(&right.created_ts))
     });
     let Some(selected_idx) = task_idx.first().copied() else {
-        return Ok(Json(json!({
-        "ok": true,
-        "task": null,
-            "blackboard": load_projected_context_blackboard(&state, &run_id),
-        })));
+        return Ok(None);
     };
     let selected = run.tasks[selected_idx].clone();
-    let lease_ms = input.lease_ms.unwrap_or(30_000).clamp(5_000, 300_000);
+    let lease_ms = lease_ms.unwrap_or(30_000).clamp(5_000, 300_000);
     let lease_token = format!("lease-{}", Uuid::new_v4());
     let next_rev = selected.task_rev.saturating_add(1);
     let mut payload = json!({
         "task_id": selected.id,
         "status": ContextBlackboardTaskStatus::InProgress,
-        "assigned_agent": input.agent_id.trim(),
-        "lease_owner": input.agent_id.trim(),
+        "assigned_agent": agent_id.trim(),
+        "lease_owner": agent_id.trim(),
         "lease_token": lease_token,
         "lease_expires_at_ms": now.saturating_add(lease_ms),
         "task_rev": next_rev,
     });
     let claimed_task = ContextBlackboardTask {
         status: ContextBlackboardTaskStatus::InProgress,
-        assigned_agent: Some(input.agent_id.trim().to_string()),
-        lease_owner: Some(input.agent_id.trim().to_string()),
+        assigned_agent: Some(agent_id.trim().to_string()),
+        lease_owner: Some(agent_id.trim().to_string()),
         lease_token: Some(lease_token.clone()),
         lease_expires_at_ms: Some(now.saturating_add(lease_ms)),
         task_rev: next_rev,
@@ -2359,8 +2374,8 @@ pub(super) async fn context_run_tasks_claim(
     }
     let outcome = context_run_engine()
         .commit_task_mutation(
-            &state,
-            &run_id,
+            state,
+            run_id,
             claimed_task.clone(),
             ContextBlackboardPatchOp::UpdateTaskState,
             payload,
@@ -2369,16 +2384,14 @@ pub(super) async fn context_run_tasks_claim(
             command_id,
             json!({
                 "task_id": selected.id,
-                "agent_id": input.agent_id.trim(),
+                "agent_id": agent_id.trim(),
                 "task_rev": next_rev,
                 "workflow_id": selected.workflow_id,
             }),
         )
         .await?;
-    let claimed = Some(claimed_task.clone());
-    Ok(Json(
-        json!({ "ok": true, "task": claimed, "patch": outcome.patch, "blackboard": outcome.blackboard }),
-    ))
+    let _ = outcome;
+    Ok(Some(claimed_task))
 }
 
 pub(super) async fn context_run_task_transition(

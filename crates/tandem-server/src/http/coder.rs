@@ -1,11 +1,13 @@
 use super::context_runs::{
-    context_run_create, context_run_engine, context_run_tasks_create, ensure_context_run_dir,
-    load_context_blackboard, load_context_run_state, save_context_run_state,
+    claim_next_context_task, context_run_create, context_run_engine, context_run_task_transition,
+    context_run_tasks_create, ensure_context_run_dir, load_context_blackboard,
+    load_context_run_state, save_context_run_state,
 };
 use super::context_types::{
     ContextBlackboardArtifact, ContextBlackboardPatchOp, ContextBlackboardTaskStatus,
     ContextRunCreateInput, ContextRunEventAppendInput, ContextRunState, ContextRunStatus,
-    ContextTaskCreateBatchInput, ContextTaskCreateInput, ContextWorkspaceLease,
+    ContextTaskCreateBatchInput, ContextTaskCreateInput, ContextTaskTransitionInput,
+    ContextWorkspaceLease,
 };
 use super::*;
 use axum::extract::Path;
@@ -331,6 +333,12 @@ pub(super) struct CoderMemoryHitsQuery {
 pub(super) struct CoderRunControlInput {
     #[serde(default)]
     pub(super) reason: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub(super) struct CoderRunExecuteNextInput {
+    #[serde(default)]
+    pub(super) agent_id: Option<String>,
 }
 
 fn coder_runs_root(state: &AppState) -> PathBuf {
@@ -1948,6 +1956,190 @@ async fn bootstrap_coder_workflow_run(
     .await
 }
 
+fn default_coder_worker_agent_id(input: Option<&str>) -> String {
+    input
+        .map(str::trim)
+        .filter(|row| !row.is_empty())
+        .map(ToString::to_string)
+        .unwrap_or_else(|| "coder_engine_worker".to_string())
+}
+
+fn summarize_triage_memory_hits(record: &CoderRunRecord, run: &ContextRunState) -> Vec<String> {
+    run.tasks
+        .iter()
+        .find(|task| task.workflow_node_id.as_deref() == Some("retrieve_memory"))
+        .and_then(|task| task.payload.get("memory_hits"))
+        .and_then(Value::as_array)
+        .map(|rows| {
+            rows.iter()
+                .take(3)
+                .filter_map(|row| {
+                    row.get("summary")
+                        .and_then(Value::as_str)
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                        .map(ToString::to_string)
+                        .or_else(|| {
+                            row.get("content")
+                                .and_then(Value::as_str)
+                                .map(str::trim)
+                                .filter(|value| !value.is_empty())
+                                .map(|value| value.chars().take(120).collect::<String>())
+                        })
+                })
+                .collect::<Vec<_>>()
+        })
+        .filter(|rows| !rows.is_empty())
+        .unwrap_or_else(|| {
+            vec![format!(
+                "No reusable triage memory was available for {}.",
+                record.repo_binding.repo_slug
+            )]
+        })
+}
+
+async fn complete_claimed_coder_task(
+    state: &AppState,
+    run_id: String,
+    task: &super::context_types::ContextBlackboardTask,
+    agent_id: &str,
+) -> Result<(), StatusCode> {
+    let lease_token = task
+        .lease_token
+        .clone()
+        .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
+    let response = context_run_task_transition(
+        State(state.clone()),
+        Path((run_id, task.id.clone())),
+        Json(ContextTaskTransitionInput {
+            action: "complete".to_string(),
+            command_id: Some(format!(
+                "coder:{}:complete:{}",
+                task.id,
+                Uuid::new_v4().simple()
+            )),
+            expected_task_rev: Some(task.task_rev),
+            lease_token: Some(lease_token),
+            agent_id: Some(agent_id.to_string()),
+            status: None,
+            error: None,
+            lease_ms: None,
+        }),
+    )
+    .await?;
+    let payload = response.0;
+    if payload.get("ok").and_then(Value::as_bool) != Some(true) {
+        return Err(StatusCode::CONFLICT);
+    }
+    Ok(())
+}
+
+async fn dispatch_issue_triage_task(
+    state: AppState,
+    record: &CoderRunRecord,
+    task: &super::context_types::ContextBlackboardTask,
+    agent_id: &str,
+) -> Result<Value, StatusCode> {
+    let run = load_context_run_state(&state, &record.linked_context_run_id).await?;
+    let issue_number = record
+        .github_ref
+        .as_ref()
+        .map(|row| row.number)
+        .unwrap_or_default();
+    match task.workflow_node_id.as_deref() {
+        Some("inspect_repo") => {
+            let memory_hits_used = summarize_triage_memory_hits(record, &run);
+            let summary = format!(
+                "Engine worker inspected likely repo areas for {} issue #{}.",
+                record.repo_binding.repo_slug, issue_number
+            );
+            let response = coder_triage_inspection_report_create(
+                State(state),
+                Path(record.coder_run_id.clone()),
+                Json(CoderTriageInspectionReportCreateInput {
+                    summary: Some(summary),
+                    likely_areas: vec![
+                        "repo workspace context".to_string(),
+                        "prior triage memory".to_string(),
+                    ],
+                    affected_files: Vec::new(),
+                    memory_hits_used,
+                    notes: Some("Auto-generated by coder engine worker dispatch.".to_string()),
+                }),
+            )
+            .await?;
+            Ok(response.0)
+        }
+        Some("attempt_reproduction") => {
+            let memory_hits_used = summarize_triage_memory_hits(record, &run);
+            let response = coder_triage_reproduction_report_create(
+                State(state),
+                Path(record.coder_run_id.clone()),
+                Json(CoderTriageReproductionReportCreateInput {
+                    summary: Some(format!(
+                        "Engine worker attempted constrained reproduction for {} issue #{}.",
+                        record.repo_binding.repo_slug, issue_number
+                    )),
+                    outcome: Some("needs_follow_up".to_string()),
+                    steps: vec![
+                        "Review current issue context".to_string(),
+                        "Use prior memory hits to constrain reproduction".to_string(),
+                    ],
+                    observed_logs: Vec::new(),
+                    affected_files: Vec::new(),
+                    memory_hits_used,
+                    notes: Some("Auto-generated by coder engine worker dispatch.".to_string()),
+                }),
+            )
+            .await?;
+            Ok(response.0)
+        }
+        Some("write_triage_artifact") => {
+            let memory_hits_used = summarize_triage_memory_hits(record, &run);
+            let response = coder_triage_summary_create(
+                State(state),
+                Path(record.coder_run_id.clone()),
+                Json(CoderTriageSummaryCreateInput {
+                    summary: Some(format!(
+                        "Engine worker completed initial triage for {} issue #{}.",
+                        record.repo_binding.repo_slug, issue_number
+                    )),
+                    confidence: Some("medium".to_string()),
+                    affected_files: Vec::new(),
+                    duplicate_candidates: Vec::new(),
+                    memory_hits_used,
+                    reproduction: Some(json!({
+                        "outcome": "needs_follow_up",
+                        "source": "coder_engine_worker"
+                    })),
+                    notes: Some("Auto-generated by coder engine worker dispatch.".to_string()),
+                }),
+            )
+            .await?;
+            Ok(response.0)
+        }
+        Some("ingest_reference") | Some("retrieve_memory") => {
+            complete_claimed_coder_task(
+                &state,
+                record.linked_context_run_id.clone(),
+                task,
+                agent_id,
+            )
+            .await?;
+            let run = load_context_run_state(&state, &record.linked_context_run_id).await?;
+            Ok(json!({
+                "ok": true,
+                "task": task,
+                "run": run,
+                "coder_run": coder_run_payload(record, &run),
+                "dispatched": false,
+                "reason": "bootstrap task completed through generic task transition"
+            }))
+        }
+        _ => Err(StatusCode::CONFLICT),
+    }
+}
+
 async fn write_issue_fix_validation_outputs(
     state: &AppState,
     record: &CoderRunRecord,
@@ -3408,6 +3600,80 @@ pub(super) async fn coder_run_get(
             "hits": memory_hits,
         },
         "memory_candidates": memory_candidates,
+    })))
+}
+
+pub(super) async fn coder_run_execute_next(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(input): Json<CoderRunExecuteNextInput>,
+) -> Result<Json<Value>, StatusCode> {
+    let mut record = load_coder_run_record(&state, &id).await?;
+    if !matches!(record.workflow_mode, CoderWorkflowMode::IssueTriage) {
+        return Ok(Json(json!({
+            "ok": false,
+            "error": "execute_next is only wired for issue_triage right now",
+            "code": "CODER_EXECUTION_UNSUPPORTED",
+        })));
+    }
+    let agent_id = default_coder_worker_agent_id(input.agent_id.as_deref());
+    let claimed_task = claim_next_context_task(
+        &state,
+        &record.linked_context_run_id,
+        &agent_id,
+        None,
+        Some(record.workflow_mode.as_context_run_type()),
+        Some(30_000),
+        Some(format!(
+            "coder:{}:execute-next:{}",
+            record.coder_run_id,
+            Uuid::new_v4().simple()
+        )),
+    )
+    .await?;
+    let Some(task) = claimed_task else {
+        let run = load_context_run_state(&state, &record.linked_context_run_id).await?;
+        return Ok(Json(json!({
+            "ok": true,
+            "task": Value::Null,
+            "run": run,
+            "coder_run": coder_run_payload(&record, &run),
+            "dispatched": false,
+            "reason": "no runnable coder task was available"
+        })));
+    };
+
+    publish_coder_run_event(
+        &state,
+        "coder.run.phase_changed",
+        &record,
+        Some(project_coder_phase(
+            &load_context_run_state(&state, &record.linked_context_run_id).await?,
+        )),
+        {
+            let mut extra = serde_json::Map::new();
+            extra.insert("event_type".to_string(), json!("worker_task_claimed"));
+            extra.insert("task_id".to_string(), json!(task.id.clone()));
+            extra.insert(
+                "workflow_node_id".to_string(),
+                json!(task.workflow_node_id.clone()),
+            );
+            extra.insert("agent_id".to_string(), json!(agent_id.clone()));
+            extra
+        },
+    );
+
+    let dispatched = dispatch_issue_triage_task(state.clone(), &record, &task, &agent_id).await?;
+    let final_run = load_context_run_state(&state, &record.linked_context_run_id).await?;
+    record.updated_at_ms = final_run.updated_at_ms;
+    save_coder_run_record(&state, &record).await?;
+    Ok(Json(json!({
+        "ok": true,
+        "task": task,
+        "dispatched": true,
+        "dispatch_result": dispatched,
+        "run": final_run,
+        "coder_run": coder_run_payload(&record, &final_run),
     })))
 }
 

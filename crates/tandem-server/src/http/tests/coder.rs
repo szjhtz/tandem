@@ -3298,6 +3298,121 @@ async fn coder_triage_inspection_report_advances_to_reproduction() {
 }
 
 #[tokio::test]
+async fn coder_issue_triage_execute_next_drives_task_runtime_to_completion() {
+    let state = test_state().await;
+    state
+        .capability_resolver
+        .refresh_builtin_bindings()
+        .await
+        .expect("refresh builtin bindings");
+    let app = app_router(state.clone());
+
+    let create_req = Request::builder()
+        .method("POST")
+        .uri("/coder/runs")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "coder_run_id": "coder-triage-execute-next",
+                "workflow_mode": "issue_triage",
+                "repo_binding": {
+                    "project_id": "proj-engine",
+                    "workspace_id": "ws-tandem",
+                    "workspace_root": "/tmp/tandem-repo",
+                    "repo_slug": "evan/tandem"
+                },
+                "github_ref": {
+                    "kind": "issue",
+                    "number": 198
+                }
+            })
+            .to_string(),
+        ))
+        .expect("create request");
+    let create_resp = app
+        .clone()
+        .oneshot(create_req)
+        .await
+        .expect("create response");
+    assert_eq!(create_resp.status(), StatusCode::OK);
+    let create_payload: Value = serde_json::from_slice(
+        &to_bytes(create_resp.into_body(), usize::MAX)
+            .await
+            .expect("create body"),
+    )
+    .expect("create json");
+    let linked_context_run_id = create_payload
+        .get("coder_run")
+        .and_then(|row| row.get("linked_context_run_id"))
+        .and_then(Value::as_str)
+        .expect("linked context run id")
+        .to_string();
+
+    for expected in [
+        "inspect_repo",
+        "attempt_reproduction",
+        "write_triage_artifact",
+    ] {
+        let execute_req = Request::builder()
+            .method("POST")
+            .uri("/coder/runs/coder-triage-execute-next/execute-next")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({
+                    "agent_id": "coder_engine_worker_test"
+                })
+                .to_string(),
+            ))
+            .expect("execute request");
+        let execute_resp = app
+            .clone()
+            .oneshot(execute_req)
+            .await
+            .expect("execute response");
+        assert_eq!(execute_resp.status(), StatusCode::OK);
+        let execute_payload: Value = serde_json::from_slice(
+            &to_bytes(execute_resp.into_body(), usize::MAX)
+                .await
+                .expect("execute body"),
+        )
+        .expect("execute json");
+        assert_eq!(
+            execute_payload
+                .get("task")
+                .and_then(|row| row.get("workflow_node_id"))
+                .and_then(Value::as_str),
+            Some(expected)
+        );
+    }
+
+    let run = load_context_run_state(&state, &linked_context_run_id)
+        .await
+        .expect("context run state");
+    assert_eq!(run.status, ContextRunStatus::Completed);
+    assert_eq!(
+        run.tasks
+            .iter()
+            .find(|task| task.workflow_node_id.as_deref() == Some("inspect_repo"))
+            .map(|task| &task.status),
+        Some(&ContextBlackboardTaskStatus::Done)
+    );
+    assert_eq!(
+        run.tasks
+            .iter()
+            .find(|task| task.workflow_node_id.as_deref() == Some("attempt_reproduction"))
+            .map(|task| &task.status),
+        Some(&ContextBlackboardTaskStatus::Done)
+    );
+    assert_eq!(
+        run.tasks
+            .iter()
+            .find(|task| task.workflow_node_id.as_deref() == Some("write_triage_artifact"))
+            .map(|task| &task.status),
+        Some(&ContextBlackboardTaskStatus::Done)
+    );
+}
+
+#[tokio::test]
 async fn coder_memory_hits_endpoint_returns_ranked_hits() {
     let state = test_state().await;
     state
