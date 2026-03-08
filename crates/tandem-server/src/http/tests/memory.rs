@@ -979,6 +979,49 @@ async fn memory_list_and_delete_admin_routes_work() {
             .and_then(Value::as_str),
         Some(delete_audit_id.as_str())
     );
+    assert_eq!(
+        delete_event.properties.get("kind").and_then(Value::as_str),
+        Some("fact")
+    );
+    assert_eq!(
+        delete_event
+            .properties
+            .get("classification")
+            .and_then(Value::as_str),
+        Some("internal")
+    );
+    assert_eq!(
+        delete_event
+            .properties
+            .get("artifactRefs")
+            .and_then(Value::as_array),
+        Some(&artifact_refs)
+    );
+    assert_eq!(
+        delete_event
+            .properties
+            .get("visibility")
+            .and_then(Value::as_str),
+        Some("private")
+    );
+    assert_eq!(
+        delete_event.properties.get("tier").and_then(Value::as_str),
+        Some("session")
+    );
+    assert_eq!(
+        delete_event
+            .properties
+            .get("demoted")
+            .and_then(Value::as_bool),
+        Some(false)
+    );
+    assert_eq!(
+        delete_event
+            .properties
+            .get("partitionKey")
+            .and_then(Value::as_str),
+        Some("org-1/ws-1/proj-1/session")
+    );
 
     let audit_req = Request::builder()
         .method("GET")
@@ -1014,6 +1057,7 @@ async fn memory_list_and_delete_admin_routes_work() {
 async fn memory_demote_hides_item_from_search_results() {
     let state = test_state().await;
     let app = app_router(state.clone());
+    let mut rx = state.event_bus.subscribe();
 
     let put_req = Request::builder()
         .method("POST")
@@ -1069,10 +1113,84 @@ async fn memory_demote_hides_item_from_search_results() {
         .await
         .expect("demote body");
     let demote_payload: Value = serde_json::from_slice(&demote_body).expect("demote json");
+    let demote_audit_id = demote_payload
+        .get("audit_id")
+        .and_then(Value::as_str)
+        .expect("demote audit id")
+        .to_string();
     assert!(demote_payload
         .get("audit_id")
         .and_then(Value::as_str)
         .is_some());
+    let demote_event = next_event_of_type(&mut rx, "memory.updated").await;
+    assert_eq!(
+        demote_event
+            .properties
+            .get("memoryID")
+            .and_then(Value::as_str),
+        Some(memory_id.as_str())
+    );
+    assert_eq!(
+        demote_event.properties.get("runID").and_then(Value::as_str),
+        Some("run-5")
+    );
+    assert_eq!(
+        demote_event
+            .properties
+            .get("action")
+            .and_then(Value::as_str),
+        Some("demote")
+    );
+    assert_eq!(
+        demote_event.properties.get("kind").and_then(Value::as_str),
+        Some("fact")
+    );
+    assert_eq!(
+        demote_event
+            .properties
+            .get("classification")
+            .and_then(Value::as_str),
+        Some("internal")
+    );
+    assert_eq!(
+        demote_event
+            .properties
+            .get("artifactRefs")
+            .and_then(Value::as_array),
+        Some(&Vec::<Value>::new())
+    );
+    assert_eq!(
+        demote_event
+            .properties
+            .get("visibility")
+            .and_then(Value::as_str),
+        Some("private")
+    );
+    assert_eq!(
+        demote_event.properties.get("tier").and_then(Value::as_str),
+        Some("session")
+    );
+    assert_eq!(
+        demote_event
+            .properties
+            .get("demoted")
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        demote_event
+            .properties
+            .get("partitionKey")
+            .and_then(Value::as_str),
+        Some("org-1/ws-1/proj-1/session")
+    );
+    assert_eq!(
+        demote_event
+            .properties
+            .get("auditID")
+            .and_then(Value::as_str),
+        Some(demote_audit_id.as_str())
+    );
 
     let search_req = Request::builder()
         .method("POST")

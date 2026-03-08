@@ -1747,7 +1747,7 @@ pub(super) async fn memory_put_impl(
     }
     let id = Uuid::new_v4().to_string();
     let partition_key = request.partition.key();
-    let kind = memory_kind_for_request(request.kind);
+    let kind = memory_kind_for_request(request.kind.clone());
     let now = crate::now_ms();
     let audit_id = Uuid::new_v4().to_string();
     let db = open_global_memory_db()
@@ -2167,6 +2167,13 @@ pub(super) async fn memory_demote(
     let db = open_global_memory_db()
         .await
         .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
+    let record = db
+        .get_global_memory(&input.id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let Some(record) = record else {
+        return Err(StatusCode::NOT_FOUND);
+    };
     let changed = db
         .set_global_memory_visibility(&input.id, "private", true)
         .await
@@ -2174,6 +2181,11 @@ pub(super) async fn memory_demote(
     if !changed {
         return Err(StatusCode::NOT_FOUND);
     }
+    let partition_key = memory_linkage(&record)
+        .get("partition_key")
+        .and_then(Value::as_str)
+        .unwrap_or("demoted")
+        .to_string();
     let audit_id = Uuid::new_v4().to_string();
     append_memory_audit(
         &state,
@@ -2184,7 +2196,7 @@ pub(super) async fn memory_demote(
             memory_id: Some(input.id.clone()),
             source_memory_id: None,
             to_tier: None,
-            partition_key: "demoted".to_string(),
+            partition_key: partition_key.clone(),
             actor: "system".to_string(),
             status: "ok".to_string(),
             detail: None,
@@ -2198,6 +2210,13 @@ pub(super) async fn memory_demote(
             "memoryID": input.id,
             "runID": input.run_id,
             "action": "demote",
+            "kind": memory_kind_label(&record.source_type),
+            "classification": memory_classification_label(record.metadata.as_ref()),
+            "artifactRefs": memory_artifact_refs(record.metadata.as_ref()),
+            "visibility": "private",
+            "tier": tandem_memory::GovernedMemoryTier::Session,
+            "partitionKey": partition_key,
+            "demoted": true,
             "auditID": audit_id,
         }),
     ));
@@ -2303,7 +2322,10 @@ pub(super) async fn memory_delete(
             memory_id: Some(id.clone()),
             source_memory_id: None,
             to_tier: None,
-            partition_key: record.project_tag.unwrap_or_else(|| "global".to_string()),
+            partition_key: record
+                .project_tag
+                .clone()
+                .unwrap_or_else(|| "global".to_string()),
             actor: "admin".to_string(),
             status: "ok".to_string(),
             detail: None,
@@ -2316,6 +2338,15 @@ pub(super) async fn memory_delete(
         json!({
             "memoryID": id,
             "runID": run_id,
+            "kind": memory_kind_label(&record.source_type),
+            "classification": memory_classification_label(record.metadata.as_ref()),
+            "artifactRefs": memory_artifact_refs(record.metadata.as_ref()),
+            "visibility": record.visibility,
+            "tier": memory_tier_for_visibility(&record.visibility),
+            "partitionKey": memory_linkage(&record)
+                .get("partition_key")
+                .and_then(Value::as_str),
+            "demoted": record.demoted,
             "auditID": audit_id,
         }),
     ));
