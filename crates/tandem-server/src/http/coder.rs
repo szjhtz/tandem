@@ -4584,6 +4584,123 @@ async fn resolve_github_create_pr_tool(
     Err(StatusCode::CONFLICT)
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct GithubPullRequestSummary {
+    number: u64,
+    title: String,
+    state: String,
+    html_url: Option<String>,
+    head_ref: Option<String>,
+    base_ref: Option<String>,
+}
+
+fn tool_result_values(result: &tandem_types::ToolResult) -> Vec<Value> {
+    let mut values = Vec::new();
+    if let Some(value) = result.metadata.get("result") {
+        values.push(value.clone());
+    }
+    if let Ok(parsed) = serde_json::from_str::<Value>(&result.output) {
+        values.push(parsed);
+    }
+    values
+}
+
+fn extract_pull_requests_from_tool_result(
+    result: &tandem_types::ToolResult,
+) -> Vec<GithubPullRequestSummary> {
+    let mut out = Vec::new();
+    for candidate in tool_result_values(result) {
+        collect_pull_requests(&candidate, &mut out);
+    }
+    dedupe_pull_requests(out)
+}
+
+fn collect_pull_requests(value: &Value, out: &mut Vec<GithubPullRequestSummary>) {
+    match value {
+        Value::Object(map) => {
+            let number = map
+                .get("number")
+                .or_else(|| map.get("pull_number"))
+                .and_then(Value::as_u64);
+            let title = map
+                .get("title")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            let state = map
+                .get("state")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            let html_url = map
+                .get("html_url")
+                .or_else(|| map.get("url"))
+                .and_then(Value::as_str)
+                .map(ToString::to_string);
+            let head_ref = map
+                .get("head")
+                .and_then(Value::as_object)
+                .and_then(|head| head.get("ref"))
+                .and_then(Value::as_str)
+                .map(ToString::to_string)
+                .or_else(|| {
+                    map.get("head_ref")
+                        .and_then(Value::as_str)
+                        .map(ToString::to_string)
+                });
+            let base_ref = map
+                .get("base")
+                .and_then(Value::as_object)
+                .and_then(|base| base.get("ref"))
+                .and_then(Value::as_str)
+                .map(ToString::to_string)
+                .or_else(|| {
+                    map.get("base_ref")
+                        .and_then(Value::as_str)
+                        .map(ToString::to_string)
+                });
+            if let Some(number) = number {
+                out.push(GithubPullRequestSummary {
+                    number,
+                    title,
+                    state,
+                    html_url,
+                    head_ref,
+                    base_ref,
+                });
+            }
+            for nested in map.values() {
+                collect_pull_requests(nested, out);
+            }
+        }
+        Value::Array(rows) => {
+            for row in rows {
+                collect_pull_requests(row, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn dedupe_pull_requests(rows: Vec<GithubPullRequestSummary>) -> Vec<GithubPullRequestSummary> {
+    let mut out = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for row in rows {
+        if seen.insert(row.number) {
+            out.push(row);
+        }
+    }
+    out
+}
+
+fn github_ref_from_pull_request(pull: &GithubPullRequestSummary) -> Value {
+    json!({
+        "kind": "pull_request",
+        "number": pull.number,
+        "url": pull.html_url,
+    })
+}
+
 async fn call_create_pull_request(
     state: &AppState,
     server_name: &str,
@@ -4819,6 +4936,8 @@ pub(super) async fn coder_issue_fix_pr_submit(
         "workflow_mode": record.workflow_mode,
         "repo_binding": record.repo_binding,
         "github_ref": record.github_ref,
+        "owner": owner,
+        "repo": repo_name,
         "approved_by": approved_by,
         "approval_reason": input.reason,
         "title": title,
@@ -4826,6 +4945,7 @@ pub(super) async fn coder_issue_fix_pr_submit(
         "base_branch": base_branch,
         "head_branch": head_branch,
         "dry_run": dry_run,
+        "submitted_github_ref": Value::Null,
         "created_at_ms": crate::now_ms(),
         "readiness": readiness,
     });
@@ -4844,10 +4964,19 @@ pub(super) async fn coder_issue_fix_pr_submit(
             head_branch,
         )
         .await?;
+        let pull_request = extract_pull_requests_from_tool_result(&result)
+            .into_iter()
+            .next()
+            .ok_or(StatusCode::BAD_GATEWAY)?;
         if let Some(obj) = submission_payload.as_object_mut() {
             obj.insert("server_name".to_string(), json!(server_name));
             obj.insert("tool_name".to_string(), json!(tool_name));
             obj.insert("submitted".to_string(), json!(true));
+            obj.insert(
+                "submitted_github_ref".to_string(),
+                github_ref_from_pull_request(&pull_request),
+            );
+            obj.insert("pull_request".to_string(), json!(pull_request));
             obj.insert(
                 "tool_result".to_string(),
                 json!({
@@ -6443,6 +6572,86 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn extract_pull_requests_from_tool_result_reads_result_shapes() {
+        let result = tandem_types::ToolResult {
+            output: json!({
+                "pull_request": {
+                    "number": 42,
+                    "title": "Fix startup recovery",
+                    "state": "open",
+                    "html_url": "https://github.com/evan/tandem/pull/42",
+                    "head": {"ref": "coder/issue-42-fix"},
+                    "base": {"ref": "main"}
+                }
+            })
+            .to_string(),
+            metadata: json!({
+                "result": {
+                    "number": 42,
+                    "title": "Fix startup recovery",
+                    "state": "open",
+                    "url": "https://github.com/evan/tandem/pull/42",
+                    "head_ref": "coder/issue-42-fix",
+                    "base_ref": "main"
+                }
+            }),
+        };
+
+        let pulls = extract_pull_requests_from_tool_result(&result);
+        assert_eq!(pulls.len(), 1);
+        assert_eq!(pulls[0].number, 42);
+        assert_eq!(pulls[0].title, "Fix startup recovery");
+        assert_eq!(pulls[0].state, "open");
+        assert_eq!(
+            pulls[0].html_url.as_deref(),
+            Some("https://github.com/evan/tandem/pull/42")
+        );
+        assert_eq!(pulls[0].head_ref.as_deref(), Some("coder/issue-42-fix"));
+        assert_eq!(pulls[0].base_ref.as_deref(), Some("main"));
+    }
+
+    #[test]
+    fn extract_pull_requests_from_tool_result_accepts_minimal_identity_shape() {
+        let result = tandem_types::ToolResult {
+            output: json!({
+                "result": {
+                    "number": 91
+                }
+            })
+            .to_string(),
+            metadata: json!({}),
+        };
+
+        let pulls = extract_pull_requests_from_tool_result(&result);
+        assert_eq!(pulls.len(), 1);
+        assert_eq!(pulls[0].number, 91);
+        assert_eq!(pulls[0].title, "");
+        assert_eq!(pulls[0].state, "");
+        assert!(pulls[0].html_url.is_none());
+    }
+
+    #[test]
+    fn github_ref_from_pull_request_builds_canonical_pr_ref() {
+        let pull = GithubPullRequestSummary {
+            number: 77,
+            title: "Guard startup recovery config loading".to_string(),
+            state: "open".to_string(),
+            html_url: Some("https://github.com/evan/tandem/pull/77".to_string()),
+            head_ref: Some("coder/issue-313-fix".to_string()),
+            base_ref: Some("main".to_string()),
+        };
+
+        assert_eq!(
+            github_ref_from_pull_request(&pull),
+            json!({
+                "kind": "pull_request",
+                "number": 77,
+                "url": "https://github.com/evan/tandem/pull/77",
+            })
+        );
     }
 }
 

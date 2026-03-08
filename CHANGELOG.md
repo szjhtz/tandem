@@ -35,6 +35,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - fixed command center run action visibility to rely on selected run identity directly, preventing cases where a selected running run looked stuck with no available controls
   - fixed validator/retry mismatch where write-intended tasks classified as `Research`/`Inspection`/`Validation` could bypass strict-write enforcement and loop into `Max retries exceeded` with `no changed-file evidence`; retries now auto-escalate to strict-write when validator feedback proves no workspace changes
 
+- **Initial Tandem Coder engine API foundation**:
+  - added engine-owned coder workflow runtime control through:
+    - `POST /coder/runs/{id}/execute-next`
+    - `POST /coder/runs/{id}/execute-all`
+  - added structured intermediate and final artifacts for triage inspection/reproduction, issue-fix validation and patch evidence, PR review evidence, and merge readiness
+  - added governed-memory-aware retrieval and reusable coder memory outputs across `issue_triage`, `issue_fix`, `pr_review`, and `merge_recommendation`
+  - added engine-owned issue-fix PR drafting and approval-gated submit handoff through:
+    - `POST /coder/runs/{id}/pr-draft`
+    - `POST /coder/runs/{id}/pr-submit`
+  - normalized PR-submit artifacts now preserve stable repo context and a canonical `submitted_github_ref`, and PR-result parsing now accepts minimal number-only GitHub/MCP result shapes so later review and merge flows have a stable PR handoff target
+
 - **Bug Monitor settings foundation and server config/status surface**:
   - added persisted bug-monitor config and status state in `tandem-server`, including repo, MCP server, provider preference, and dedicated `model_policy.default_model` routing for the reporter agent
   - added fail-closed readiness validation for the selected provider/model, required GitHub capabilities, and selected MCP server connectivity

@@ -83,6 +83,13 @@
     - `GET /coder/runs/{id}`
     - `GET /coder/runs/{id}/artifacts`
     - `POST /coder/runs/{id}/execute-next`
+    - `POST /coder/runs/{id}/execute-all`
+  - added structured intermediate and final artifacts for triage inspection/reproduction, issue-fix validation and patch evidence, PR review evidence, and merge readiness
+  - added governed-memory-aware retrieval and reusable coder memory outputs across `issue_triage`, `issue_fix`, `pr_review`, and `merge_recommendation`
+  - added engine-owned issue-fix PR drafting and approval-gated submit handoff through:
+    - `POST /coder/runs/{id}/pr-draft`
+    - `POST /coder/runs/{id}/pr-submit`
+  - PR submit artifacts now preserve stable repo context plus a canonical `submitted_github_ref`, and GitHub/MCP result parsing now accepts minimal number-only PR result shapes so downstream review and merge flows have a stable PR handoff target
   - coder runs now persist as thin metadata records linked to engine context runs instead of a frontend-owned workflow store
   - creating an `issue_triage` coder run now seeds a deterministic context-run task graph for issue normalization, memory retrieval, repo inspection, reproduction, and triage artifact writing
   - added initial `coder.run.created` engine event emission and backend regression coverage for coder create/get/list/artifact behavior
