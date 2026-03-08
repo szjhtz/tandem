@@ -3,14 +3,16 @@ use std::sync::Arc;
 use tokio::net::TcpListener;
 use tokio::sync::RwLock;
 
-async fn spawn_fake_bug_monitor_github_mcp_server() -> (String, tokio::task::JoinHandle<()>) {
+async fn spawn_fake_bug_monitor_github_mcp_server_with_issues(
+    seeded_issues: Vec<Value>,
+) -> (String, tokio::task::JoinHandle<()>) {
     let listener = TcpListener::bind("127.0.0.1:0")
         .await
         .expect("bind fake bug monitor github mcp listener");
     let addr = listener
         .local_addr()
         .expect("fake bug monitor github mcp addr");
-    let issues = Arc::new(RwLock::new(Vec::<Value>::new()));
+    let issues = Arc::new(RwLock::new(seeded_issues));
     let comments = Arc::new(RwLock::new(Vec::<Value>::new()));
     let app = axum::Router::new().route(
         "/",
@@ -161,6 +163,10 @@ async fn spawn_fake_bug_monitor_github_mcp_server() -> (String, tokio::task::Joi
             .expect("serve fake bug monitor github mcp");
     });
     (format!("http://{addr}"), server)
+}
+
+async fn spawn_fake_bug_monitor_github_mcp_server() -> (String, tokio::task::JoinHandle<()>) {
+    spawn_fake_bug_monitor_github_mcp_server_with_issues(Vec::new()).await
 }
 
 #[tokio::test]
@@ -1573,6 +1579,182 @@ async fn bug_monitor_publish_and_recheck_succeed_with_triage_context() {
             .and_then(Value::as_array)
             .map(|rows| rows.len()),
         Some(0)
+    );
+
+    server.abort();
+}
+
+#[tokio::test]
+async fn bug_monitor_publish_comments_on_matched_open_issue_and_lists_post() {
+    let (endpoint, server) = spawn_fake_bug_monitor_github_mcp_server_with_issues(vec![json!({
+        "number": 42,
+        "title": "Build failure in CI",
+        "body": "existing issue body\n<!-- tandem:fingerprint:v1:fingerprint-match-open -->",
+        "state": "open",
+        "html_url": "https://github.com/acme/platform/issues/42"
+    })])
+    .await;
+
+    let state = test_state().await;
+    state
+        .mcp
+        .add_or_update(
+            "github".to_string(),
+            endpoint,
+            std::collections::HashMap::new(),
+            true,
+        )
+        .await;
+    assert!(state.mcp.connect("github").await);
+    state
+        .capability_resolver
+        .refresh_builtin_bindings()
+        .await
+        .expect("refresh builtin bindings");
+    state
+        .put_bug_monitor_config(crate::BugMonitorConfig {
+            enabled: true,
+            repo: Some("acme/platform".to_string()),
+            workspace_root: Some("/tmp/acme".to_string()),
+            mcp_server: Some("github".to_string()),
+            auto_comment_on_matched_open_issues: true,
+            ..Default::default()
+        })
+        .await
+        .expect("config");
+
+    let app = app_router(state.clone());
+    let create_req = Request::builder()
+        .method("POST")
+        .uri("/bug-monitor/report")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "report": {
+                    "source": "desktop_logs",
+                    "title": "Build failure in CI",
+                    "fingerprint": "fingerprint-match-open",
+                    "detail": "event: orchestrator.run_failed\nprocess: tandem-engine\ncomponent: orchestrator",
+                    "excerpt": ["boom", "stack trace"],
+                }
+            })
+            .to_string(),
+        ))
+        .expect("request");
+    let create_resp = app.clone().oneshot(create_req).await.expect("response");
+    assert_eq!(create_resp.status(), StatusCode::OK);
+    let create_payload: Value = serde_json::from_slice(
+        &to_bytes(create_resp.into_body(), usize::MAX)
+            .await
+            .expect("create body"),
+    )
+    .expect("create json");
+    let draft_id = create_payload
+        .get("draft")
+        .and_then(|row| row.get("draft_id"))
+        .and_then(Value::as_str)
+        .expect("draft id")
+        .to_string();
+
+    let triage_req = Request::builder()
+        .method("POST")
+        .uri(format!("/bug-monitor/drafts/{draft_id}/triage-run"))
+        .body(Body::empty())
+        .expect("triage request");
+    let triage_resp = app
+        .clone()
+        .oneshot(triage_req)
+        .await
+        .expect("triage response");
+    assert_eq!(triage_resp.status(), StatusCode::OK);
+
+    let publish_req = Request::builder()
+        .method("POST")
+        .uri(format!("/bug-monitor/drafts/{draft_id}/publish"))
+        .body(Body::empty())
+        .expect("publish request");
+    let publish_resp = app
+        .clone()
+        .oneshot(publish_req)
+        .await
+        .expect("publish response");
+    assert_eq!(publish_resp.status(), StatusCode::OK);
+    let publish_payload: Value = serde_json::from_slice(
+        &to_bytes(publish_resp.into_body(), usize::MAX)
+            .await
+            .expect("publish body"),
+    )
+    .expect("publish json");
+    assert_eq!(
+        publish_payload.get("action").and_then(Value::as_str),
+        Some("comment_issue")
+    );
+    assert_eq!(
+        publish_payload
+            .get("post")
+            .and_then(|row| row.get("operation"))
+            .and_then(Value::as_str),
+        Some("comment_issue")
+    );
+    assert_eq!(
+        publish_payload
+            .get("post")
+            .and_then(|row| row.get("issue_number"))
+            .and_then(Value::as_u64),
+        Some(42)
+    );
+    assert_eq!(
+        publish_payload
+            .get("draft")
+            .and_then(|row| row.get("status"))
+            .and_then(Value::as_str),
+        Some("github_comment_posted")
+    );
+
+    let posts_req = Request::builder()
+        .method("GET")
+        .uri("/bug-monitor/posts?limit=10")
+        .body(Body::empty())
+        .expect("posts request");
+    let posts_resp = app
+        .clone()
+        .oneshot(posts_req)
+        .await
+        .expect("posts response");
+    assert_eq!(posts_resp.status(), StatusCode::OK);
+    let posts_payload: Value = serde_json::from_slice(
+        &to_bytes(posts_resp.into_body(), usize::MAX)
+            .await
+            .expect("posts body"),
+    )
+    .expect("posts json");
+    assert_eq!(posts_payload.get("count").and_then(Value::as_u64), Some(1));
+    assert_eq!(
+        posts_payload
+            .get("posts")
+            .and_then(Value::as_array)
+            .and_then(|rows| rows.first())
+            .and_then(|row| row.get("draft_id"))
+            .and_then(Value::as_str),
+        Some(draft_id.as_str())
+    );
+    assert_eq!(
+        posts_payload
+            .get("posts")
+            .and_then(Value::as_array)
+            .and_then(|rows| rows.first())
+            .and_then(|row| row.get("operation"))
+            .and_then(Value::as_str),
+        Some("comment_issue")
+    );
+    assert_eq!(
+        posts_payload
+            .get("posts")
+            .and_then(Value::as_array)
+            .and_then(|rows| rows.first())
+            .and_then(|row| row.get("issue_number"))
+            .and_then(Value::as_u64),
+        Some(42)
     );
 
     server.abort();
