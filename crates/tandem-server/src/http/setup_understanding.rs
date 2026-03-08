@@ -289,12 +289,13 @@ pub(super) async fn resolve_setup_request(
         SetupIntentKind::AutomationCreate => intercept_response(
             SetupIntentKind::AutomationCreate,
             top_score.clone(),
-            "pack_builder_preview",
+            "workflow_plan_preview",
             json!({
-                "goal": top_score.slots.goal.clone(),
+                "prompt": top_score.slots.goal.clone(),
                 "schedule_hint": top_score.slots.schedule_hint.clone(),
                 "delivery_target": top_score.slots.delivery_target.clone(),
                 "integration_targets": top_score.slots.integration_targets.clone(),
+                "plan_source": "chat_setup",
             }),
         ),
         SetupIntentKind::ChannelSetupHelp => intercept_response(

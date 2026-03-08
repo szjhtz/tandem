@@ -22,6 +22,7 @@ pub(super) async fn global_health(State(state): State<AppState>) -> impl IntoRes
     let build_id = crate::build_id();
     let binary_path = crate::binary_path_for_health();
     let environment = state.host_runtime_context();
+    let workspace_root = state.workspace_index.snapshot().await.root;
     let browser = state.browser_health_summary().await;
     Json(json!({
         "healthy": true,
@@ -36,6 +37,7 @@ pub(super) async fn global_health(State(state): State<AppState>) -> impl IntoRes
         "binary_path": binary_path,
         "mode": state.mode_label(),
         "leaseCount": lease_count,
+        "workspace_root": workspace_root,
         "environment": environment,
         "browser": browser
     }))
@@ -544,6 +546,12 @@ pub(super) async fn openapi_doc() -> Json<Value> {
             "/skills/compile":{"post":{"summary":"Compile selected/routed skill into execution summary"}},
             "/skills/generate":{"post":{"summary":"Generate scaffold skill artifacts from prompt"}},
             "/skills/generate/install":{"post":{"summary":"Install generated/custom skill bundle artifacts"}},
+            "/workflow-plans/preview":{"post":{"summary":"Preview an engine-owned workflow plan from a raw prompt"}},
+            "/workflow-plans/apply":{"post":{"summary":"Compile and persist a previewed workflow plan as automation v2"}},
+            "/workflow-plans/chat/start":{"post":{"summary":"Start a workflow plan drafting conversation"}},
+            "/workflow-plans/chat/message":{"post":{"summary":"Revise a workflow plan draft with a planning chat message"}},
+            "/workflow-plans/chat/reset":{"post":{"summary":"Reset a workflow plan draft back to its initial preview"}},
+            "/workflow-plans/{plan_id}":{"get":{"summary":"Fetch a workflow plan draft and planning conversation"}},
             "/skills/evals/benchmark":{"post":{"summary":"Run benchmark scaffold for skill routing quality"}},
             "/skills/evals/triggers":{"post":{"summary":"Run trigger recall scaffold for a target skill"}},
             "/skills/templates":{"get":{"summary":"List installable skill templates"}},

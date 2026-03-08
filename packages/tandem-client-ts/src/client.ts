@@ -115,6 +115,8 @@ import type {
   AgentTeamApprovalsResponse,
   AutomationV2Spec,
   AutomationV2RunRecord,
+  WorkflowPlan,
+  WorkflowPlanConversation,
   MissionCreateInput,
   MissionCreateResponse,
   MissionListResponse,
@@ -224,6 +226,8 @@ export class TandemClient {
   readonly automations: Automations;
   /** Persistent automation flows (V2) */
   readonly automationsV2: AutomationsV2;
+  /** Engine-owned workflow planning */
+  readonly workflowPlans: WorkflowPlans;
   /** Semantic memory / vector store */
   readonly memory: Memory;
   /** Agent skill packs */
@@ -264,6 +268,7 @@ export class TandemClient {
     this.routines = new Routines(this.baseUrl, getToken, req);
     this.automations = new Automations(this.baseUrl, getToken, req);
     this.automationsV2 = new AutomationsV2(this.baseUrl, getToken, req);
+    this.workflowPlans = new WorkflowPlans(req);
     this.memory = new Memory(req);
     this.skills = new Skills(req);
     this.packs = new Packs(req);
@@ -2167,6 +2172,138 @@ class Routines {
       method: "POST",
       body: JSON.stringify(payload),
     });
+  }
+}
+
+class WorkflowPlans {
+  constructor(private req: TandemClient["_request"]) {}
+
+  async preview(options: {
+    prompt: string;
+    schedule?: JsonObject;
+    planSource?: string;
+    plan_source?: string;
+    allowedMcpServers?: string[];
+    allowed_mcp_servers?: string[];
+    workspaceRoot?: string;
+    workspace_root?: string;
+    operatorPreferences?: JsonObject;
+    operator_preferences?: JsonObject;
+  }): Promise<{ plan: WorkflowPlan }> {
+    return this.req<{ plan: WorkflowPlan }>("/workflow-plans/preview", {
+      method: "POST",
+      body: JSON.stringify({
+        prompt: options.prompt,
+        schedule: options.schedule,
+        plan_source: options.plan_source ?? options.planSource,
+        allowed_mcp_servers: options.allowed_mcp_servers ?? options.allowedMcpServers,
+        workspace_root: options.workspace_root ?? options.workspaceRoot,
+        operator_preferences: options.operator_preferences ?? options.operatorPreferences,
+      }),
+    });
+  }
+
+  async apply(options: {
+    planId?: string;
+    plan_id?: string;
+    plan?: WorkflowPlan;
+    creatorId?: string;
+    creator_id?: string;
+    packBuilderExport?: JsonObject;
+    pack_builder_export?: JsonObject;
+  }): Promise<{
+    ok?: boolean;
+    plan?: WorkflowPlan;
+    automation?: JsonObject;
+    pack_builder_export?: JsonObject;
+  }> {
+    return this.req<{
+      ok?: boolean;
+      plan?: WorkflowPlan;
+      automation?: JsonObject;
+      pack_builder_export?: JsonObject;
+    }>("/workflow-plans/apply", {
+      method: "POST",
+      body: JSON.stringify({
+        plan_id: options.plan_id ?? options.planId,
+        plan: options.plan,
+        creator_id: options.creator_id ?? options.creatorId,
+        pack_builder_export: options.pack_builder_export ?? options.packBuilderExport,
+      }),
+    });
+  }
+
+  async chatStart(options: {
+    prompt: string;
+    schedule?: JsonObject;
+    planSource?: string;
+    plan_source?: string;
+    allowedMcpServers?: string[];
+    allowed_mcp_servers?: string[];
+    workspaceRoot?: string;
+    workspace_root?: string;
+    operatorPreferences?: JsonObject;
+    operator_preferences?: JsonObject;
+  }): Promise<{ plan: WorkflowPlan; conversation: WorkflowPlanConversation }> {
+    return this.req<{ plan: WorkflowPlan; conversation: WorkflowPlanConversation }>(
+      "/workflow-plans/chat/start",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          prompt: options.prompt,
+          schedule: options.schedule,
+          plan_source: options.plan_source ?? options.planSource,
+          allowed_mcp_servers: options.allowed_mcp_servers ?? options.allowedMcpServers,
+          workspace_root: options.workspace_root ?? options.workspaceRoot,
+          operator_preferences: options.operator_preferences ?? options.operatorPreferences,
+        }),
+      }
+    );
+  }
+
+  async get(
+    planId: string
+  ): Promise<{ plan: WorkflowPlan; conversation: WorkflowPlanConversation }> {
+    return this.req<{ plan: WorkflowPlan; conversation: WorkflowPlanConversation }>(
+      `/workflow-plans/${encodeURIComponent(planId)}`
+    );
+  }
+
+  async chatMessage(options: { planId?: string; plan_id?: string; message: string }): Promise<{
+    plan: WorkflowPlan;
+    conversation: WorkflowPlanConversation;
+    assistant_message?: JsonObject;
+    change_summary?: string[];
+    clarifier?: JsonObject | null;
+  }> {
+    return this.req<{
+      plan: WorkflowPlan;
+      conversation: WorkflowPlanConversation;
+      assistant_message?: JsonObject;
+      change_summary?: string[];
+      clarifier?: JsonObject | null;
+    }>("/workflow-plans/chat/message", {
+      method: "POST",
+      body: JSON.stringify({
+        plan_id: options.plan_id ?? options.planId,
+        message: options.message,
+      }),
+    });
+  }
+
+  async chatReset(options: { planId?: string; plan_id?: string }): Promise<{
+    plan: WorkflowPlan;
+    conversation: WorkflowPlanConversation;
+  }> {
+    return this.req<{ plan: WorkflowPlan; conversation: WorkflowPlanConversation }>(
+      "/workflow-plans/chat/reset",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          plan_id: options.plan_id ?? options.planId,
+        }),
+      }
+    );
   }
 }
 

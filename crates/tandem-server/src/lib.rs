@@ -19,8 +19,8 @@ use tandem_memory::types::MemoryTier;
 use tandem_memory::{GovernedMemoryTier, MemoryClassification, MemoryContentKind, MemoryPartition};
 use tandem_orchestrator::MissionState;
 use tandem_types::{
-    EngineEvent, HostOs, HostRuntimeContext, MessagePart, MessagePartInput, ModelSpec, PathStyle,
-    SendMessageRequest, Session, ShellFamily,
+    EngineEvent, HostOs, HostRuntimeContext, MessagePart, MessagePartInput, MessageRole, ModelSpec,
+    PathStyle, SendMessageRequest, Session, ShellFamily,
 };
 use tokio::fs;
 use tokio::sync::RwLock;
@@ -70,6 +70,19 @@ pub use workflows::{
     canonical_workflow_event_names, dispatch_workflow_event, execute_hook_binding,
     execute_workflow, parse_workflow_action, run_workflow_dispatcher, simulate_workflow_event,
 };
+
+pub(crate) fn normalize_absolute_workspace_root(raw: &str) -> Result<String, String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Err("workspace_root is required".to_string());
+    }
+    let as_path = PathBuf::from(trimmed);
+    if !as_path.is_absolute() {
+        return Err("workspace_root must be an absolute path".to_string());
+    }
+    tandem_core::normalize_workspace_path(trimmed)
+        .ok_or_else(|| "workspace_root is invalid".to_string())
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ChannelStatus {
@@ -599,10 +612,25 @@ pub struct AutomationFlowNode {
     pub objective: String,
     #[serde(default)]
     pub depends_on: Vec<String>,
+    #[serde(default)]
+    pub input_refs: Vec<AutomationFlowInputRef>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_contract: Option<AutomationFlowOutputContract>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub retry_policy: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeout_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AutomationFlowInputRef {
+    pub from_step_id: String,
+    pub alias: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AutomationFlowOutputContract {
+    pub kind: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -639,9 +667,85 @@ pub struct AutomationV2Spec {
     pub updated_at_ms: u64,
     pub creator_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_root: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub next_fire_at_ms: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_fired_at_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkflowPlanStep {
+    pub step_id: String,
+    pub kind: String,
+    pub objective: String,
+    #[serde(default)]
+    pub depends_on: Vec<String>,
+    pub agent_role: String,
+    #[serde(default)]
+    pub input_refs: Vec<AutomationFlowInputRef>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_contract: Option<AutomationFlowOutputContract>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkflowPlan {
+    pub plan_id: String,
+    pub planner_version: String,
+    pub plan_source: String,
+    pub original_prompt: String,
+    pub normalized_prompt: String,
+    pub confidence: String,
+    pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    pub schedule: AutomationV2Schedule,
+    pub execution_target: String,
+    pub workspace_root: String,
+    #[serde(default)]
+    pub steps: Vec<WorkflowPlanStep>,
+    #[serde(default)]
+    pub requires_integrations: Vec<String>,
+    #[serde(default)]
+    pub allowed_mcp_servers: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub operator_preferences: Option<Value>,
+    pub save_options: Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkflowPlanChatMessage {
+    pub role: String,
+    pub text: String,
+    pub created_at_ms: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkflowPlanConversation {
+    pub conversation_id: String,
+    pub plan_id: String,
+    pub created_at_ms: u64,
+    pub updated_at_ms: u64,
+    #[serde(default)]
+    pub messages: Vec<WorkflowPlanChatMessage>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkflowPlanDraftRecord {
+    pub initial_plan: WorkflowPlan,
+    pub current_plan: WorkflowPlan,
+    pub conversation: WorkflowPlanConversation,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AutomationNodeOutput {
+    pub contract_kind: String,
+    pub summary: String,
+    pub content: Value,
+    pub created_at_ms: u64,
+    pub node_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1087,6 +1191,9 @@ pub struct AppState {
     pub routine_runs: Arc<RwLock<std::collections::HashMap<String, RoutineRunRecord>>>,
     pub automations_v2: Arc<RwLock<std::collections::HashMap<String, AutomationV2Spec>>>,
     pub automation_v2_runs: Arc<RwLock<std::collections::HashMap<String, AutomationV2RunRecord>>>,
+    pub workflow_plans: Arc<RwLock<std::collections::HashMap<String, WorkflowPlan>>>,
+    pub workflow_plan_drafts:
+        Arc<RwLock<std::collections::HashMap<String, WorkflowPlanDraftRecord>>>,
     pub bug_monitor_config: Arc<RwLock<BugMonitorConfig>>,
     pub bug_monitor_drafts: Arc<RwLock<std::collections::HashMap<String, BugMonitorDraftRecord>>>,
     pub bug_monitor_incidents:
@@ -1155,6 +1262,8 @@ impl AppState {
             routine_runs: Arc::new(RwLock::new(std::collections::HashMap::new())),
             automations_v2: Arc::new(RwLock::new(std::collections::HashMap::new())),
             automation_v2_runs: Arc::new(RwLock::new(std::collections::HashMap::new())),
+            workflow_plans: Arc::new(RwLock::new(std::collections::HashMap::new())),
+            workflow_plan_drafts: Arc::new(RwLock::new(std::collections::HashMap::new())),
             bug_monitor_config: Arc::new(RwLock::new(resolve_bug_monitor_env_config())),
             bug_monitor_drafts: Arc::new(RwLock::new(std::collections::HashMap::new())),
             bug_monitor_incidents: Arc::new(RwLock::new(std::collections::HashMap::new())),
@@ -3122,6 +3231,29 @@ impl AppState {
 
     pub async fn get_automation_v2(&self, automation_id: &str) -> Option<AutomationV2Spec> {
         self.automations_v2.read().await.get(automation_id).cloned()
+    }
+
+    pub async fn put_workflow_plan(&self, plan: WorkflowPlan) {
+        self.workflow_plans
+            .write()
+            .await
+            .insert(plan.plan_id.clone(), plan);
+    }
+
+    pub async fn get_workflow_plan(&self, plan_id: &str) -> Option<WorkflowPlan> {
+        self.workflow_plans.read().await.get(plan_id).cloned()
+    }
+
+    pub async fn put_workflow_plan_draft(&self, draft: WorkflowPlanDraftRecord) {
+        self.workflow_plan_drafts
+            .write()
+            .await
+            .insert(draft.current_plan.plan_id.clone(), draft.clone());
+        self.put_workflow_plan(draft.current_plan).await;
+    }
+
+    pub async fn get_workflow_plan_draft(&self, plan_id: &str) -> Option<WorkflowPlanDraftRecord> {
+        self.workflow_plan_drafts.read().await.get(plan_id).cloned()
     }
 
     pub async fn list_automations_v2(&self) -> Vec<AutomationV2Spec> {
@@ -5421,6 +5553,159 @@ pub async fn run_automation_v2_scheduler(state: AppState) {
     }
 }
 
+fn build_automation_v2_upstream_inputs(
+    run: &AutomationV2RunRecord,
+    node: &AutomationFlowNode,
+) -> anyhow::Result<Vec<Value>> {
+    let mut inputs = Vec::new();
+    for input_ref in &node.input_refs {
+        let Some(output) = run.checkpoint.node_outputs.get(&input_ref.from_step_id) else {
+            anyhow::bail!(
+                "missing upstream output for `{}` referenced by node `{}`",
+                input_ref.from_step_id,
+                node.node_id
+            );
+        };
+        inputs.push(json!({
+            "alias": input_ref.alias,
+            "from_step_id": input_ref.from_step_id,
+            "output": output,
+        }));
+    }
+    Ok(inputs)
+}
+
+fn render_automation_v2_prompt(
+    automation: &AutomationV2Spec,
+    run_id: &str,
+    node: &AutomationFlowNode,
+    agent: &AutomationAgentProfile,
+    upstream_inputs: &[Value],
+) -> String {
+    let contract_kind = node
+        .output_contract
+        .as_ref()
+        .map(|contract| contract.kind.as_str())
+        .unwrap_or("structured_json");
+    let mut prompt = format!(
+        "Automation ID: {}\nRun ID: {}\nNode ID: {}\nAgent: {}\nObjective: {}\nOutput contract kind: {}",
+        automation.automation_id, run_id, node.node_id, agent.display_name, node.objective, contract_kind
+    );
+    if !upstream_inputs.is_empty() {
+        prompt.push_str("\n\nUpstream Inputs:");
+        for input in upstream_inputs {
+            let alias = input
+                .get("alias")
+                .and_then(Value::as_str)
+                .unwrap_or("input");
+            let from_step_id = input
+                .get("from_step_id")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown");
+            let output = input.get("output").cloned().unwrap_or(Value::Null);
+            let rendered =
+                serde_json::to_string_pretty(&output).unwrap_or_else(|_| output.to_string());
+            prompt.push_str(&format!(
+                "\n- {}\n  from_step_id: {}\n  output:\n{}",
+                alias,
+                from_step_id,
+                rendered
+                    .lines()
+                    .map(|line| format!("    {}", line))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            ));
+        }
+    }
+    prompt.push_str(
+        "\n\nReturn a concise completion. If you produce structured content, keep it valid JSON inside the response body.",
+    );
+    prompt
+}
+
+fn extract_session_text_output(session: &Session) -> String {
+    session
+        .messages
+        .iter()
+        .rev()
+        .find(|message| matches!(message.role, MessageRole::Assistant))
+        .map(|message| {
+            message
+                .parts
+                .iter()
+                .filter_map(|part| match part {
+                    MessagePart::Text { text } | MessagePart::Reasoning { text } => {
+                        Some(text.as_str())
+                    }
+                    MessagePart::ToolInvocation { .. } => None,
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+        .unwrap_or_default()
+}
+
+fn wrap_automation_node_output(
+    node: &AutomationFlowNode,
+    session_id: &str,
+    session_text: &str,
+) -> Value {
+    let contract_kind = node
+        .output_contract
+        .as_ref()
+        .map(|contract| contract.kind.clone())
+        .unwrap_or_else(|| "structured_json".to_string());
+    let summary = if session_text.trim().is_empty() {
+        format!("Node `{}` completed successfully.", node.node_id)
+    } else {
+        truncate_text(session_text.trim(), 240)
+    };
+    let content = match contract_kind.as_str() {
+        "report_markdown" | "text_summary" => {
+            json!({ "text": session_text.trim(), "session_id": session_id })
+        }
+        "urls" => json!({ "items": [], "raw_text": session_text.trim(), "session_id": session_id }),
+        "citations" => {
+            json!({ "items": [], "raw_text": session_text.trim(), "session_id": session_id })
+        }
+        _ => json!({ "text": session_text.trim(), "session_id": session_id }),
+    };
+    json!(AutomationNodeOutput {
+        contract_kind,
+        summary,
+        content,
+        created_at_ms: now_ms(),
+        node_id: node.node_id.clone(),
+    })
+}
+
+async fn resolve_automation_v2_workspace_root(
+    state: &AppState,
+    automation: &AutomationV2Spec,
+) -> String {
+    if let Some(workspace_root) = automation
+        .workspace_root
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+    {
+        return workspace_root;
+    }
+    if let Some(workspace_root) = automation
+        .metadata
+        .as_ref()
+        .and_then(|row| row.get("workspace_root"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+    {
+        return workspace_root;
+    }
+    state.workspace_index.snapshot().await.root
+}
+
 async fn execute_automation_v2_node(
     state: &AppState,
     run_id: &str,
@@ -5428,7 +5713,27 @@ async fn execute_automation_v2_node(
     node: &AutomationFlowNode,
     agent: &AutomationAgentProfile,
 ) -> anyhow::Result<Value> {
-    let workspace_root = state.workspace_index.snapshot().await.root;
+    let run = state
+        .get_automation_v2_run(run_id)
+        .await
+        .ok_or_else(|| anyhow::anyhow!("automation run `{}` not found", run_id))?;
+    let upstream_inputs = build_automation_v2_upstream_inputs(&run, node)?;
+    let workspace_root = resolve_automation_v2_workspace_root(state, automation).await;
+    let workspace_path = PathBuf::from(&workspace_root);
+    if !workspace_path.exists() {
+        anyhow::bail!(
+            "workspace_root `{}` for automation `{}` does not exist",
+            workspace_root,
+            automation.automation_id
+        );
+    }
+    if !workspace_path.is_dir() {
+        anyhow::bail!(
+            "workspace_root `{}` for automation `{}` is not a directory",
+            workspace_root,
+            automation.automation_id
+        );
+    }
     let mut session = Session::new(
         Some(format!(
             "Automation {} / {}",
@@ -5456,10 +5761,7 @@ async fn execute_automation_v2_node(
         .as_ref()
         .and_then(|policy| policy.get("default_model"))
         .and_then(parse_model_spec);
-    let prompt = format!(
-        "Automation ID: {}\nRun ID: {}\nNode ID: {}\nAgent: {}\nObjective: {}",
-        automation.automation_id, run_id, node.node_id, agent.display_name, node.objective
-    );
+    let prompt = render_automation_v2_prompt(automation, run_id, node, agent, &upstream_inputs);
     let req = SendMessageRequest {
         parts: vec![MessagePartInput::Text { text: prompt }],
         model,
@@ -5484,12 +5786,18 @@ async fn execute_automation_v2_node(
         .await;
     state.clear_automation_v2_session(run_id, &session_id).await;
 
-    result.map(|_| {
-        serde_json::json!({
-            "sessionID": session_id,
-            "status": "completed",
-        })
-    })
+    result?;
+    let session = state
+        .storage
+        .get_session(&session_id)
+        .await
+        .ok_or_else(|| anyhow::anyhow!("automation session `{}` missing after run", session_id))?;
+    let session_text = extract_session_text_output(&session);
+    Ok(wrap_automation_node_output(
+        node,
+        &session_id,
+        &session_text,
+    ))
 }
 
 pub async fn run_automation_v2_executor(state: AppState) {

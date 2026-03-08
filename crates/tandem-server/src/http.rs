@@ -84,12 +84,14 @@ mod routes_sessions;
 mod routes_setup_understanding;
 mod routes_skills_memory;
 mod routes_system_api;
+mod routes_workflow_planner;
 mod routes_workflows;
 pub(crate) mod routines_automations;
 mod sessions;
 mod setup_understanding;
 mod skills_memory;
 mod system_api;
+mod workflow_planner;
 mod workflows;
 
 use capabilities::*;

@@ -22,6 +22,7 @@ interface SchedulePreset {
 
 interface WizardState {
   goal: string;
+  workspaceRoot: string;
   schedulePreset: string;
   cron: string;
   mode: ExecutionMode;
@@ -104,6 +105,8 @@ const GOAL_EXAMPLES = [
   "Generate a weekly report from our Notion workspace",
 ];
 
+const AUTOMATION_PLANNER_SEED_KEY = "tandem.automations.plannerSeed";
+
 function toArray(input: any, key: string) {
   if (Array.isArray(input)) return input;
   if (Array.isArray(input?.[key])) return input[key];
@@ -143,31 +146,6 @@ function normalizeMcpServers(raw: any): McpServerOption[] {
   return [];
 }
 
-function normalizeMcpToolIds(raw: any): string[] {
-  const rows = Array.isArray(raw) ? raw : Array.isArray(raw?.tools) ? raw.tools : [];
-  return rows
-    .map((tool: any) => {
-      if (typeof tool === "string") return tool.trim();
-      if (!tool || typeof tool !== "object") return "";
-      return String(
-        tool.namespaced_name ||
-          tool.namespacedName ||
-          tool.id ||
-          tool.tool_name ||
-          tool.toolName ||
-          ""
-      ).trim();
-    })
-    .filter(Boolean);
-}
-
-function sanitizeAutomationName(goal: string) {
-  const trimmed = String(goal || "").trim();
-  if (!trimmed) return "Automation";
-  const compact = trimmed.replace(/\s+/g, " ");
-  return compact.length > 72 ? `${compact.slice(0, 69)}...` : compact;
-}
-
 function toSchedulePayload(wizard: WizardState) {
   const customCron = String(wizard.cron || "").trim();
   if (customCron) {
@@ -180,7 +158,7 @@ function toSchedulePayload(wizard: WizardState) {
   if (preset?.cron) {
     return { cron: { expression: preset.cron } };
   }
-  return { interval_seconds: { seconds: 86400 } };
+  return { type: "manual" };
 }
 
 function formatScheduleLabel(schedule: any) {
@@ -211,6 +189,60 @@ function formatAutomationV2ScheduleLabel(schedule: any) {
   return "manual";
 }
 
+function validateWorkspaceRootInput(raw: string) {
+  const value = String(raw || "").trim();
+  if (!value) return "Workspace root is required.";
+  if (!value.startsWith("/")) return "Workspace root must be an absolute path.";
+  return "";
+}
+
+function buildOperatorPreferences(wizard: WizardState) {
+  let roleModels: Record<string, unknown> | undefined;
+  const rawRoleModels = String(wizard.roleModelsJson || "").trim();
+  if (rawRoleModels) {
+    try {
+      const parsed = JSON.parse(rawRoleModels);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        roleModels = parsed as Record<string, unknown>;
+      }
+    } catch {
+      roleModels = undefined;
+    }
+  }
+  const maxParallelAgents =
+    wizard.mode === "swarm"
+      ? Math.max(1, Math.min(16, Number.parseInt(String(wizard.maxAgents || "4"), 10) || 4))
+      : 1;
+  const payload: Record<string, unknown> = {
+    execution_mode: wizard.mode,
+    max_parallel_agents: maxParallelAgents,
+  };
+  if (String(wizard.modelProvider || "").trim()) {
+    payload.model_provider = String(wizard.modelProvider).trim();
+  }
+  if (String(wizard.modelId || "").trim()) {
+    payload.model_id = String(wizard.modelId).trim();
+  }
+  if (roleModels && Object.keys(roleModels).length) {
+    payload.role_models = roleModels;
+  }
+  return payload;
+}
+
+function validateRoleModelsJsonInput(raw: string) {
+  const value = String(raw || "").trim();
+  if (!value) return "";
+  try {
+    const parsed = JSON.parse(value);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return "Role model overrides must be a JSON object.";
+    }
+    return "";
+  } catch {
+    return "Role model overrides must be valid JSON.";
+  }
+}
+
 function scheduleToEditor(schedule: any) {
   const cronExpression = String(
     schedule?.cron?.expression || schedule?.cron_expression || schedule?.cron || ""
@@ -225,18 +257,6 @@ function scheduleToEditor(schedule: any) {
     cronExpression,
     intervalSeconds,
   };
-}
-
-function toolMatchesServer(toolId: string, serverName: string) {
-  const tool = String(toolId || "").toLowerCase();
-  const server = String(serverName || "").toLowerCase();
-  if (!tool || !server) return false;
-  return (
-    tool.startsWith(`mcp.${server}.`) ||
-    tool.startsWith(`${server}.`) ||
-    tool.includes(`.${server}.`) ||
-    tool.includes(`_${server}_`)
-  );
 }
 
 function isActiveRunStatus(status: string) {
@@ -557,12 +577,12 @@ function Step1Goal({
       </div>
       <div className="rounded-xl border border-slate-700/50 bg-slate-900/30 p-3 text-xs text-slate-300">
         <div className="flex items-center justify-between gap-2">
-          <span className="uppercase tracking-wide text-slate-500">Skill routing</span>
+          <span className="uppercase tracking-wide text-slate-500">Reusable Flows</span>
           <span className="text-slate-500">{isMatching ? "Analyzing…" : "Ready"}</span>
         </div>
         {routedSkill ? (
           <p className="mt-1">
-            Selected flow: <strong>{routedSkill}</strong>{" "}
+            Reusable flow match: <strong>{routedSkill}</strong>{" "}
             {routingConfidence ? `(${routingConfidence})` : ""}
             {validationBadge ? (
               <span
@@ -574,7 +594,7 @@ function Step1Goal({
           </p>
         ) : (
           <p className="mt-1 text-slate-400">
-            No flow selected yet. Tandem will fall back to generic pack builder mode.
+            No reusable flow selected. Tandem will create and run a workflow plan in the engine.
           </p>
         )}
         {topMatches.length ? (
@@ -590,7 +610,9 @@ function Step1Goal({
       </div>
       <div className="rounded-xl border border-slate-700/50 bg-slate-900/30 p-3 text-xs text-slate-300">
         <div className="flex items-center justify-between gap-2">
-          <span className="uppercase tracking-wide text-slate-500">Advanced: Skill Builder</span>
+          <span className="uppercase tracking-wide text-slate-500">
+            Advanced: Reusable Skill Export
+          </span>
           <div className="flex items-center gap-2">
             <button className="tcp-btn h-7 px-2 text-xs" onClick={onToggleAdvancedMode}>
               {advancedMode ? "Hide Advanced" : "Show Advanced"}
@@ -600,17 +622,21 @@ function Step1Goal({
               onClick={onGenerateSkill}
               disabled={!value.trim() || isGeneratingSkill}
             >
-              {isGeneratingSkill ? "Generating…" : "Generate Skill from Prompt"}
+              {isGeneratingSkill ? "Generating…" : "Generate Reusable Skill Draft"}
             </button>
             <button
               className="tcp-btn h-7 px-2 text-xs"
               onClick={onInstallGeneratedSkill}
               disabled={!generatedSkill?.artifacts || isInstallingSkill}
             >
-              {isInstallingSkill ? "Installing…" : "Install Generated Skill"}
+              {isInstallingSkill ? "Installing…" : "Save Reusable Skill"}
             </button>
           </div>
         </div>
+        <p className="mt-1 text-slate-400">
+          This does not power the default automation path. Use it only if you want to export the
+          planned workflow into a reusable skill scaffold.
+        </p>
         {advancedMode ? (
           <div className="mt-2 grid gap-2">
             <input
@@ -644,12 +670,12 @@ function Step1Goal({
         {generatedSkill ? (
           <div className="mt-2 grid gap-1">
             <p>
-              Generated scaffold status:{" "}
+              Optional scaffold status:{" "}
               <strong>{String(generatedSkill?.status || "generated")}</strong>
             </p>
             <p>
               Suggested skill:{" "}
-              <strong>{String(generatedSkill?.router?.skill_name || "new generated skill")}</strong>
+              <strong>{String(generatedSkill?.router?.skill_name || "new optional skill")}</strong>
             </p>
             <p className="text-slate-400">
               Artifacts:{" "}
@@ -689,7 +715,8 @@ function Step1Goal({
           </div>
         ) : (
           <p className="mt-1 text-slate-400">
-            Generate scaffold files from your prompt, then refine before installation.
+            Generate a reusable skill draft after planning if you want to save this workflow for
+            later reuse.
           </p>
         )}
         {installStatus ? <p className="mt-2 text-slate-300">{installStatus}</p> : null}
@@ -752,6 +779,8 @@ function Step3Mode({
   onSelect,
   maxAgents,
   onMaxAgents,
+  workspaceRoot,
+  onWorkspaceRootChange,
   providerOptions,
   providerId,
   modelId,
@@ -759,15 +788,19 @@ function Step3Mode({
   onModelChange,
   roleModelsJson,
   onRoleModelsChange,
+  roleModelsError,
   mcpServers,
   selectedMcpServers,
   onToggleMcpServer,
   onOpenMcpSettings,
+  workspaceRootError,
 }: {
   selected: ExecutionMode;
   onSelect: (mode: ExecutionMode) => void;
   maxAgents: string;
   onMaxAgents: (v: string) => void;
+  workspaceRoot: string;
+  onWorkspaceRootChange: (v: string) => void;
   providerOptions: ProviderOption[];
   providerId: string;
   modelId: string;
@@ -775,10 +808,12 @@ function Step3Mode({
   onModelChange: (v: string) => void;
   roleModelsJson: string;
   onRoleModelsChange: (v: string) => void;
+  roleModelsError: string;
   mcpServers: McpServerOption[];
   selectedMcpServers: string[];
   onToggleMcpServer: (name: string) => void;
   onOpenMcpSettings: () => void;
+  workspaceRootError: string;
 }) {
   const modelOptions = providerOptions.find((p) => p.id === providerId)?.models || [];
   return (
@@ -829,6 +864,24 @@ function Step3Mode({
         </div>
       ) : null}
       <div className="grid gap-2 rounded-xl border border-slate-700/50 bg-slate-900/30 p-3">
+        <div className="text-xs uppercase tracking-wide text-slate-500">Execution Directory</div>
+        <div className="grid gap-1">
+          <label className="text-xs text-slate-400">Workspace root</label>
+          <input
+            className={`tcp-input text-sm ${workspaceRootError ? "border-red-500/70 text-red-100" : ""}`}
+            value={workspaceRoot}
+            onInput={(e) => onWorkspaceRootChange((e.target as HTMLInputElement).value)}
+            placeholder="/absolute/path/to/project"
+          />
+          <div className="text-xs text-slate-500">
+            Tandem will run this automation from this workspace directory.
+          </div>
+          {workspaceRootError ? (
+            <div className="text-xs text-red-300">{workspaceRootError}</div>
+          ) : null}
+        </div>
+      </div>
+      <div className="grid gap-2 rounded-xl border border-slate-700/50 bg-slate-900/30 p-3">
         <div className="text-xs uppercase tracking-wide text-slate-500">Model Selection</div>
         <div className="grid gap-2 sm:grid-cols-2">
           <div className="grid gap-1">
@@ -867,11 +920,12 @@ function Step3Mode({
         <div className="grid gap-1">
           <label className="text-xs text-slate-400">Role model overrides (advanced JSON)</label>
           <textarea
-            className="tcp-input min-h-[72px] font-mono text-xs"
+            className={`tcp-input min-h-[72px] font-mono text-xs ${roleModelsError ? "border-red-500/70 text-red-100" : ""}`}
             value={roleModelsJson}
             onInput={(e) => onRoleModelsChange((e.target as HTMLTextAreaElement).value)}
             placeholder={`{"planner":{"provider_id":"openai","model_id":"gpt-5"},"worker":{"provider_id":"anthropic","model_id":"claude-sonnet-4"}}`}
           />
+          {roleModelsError ? <div className="text-xs text-red-300">{roleModelsError}</div> : null}
         </div>
       </div>
       <div className="grid gap-2 rounded-xl border border-slate-700/50 bg-slate-900/30 p-3">
@@ -910,22 +964,75 @@ function Step4Review({
   wizard,
   onSubmit,
   isPending,
-  compileResult,
-  isCompiling,
+  planPreview,
+  isPreviewing,
+  planningConversation,
+  planningChangeSummary,
+  onSendPlanningMessage,
+  isSendingPlanningMessage,
+  onResetPlanningChat,
+  isResettingPlanningChat,
+  plannerError,
 }: {
   wizard: WizardState;
   onSubmit: () => void;
   isPending: boolean;
-  compileResult: any;
-  isCompiling: boolean;
+  planPreview: any;
+  isPreviewing: boolean;
+  planningConversation: any;
+  planningChangeSummary: string[];
+  onSendPlanningMessage: (message: string) => void;
+  isSendingPlanningMessage: boolean;
+  onResetPlanningChat: () => void;
+  isResettingPlanningChat: boolean;
+  plannerError: string;
 }) {
-  const schedule = wizard.cron
+  const [planningNote, setPlanningNote] = useState("");
+  const wizardSchedule = wizard.cron
     ? wizard.cron
     : SCHEDULE_PRESETS.find((p) => p.label === wizard.schedulePreset)?.intervalSeconds
       ? `Every ${SCHEDULE_PRESETS.find((p) => p.label === wizard.schedulePreset)!.intervalSeconds! / 3600}h`
       : wizard.schedulePreset || "Manual";
-
-  const modeInfo = EXECUTION_MODES.find((m) => m.id === wizard.mode);
+  const planOperatorPreferences =
+    planPreview && typeof planPreview === "object"
+      ? planPreview.operator_preferences || planPreview.operatorPreferences || {}
+      : {};
+  const effectiveMode = String(
+    (planOperatorPreferences as any)?.execution_mode || wizard.mode || "team"
+  ).trim() as ExecutionMode;
+  const modeInfo = EXECUTION_MODES.find((m) => m.id === effectiveMode);
+  const effectiveMaxParallel = Number(
+    (planOperatorPreferences as any)?.max_parallel_agents ??
+      (planOperatorPreferences as any)?.maxParallelAgents ??
+      (effectiveMode === "swarm" ? wizard.maxAgents : 1)
+  );
+  const hasPlanPreview = !!planPreview;
+  const effectiveModelProvider = String(
+    hasPlanPreview
+      ? (planOperatorPreferences as any)?.model_provider ||
+          (planOperatorPreferences as any)?.modelProvider ||
+          ""
+      : wizard.modelProvider || ""
+  ).trim();
+  const effectiveModelId = String(
+    hasPlanPreview
+      ? (planOperatorPreferences as any)?.model_id ||
+          (planOperatorPreferences as any)?.modelId ||
+          ""
+      : wizard.modelId || ""
+  ).trim();
+  const effectiveWorkspaceRoot = String(
+    planPreview?.workspace_root || planPreview?.workspaceRoot || wizard.workspaceRoot || ""
+  ).trim();
+  const effectiveMcpServers = Array.isArray(
+    planPreview?.allowed_mcp_servers || planPreview?.allowedMcpServers
+  )
+    ? ((planPreview?.allowed_mcp_servers || planPreview?.allowedMcpServers || []) as string[])
+    : wizard.selectedMcpServers;
+  const effectiveSchedule = planPreview?.schedule
+    ? formatAutomationV2ScheduleLabel(planPreview.schedule)
+    : wizardSchedule;
+  const effectivePlanTitle = String(planPreview?.title || "").trim();
 
   return (
     <div className="grid gap-4">
@@ -933,6 +1040,12 @@ function Step4Review({
 
       {/* Summary card */}
       <div className="rounded-xl border border-slate-700/60 bg-slate-900/40 p-4 grid gap-3">
+        {effectivePlanTitle ? (
+          <div className="grid gap-1">
+            <span className="text-xs text-slate-500 uppercase tracking-wide">Plan Title</span>
+            <span className="text-sm font-semibold text-slate-100">{effectivePlanTitle}</span>
+          </div>
+        ) : null}
         <div className="grid gap-1">
           <span className="text-xs text-slate-500 uppercase tracking-wide">Goal</span>
           <span className="text-sm text-slate-100 italic">"{wizard.goal}"</span>
@@ -940,40 +1053,55 @@ function Step4Review({
         <div className="grid grid-cols-2 gap-3">
           <div className="grid gap-1">
             <span className="text-xs text-slate-500 uppercase tracking-wide">Schedule</span>
-            <span className="text-sm font-medium text-slate-200">
-              {modeInfo?.icon} {wizard.schedulePreset || schedule}
-            </span>
+            <span className="text-sm font-medium text-slate-200">{effectiveSchedule}</span>
           </div>
           <div className="grid gap-1">
             <span className="text-xs text-slate-500 uppercase tracking-wide">Execution Mode</span>
             <span className="text-sm font-medium text-slate-200">
-              {modeInfo?.icon} {modeInfo?.label}
+              {modeInfo?.icon} {modeInfo?.label || effectiveMode}
+              {Number.isFinite(effectiveMaxParallel) && effectiveMaxParallel > 1
+                ? ` · ${effectiveMaxParallel} agents`
+                : ""}
             </span>
           </div>
         </div>
-        {wizard.modelProvider || wizard.modelId ? (
+        {hasPlanPreview || effectiveModelProvider || effectiveModelId ? (
           <div className="grid gap-1">
             <span className="text-xs text-slate-500 uppercase tracking-wide">Model Override</span>
             <span className="text-sm font-medium text-slate-200">
-              {wizard.modelProvider || "default provider"} / {wizard.modelId || "default model"}
+              {effectiveModelProvider || effectiveModelId
+                ? `${effectiveModelProvider || "default provider"} / ${effectiveModelId || "default model"}`
+                : "Workspace default"}
             </span>
           </div>
         ) : null}
-        {wizard.selectedMcpServers.length ? (
+        <div className="grid gap-1">
+          <span className="text-xs text-slate-500 uppercase tracking-wide">Workspace Root</span>
+          <code className="rounded bg-slate-800/60 px-2 py-1 text-xs text-slate-300">
+            {effectiveWorkspaceRoot || "engine workspace root"}
+          </code>
+        </div>
+        {hasPlanPreview || effectiveMcpServers.length ? (
           <div className="grid gap-1">
             <span className="text-xs text-slate-500 uppercase tracking-wide">MCP Servers</span>
-            <div className="flex flex-wrap gap-1">
-              {wizard.selectedMcpServers.map((name) => (
-                <span key={name} className="tcp-badge-info">
-                  {name}
-                </span>
-              ))}
-            </div>
+            {effectiveMcpServers.length ? (
+              <div className="flex flex-wrap gap-1">
+                {effectiveMcpServers.map((name) => (
+                  <span key={name} className="tcp-badge-info">
+                    {name}
+                  </span>
+                ))}
+              </div>
+            ) : (
+              <span className="text-sm font-medium text-slate-400">None</span>
+            )}
           </div>
         ) : null}
         {wizard.routedSkill ? (
           <div className="grid gap-1">
-            <span className="text-xs text-slate-500 uppercase tracking-wide">Selected Flow</span>
+            <span className="text-xs text-slate-500 uppercase tracking-wide">
+              Reusable Flow Match
+            </span>
             <span className="text-sm font-medium text-slate-200">
               {wizard.routedSkill}
               {wizard.routingConfidence ? ` (${wizard.routingConfidence})` : ""}
@@ -989,43 +1117,146 @@ function Step4Review({
           </div>
         ) : null}
         <div className="grid gap-1">
-          <span className="text-xs text-slate-500 uppercase tracking-wide">Compile Status</span>
-          {isCompiling ? (
-            <span className="text-sm text-slate-300">Compiling selected flow…</span>
-          ) : compileResult ? (
+          <span className="text-xs text-slate-500 uppercase tracking-wide">Workflow Plan</span>
+          {isPreviewing ? (
+            <span className="text-sm text-slate-300">Planning workflow…</span>
+          ) : planPreview ? (
             <div className="grid gap-1 text-sm text-slate-300">
               <span>
-                Status: <strong>{String(compileResult?.status || "unknown")}</strong>
+                Confidence: <strong>{String(planPreview?.confidence || "unknown")}</strong>
               </span>
               <span>
-                Workflow kind:{" "}
-                <strong>{String(compileResult?.workflow_kind || "pack_builder_recipe")}</strong>
+                Execution target:{" "}
+                <strong>{String(planPreview?.execution_target || "automation_v2")}</strong>
               </span>
+              {effectivePlanTitle ? (
+                <span>
+                  Title: <strong>{effectivePlanTitle}</strong>
+                </span>
+              ) : null}
               <span>
-                Validation:{" "}
-                <strong>
-                  {typeof compileResult?.validation?.valid === "number"
-                    ? `${String(compileResult.validation.valid)} valid / ${String(compileResult.validation.invalid || 0)} invalid`
-                    : "not available"}
-                </strong>
+                Steps:{" "}
+                <strong>{Array.isArray(planPreview?.steps) ? planPreview.steps.length : 0}</strong>
               </span>
+              {Array.isArray(planPreview?.steps) && planPreview.steps.length ? (
+                <div className="mt-1 grid gap-1">
+                  {planPreview.steps.map((step: any, index: number) => (
+                    <div
+                      key={`${String(step?.step_id || step?.stepId || index)}-${index}`}
+                      className="rounded-lg border border-slate-800 bg-slate-950/40 px-2 py-1"
+                    >
+                      <div className="text-xs font-medium text-slate-200">
+                        {String(step?.step_id || step?.stepId || `step-${index + 1}`)}
+                        {step?.kind ? (
+                          <span className="ml-2 text-[11px] uppercase tracking-wide text-slate-500">
+                            {String(step.kind)}
+                          </span>
+                        ) : null}
+                      </div>
+                      {typeof step?.objective === "string" && step.objective.trim() ? (
+                        <div className="text-xs text-slate-400">{step.objective}</div>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+              {typeof planPreview?.description === "string" && planPreview.description.trim() ? (
+                <span>{planPreview.description}</span>
+              ) : null}
             </div>
           ) : (
-            <span className="text-sm text-slate-400">No compile summary available.</span>
+            <span className="text-sm text-slate-400">No workflow plan available yet.</span>
           )}
+        </div>
+      </div>
+
+      {plannerError ? (
+        <div className="rounded-xl border border-red-500/40 bg-red-950/30 p-3 text-sm text-red-200">
+          {plannerError}
+        </div>
+      ) : null}
+
+      {planningChangeSummary.length ? (
+        <div className="rounded-xl border border-emerald-500/30 bg-emerald-950/20 p-3">
+          <div className="text-xs uppercase tracking-wide text-emerald-300">
+            Latest Plan Changes
+          </div>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {planningChangeSummary.map((item, index) => (
+              <span key={`${item}-${index}`} className="tcp-badge-ok">
+                {item}
+              </span>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      <div className="rounded-xl border border-slate-700/60 bg-slate-900/40 p-4 grid gap-3">
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-xs text-slate-500 uppercase tracking-wide">Planning Chat</span>
+          <button
+            className="tcp-btn h-7 px-2 text-xs"
+            disabled={isResettingPlanningChat || !planPreview?.plan_id}
+            onClick={onResetPlanningChat}
+          >
+            {isResettingPlanningChat ? "Resetting…" : "Reset Plan"}
+          </button>
+        </div>
+        <div className="rounded-lg border border-amber-500/30 bg-amber-950/20 px-3 py-2 text-xs text-amber-200">
+          Planning chat is currently limited to deterministic edits like schedule, workspace root,
+          title, MCP servers, execution mode, and model overrides. Broader workflow rewrites are not
+          supported in this slice yet.
+        </div>
+        <div className="max-h-56 overflow-auto rounded-lg border border-slate-800 bg-slate-950/50 p-3">
+          {Array.isArray(planningConversation?.messages) && planningConversation.messages.length ? (
+            <div className="grid gap-3">
+              {planningConversation.messages.map((message: any, index: number) => (
+                <div key={`${message?.created_at_ms || index}-${index}`} className="grid gap-1">
+                  <span className="text-[11px] uppercase tracking-wide text-slate-500">
+                    {String(message?.role || "assistant")}
+                  </span>
+                  <div className="text-sm text-slate-200">{String(message?.text || "").trim()}</div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="text-sm text-slate-400">
+              Add planning notes here to revise the workflow before creating it.
+            </div>
+          )}
+        </div>
+        <textarea
+          className="tcp-input min-h-[84px] text-sm"
+          value={planningNote}
+          onInput={(e) => setPlanningNote((e.target as HTMLTextAreaElement).value)}
+          placeholder='Example: "Make this weekly, run it from /srv/acme/app, and remove notifications."'
+        />
+        <div className="flex justify-end">
+          <button
+            className="tcp-btn-primary"
+            disabled={isSendingPlanningMessage || !planningNote.trim() || !planPreview?.plan_id}
+            onClick={() => {
+              const note = planningNote.trim();
+              if (!note) return;
+              onSendPlanningMessage(note);
+              setPlanningNote("");
+            }}
+          >
+            {isSendingPlanningMessage ? "Updating plan…" : "Update Plan"}
+          </button>
         </div>
       </div>
 
       <div className="rounded-xl border border-slate-700/40 bg-slate-800/20 p-3 text-xs text-slate-400">
         💡 Tandem will save this automation and schedule a{" "}
-        <strong className="text-slate-300">{modeInfo?.label}</strong> that runs{" "}
-        <strong className="text-slate-300">{wizard.schedulePreset || schedule}</strong>. You can
-        pause, edit or delete it anytime.
+        <strong className="text-slate-300">{modeInfo?.label || effectiveMode}</strong> that runs{" "}
+        <strong className="text-slate-300">{effectiveSchedule}</strong>. You can pause, edit or
+        delete it anytime.
       </div>
 
       <button
         className="tcp-btn-primary"
-        disabled={isPending || !wizard.goal.trim()}
+        disabled={isPending || isPreviewing || !wizard.goal.trim() || !planPreview}
         onClick={onSubmit}
       >
         {isPending ? "Creating automation…" : "🚀 Create Automation"}
@@ -1051,10 +1282,14 @@ function CreateWizard({
 }) {
   const queryClient = useQueryClient();
   const [step, setStep] = useState<WizardStep>(1);
+  const [planSource, setPlanSource] = useState<string>("automations_page");
   const [routerMatches, setRouterMatches] = useState<
     Array<{ skill_name?: string; confidence?: number }>
   >([]);
-  const [compileResult, setCompileResult] = useState<any>(null);
+  const [planPreview, setPlanPreview] = useState<any>(null);
+  const [planningConversation, setPlanningConversation] = useState<any>(null);
+  const [planningChangeSummary, setPlanningChangeSummary] = useState<string[]>([]);
+  const [plannerError, setPlannerError] = useState<string>("");
   const [validationBadge, setValidationBadge] = useState<string>("");
   const [generatedSkill, setGeneratedSkill] = useState<any>(null);
   const [showArtifactPreview, setShowArtifactPreview] = useState<boolean>(false);
@@ -1062,6 +1297,7 @@ function CreateWizard({
   const [installStatus, setInstallStatus] = useState<string>("");
   const [wizard, setWizard] = useState<WizardState>({
     goal: "",
+    workspaceRoot: "",
     schedulePreset: "Every morning",
     cron: "",
     mode: "team",
@@ -1096,10 +1332,10 @@ function CreateWizard({
     refetchInterval: 12000,
   });
 
-  const mcpToolsQuery = useQuery({
-    queryKey: ["mcp", "tools"],
-    queryFn: () => client.mcp.listTools().catch(() => []),
-    refetchInterval: 15000,
+  const healthQuery = useQuery({
+    queryKey: ["global", "health"],
+    queryFn: () => client.health().catch(() => ({})),
+    refetchInterval: 30000,
   });
 
   const providerOptions = useMemo(() => {
@@ -1119,8 +1355,6 @@ function CreateWizard({
     () => normalizeMcpServers(mcpServersQuery.data),
     [mcpServersQuery.data]
   );
-  const mcpToolIds = useMemo(() => normalizeMcpToolIds(mcpToolsQuery.data), [mcpToolsQuery.data]);
-
   useEffect(() => {
     const configDefaultProvider = String(
       providersConfigQuery.data?.default || defaultProvider || ""
@@ -1144,6 +1378,20 @@ function CreateWizard({
     });
   }, [defaultModel, defaultProvider, providerOptions, providersConfigQuery.data]);
 
+  useEffect(() => {
+    const defaultWorkspaceRoot = String(
+      (healthQuery.data as any)?.workspaceRoot || (healthQuery.data as any)?.workspace_root || ""
+    ).trim();
+    if (!defaultWorkspaceRoot) return;
+    setWizard((current) => {
+      if (String(current.workspaceRoot || "").trim()) return current;
+      return {
+        ...current,
+        workspaceRoot: defaultWorkspaceRoot,
+      };
+    });
+  }, [healthQuery.data]);
+
   const matchMutation = useMutation({
     mutationFn: async (goal: string) => {
       if (!goal.trim() || !client?.skills?.match) {
@@ -1158,20 +1406,82 @@ function CreateWizard({
 
   const compileMutation = useMutation({
     mutationFn: async () => {
-      if (!client?.skills?.compile) {
+      if (!client?.workflowPlans?.chatStart) {
         return null;
       }
-      return client.skills.compile({
-        skillName: wizard.routedSkill || undefined,
-        goal: wizard.goal,
-        schedule:
-          wizard.cron && wizard.cron.trim()
-            ? { type: "cron", cron_expression: wizard.cron }
-            : undefined,
+      const response = await client.workflowPlans.chatStart({
+        prompt: wizard.goal,
+        schedule: toSchedulePayload(wizard),
+        plan_source: planSource,
+        allowed_mcp_servers: wizard.selectedMcpServers,
+        workspace_root: wizard.workspaceRoot,
+        operator_preferences: buildOperatorPreferences(wizard),
+      });
+      return response || null;
+    },
+    onSuccess: (res) => {
+      setPlanPreview(res?.plan || null);
+      setPlanningConversation(res?.conversation || null);
+      setPlanningChangeSummary([]);
+      setPlannerError("");
+    },
+    onError: (error) => {
+      setPlanPreview(null);
+      setPlanningConversation(null);
+      setPlanningChangeSummary([]);
+      setPlannerError(error instanceof Error ? error.message : String(error));
+    },
+  });
+
+  const planningMessageMutation = useMutation({
+    mutationFn: async (message: string) => {
+      if (!client?.workflowPlans?.chatMessage || !planPreview?.plan_id) {
+        return null;
+      }
+      return client.workflowPlans.chatMessage({
+        plan_id: planPreview.plan_id,
+        message,
       });
     },
-    onSuccess: (res) => setCompileResult(res),
-    onError: () => setCompileResult(null),
+    onSuccess: (res) => {
+      setPlanPreview(res?.plan || null);
+      setPlanningConversation(res?.conversation || null);
+      setPlanningChangeSummary(
+        Array.isArray(res?.change_summary)
+          ? res.change_summary.map((row: any) => String(row || "").trim()).filter(Boolean)
+          : []
+      );
+      setPlannerError(
+        typeof res?.clarifier?.question === "string" ? String(res.clarifier.question) : ""
+      );
+    },
+    onError: (error) => {
+      const message = error instanceof Error ? error.message : String(error);
+      setPlannerError(message);
+      toast("err", message);
+    },
+  });
+
+  const planningResetMutation = useMutation({
+    mutationFn: async () => {
+      if (!client?.workflowPlans?.chatReset || !planPreview?.plan_id) {
+        return null;
+      }
+      return client.workflowPlans.chatReset({
+        plan_id: planPreview.plan_id,
+      });
+    },
+    onSuccess: (res) => {
+      setPlanPreview(res?.plan || null);
+      setPlanningConversation(res?.conversation || null);
+      setPlanningChangeSummary([]);
+      setPlannerError("");
+    },
+    onError: (error) => {
+      const message = error instanceof Error ? error.message : String(error);
+      setPlannerError(message);
+      toast("err", message);
+    },
   });
 
   const validateSkillMutation = useMutation({
@@ -1223,7 +1533,7 @@ function CreateWizard({
     onError: () => {
       setGeneratedSkill(null);
       setShowArtifactPreview(false);
-      setInstallStatus("Skill generation failed.");
+      setInstallStatus("Optional skill generation failed.");
     },
   });
 
@@ -1250,8 +1560,8 @@ function CreateWizard({
       const name = (res as any)?.skill?.name;
       setInstallStatus(
         name
-          ? `Installed generated skill as '${String(name)}' in project skills.`
-          : "Installed generated skill in project skills."
+          ? `Installed optional skill as '${String(name)}' in project skills.`
+          : "Installed optional skill in project skills."
       );
       void queryClient.invalidateQueries({ queryKey: ["automations"] });
     },
@@ -1262,77 +1572,17 @@ function CreateWizard({
   const deployMutation = useMutation({
     mutationFn: async () => {
       if (!wizard.goal.trim()) throw new Error("Please describe your goal first.");
-      const normalizedProvider = String(wizard.modelProvider || "").trim();
-      const normalizedModel = String(wizard.modelId || "").trim();
-      const roleModelsRaw = String(wizard.roleModelsJson || "").trim();
-      let roleModels: Record<string, { provider_id: string; model_id: string }> = {};
-      if (roleModelsRaw) {
-        const parsed = JSON.parse(roleModelsRaw);
-        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-          throw new Error("Role model overrides must be a JSON object.");
-        }
-        for (const [role, spec] of Object.entries(parsed as Record<string, any>)) {
-          const providerId = String(spec?.provider_id || "").trim();
-          const modelId = String(spec?.model_id || "").trim();
-          if (!providerId || !modelId) {
-            throw new Error(
-              `Role override '${String(role)}' must include provider_id and model_id.`
-            );
-          }
-          roleModels[role] = { provider_id: providerId, model_id: modelId };
-        }
+      const preview =
+        planPreview ||
+        (await compileMutation.mutateAsync().catch((error: unknown) => {
+          throw error instanceof Error ? error : new Error(String(error));
+        }));
+      const nextPlan = preview?.plan || preview;
+      if (!nextPlan) {
+        throw new Error("Workflow plan preview failed.");
       }
-      const modelPolicy =
-        (normalizedProvider && normalizedModel) || Object.keys(roleModels).length
-          ? {
-              ...(normalizedProvider && normalizedModel
-                ? {
-                    default_model: {
-                      provider_id: normalizedProvider,
-                      model_id: normalizedModel,
-                    },
-                  }
-                : {}),
-              ...(Object.keys(roleModels).length ? { role_models: roleModels } : {}),
-            }
-          : undefined;
-      const selectedServers = wizard.selectedMcpServers
-        .map((server) => String(server).trim())
-        .filter(Boolean);
-      const selectedToolAllowlist = Array.from(
-        new Set(
-          mcpToolIds.filter((toolId) =>
-            selectedServers.some((serverName) => toolMatchesServer(toolId, serverName))
-          )
-        )
-      );
-      const briefing = selectedServers.length
-        ? `Preferred MCP servers: ${selectedServers.join(", ")}`
-        : undefined;
-      return client.automations.create({
-        name: sanitizeAutomationName(wizard.goal),
-        schedule: toSchedulePayload(wizard),
-        mode: wizard.mode === "single" ? "standalone" : "orchestrated",
-        mission: {
-          objective: wizard.goal.trim(),
-          success_criteria: wizard.routedSkill
-            ? [
-                `Use routed skill ${wizard.routedSkill}`,
-                "Produce a complete outcome for the defined goal",
-              ]
-            : ["Produce a complete outcome for the defined goal"],
-          briefing,
-        },
-        policy: {
-          tool: {
-            ...(selectedToolAllowlist.length ? { run_allowlist: selectedToolAllowlist } : {}),
-            external_integrations_allowed: selectedServers.length > 0,
-            orchestrator_only_tool_calls: wizard.mode !== "single",
-          },
-          approval: { requires_approval: false },
-        },
-        ...(modelPolicy ? { model_policy: modelPolicy } : {}),
-        creator_type: "user",
+      return client.workflowPlans.apply({
+        plan: nextPlan,
         creator_id: "control-panel",
       });
     },
@@ -1344,6 +1594,11 @@ function CreateWizard({
       ]);
       setWizard({
         goal: "",
+        workspaceRoot: String(
+          (healthQuery.data as any)?.workspaceRoot ||
+            (healthQuery.data as any)?.workspace_root ||
+            ""
+        ).trim(),
         schedulePreset: "Every morning",
         cron: "",
         mode: "team",
@@ -1360,7 +1615,11 @@ function CreateWizard({
         customWorkflowKind: "pack_builder_recipe",
       });
       setRouterMatches([]);
-      setCompileResult(null);
+      setPlanSource("automations_page");
+      setPlanPreview(null);
+      setPlanningConversation(null);
+      setPlanningChangeSummary([]);
+      setPlannerError("");
       setValidationBadge("");
       setGeneratedSkill(null);
       setShowArtifactPreview(false);
@@ -1368,8 +1627,15 @@ function CreateWizard({
       setInstallStatus("");
       setStep(1);
     },
-    onError: (error) => toast("err", error instanceof Error ? error.message : String(error)),
+    onError: (error) => {
+      const message = error instanceof Error ? error.message : String(error);
+      setPlannerError(message);
+      toast("err", message);
+    },
   });
+
+  const workspaceRootError = validateWorkspaceRootInput(wizard.workspaceRoot);
+  const roleModelsError = validateRoleModelsJsonInput(wizard.roleModelsJson);
 
   const canAdvance =
     step === 1
@@ -1377,7 +1643,7 @@ function CreateWizard({
       : step === 2
         ? !!wizard.schedulePreset || !!wizard.cron.trim()
         : step === 3
-          ? !!wizard.mode
+          ? !!wizard.mode && !workspaceRootError && !roleModelsError
           : true;
 
   const STEPS = ["What?", "When?", "How?", "Review"];
@@ -1406,9 +1672,33 @@ function CreateWizard({
     const next = (step + 1) as WizardStep;
     setStep(next);
     if (next === 4) {
+      setPlannerError("");
+      setPlanPreview(null);
+      setPlanningConversation(null);
+      setPlanningChangeSummary([]);
       void compileMutation.mutateAsync();
     }
   };
+
+  useEffect(() => {
+    if (step !== 1) return;
+    try {
+      const raw = sessionStorage.getItem(AUTOMATION_PLANNER_SEED_KEY);
+      if (!raw) return;
+      sessionStorage.removeItem(AUTOMATION_PLANNER_SEED_KEY);
+      const seed = JSON.parse(raw);
+      const prompt = String(seed?.prompt || "").trim();
+      if (!prompt) return;
+      const nextPlanSource = String(seed?.plan_source || "chat_setup").trim() || "chat_setup";
+      setPlanSource(nextPlanSource);
+      setWizard((current) => ({
+        ...current,
+        goal: prompt,
+      }));
+    } catch {
+      // ignore
+    }
+  }, [step]);
 
   return (
     <div className="grid gap-4">
@@ -1521,6 +1811,8 @@ function CreateWizard({
               onSelect={(mode) => setWizard((s) => ({ ...s, mode }))}
               maxAgents={wizard.maxAgents}
               onMaxAgents={(v) => setWizard((s) => ({ ...s, maxAgents: v }))}
+              workspaceRoot={wizard.workspaceRoot}
+              onWorkspaceRootChange={(v) => setWizard((s) => ({ ...s, workspaceRoot: v }))}
               providerOptions={providerOptions}
               providerId={wizard.modelProvider}
               modelId={wizard.modelId}
@@ -1534,6 +1826,7 @@ function CreateWizard({
               onModelChange={(v) => setWizard((s) => ({ ...s, modelId: v }))}
               roleModelsJson={wizard.roleModelsJson}
               onRoleModelsChange={(v) => setWizard((s) => ({ ...s, roleModelsJson: v }))}
+              roleModelsError={roleModelsError}
               mcpServers={mcpServers}
               selectedMcpServers={wizard.selectedMcpServers}
               onToggleMcpServer={(name) =>
@@ -1545,14 +1838,26 @@ function CreateWizard({
                 }))
               }
               onOpenMcpSettings={() => navigate("mcp")}
+              workspaceRootError={workspaceRootError}
             />
           ) : (
             <Step4Review
               wizard={wizard}
               onSubmit={() => deployMutation.mutate()}
               isPending={deployMutation.isPending}
-              compileResult={compileResult}
-              isCompiling={compileMutation.isPending}
+              planPreview={planPreview}
+              isPreviewing={compileMutation.isPending}
+              planningConversation={planningConversation}
+              planningChangeSummary={planningChangeSummary}
+              onSendPlanningMessage={(message) => {
+                void planningMessageMutation.mutateAsync(message);
+              }}
+              isSendingPlanningMessage={planningMessageMutation.isPending}
+              onResetPlanningChat={() => {
+                void planningResetMutation.mutateAsync();
+              }}
+              isResettingPlanningChat={planningResetMutation.isPending}
+              plannerError={plannerError}
             />
           )}
         </motion.div>

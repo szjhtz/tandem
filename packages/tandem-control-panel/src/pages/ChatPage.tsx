@@ -31,6 +31,7 @@ import { subscribeSse } from "../services/sse.js";
 
 const CHAT_UPLOAD_DIR = "control-panel";
 const CHAT_AUTO_APPROVE_KEY = "tandem_control_panel_chat_auto_approve_tools";
+const AUTOMATION_PLANNER_SEED_KEY = "tandem.automations.plannerSeed";
 const EXT_MIME: Record<string, string> = {
   md: "text/markdown",
   txt: "text/plain",
@@ -139,6 +140,22 @@ function loadAutoApprovePreference() {
 function saveAutoApprovePreference(enabled: boolean) {
   try {
     localStorage.setItem(CHAT_AUTO_APPROVE_KEY, enabled ? "1" : "0");
+  } catch {
+    // ignore
+  }
+}
+
+function seedAutomationPlanner(payload: Record<string, unknown>) {
+  try {
+    const prompt = String(payload?.prompt || payload?.goal || "").trim();
+    if (!prompt) return;
+    sessionStorage.setItem(
+      AUTOMATION_PLANNER_SEED_KEY,
+      JSON.stringify({
+        prompt,
+        plan_source: String(payload?.plan_source || "chat_setup").trim() || "chat_setup",
+      })
+    );
   } catch {
     // ignore
   }
@@ -1352,7 +1369,10 @@ export function ChatPage({ client, api, toast, providerStatus, identity, navigat
                 onClick={() => {
                   if (setupCard.actionType === "open_provider_setup") navigate("settings");
                   else if (setupCard.actionType === "open_mcp_setup") navigate("mcp");
-                  else if (setupCard.actionType === "open_automations") navigate("automations");
+                  else if (setupCard.actionType === "open_automations") {
+                    seedAutomationPlanner(setupCard.payload);
+                    navigate("automations");
+                  }
                 }}
               >
                 {setupCard.cta}

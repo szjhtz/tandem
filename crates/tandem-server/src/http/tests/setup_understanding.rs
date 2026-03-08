@@ -93,7 +93,7 @@ async fn setup_understand_intercepts_automation_creation() {
             .get("proposed_action")
             .and_then(|row| row.get("type"))
             .and_then(Value::as_str),
-        Some("pack_builder_preview")
+        Some("workflow_plan_preview")
     );
 }
 

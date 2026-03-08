@@ -1752,6 +1752,20 @@ pub(super) async fn automations_v2_create(
     Json(input): Json<AutomationV2CreateInput>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     let now = crate::now_ms();
+    let workspace_root = input
+        .workspace_root
+        .as_deref()
+        .map(crate::normalize_absolute_workspace_root)
+        .transpose()
+        .map_err(|error| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(json!({
+                    "error": error,
+                    "code": "AUTOMATION_V2_CREATE_FAILED",
+                })),
+            )
+        })?;
     let automation = AutomationV2Spec {
         automation_id: input
             .automation_id
@@ -1775,7 +1789,7 @@ pub(super) async fn automations_v2_create(
         created_at_ms: now,
         updated_at_ms: now,
         creator_id: input.creator_id.unwrap_or_else(|| "unknown".to_string()),
-        workspace_root: input.workspace_root,
+        workspace_root,
         metadata: input.metadata,
         next_fire_at_ms: None,
         last_fired_at_ms: None,
@@ -1856,7 +1870,17 @@ pub(super) async fn automations_v2_patch(
         automation.output_targets = output_targets;
     }
     if let Some(workspace_root) = input.workspace_root {
-        automation.workspace_root = Some(workspace_root);
+        let normalized =
+            crate::normalize_absolute_workspace_root(&workspace_root).map_err(|error| {
+                (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({
+                        "error": error,
+                        "code": "AUTOMATION_V2_UPDATE_FAILED",
+                    })),
+                )
+            })?;
+        automation.workspace_root = Some(normalized);
     }
     if let Some(metadata) = input.metadata {
         automation.metadata = Some(metadata);

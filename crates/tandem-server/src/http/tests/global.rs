@@ -1,5 +1,24 @@
 use super::*;
 
+async fn wait_for_automation_v2_run_failure(
+    state: &AppState,
+    run_id: &str,
+    timeout_ms: u64,
+) -> Option<crate::AutomationV2RunRecord> {
+    let start = std::time::Instant::now();
+    loop {
+        if start.elapsed().as_millis() as u64 > timeout_ms {
+            return None;
+        }
+        if let Some(run) = state.get_automation_v2_run(run_id).await {
+            if run.status == crate::AutomationRunStatus::Failed {
+                return Some(run);
+            }
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+}
+
 #[tokio::test]
 async fn global_health_route_returns_healthy_shape() {
     let state = test_state().await;
@@ -404,4 +423,333 @@ async fn automation_v2_run_get_projects_nodes_into_context_blackboard_tasks() {
                 .map(|row| row == "node-1")
                 .unwrap_or(false)
     }));
+}
+
+#[tokio::test]
+async fn automations_v2_create_rejects_relative_workspace_root() {
+    let state = test_state().await;
+    let app = app_router(state);
+
+    let create_req = Request::builder()
+        .method("POST")
+        .uri("/automations/v2")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "automation_id": "auto-v2-invalid-root",
+                "name": "Invalid Root Automation",
+                "status": "draft",
+                "workspace_root": "relative/path",
+                "schedule": {
+                    "type": "manual",
+                    "timezone": "UTC",
+                    "misfire_policy": { "type": "skip" }
+                },
+                "agents": [
+                    {
+                        "agent_id": "agent-a",
+                        "display_name": "Agent A",
+                        "skills": [],
+                        "tool_policy": { "allowlist": ["read"], "denylist": [] },
+                        "mcp_policy": { "allowed_servers": [] }
+                    }
+                ],
+                "flow": {
+                    "nodes": [
+                        {
+                            "node_id": "node-1",
+                            "agent_id": "agent-a",
+                            "objective": "Analyze incoming signal",
+                            "depends_on": []
+                        }
+                    ]
+                },
+                "execution": { "max_parallel_agents": 1 }
+            })
+            .to_string(),
+        ))
+        .expect("create request");
+    let create_resp = app
+        .clone()
+        .oneshot(create_req)
+        .await
+        .expect("create response");
+    assert_eq!(create_resp.status(), StatusCode::BAD_REQUEST);
+    let create_body = to_bytes(create_resp.into_body(), usize::MAX)
+        .await
+        .expect("create body");
+    let create_payload: Value = serde_json::from_slice(&create_body).expect("create json");
+    assert_eq!(
+        create_payload.get("code").and_then(Value::as_str),
+        Some("AUTOMATION_V2_CREATE_FAILED")
+    );
+}
+
+#[tokio::test]
+async fn automations_v2_patch_rejects_relative_workspace_root() {
+    let state = test_state().await;
+    let app = app_router(state);
+
+    let create_req = Request::builder()
+        .method("POST")
+        .uri("/automations/v2")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "automation_id": "auto-v2-patch-invalid-root",
+                "name": "Patch Invalid Root Automation",
+                "status": "draft",
+                "workspace_root": "/tmp/valid-root",
+                "schedule": {
+                    "type": "manual",
+                    "timezone": "UTC",
+                    "misfire_policy": { "type": "skip" }
+                },
+                "agents": [
+                    {
+                        "agent_id": "agent-a",
+                        "display_name": "Agent A",
+                        "skills": [],
+                        "tool_policy": { "allowlist": ["read"], "denylist": [] },
+                        "mcp_policy": { "allowed_servers": [] }
+                    }
+                ],
+                "flow": {
+                    "nodes": [
+                        {
+                            "node_id": "node-1",
+                            "agent_id": "agent-a",
+                            "objective": "Analyze incoming signal",
+                            "depends_on": []
+                        }
+                    ]
+                },
+                "execution": { "max_parallel_agents": 1 }
+            })
+            .to_string(),
+        ))
+        .expect("create request");
+    let create_resp = app
+        .clone()
+        .oneshot(create_req)
+        .await
+        .expect("create response");
+    assert_eq!(create_resp.status(), StatusCode::OK);
+
+    let patch_req = Request::builder()
+        .method("PATCH")
+        .uri("/automations/v2/auto-v2-patch-invalid-root")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "workspace_root": "relative/path"
+            })
+            .to_string(),
+        ))
+        .expect("patch request");
+    let patch_resp = app
+        .clone()
+        .oneshot(patch_req)
+        .await
+        .expect("patch response");
+    assert_eq!(patch_resp.status(), StatusCode::BAD_REQUEST);
+    let patch_body = to_bytes(patch_resp.into_body(), usize::MAX)
+        .await
+        .expect("patch body");
+    let patch_payload: Value = serde_json::from_slice(&patch_body).expect("patch json");
+    assert_eq!(
+        patch_payload.get("code").and_then(Value::as_str),
+        Some("AUTOMATION_V2_UPDATE_FAILED")
+    );
+}
+
+#[tokio::test]
+async fn automations_v2_executor_fails_run_when_workspace_root_missing() {
+    let state = test_state().await;
+    let app = app_router(state.clone());
+    let missing_root = std::env::temp_dir().join(format!(
+        "tandem-automation-v2-missing-root-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+    ));
+    let _ = std::fs::remove_dir_all(&missing_root);
+
+    let create_req = Request::builder()
+        .method("POST")
+        .uri("/automations/v2")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "automation_id": "auto-v2-runtime-missing-root",
+                "name": "Runtime Missing Root Automation",
+                "status": "active",
+                "workspace_root": missing_root.to_string_lossy(),
+                "schedule": {
+                    "type": "manual",
+                    "timezone": "UTC",
+                    "misfire_policy": { "type": "skip" }
+                },
+                "agents": [
+                    {
+                        "agent_id": "agent-a",
+                        "display_name": "Agent A",
+                        "skills": [],
+                        "tool_policy": { "allowlist": ["read"], "denylist": [] },
+                        "mcp_policy": { "allowed_servers": [] }
+                    }
+                ],
+                "flow": {
+                    "nodes": [
+                        {
+                            "node_id": "node-1",
+                            "agent_id": "agent-a",
+                            "objective": "Analyze incoming signal",
+                            "depends_on": []
+                        }
+                    ]
+                },
+                "execution": { "max_parallel_agents": 1 }
+            })
+            .to_string(),
+        ))
+        .expect("create request");
+    let create_resp = app
+        .clone()
+        .oneshot(create_req)
+        .await
+        .expect("create response");
+    assert_eq!(create_resp.status(), StatusCode::OK);
+
+    let run_now_req = Request::builder()
+        .method("POST")
+        .uri("/automations/v2/auto-v2-runtime-missing-root/run_now")
+        .body(Body::empty())
+        .expect("run now request");
+    let run_now_resp = app
+        .clone()
+        .oneshot(run_now_req)
+        .await
+        .expect("run now response");
+    assert_eq!(run_now_resp.status(), StatusCode::OK);
+    let run_now_body = to_bytes(run_now_resp.into_body(), usize::MAX)
+        .await
+        .expect("run now body");
+    let run_now_payload: Value = serde_json::from_slice(&run_now_body).expect("run now json");
+    let run_id = run_now_payload
+        .get("run")
+        .and_then(|row| row.get("run_id"))
+        .and_then(Value::as_str)
+        .expect("run id")
+        .to_string();
+
+    let executor = tokio::spawn(crate::run_automation_v2_executor(state.clone()));
+    let failed = wait_for_automation_v2_run_failure(&state, &run_id, 5_000)
+        .await
+        .expect("run should fail for missing workspace root");
+    executor.abort();
+
+    assert!(failed
+        .detail
+        .as_deref()
+        .map(|detail| detail.contains("does not exist"))
+        .unwrap_or(false));
+}
+
+#[tokio::test]
+async fn automations_v2_executor_fails_run_when_workspace_root_is_file() {
+    let state = test_state().await;
+    let app = app_router(state.clone());
+    let file_root = std::env::temp_dir().join(format!(
+        "tandem-automation-v2-workspace-file-{}-{}.txt",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+    ));
+    std::fs::write(&file_root, "not-a-directory").expect("write workspace root file");
+
+    let create_req = Request::builder()
+        .method("POST")
+        .uri("/automations/v2")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "automation_id": "auto-v2-runtime-file-root",
+                "name": "Runtime File Root Automation",
+                "status": "active",
+                "workspace_root": file_root.to_string_lossy(),
+                "schedule": {
+                    "type": "manual",
+                    "timezone": "UTC",
+                    "misfire_policy": { "type": "skip" }
+                },
+                "agents": [
+                    {
+                        "agent_id": "agent-a",
+                        "display_name": "Agent A",
+                        "skills": [],
+                        "tool_policy": { "allowlist": ["read"], "denylist": [] },
+                        "mcp_policy": { "allowed_servers": [] }
+                    }
+                ],
+                "flow": {
+                    "nodes": [
+                        {
+                            "node_id": "node-1",
+                            "agent_id": "agent-a",
+                            "objective": "Analyze incoming signal",
+                            "depends_on": []
+                        }
+                    ]
+                },
+                "execution": { "max_parallel_agents": 1 }
+            })
+            .to_string(),
+        ))
+        .expect("create request");
+    let create_resp = app
+        .clone()
+        .oneshot(create_req)
+        .await
+        .expect("create response");
+    assert_eq!(create_resp.status(), StatusCode::OK);
+
+    let run_now_req = Request::builder()
+        .method("POST")
+        .uri("/automations/v2/auto-v2-runtime-file-root/run_now")
+        .body(Body::empty())
+        .expect("run now request");
+    let run_now_resp = app
+        .clone()
+        .oneshot(run_now_req)
+        .await
+        .expect("run now response");
+    assert_eq!(run_now_resp.status(), StatusCode::OK);
+    let run_now_body = to_bytes(run_now_resp.into_body(), usize::MAX)
+        .await
+        .expect("run now body");
+    let run_now_payload: Value = serde_json::from_slice(&run_now_body).expect("run now json");
+    let run_id = run_now_payload
+        .get("run")
+        .and_then(|row| row.get("run_id"))
+        .and_then(Value::as_str)
+        .expect("run id")
+        .to_string();
+
+    let executor = tokio::spawn(crate::run_automation_v2_executor(state.clone()));
+    let failed = wait_for_automation_v2_run_failure(&state, &run_id, 5_000)
+        .await
+        .expect("run should fail for file workspace root");
+    executor.abort();
+    let _ = std::fs::remove_file(&file_root);
+
+    assert!(failed
+        .detail
+        .as_deref()
+        .map(|detail| detail.contains("is not a directory"))
+        .unwrap_or(false));
 }

@@ -16,6 +16,7 @@ export interface TandemClientOptions {
 export interface SystemHealth {
   ready?: boolean;
   phase?: string;
+  workspace_root?: string;
   [key: string]: unknown;
 }
 
@@ -1106,6 +1107,8 @@ export interface AutomationV2FlowNode {
   agent_id: string;
   objective: string;
   depends_on?: string[];
+  input_refs?: Array<{ from_step_id?: string; alias: string }>;
+  output_contract?: { kind: string };
   retry_policy?: JsonObject;
   timeout_ms?: number;
 }
@@ -1125,6 +1128,52 @@ export interface AutomationV2Spec {
   };
   output_targets?: string[];
   creator_id?: string;
+  workspace_root?: string;
+  metadata?: JsonObject;
+  [key: string]: unknown;
+}
+
+export interface WorkflowPlanStep {
+  step_id?: string;
+  kind: string;
+  objective: string;
+  depends_on?: string[];
+  agent_role?: string;
+  input_refs?: Array<{ from_step_id?: string; alias: string }>;
+  output_contract?: { kind: string };
+}
+
+export interface WorkflowPlan {
+  plan_id?: string;
+  planner_version?: string;
+  plan_source?: string;
+  original_prompt?: string;
+  normalized_prompt?: string;
+  confidence?: string;
+  title: string;
+  description?: string;
+  schedule: AutomationV2Schedule;
+  execution_target?: string;
+  workspace_root?: string;
+  steps: WorkflowPlanStep[];
+  allowed_mcp_servers?: string[];
+  operator_preferences?: JsonObject;
+  [key: string]: unknown;
+}
+
+export interface WorkflowPlanChatMessage {
+  role: string;
+  text: string;
+  created_at_ms?: number;
+  [key: string]: unknown;
+}
+
+export interface WorkflowPlanConversation {
+  conversation_id?: string;
+  plan_id?: string;
+  created_at_ms?: number;
+  updated_at_ms?: number;
+  messages: WorkflowPlanChatMessage[];
   [key: string]: unknown;
 }
 

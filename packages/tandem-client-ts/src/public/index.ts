@@ -25,6 +25,8 @@ export interface TandemClientOptions {
 export interface SystemHealth {
   ready?: boolean;
   phase?: string;
+  workspaceRoot?: string;
+  workspace_root?: string;
   [key: string]: unknown;
 }
 
@@ -1300,6 +1302,9 @@ export interface AutomationV2FlowNode {
   agentId: string;
   objective: string;
   dependsOn?: string[];
+  inputRefs?: Array<{ fromStepId?: string; from_step_id?: string; alias: string }>;
+  outputContract?: { kind: string };
+  output_contract?: { kind: string };
   retryPolicy?: JsonObject;
   timeoutMs?: number;
 }
@@ -1319,6 +1324,73 @@ export interface AutomationV2Spec {
   };
   outputTargets?: string[];
   creatorId?: string;
+  workspaceRoot?: string;
+  workspace_root?: string;
+  metadata?: JsonObject;
+  [key: string]: unknown;
+}
+
+export interface WorkflowPlanStep {
+  stepId?: string;
+  step_id?: string;
+  kind: string;
+  objective: string;
+  dependsOn?: string[];
+  depends_on?: string[];
+  agentRole?: string;
+  agent_role?: string;
+  inputRefs?: Array<{ fromStepId?: string; from_step_id?: string; alias: string }>;
+  input_refs?: Array<{ fromStepId?: string; from_step_id?: string; alias: string }>;
+  outputContract?: { kind: string };
+  output_contract?: { kind: string };
+}
+
+export interface WorkflowPlan {
+  planId?: string;
+  plan_id?: string;
+  plannerVersion?: string;
+  planner_version?: string;
+  planSource?: string;
+  plan_source?: string;
+  originalPrompt?: string;
+  original_prompt?: string;
+  normalizedPrompt?: string;
+  normalized_prompt?: string;
+  confidence?: string;
+  title: string;
+  description?: string;
+  schedule: AutomationV2Schedule;
+  executionTarget?: string;
+  execution_target?: string;
+  workspaceRoot?: string;
+  workspace_root?: string;
+  steps: WorkflowPlanStep[];
+  allowedMcpServers?: string[];
+  allowed_mcp_servers?: string[];
+  operatorPreferences?: JsonObject;
+  operator_preferences?: JsonObject;
+  metadata?: JsonObject;
+  [key: string]: unknown;
+}
+
+export interface WorkflowPlanChatMessage {
+  role: string;
+  text: string;
+  createdAtMs?: number;
+  created_at_ms?: number;
+  [key: string]: unknown;
+}
+
+export interface WorkflowPlanConversation {
+  conversationId?: string;
+  conversation_id?: string;
+  planId?: string;
+  plan_id?: string;
+  createdAtMs?: number;
+  created_at_ms?: number;
+  updatedAtMs?: number;
+  updated_at_ms?: number;
+  messages: WorkflowPlanChatMessage[];
   [key: string]: unknown;
 }
 

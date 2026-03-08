@@ -66,8 +66,16 @@ export const SystemHealthSchema = z
   .object({
     ready: z.boolean().optional(),
     phase: z.string().optional(),
+    workspace_root: z.string().optional(),
+    workspaceRoot: z.string().optional(),
   })
-  .passthrough() satisfies z.ZodType<Public.SystemHealth, any, any>;
+  .passthrough()
+  .transform(
+    (val): Public.SystemHealth => ({
+      ...val,
+      workspaceRoot: val.workspace_root ?? val.workspaceRoot,
+    })
+  ) satisfies z.ZodType<Public.SystemHealth, any, any>;
 
 // ─── Session Schemas ──────────────────────────────────────────────────────────
 
