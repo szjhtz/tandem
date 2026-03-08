@@ -920,6 +920,88 @@ async fn coder_issue_fix_execute_next_drives_task_runtime_to_completion() {
 }
 
 #[tokio::test]
+async fn coder_issue_fix_execute_all_runs_to_completion() {
+    let state = test_state().await;
+    state
+        .capability_resolver
+        .refresh_builtin_bindings()
+        .await
+        .expect("refresh builtin bindings");
+    let app = app_router(state.clone());
+
+    let create_req = Request::builder()
+        .method("POST")
+        .uri("/coder/runs")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "coder_run_id": "coder-issue-fix-execute-all",
+                "workflow_mode": "issue_fix",
+                "repo_binding": {
+                    "project_id": "proj-engine",
+                    "workspace_id": "ws-tandem",
+                    "workspace_root": "/tmp/tandem-repo",
+                    "repo_slug": "evan/tandem"
+                },
+                "github_ref": {
+                    "kind": "issue",
+                    "number": 299
+                }
+            })
+            .to_string(),
+        ))
+        .expect("create request");
+    let create_resp = app
+        .clone()
+        .oneshot(create_req)
+        .await
+        .expect("create response");
+    assert_eq!(create_resp.status(), StatusCode::OK);
+
+    let execute_req = Request::builder()
+        .method("POST")
+        .uri("/coder/runs/coder-issue-fix-execute-all/execute-all")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "agent_id": "coder_engine_worker_test",
+                "max_steps": 8
+            })
+            .to_string(),
+        ))
+        .expect("execute-all request");
+    let execute_resp = app
+        .clone()
+        .oneshot(execute_req)
+        .await
+        .expect("execute-all response");
+    assert_eq!(execute_resp.status(), StatusCode::OK);
+    let execute_payload: Value = serde_json::from_slice(
+        &to_bytes(execute_resp.into_body(), usize::MAX)
+            .await
+            .expect("execute-all body"),
+    )
+    .expect("execute-all json");
+    assert_eq!(
+        execute_payload
+            .get("run")
+            .and_then(|row| row.get("status"))
+            .and_then(Value::as_str),
+        Some("completed")
+    );
+    assert_eq!(
+        execute_payload
+            .get("stopped_reason")
+            .and_then(Value::as_str),
+        Some("run_completed")
+    );
+    assert!(execute_payload
+        .get("executed_steps")
+        .and_then(Value::as_u64)
+        .is_some_and(|count| count >= 4));
+}
+
+#[tokio::test]
 async fn coder_issue_fix_summary_create_writes_artifact() {
     let state = test_state().await;
     state
@@ -1107,6 +1189,140 @@ async fn coder_issue_fix_summary_create_writes_artifact() {
             row.get("artifact_type").and_then(Value::as_str) == Some("coder_validation_report")
         }))
         .unwrap_or(false));
+}
+
+#[tokio::test]
+async fn coder_issue_fix_summary_writes_patch_summary_without_changed_files() {
+    let state = test_state().await;
+    state
+        .capability_resolver
+        .refresh_builtin_bindings()
+        .await
+        .expect("refresh builtin bindings");
+    let app = app_router(state.clone());
+
+    let create_req = Request::builder()
+        .method("POST")
+        .uri("/coder/runs")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "coder_run_id": "coder-issue-fix-diagnostic-summary",
+                "workflow_mode": "issue_fix",
+                "repo_binding": {
+                    "project_id": "proj-engine",
+                    "workspace_id": "ws-tandem",
+                    "workspace_root": "/tmp/tandem-repo",
+                    "repo_slug": "acme/platform"
+                },
+                "github_ref": {
+                    "kind": "issue",
+                    "number": 132
+                }
+            })
+            .to_string(),
+        ))
+        .expect("create request");
+    let create_resp = app
+        .clone()
+        .oneshot(create_req)
+        .await
+        .expect("create response");
+    assert_eq!(create_resp.status(), StatusCode::OK);
+    let create_payload: Value = serde_json::from_slice(
+        &to_bytes(create_resp.into_body(), usize::MAX)
+            .await
+            .expect("create body"),
+    )
+    .expect("create json");
+    let linked_context_run_id = create_payload
+        .get("coder_run")
+        .and_then(|row| row.get("linked_context_run_id"))
+        .and_then(Value::as_str)
+        .expect("linked context run id")
+        .to_string();
+
+    let summary_req = Request::builder()
+        .method("POST")
+        .uri("/coder/runs/coder-issue-fix-diagnostic-summary/issue-fix-summary")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "root_cause": "The startup fallback branch was intentionally not patched because the incident was configuration-only.",
+                "validation_steps": ["cargo test -p tandem-server coder_issue_fix_summary_writes_patch_summary_without_changed_files -- --test-threads=1"],
+                "validation_results": [{
+                    "kind": "diagnostic",
+                    "status": "passed",
+                    "summary": "Configuration-only recovery path validated without code changes"
+                }],
+                "memory_hits_used": ["memory-hit-fix-diagnostic-1"],
+                "notes": "No-op fix summary for operator follow-up."
+            })
+            .to_string(),
+        ))
+        .expect("summary request");
+    let summary_resp = app
+        .clone()
+        .oneshot(summary_req)
+        .await
+        .expect("summary response");
+    assert_eq!(summary_resp.status(), StatusCode::OK);
+    let summary_payload: Value = serde_json::from_slice(
+        &to_bytes(summary_resp.into_body(), usize::MAX)
+            .await
+            .expect("summary body"),
+    )
+    .expect("summary json");
+    assert_eq!(
+        summary_payload
+            .get("artifact")
+            .and_then(|row| row.get("artifact_type"))
+            .and_then(Value::as_str),
+        Some("coder_issue_fix_summary")
+    );
+    assert_eq!(
+        summary_payload
+            .get("validation_artifact")
+            .and_then(|row| row.get("artifact_type"))
+            .and_then(Value::as_str),
+        Some("coder_validation_report")
+    );
+
+    let blackboard = load_context_blackboard(&state, &linked_context_run_id);
+    let patch_summary_path = blackboard
+        .artifacts
+        .iter()
+        .find(|artifact| artifact.artifact_type == "coder_patch_summary")
+        .map(|artifact| artifact.path.clone())
+        .expect("patch summary path");
+    let patch_summary_payload: Value = serde_json::from_str(
+        &tokio::fs::read_to_string(&patch_summary_path)
+            .await
+            .expect("read patch summary artifact"),
+    )
+    .expect("parse patch summary artifact");
+    assert_eq!(
+        patch_summary_payload
+            .get("root_cause")
+            .and_then(Value::as_str),
+        Some(
+            "The startup fallback branch was intentionally not patched because the incident was configuration-only."
+        )
+    );
+    assert_eq!(
+        patch_summary_payload
+            .get("changed_files")
+            .and_then(Value::as_array)
+            .map(|rows| rows.len()),
+        Some(0)
+    );
+    assert_eq!(
+        patch_summary_payload
+            .get("validation_results")
+            .and_then(Value::as_array)
+            .map(|rows| rows.len()),
+        Some(1)
+    );
 }
 
 #[tokio::test]

@@ -90,6 +90,7 @@
   - `issue_fix` now uses that same `execute-next` worker bridge: the engine claims fix tasks through the shared task runtime, advances inspection and preparation nodes through workflow progression, and dispatches validation plus final summary handlers to complete the run end to end
   - `pr_review` now also uses `execute-next`: the engine claims review tasks through the same task runtime, advances the initial inspection node through workflow progression, and dispatches review-evidence plus final summary handlers to complete the run end to end
   - `merge_recommendation` now uses `execute-next` too: the engine claims merge-readiness tasks through the same task runtime, advances the initial inspection node through workflow progression, and dispatches readiness plus final recommendation handlers to complete the run end to end
+  - added `POST /coder/runs/{id}/execute-all`, which loops that same engine-owned task runtime until a coder run completes, fails, cancels, exhausts runnable tasks, or hits a configured step cap
   - added an initial fail-closed readiness gate for `issue_triage`: required GitHub issue capability bindings must exist, and explicitly requested MCP servers must be configured and connected
   - added `POST /coder/runs/{id}/memory-candidates` so `issue_triage` runs can persist engine-owned memory candidate payloads and attach them to the linked context run as `coder_memory_candidate` artifacts
   - new `issue_triage` runs now seed their retrieval task with prior repo/issue memory candidate hints from earlier coder runs

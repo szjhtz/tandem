@@ -345,6 +345,14 @@ pub(super) struct CoderRunExecuteNextInput {
     pub(super) agent_id: Option<String>,
 }
 
+#[derive(Debug, Deserialize, Default)]
+pub(super) struct CoderRunExecuteAllInput {
+    #[serde(default)]
+    pub(super) agent_id: Option<String>,
+    #[serde(default)]
+    pub(super) max_steps: Option<usize>,
+}
+
 fn coder_runs_root(state: &AppState) -> PathBuf {
     state
         .shared_resources_path
@@ -4194,7 +4202,10 @@ async fn write_issue_fix_patch_summary_artifact(
 ) -> Result<Option<ContextBlackboardArtifact>, StatusCode> {
     if changed_files.is_empty()
         && summary.map(str::trim).unwrap_or("").is_empty()
+        && root_cause.map(str::trim).unwrap_or("").is_empty()
         && fix_strategy.map(str::trim).unwrap_or("").is_empty()
+        && validation_results.is_empty()
+        && validation_session.is_none()
     {
         return Ok(None);
     }
@@ -4979,12 +4990,11 @@ pub(super) async fn coder_run_get(
     })))
 }
 
-pub(super) async fn coder_run_execute_next(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-    Json(input): Json<CoderRunExecuteNextInput>,
-) -> Result<Json<Value>, StatusCode> {
-    let mut record = load_coder_run_record(&state, &id).await?;
+async fn execute_coder_run_step(
+    state: AppState,
+    record: &mut CoderRunRecord,
+    agent_id: &str,
+) -> Result<Value, StatusCode> {
     if !matches!(
         record.workflow_mode,
         CoderWorkflowMode::IssueTriage
@@ -4992,17 +5002,16 @@ pub(super) async fn coder_run_execute_next(
             | CoderWorkflowMode::PrReview
             | CoderWorkflowMode::MergeRecommendation
     ) {
-        return Ok(Json(json!({
+        return Ok(json!({
             "ok": false,
             "error": "execute_next is only wired for issue_triage, issue_fix, pr_review, and merge_recommendation right now",
             "code": "CODER_EXECUTION_UNSUPPORTED",
-        })));
+        }));
     }
-    let agent_id = default_coder_worker_agent_id(input.agent_id.as_deref());
     let claimed_task = claim_next_context_task(
         &state,
         &record.linked_context_run_id,
-        &agent_id,
+        agent_id,
         None,
         Some(record.workflow_mode.as_context_run_type()),
         Some(30_000),
@@ -5015,20 +5024,20 @@ pub(super) async fn coder_run_execute_next(
     .await?;
     let Some(task) = claimed_task else {
         let run = load_context_run_state(&state, &record.linked_context_run_id).await?;
-        return Ok(Json(json!({
+        return Ok(json!({
             "ok": true,
             "task": Value::Null,
             "run": run,
-            "coder_run": coder_run_payload(&record, &run),
+            "coder_run": coder_run_payload(record, &run),
             "dispatched": false,
             "reason": "no runnable coder task was available"
-        })));
+        }));
     };
 
     publish_coder_run_event(
         &state,
         "coder.run.phase_changed",
-        &record,
+        record,
         Some(project_coder_phase(
             &load_context_run_state(&state, &record.linked_context_run_id).await?,
         )),
@@ -5040,33 +5049,92 @@ pub(super) async fn coder_run_execute_next(
                 "workflow_node_id".to_string(),
                 json!(task.workflow_node_id.clone()),
             );
-            extra.insert("agent_id".to_string(), json!(agent_id.clone()));
+            extra.insert("agent_id".to_string(), json!(agent_id));
             extra
         },
     );
 
     let dispatched = match record.workflow_mode {
         CoderWorkflowMode::IssueTriage => {
-            dispatch_issue_triage_task(state.clone(), &record, &task, &agent_id).await?
+            dispatch_issue_triage_task(state.clone(), record, &task, agent_id).await?
         }
         CoderWorkflowMode::IssueFix => {
-            dispatch_issue_fix_task(state.clone(), &record, &task, &agent_id).await?
+            dispatch_issue_fix_task(state.clone(), record, &task, agent_id).await?
         }
         CoderWorkflowMode::PrReview => {
-            dispatch_pr_review_task(state.clone(), &record, &task).await?
+            dispatch_pr_review_task(state.clone(), record, &task).await?
         }
         CoderWorkflowMode::MergeRecommendation => {
-            dispatch_merge_recommendation_task(state.clone(), &record, &task).await?
+            dispatch_merge_recommendation_task(state.clone(), record, &task).await?
         }
     };
     let final_run = load_context_run_state(&state, &record.linked_context_run_id).await?;
     record.updated_at_ms = final_run.updated_at_ms;
     save_coder_run_record(&state, &record).await?;
-    Ok(Json(json!({
+    Ok(json!({
         "ok": true,
         "task": task,
         "dispatched": true,
         "dispatch_result": dispatched,
+        "run": final_run,
+        "coder_run": coder_run_payload(record, &final_run),
+    }))
+}
+
+pub(super) async fn coder_run_execute_next(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(input): Json<CoderRunExecuteNextInput>,
+) -> Result<Json<Value>, StatusCode> {
+    let mut record = load_coder_run_record(&state, &id).await?;
+    let agent_id = default_coder_worker_agent_id(input.agent_id.as_deref());
+    Ok(Json(
+        execute_coder_run_step(state, &mut record, &agent_id).await?,
+    ))
+}
+
+pub(super) async fn coder_run_execute_all(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(input): Json<CoderRunExecuteAllInput>,
+) -> Result<Json<Value>, StatusCode> {
+    let mut record = load_coder_run_record(&state, &id).await?;
+    let agent_id = default_coder_worker_agent_id(input.agent_id.as_deref());
+    let max_steps = input.max_steps.unwrap_or(16).clamp(1, 64);
+    let mut steps = Vec::<Value>::new();
+    let mut stopped_reason = "max_steps_reached".to_string();
+
+    for _ in 0..max_steps {
+        let step = execute_coder_run_step(state.clone(), &mut record, &agent_id).await?;
+        let no_task = step.get("task").is_none_or(Value::is_null);
+        let run_status = step
+            .get("run")
+            .and_then(|row| row.get("status"))
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        steps.push(step);
+        if no_task {
+            stopped_reason = "no_runnable_task".to_string();
+            break;
+        }
+        if matches!(run_status.as_str(), "completed" | "failed" | "cancelled") {
+            stopped_reason = format!("run_{run_status}");
+            break;
+        }
+    }
+
+    let final_run = load_context_run_state(&state, &record.linked_context_run_id).await?;
+    record.updated_at_ms = final_run.updated_at_ms;
+    save_coder_run_record(&state, &record).await?;
+    Ok(Json(json!({
+        "ok": true,
+        "executed_steps": steps
+            .iter()
+            .filter(|row| row.get("task").is_some_and(|task| !task.is_null()))
+            .count(),
+        "steps": steps,
+        "stopped_reason": stopped_reason,
         "run": final_run,
         "coder_run": coder_run_payload(&record, &final_run),
     })))

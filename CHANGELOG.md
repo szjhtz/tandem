@@ -109,6 +109,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `issue_fix` now uses that same `execute-next` worker bridge: the engine claims fix tasks through the shared task runtime, advances inspection and preparation nodes through workflow progression, and dispatches validation plus final summary handlers to complete the run end to end
   - `pr_review` now also uses `execute-next`: the engine claims review tasks through the same task runtime, advances the initial inspection node through workflow progression, and dispatches review-evidence plus final summary handlers to complete the run end to end
   - `merge_recommendation` now uses `execute-next` too: the engine claims merge-readiness tasks through the same task runtime, advances the initial inspection node through workflow progression, and dispatches readiness plus final recommendation handlers to complete the run end to end
+  - added `POST /coder/runs/{id}/execute-all`, which loops that same engine-owned task runtime until a coder run completes, fails, cancels, exhausts runnable tasks, or hits a configured step cap
   - added backend regression coverage for coder run creation, retrieval, list projection, context-run linkage, and artifact projection
   - added the first fail-closed readiness gate for `issue_triage` coder runs:
     - required GitHub issue capability bindings must exist

@@ -12,6 +12,7 @@ pub(super) fn apply(router: Router<AppState>) -> Router<AppState> {
             "/coder/runs/{id}/execute-next",
             post(coder_run_execute_next),
         )
+        .route("/coder/runs/{id}/execute-all", post(coder_run_execute_all))
         .route("/coder/runs/{id}/approve", post(coder_run_approve))
         .route("/coder/runs/{id}/cancel", post(coder_run_cancel))
         .route("/coder/runs/{id}/artifacts", get(coder_run_artifacts))
