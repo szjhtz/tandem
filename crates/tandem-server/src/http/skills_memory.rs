@@ -1951,7 +1951,7 @@ pub(super) async fn memory_promote_impl(
                 memory_id: None,
                 source_memory_id: Some(source_memory_id.clone()),
                 to_tier: Some(request.to_tier),
-                partition_key,
+                partition_key: partition_key.clone(),
                 actor: capability.subject,
                 status: "blocked".to_string(),
                 detail: scrub_report.block_reason.clone(),

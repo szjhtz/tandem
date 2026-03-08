@@ -695,6 +695,8 @@ async fn coder_issue_fix_execute_next_drives_task_runtime_to_completion() {
             json!({
                 "coder_run_id": "coder-issue-fix-execute-next",
                 "workflow_mode": "issue_fix",
+                "model_provider": "local",
+                "model_id": "echo-1",
                 "repo_binding": {
                     "project_id": "proj-engine",
                     "workspace_id": "ws-tandem",
@@ -764,6 +766,39 @@ async fn coder_issue_fix_execute_next_drives_task_runtime_to_completion() {
                 .and_then(Value::as_str),
             Some(expected)
         );
+        if expected == "prepare_fix" {
+            assert_eq!(
+                execute_payload
+                    .get("dispatch_result")
+                    .and_then(|row| row.get("worker_artifact"))
+                    .and_then(|row| row.get("artifact_type"))
+                    .and_then(Value::as_str),
+                Some("coder_issue_fix_worker_session")
+            );
+            assert_eq!(
+                execute_payload
+                    .get("dispatch_result")
+                    .and_then(|row| row.get("worker_session"))
+                    .and_then(|row| row.get("status"))
+                    .and_then(Value::as_str),
+                Some("completed")
+            );
+            assert_eq!(
+                execute_payload
+                    .get("dispatch_result")
+                    .and_then(|row| row.get("worker_session"))
+                    .and_then(|row| row.get("model"))
+                    .and_then(|row| row.get("provider_id"))
+                    .and_then(Value::as_str),
+                Some("local")
+            );
+            assert!(execute_payload
+                .get("dispatch_result")
+                .and_then(|row| row.get("worker_session"))
+                .and_then(|row| row.get("assistant_text"))
+                .and_then(Value::as_str)
+                .is_some_and(|text| text.contains("Echo:")));
+        }
     }
 
     let run = load_context_run_state(&state, &linked_context_run_id)
@@ -786,6 +821,11 @@ async fn coder_issue_fix_execute_next_drives_task_runtime_to_completion() {
             "expected {workflow_node_id} to be done"
         );
     }
+    let blackboard = load_context_blackboard(&state, &linked_context_run_id);
+    assert!(blackboard
+        .artifacts
+        .iter()
+        .any(|artifact| { artifact.artifact_type == "coder_issue_fix_worker_session" }));
 }
 
 #[tokio::test]

@@ -75,6 +75,10 @@ pub(super) struct CoderRunRecord {
     pub(super) github_ref: Option<CoderGithubRef>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) source_client: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) model_provider: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) model_id: Option<String>,
     pub(super) created_at_ms: u64,
     pub(super) updated_at_ms: u64,
 }
@@ -2038,6 +2042,43 @@ async fn complete_claimed_coder_task(
     Ok(())
 }
 
+async fn fail_claimed_coder_task(
+    state: &AppState,
+    run_id: String,
+    task: &super::context_types::ContextBlackboardTask,
+    agent_id: &str,
+    error: &str,
+) -> Result<(), StatusCode> {
+    let lease_token = task
+        .lease_token
+        .clone()
+        .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
+    let response = context_run_task_transition(
+        State(state.clone()),
+        Path((run_id, task.id.clone())),
+        Json(ContextTaskTransitionInput {
+            action: "fail".to_string(),
+            command_id: Some(format!(
+                "coder:{}:fail:{}",
+                task.id,
+                Uuid::new_v4().simple()
+            )),
+            expected_task_rev: Some(task.task_rev),
+            lease_token: Some(lease_token),
+            agent_id: Some(agent_id.to_string()),
+            status: None,
+            error: Some(crate::truncate_text(error, 500)),
+            lease_ms: None,
+        }),
+    )
+    .await?;
+    let payload = response.0;
+    if payload.get("ok").and_then(Value::as_bool) != Some(true) {
+        return Err(StatusCode::CONFLICT);
+    }
+    Ok(())
+}
+
 async fn dispatch_issue_triage_task(
     state: AppState,
     record: &CoderRunRecord,
@@ -2148,6 +2189,7 @@ async fn dispatch_issue_fix_task(
     state: AppState,
     record: &CoderRunRecord,
     task: &super::context_types::ContextBlackboardTask,
+    agent_id: &str,
 ) -> Result<Value, StatusCode> {
     let run = load_context_run_state(&state, &record.linked_context_run_id).await?;
     let issue_number = record
@@ -2174,6 +2216,39 @@ async fn dispatch_issue_fix_task(
             }))
         }
         Some("prepare_fix") => {
+            let worker_result = run_issue_fix_prepare_worker(&state, record, &run).await;
+            let (worker_artifact, worker_payload) = match worker_result {
+                Ok(result) => result,
+                Err(error) => {
+                    let detail = format!(
+                        "Issue-fix worker session failed during prepare_fix with status {}.",
+                        error
+                    );
+                    fail_claimed_coder_task(
+                        &state,
+                        record.linked_context_run_id.clone(),
+                        task,
+                        agent_id,
+                        &detail,
+                    )
+                    .await?;
+                    let failed = coder_run_transition(
+                        &state,
+                        record,
+                        "run_failed",
+                        ContextRunStatus::Failed,
+                        Some(detail.clone()),
+                    )
+                    .await?;
+                    return Ok(json!({
+                        "ok": false,
+                        "error": detail,
+                        "code": "CODER_WORKER_SESSION_FAILED",
+                        "run": failed.get("run").cloned().unwrap_or(Value::Null),
+                        "coder_run": failed.get("coder_run").cloned().unwrap_or(Value::Null),
+                    }));
+                }
+            };
             let final_run = advance_coder_workflow_run(
                 &state,
                 record,
@@ -2184,14 +2259,29 @@ async fn dispatch_issue_fix_task(
             .await?;
             Ok(json!({
                 "ok": true,
+                "worker_artifact": worker_artifact,
+                "worker_session": worker_payload,
                 "run": final_run,
                 "coder_run": coder_run_payload(record, &final_run),
-                "dispatched": false,
-                "reason": "prepare_fix advanced through coder workflow progression"
+                "dispatched": true,
+                "reason": "prepare_fix completed through a real coder worker session"
             }))
         }
         Some("validate_fix") => {
             let memory_hits_used = summarize_workflow_memory_hits(record, &run, "retrieve_memory");
+            let worker_session = load_latest_coder_artifact_payload(
+                &state,
+                record,
+                "coder_issue_fix_worker_session",
+            )
+            .await;
+            let worker_summary = worker_session
+                .as_ref()
+                .and_then(|payload| payload.get("assistant_text"))
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|text| !text.is_empty())
+                .map(|text| crate::truncate_text(text, 240));
             let response = coder_issue_fix_validation_report_create(
                 State(state),
                 Path(record.coder_run_id.clone()),
@@ -2209,15 +2299,26 @@ async fn dispatch_issue_fix_task(
                     changed_files: Vec::new(),
                     validation_steps: vec![
                         "Review constrained fix plan".to_string(),
+                        "Inspect coder worker session output".to_string(),
                         "Record validation outcome for follow-up artifact writing".to_string(),
                     ],
                     validation_results: vec![json!({
                         "kind": "engine_worker_validation",
                         "status": "needs_follow_up",
-                        "summary": "Validation completed through the coder engine worker bridge."
+                        "summary": "Validation completed through the coder engine worker bridge.",
+                        "worker_session_id": worker_session.as_ref().and_then(|payload| payload.get("session_id")).cloned(),
+                        "worker_session_run_id": worker_session.as_ref().and_then(|payload| payload.get("session_run_id")).cloned(),
+                        "worker_assistant_excerpt": worker_summary,
                     })],
                     memory_hits_used,
-                    notes: Some("Auto-generated by coder engine worker dispatch.".to_string()),
+                    notes: Some(format!(
+                        "Auto-generated by coder engine worker dispatch. Worker session: {}",
+                        worker_session
+                            .as_ref()
+                            .and_then(|payload| payload.get("session_id"))
+                            .and_then(Value::as_str)
+                            .unwrap_or("unknown")
+                    )),
                 }),
             )
             .await?;
@@ -3429,6 +3530,311 @@ fn normalize_source_client(input: Option<&str>) -> Option<String> {
         .map(ToString::to_string)
 }
 
+async fn resolve_coder_worker_model_spec(
+    state: &AppState,
+    record: &CoderRunRecord,
+) -> Option<tandem_types::ModelSpec> {
+    if let (Some(provider_id), Some(model_id)) = (
+        normalize_source_client(record.model_provider.as_deref()),
+        normalize_source_client(record.model_id.as_deref()),
+    ) {
+        return Some(tandem_types::ModelSpec {
+            provider_id,
+            model_id,
+        });
+    }
+
+    let effective_config = state.config.get_effective_value().await;
+    if let Some(spec) = crate::default_model_spec_from_effective_config(&effective_config) {
+        return Some(spec);
+    }
+
+    state
+        .providers
+        .list()
+        .await
+        .into_iter()
+        .find_map(|provider| {
+            provider
+                .models
+                .first()
+                .map(|model| tandem_types::ModelSpec {
+                    provider_id: provider.id.clone(),
+                    model_id: model.id.clone(),
+                })
+        })
+}
+
+fn compact_session_messages(session: &Session) -> Vec<Value> {
+    session
+        .messages
+        .iter()
+        .map(|message| {
+            let parts = message
+                .parts
+                .iter()
+                .map(|part| match part {
+                    MessagePart::Text { text } => json!({
+                        "type": "text",
+                        "text": crate::truncate_text(text, 500),
+                    }),
+                    MessagePart::Reasoning { text } => json!({
+                        "type": "reasoning",
+                        "text": crate::truncate_text(text, 500),
+                    }),
+                    MessagePart::ToolInvocation {
+                        tool,
+                        args,
+                        result,
+                        error,
+                    } => json!({
+                        "type": "tool_invocation",
+                        "tool": tool,
+                        "args": args,
+                        "result": result,
+                        "error": error,
+                    }),
+                })
+                .collect::<Vec<_>>();
+            json!({
+                "id": message.id,
+                "role": message.role,
+                "parts": parts,
+                "created_at": message.created_at,
+            })
+        })
+        .collect()
+}
+
+fn latest_assistant_session_text(session: &Session) -> Option<String> {
+    session.messages.iter().rev().find_map(|message| {
+        if !matches!(message.role, MessageRole::Assistant) {
+            return None;
+        }
+        message.parts.iter().rev().find_map(|part| match part {
+            MessagePart::Text { text } | MessagePart::Reasoning { text } => Some(text.clone()),
+            _ => None,
+        })
+    })
+}
+
+fn count_session_tool_invocations(session: &Session) -> usize {
+    session
+        .messages
+        .iter()
+        .flat_map(|message| message.parts.iter())
+        .filter(|part| matches!(part, MessagePart::ToolInvocation { .. }))
+        .count()
+}
+
+async fn load_latest_coder_artifact_payload(
+    state: &AppState,
+    record: &CoderRunRecord,
+    artifact_type: &str,
+) -> Option<Value> {
+    let blackboard = load_context_blackboard(state, &record.linked_context_run_id);
+    let artifact = blackboard
+        .artifacts
+        .iter()
+        .rev()
+        .find(|artifact| artifact.artifact_type == artifact_type)?;
+    let raw = tokio::fs::read_to_string(&artifact.path).await.ok()?;
+    serde_json::from_str::<Value>(&raw).ok()
+}
+
+fn build_issue_fix_worker_prompt(
+    record: &CoderRunRecord,
+    run: &ContextRunState,
+    memory_hits_used: &[String],
+) -> String {
+    let issue_number = record
+        .github_ref
+        .as_ref()
+        .map(|row| row.number)
+        .unwrap_or_default();
+    let memory_hint = if memory_hits_used.is_empty() {
+        "none".to_string()
+    } else {
+        memory_hits_used.join(", ")
+    };
+    format!(
+        concat!(
+            "You are the Tandem coder issue-fix worker.\n",
+            "Repository: {repo_slug}\n",
+            "Workspace root: {workspace_root}\n",
+            "Issue number: #{issue_number}\n",
+            "Context run ID: {context_run_id}\n",
+            "Memory hits already surfaced: {memory_hint}\n\n",
+            "Task:\n",
+            "1. Inspect the repository and issue context.\n",
+            "2. Propose a constrained fix plan.\n",
+            "3. If safe, make the smallest useful code change.\n",
+            "4. Run targeted validation.\n",
+            "5. Respond with a concise fix report.\n\n",
+            "Return a compact response with these headings:\n",
+            "Summary:\n",
+            "Root Cause:\n",
+            "Fix Strategy:\n",
+            "Changed Files:\n",
+            "Validation:\n"
+        ),
+        repo_slug = record.repo_binding.repo_slug,
+        workspace_root = record.repo_binding.workspace_root,
+        issue_number = issue_number,
+        context_run_id = run.run_id,
+        memory_hint = memory_hint,
+    )
+}
+
+async fn run_issue_fix_prepare_worker(
+    state: &AppState,
+    record: &CoderRunRecord,
+    run: &ContextRunState,
+) -> Result<(ContextBlackboardArtifact, Value), StatusCode> {
+    let model = resolve_coder_worker_model_spec(state, record)
+        .await
+        .unwrap_or(tandem_types::ModelSpec {
+            provider_id: "local".to_string(),
+            model_id: "echo-1".to_string(),
+        });
+    let session_title = format!("Coder Issue Fix {} / prepare_fix", record.coder_run_id);
+    let mut session = Session::new(
+        Some(session_title),
+        Some(record.repo_binding.workspace_root.clone()),
+    );
+    session.project_id = Some(record.repo_binding.project_id.clone());
+    session.workspace_root = Some(record.repo_binding.workspace_root.clone());
+    session.environment = Some(state.host_runtime_context());
+    session.provider = Some(model.provider_id.clone());
+    session.model = Some(model.clone());
+    let session_id = session.id.clone();
+    state
+        .storage
+        .save_session(session)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let run_id = Uuid::new_v4().to_string();
+    let client_id = Some(record.coder_run_id.clone());
+    let agent_id = Some("coder_issue_fix_worker".to_string());
+    let active_run = state
+        .run_registry
+        .acquire(
+            &session_id,
+            run_id.clone(),
+            client_id.clone(),
+            agent_id.clone(),
+            agent_id.clone(),
+        )
+        .await
+        .map_err(|_| StatusCode::CONFLICT)?;
+    state.event_bus.publish(EngineEvent::new(
+        "session.run.started",
+        json!({
+            "sessionID": session_id,
+            "runID": run_id,
+            "startedAtMs": active_run.started_at_ms,
+            "clientID": active_run.client_id,
+            "agentID": active_run.agent_id,
+            "agentProfile": active_run.agent_profile,
+            "environment": state.host_runtime_context(),
+        }),
+    ));
+
+    let prompt = build_issue_fix_worker_prompt(
+        record,
+        run,
+        &summarize_workflow_memory_hits(record, run, "retrieve_memory"),
+    );
+    let request = SendMessageRequest {
+        parts: vec![MessagePartInput::Text {
+            text: prompt.clone(),
+        }],
+        model: Some(model.clone()),
+        agent: agent_id.clone(),
+        tool_mode: Some(tandem_types::ToolMode::Auto),
+        tool_allowlist: None,
+        context_mode: Some(tandem_types::ContextMode::Full),
+        write_required: Some(true),
+    };
+
+    state
+        .engine_loop
+        .set_session_allowed_tools(
+            &session_id,
+            crate::normalize_allowed_tools(vec!["*".to_string()]),
+        )
+        .await;
+    let run_result = super::sessions::execute_run(
+        state.clone(),
+        session_id.clone(),
+        run_id.clone(),
+        request,
+        Some(format!("coder:{}:prepare_fix", record.coder_run_id)),
+        client_id,
+    )
+    .await;
+    state
+        .engine_loop
+        .clear_session_allowed_tools(&session_id)
+        .await;
+
+    let session = state
+        .storage
+        .get_session(&session_id)
+        .await
+        .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
+    let assistant_text = latest_assistant_session_text(&session);
+    let tool_invocation_count = count_session_tool_invocations(&session);
+    let payload = json!({
+        "coder_run_id": record.coder_run_id,
+        "linked_context_run_id": record.linked_context_run_id,
+        "workflow_mode": record.workflow_mode,
+        "repo_binding": record.repo_binding,
+        "github_ref": record.github_ref,
+        "worker_kind": "issue_fix_prepare",
+        "session_id": session_id,
+        "session_run_id": run_id,
+        "status": if run_result.is_ok() { "completed" } else { "error" },
+        "model": model,
+        "agent_id": agent_id,
+        "prompt": prompt,
+        "assistant_text": assistant_text,
+        "tool_invocation_count": tool_invocation_count,
+        "message_count": session.messages.len(),
+        "messages": compact_session_messages(&session),
+        "error": run_result.as_ref().err().map(|error| crate::truncate_text(&error.to_string(), 500)),
+        "created_at_ms": crate::now_ms(),
+    });
+    let artifact = write_coder_artifact(
+        state,
+        &record.linked_context_run_id,
+        &format!("issue-fix-worker-session-{}", Uuid::new_v4().simple()),
+        "coder_issue_fix_worker_session",
+        "artifacts/issue_fix.worker_session.json",
+        &payload,
+    )
+    .await?;
+    publish_coder_artifact_added(state, record, &artifact, Some("analysis"), {
+        let mut extra = serde_json::Map::new();
+        extra.insert("kind".to_string(), json!("worker_session"));
+        if let Some(session_id) = payload.get("session_id").cloned() {
+            extra.insert("session_id".to_string(), session_id);
+        }
+        if let Some(session_run_id) = payload.get("session_run_id").cloned() {
+            extra.insert("session_run_id".to_string(), session_run_id);
+        }
+        extra.insert("worker_kind".to_string(), json!("issue_fix_prepare"));
+        extra
+    });
+
+    if run_result.is_err() {
+        return Err(StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    Ok((artifact, payload))
+}
+
 fn coder_run_payload(record: &CoderRunRecord, context_run: &ContextRunState) -> Value {
     json!({
         "coder_run_id": record.coder_run_id,
@@ -3437,6 +3843,8 @@ fn coder_run_payload(record: &CoderRunRecord, context_run: &ContextRunState) -> 
         "repo_binding": record.repo_binding,
         "github_ref": record.github_ref,
         "source_client": record.source_client,
+        "model_provider": record.model_provider,
+        "model_id": record.model_id,
         "status": context_run.status,
         "phase": project_coder_phase(context_run),
         "created_at_ms": record.created_at_ms,
@@ -3574,6 +3982,8 @@ pub(super) async fn coder_run_create(
         github_ref: input.github_ref,
         source_client: normalize_source_client(input.source_client.as_deref())
             .or_else(|| Some("coder_api".to_string())),
+        model_provider: normalize_source_client(input.model_provider.as_deref()),
+        model_id: normalize_source_client(input.model_id.as_deref()),
         created_at_ms: now,
         updated_at_ms: now,
     };
@@ -3964,7 +4374,7 @@ pub(super) async fn coder_run_execute_next(
             dispatch_issue_triage_task(state.clone(), &record, &task, &agent_id).await?
         }
         CoderWorkflowMode::IssueFix => {
-            dispatch_issue_fix_task(state.clone(), &record, &task).await?
+            dispatch_issue_fix_task(state.clone(), &record, &task, &agent_id).await?
         }
         CoderWorkflowMode::PrReview => {
             dispatch_pr_review_task(state.clone(), &record, &task).await?
