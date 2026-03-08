@@ -2439,6 +2439,7 @@ async fn memory_delete_missing_memory_writes_not_found_audit() {
         .properties
         .get("runID")
         .is_some_and(Value::is_null));
+    assert!(delete_event.properties.get("linkage").is_none());
     assert!(delete_event
         .properties
         .get("detail")
@@ -2845,6 +2846,7 @@ async fn memory_demote_missing_memory_writes_not_found_audit() {
         .properties
         .get("demoted")
         .is_some_and(Value::is_null));
+    assert!(demote_event.properties.get("linkage").is_none());
     assert!(demote_event
         .properties
         .get("detail")
