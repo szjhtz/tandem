@@ -72,12 +72,14 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
 
 - Initial Tandem Coder engine API foundation
   - Added the first engine-owned coder endpoints:
+    - `GET /coder/projects`
     - `POST /coder/runs`
     - `GET /coder/runs`
     - `GET /coder/runs/{id}`
     - `GET /coder/runs/{id}/artifacts`
     - `POST /coder/runs/{id}/execute-next`
     - `POST /coder/runs/{id}/execute-all`
+  - `GET /coder/projects` now summarizes known repo bindings, workflow coverage, latest run metadata, and project-level coder policy from existing engine-owned run state.
   - Coder runs now persist as thin metadata records linked to engine context runs rather than introducing a frontend-owned workflow store.
   - Added structured intermediate and final artifacts for triage inspection/reproduction, issue-fix validation and patch evidence, PR review evidence, and merge readiness.
   - Added governed-memory-aware retrieval and reusable coder memory outputs across `issue_triage`, `issue_fix`, `pr_review`, and `merge_recommendation`.

@@ -5111,6 +5111,168 @@ async fn coder_project_policy_get_and_put_controls_auto_merge_flag() {
 }
 
 #[tokio::test]
+async fn coder_project_list_summarizes_known_repo_bindings_and_policy() {
+    let (endpoint, server) = spawn_fake_github_mcp_server().await;
+    let state = test_state().await;
+    state
+        .mcp
+        .add_or_update(
+            "github".to_string(),
+            endpoint,
+            std::collections::HashMap::new(),
+            true,
+        )
+        .await;
+    assert!(state.mcp.connect("github").await);
+    state
+        .capability_resolver
+        .refresh_builtin_bindings()
+        .await
+        .expect("refresh builtin bindings");
+    let app = app_router(state.clone());
+
+    let policy_req = Request::builder()
+        .method("PUT")
+        .uri("/coder/projects/proj-engine/policy")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "auto_merge_enabled": true
+            })
+            .to_string(),
+        ))
+        .expect("policy request");
+    let policy_resp = app
+        .clone()
+        .oneshot(policy_req)
+        .await
+        .expect("policy response");
+    assert_eq!(policy_resp.status(), StatusCode::OK);
+
+    for payload in [
+        json!({
+            "coder_run_id": "coder-project-list-a",
+            "workflow_mode": "issue_triage",
+            "repo_binding": {
+                "project_id": "proj-engine",
+                "workspace_id": "ws-tandem",
+                "workspace_root": "/tmp/tandem-repo",
+                "repo_slug": "evan/tandem"
+            },
+            "github_ref": {
+                "kind": "issue",
+                "number": 321
+            },
+            "mcp_servers": ["github"]
+        }),
+        json!({
+            "coder_run_id": "coder-project-list-b",
+            "workflow_mode": "issue_fix",
+            "repo_binding": {
+                "project_id": "proj-engine",
+                "workspace_id": "ws-tandem",
+                "workspace_root": "/tmp/tandem-repo",
+                "repo_slug": "evan/tandem"
+            },
+            "github_ref": {
+                "kind": "issue",
+                "number": 322
+            },
+            "mcp_servers": ["github"]
+        }),
+        json!({
+            "coder_run_id": "coder-project-list-c",
+            "workflow_mode": "pr_review",
+            "repo_binding": {
+                "project_id": "proj-docs",
+                "workspace_id": "ws-docs",
+                "workspace_root": "/tmp/docs-repo",
+                "repo_slug": "evan/docs"
+            },
+            "github_ref": {
+                "kind": "pull_request",
+                "number": 12
+            },
+            "mcp_servers": ["github"]
+        }),
+    ] {
+        let create_req = Request::builder()
+            .method("POST")
+            .uri("/coder/runs")
+            .header("content-type", "application/json")
+            .body(Body::from(payload.to_string()))
+            .expect("create request");
+        let create_resp = app
+            .clone()
+            .oneshot(create_req)
+            .await
+            .expect("create response");
+        assert_eq!(create_resp.status(), StatusCode::OK);
+    }
+
+    let list_req = Request::builder()
+        .method("GET")
+        .uri("/coder/projects")
+        .body(Body::empty())
+        .expect("list request");
+    let list_resp = app.clone().oneshot(list_req).await.expect("list response");
+    server.abort();
+    assert_eq!(list_resp.status(), StatusCode::OK);
+    let list_payload: Value = serde_json::from_slice(
+        &to_bytes(list_resp.into_body(), usize::MAX)
+            .await
+            .expect("list body"),
+    )
+    .expect("list json");
+    let projects = list_payload
+        .get("projects")
+        .and_then(Value::as_array)
+        .expect("projects array");
+    assert_eq!(projects.len(), 2);
+    let engine_project = projects
+        .iter()
+        .find(|row| row.get("project_id").and_then(Value::as_str) == Some("proj-engine"))
+        .expect("engine project");
+    let docs_project = projects
+        .iter()
+        .find(|row| row.get("project_id").and_then(Value::as_str) == Some("proj-docs"))
+        .expect("docs project");
+    assert_eq!(
+        engine_project.get("project_id").and_then(Value::as_str),
+        Some("proj-engine")
+    );
+    assert_eq!(
+        engine_project.get("run_count").and_then(Value::as_u64),
+        Some(2)
+    );
+    assert_eq!(
+        engine_project
+            .get("project_policy")
+            .and_then(|row| row.get("auto_merge_enabled"))
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        engine_project
+            .get("workflow_modes")
+            .and_then(Value::as_array)
+            .map(|rows| rows.iter().filter_map(Value::as_str).collect::<Vec<_>>()),
+        Some(vec!["issue_fix", "issue_triage"])
+    );
+    assert_eq!(
+        docs_project.get("project_id").and_then(Value::as_str),
+        Some("proj-docs")
+    );
+    assert_eq!(
+        docs_project
+            .get("project_policy")
+            .and_then(|row| row.get("auto_merge_enabled"))
+            .and_then(Value::as_bool),
+        Some(false)
+    );
+}
+
+#[tokio::test]
 async fn coder_merge_submit_blocks_when_execution_request_is_not_merge_ready() {
     let (endpoint, server) = spawn_fake_github_mcp_server().await;
 

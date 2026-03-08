@@ -415,6 +415,17 @@ pub(super) struct CoderProjectPolicy {
     pub(super) updated_at_ms: u64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(super) struct CoderProjectSummary {
+    pub(super) project_id: String,
+    pub(super) repo_binding: CoderRepoBinding,
+    pub(super) latest_coder_run_id: Option<String>,
+    pub(super) latest_updated_at_ms: u64,
+    pub(super) run_count: u64,
+    pub(super) workflow_modes: Vec<CoderWorkflowMode>,
+    pub(super) project_policy: CoderProjectPolicy,
+}
+
 #[derive(Debug, Deserialize, Default)]
 pub(super) struct CoderProjectPolicyPutInput {
     #[serde(default)]
@@ -7972,6 +7983,67 @@ pub(super) async fn coder_project_policy_get(
     let policy = load_coder_project_policy(&state, project_id.trim()).await?;
     Ok(Json(json!({
         "project_policy": policy,
+    })))
+}
+
+pub(super) async fn coder_project_list(
+    State(state): State<AppState>,
+) -> Result<Json<Value>, StatusCode> {
+    ensure_coder_runs_dir(&state).await?;
+    let mut projects = std::collections::BTreeMap::<String, CoderProjectSummary>::new();
+    let mut dir = tokio::fs::read_dir(coder_runs_root(&state))
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    while let Ok(Some(entry)) = dir.next_entry().await {
+        if !entry
+            .file_type()
+            .await
+            .map(|row| row.is_file())
+            .unwrap_or(false)
+        {
+            continue;
+        }
+        let raw = tokio::fs::read_to_string(entry.path())
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        let Ok(record) = serde_json::from_str::<CoderRunRecord>(&raw) else {
+            continue;
+        };
+        let project_id = record.repo_binding.project_id.clone();
+        let project_policy = load_coder_project_policy(&state, &project_id).await?;
+        let entry = projects
+            .entry(project_id.clone())
+            .or_insert_with(|| CoderProjectSummary {
+                project_id: project_id.clone(),
+                repo_binding: record.repo_binding.clone(),
+                latest_coder_run_id: Some(record.coder_run_id.clone()),
+                latest_updated_at_ms: record.updated_at_ms,
+                run_count: 0,
+                workflow_modes: Vec::new(),
+                project_policy,
+            });
+        entry.run_count += 1;
+        if !entry.workflow_modes.contains(&record.workflow_mode) {
+            entry.workflow_modes.push(record.workflow_mode.clone());
+        }
+        if record.updated_at_ms >= entry.latest_updated_at_ms {
+            entry.latest_updated_at_ms = record.updated_at_ms;
+            entry.latest_coder_run_id = Some(record.coder_run_id.clone());
+            entry.repo_binding = record.repo_binding.clone();
+        }
+    }
+    let mut rows = projects.into_values().collect::<Vec<_>>();
+    for row in &mut rows {
+        row.workflow_modes.sort_by_key(|mode| match mode {
+            CoderWorkflowMode::IssueFix => 0,
+            CoderWorkflowMode::IssueTriage => 1,
+            CoderWorkflowMode::MergeRecommendation => 2,
+            CoderWorkflowMode::PrReview => 3,
+        });
+    }
+    rows.sort_by(|a, b| b.latest_updated_at_ms.cmp(&a.latest_updated_at_ms));
+    Ok(Json(json!({
+        "projects": rows,
     })))
 }
 

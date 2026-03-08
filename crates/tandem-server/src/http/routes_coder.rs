@@ -6,6 +6,7 @@ use crate::AppState;
 
 pub(super) fn apply(router: Router<AppState>) -> Router<AppState> {
     router
+        .route("/coder/projects", get(coder_project_list))
         .route(
             "/coder/projects/{project_id}/policy",
             get(coder_project_policy_get).put(coder_project_policy_put),
