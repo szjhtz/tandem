@@ -109,7 +109,11 @@ async fn memory_put_enforces_default_write_scope() {
                     && row
                         .get("detail")
                         .and_then(Value::as_str)
-                        .is_some_and(|detail| detail.contains("write tier not allowed"))
+                        .is_some_and(|detail| {
+                            detail.contains("write tier not allowed")
+                                && detail.contains("origin_run_id=run-1")
+                                && detail.contains("project_id=proj-1")
+                        })
             })
         })
         .unwrap_or(false);
@@ -692,6 +696,14 @@ async fn memory_promote_blocks_sensitive_content_and_emits_audit() {
             events.iter().any(|event| {
                 event.get("action").and_then(|v| v.as_str()) == Some("memory_promote")
                     && event.get("status").and_then(|v| v.as_str()) == Some("blocked")
+                    && event
+                        .get("detail")
+                        .and_then(Value::as_str)
+                        .is_some_and(|detail| {
+                            detail.contains("private key")
+                                && detail.contains("origin_run_id=run-3")
+                                && detail.contains("project_id=proj-1")
+                        })
             })
         })
         .unwrap_or(false);

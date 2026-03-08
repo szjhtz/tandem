@@ -1032,6 +1032,12 @@ async fn emit_blocked_memory_put_guardrail(
         request.classification,
     );
     let provenance = memory_put_provenance(request, &partition_key, &request.artifact_refs);
+    let linkage = memory_linkage_from_parts(
+        &request.run_id,
+        Some(&request.partition.project_id),
+        metadata.as_ref(),
+        Some(&provenance),
+    );
     append_memory_audit(
         state,
         crate::MemoryAuditEvent {
@@ -1044,7 +1050,7 @@ async fn emit_blocked_memory_put_guardrail(
             partition_key: partition_key.clone(),
             actor,
             status: "blocked".to_string(),
-            detail: Some(detail.to_string()),
+            detail: Some(format!("{detail}{}", memory_linkage_detail(&linkage))),
             created_at_ms: crate::now_ms(),
         },
     )
@@ -1059,12 +1065,7 @@ async fn emit_blocked_memory_put_guardrail(
             "visibility": Value::Null,
             "tier": request.partition.tier,
             "partitionKey": partition_key,
-            "linkage": memory_linkage_from_parts(
-                &request.run_id,
-                Some(&request.partition.project_id),
-                metadata.as_ref(),
-                Some(&provenance),
-            ),
+            "linkage": linkage,
             "status": "blocked",
             "detail": detail,
             "auditID": audit_id,
@@ -2358,6 +2359,7 @@ pub(super) async fn memory_promote_impl(
         request.partition.project_id,
         request.to_tier
     );
+    let linkage = memory_linkage(&source);
     if scrub_report.status == ScrubStatus::Blocked {
         append_memory_audit(
             &state,
@@ -2371,7 +2373,10 @@ pub(super) async fn memory_promote_impl(
                 partition_key: partition_key.clone(),
                 actor: capability.subject,
                 status: "blocked".to_string(),
-                detail: scrub_report.block_reason.clone(),
+                detail: scrub_report
+                    .block_reason
+                    .as_ref()
+                    .map(|detail| format!("{detail}{}", memory_linkage_detail(&linkage))),
                 created_at_ms: now,
             },
         )
@@ -2389,7 +2394,7 @@ pub(super) async fn memory_promote_impl(
                 "artifactRefs": memory_artifact_refs(source.metadata.as_ref()),
                 "visibility": source.visibility,
                 "scrubStatus": scrub_report.status,
-                "linkage": memory_linkage(&source),
+                "linkage": linkage,
                 "detail": scrub_report.block_reason.clone(),
                 "auditID": audit_id,
             }),
