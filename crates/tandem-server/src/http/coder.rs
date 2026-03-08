@@ -5758,6 +5758,7 @@ fn build_follow_on_run_templates(
     mcp_servers: &[String],
     requested_follow_on_runs: &[CoderWorkflowMode],
     allow_auto_merge_recommendation: bool,
+    project_auto_merge_enabled: bool,
     skipped_follow_on_runs: &[Value],
 ) -> Vec<Value> {
     [
@@ -5773,6 +5774,30 @@ fn build_follow_on_run_templates(
                 vec![json!("pr_review")]
             } else {
                 Vec::new()
+            };
+        let merge_submit_policy_preview =
+            if matches!(workflow_mode, CoderWorkflowMode::MergeRecommendation) {
+                json!({
+                    "manual": blocked_merge_submit_policy("manual", json!({
+                        "reason": "requires_merge_execution_request",
+                    })),
+                    "auto": blocked_merge_submit_policy("auto", json!({
+                        "reason": "requires_merge_execution_request",
+                        "merge_auto_spawn_opted_in": allow_auto_merge_recommendation,
+                    })),
+                    "preferred_submit_mode": "manual",
+                    "explicit_submit_required": true,
+                    "auto_execute_after_approval": false,
+                    "auto_execute_eligible": false,
+                    "auto_execute_policy_enabled": project_auto_merge_enabled,
+                    "auto_execute_block_reason": if project_auto_merge_enabled {
+                        "requires_merge_execution_request"
+                    } else {
+                        "project_auto_merge_policy_disabled"
+                    },
+                })
+            } else {
+                Value::Null
             };
         json!({
             "workflow_mode": workflow_mode,
@@ -5802,6 +5827,7 @@ fn build_follow_on_run_templates(
                 &workflow_mode,
                 &required_completed_workflow_modes,
             ),
+            "merge_submit_policy_preview": merge_submit_policy_preview,
         })
     })
     .collect::<Vec<_>>()
@@ -6195,12 +6221,15 @@ pub(super) async fn coder_issue_fix_pr_submit(
         let submitted_github_ref =
             parse_coder_github_ref(&github_ref_from_pull_request(&pull_request))
                 .ok_or(StatusCode::BAD_GATEWAY)?;
+        let project_policy =
+            load_coder_project_policy(&state, &record.repo_binding.project_id).await?;
         let follow_on_templates = build_follow_on_run_templates(
             &record,
             &submitted_github_ref,
             &[server_name.clone()],
             &requested_follow_on_modes,
             allow_auto_merge_recommendation,
+            project_policy.auto_merge_enabled,
             &skipped_follow_on_runs,
         );
         if let Some(obj) = submission_payload.as_object_mut() {

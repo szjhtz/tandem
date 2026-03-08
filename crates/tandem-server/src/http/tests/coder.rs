@@ -1760,6 +1760,38 @@ async fn coder_issue_fix_pr_submit_real_submit_writes_canonical_pr_identity() {
     );
     assert_eq!(
         submit_payload
+            .get("follow_on_runs")
+            .and_then(Value::as_array)
+            .and_then(|rows| rows.get(1))
+            .and_then(|row| row.get("merge_submit_policy_preview"))
+            .and_then(|row| row.get("auto_execute_policy_enabled"))
+            .and_then(Value::as_bool),
+        Some(false)
+    );
+    assert_eq!(
+        submit_payload
+            .get("follow_on_runs")
+            .and_then(Value::as_array)
+            .and_then(|rows| rows.get(1))
+            .and_then(|row| row.get("merge_submit_policy_preview"))
+            .and_then(|row| row.get("auto_execute_block_reason"))
+            .and_then(Value::as_str),
+        Some("project_auto_merge_policy_disabled")
+    );
+    assert_eq!(
+        submit_payload
+            .get("follow_on_runs")
+            .and_then(Value::as_array)
+            .and_then(|rows| rows.get(1))
+            .and_then(|row| row.get("merge_submit_policy_preview"))
+            .and_then(|row| row.get("manual"))
+            .and_then(|row| row.get("policy"))
+            .and_then(|row| row.get("reason"))
+            .and_then(Value::as_str),
+        Some("requires_merge_execution_request")
+    );
+    assert_eq!(
+        submit_payload
             .get("spawned_follow_on_runs")
             .and_then(Value::as_array)
             .map(|rows| rows.len()),
@@ -1916,6 +1948,16 @@ async fn coder_issue_fix_pr_submit_real_submit_writes_canonical_pr_identity() {
     );
     assert_eq!(
         artifact_payload
+            .get("follow_on_runs")
+            .and_then(Value::as_array)
+            .and_then(|rows| rows.get(1))
+            .and_then(|row| row.get("merge_submit_policy_preview"))
+            .and_then(|row| row.get("auto_execute_policy_enabled"))
+            .and_then(Value::as_bool),
+        Some(false)
+    );
+    assert_eq!(
+        artifact_payload
             .get("spawned_follow_on_runs")
             .and_then(Value::as_array)
             .and_then(|rows| rows.first())
@@ -2052,6 +2094,17 @@ async fn coder_issue_fix_pr_submit_real_submit_writes_canonical_pr_identity() {
             .and_then(|row| row.get("blocked"))
             .and_then(Value::as_bool),
         Some(true)
+    );
+    assert_eq!(
+        submitted_event
+            .properties
+            .get("follow_on_runs")
+            .and_then(Value::as_array)
+            .and_then(|rows| rows.get(1))
+            .and_then(|row| row.get("merge_submit_policy_preview"))
+            .and_then(|row| row.get("auto_execute_policy_enabled"))
+            .and_then(Value::as_bool),
+        Some(false)
     );
     assert_eq!(
         submitted_event
