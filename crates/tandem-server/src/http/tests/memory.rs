@@ -2401,6 +2401,14 @@ async fn memory_search_rejects_expired_capability_and_emits_blocked_audit() {
         .get("detail")
         .and_then(Value::as_str)
         .is_some_and(|detail| detail.contains("capability expired")));
+    assert_eq!(
+        search_event
+            .properties
+            .get("blockedScopes")
+            .and_then(Value::as_array)
+            .map(|rows| rows.iter().filter_map(Value::as_str).collect::<Vec<_>>()),
+        Some(vec!["session"])
+    );
 
     let audit_req = Request::builder()
         .method("GET")
@@ -2427,7 +2435,10 @@ async fn memory_search_rejects_expired_capability_and_emits_blocked_audit() {
                     && row
                         .get("detail")
                         .and_then(Value::as_str)
-                        .is_some_and(|detail| detail.contains("capability expired"))
+                        .is_some_and(|detail| {
+                            detail.contains("capability expired")
+                                && detail.contains("blocked_scopes=session")
+                        })
             })
         })
         .unwrap_or(false);

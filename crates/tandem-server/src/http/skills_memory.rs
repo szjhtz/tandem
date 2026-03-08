@@ -1177,8 +1177,13 @@ async fn emit_blocked_memory_search_guardrail(
 ) -> Result<MemoryCapabilityToken, StatusCode> {
     let audit_id = Uuid::new_v4().to_string();
     let search_detail = format!(
-        "query={} result_count=0 result_ids= result_kinds= requested_scopes={} scopes_used= blocked_scopes= detail={}",
+        "query={} result_count=0 result_ids= result_kinds= requested_scopes={} scopes_used= blocked_scopes={} detail={}",
         request.query,
+        requested_scopes
+            .iter()
+            .map(|scope| scope.to_string())
+            .collect::<Vec<_>>()
+            .join(","),
         requested_scopes
             .iter()
             .map(|scope| scope.to_string())
@@ -1214,7 +1219,7 @@ async fn emit_blocked_memory_search_guardrail(
             "resultKinds": [],
             "requestedScopes": requested_scopes,
             "scopesUsed": [],
-            "blockedScopes": [],
+            "blockedScopes": requested_scopes,
             "status": "blocked",
             "detail": detail,
             "auditID": audit_id,
