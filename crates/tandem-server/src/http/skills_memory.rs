@@ -2153,6 +2153,22 @@ pub(super) async fn memory_search(
     } else {
         "ok"
     };
+    let search_detail = format!(
+        "query={} result_count={} result_ids={} requested_scopes={} blocked_scopes={}",
+        request.query,
+        results.len(),
+        result_ids.join(","),
+        requested_scopes
+            .iter()
+            .map(|scope| scope.to_string())
+            .collect::<Vec<_>>()
+            .join(","),
+        blocked_scopes
+            .iter()
+            .map(|scope| scope.to_string())
+            .collect::<Vec<_>>()
+            .join(",")
+    );
     append_memory_audit(
         &state,
         crate::MemoryAuditEvent {
@@ -2165,21 +2181,7 @@ pub(super) async fn memory_search(
             partition_key: request.partition.key(),
             actor: capability.subject,
             status: search_status.to_string(),
-            detail: (!blocked_scopes.is_empty()).then(|| {
-                format!(
-                    "requested_scopes={} blocked_scopes={}",
-                    requested_scopes
-                        .iter()
-                        .map(|scope| scope.to_string())
-                        .collect::<Vec<_>>()
-                        .join(","),
-                    blocked_scopes
-                        .iter()
-                        .map(|scope| scope.to_string())
-                        .collect::<Vec<_>>()
-                        .join(",")
-                )
-            }),
+            detail: Some(search_detail),
             created_at_ms: now,
         },
     )

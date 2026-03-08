@@ -200,6 +200,41 @@ async fn memory_put_then_search_in_session_scope() {
             .map(|rows| rows.iter().filter_map(Value::as_str).collect::<Vec<_>>()),
         Some(vec!["session"])
     );
+
+    let audit_req = Request::builder()
+        .method("GET")
+        .uri("/memory/audit?run_id=run-2")
+        .body(Body::empty())
+        .expect("audit request");
+    let audit_resp = app
+        .clone()
+        .oneshot(audit_req)
+        .await
+        .expect("audit response");
+    assert_eq!(audit_resp.status(), StatusCode::OK);
+    let audit_body = to_bytes(audit_resp.into_body(), usize::MAX)
+        .await
+        .expect("audit body");
+    let audit_payload: Value = serde_json::from_slice(&audit_body).expect("audit json");
+    let search_audit_exists = audit_payload
+        .get("events")
+        .and_then(Value::as_array)
+        .map(|rows| {
+            rows.iter().any(|row| {
+                row.get("action").and_then(Value::as_str) == Some("memory_search")
+                    && row.get("status").and_then(Value::as_str) == Some("ok")
+                    && row
+                        .get("detail")
+                        .and_then(Value::as_str)
+                        .is_some_and(|detail| {
+                            detail.contains("query=budget extension")
+                                && detail.contains("result_count=")
+                                && detail.contains("requested_scopes=session")
+                        })
+            })
+        })
+        .unwrap_or(false);
+    assert!(search_audit_exists);
 }
 
 #[tokio::test]
@@ -1681,7 +1716,11 @@ async fn memory_search_returns_empty_when_all_requested_scopes_are_blocked() {
                     && row
                         .get("detail")
                         .and_then(Value::as_str)
-                        .is_some_and(|detail| detail.contains("blocked_scopes=team"))
+                        .is_some_and(|detail| {
+                            detail.contains("query=blocked scopes should return no results")
+                                && detail.contains("result_count=0")
+                                && detail.contains("blocked_scopes=team")
+                        })
             })
         })
         .unwrap_or(false);
