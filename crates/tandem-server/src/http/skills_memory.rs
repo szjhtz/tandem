@@ -1129,6 +1129,107 @@ async fn validate_memory_promote_capability_with_guardrail(
     Ok(cap)
 }
 
+async fn validate_memory_search_capability_with_guardrail(
+    state: &AppState,
+    request: &MemorySearchRequest,
+    capability: Option<MemoryCapabilityToken>,
+) -> Result<MemoryCapabilityToken, StatusCode> {
+    let cap = capability
+        .unwrap_or_else(|| default_memory_capability_for(&request.run_id, &request.partition));
+    let requested_scopes = if request.read_scopes.is_empty() {
+        cap.memory.read_tiers.clone()
+    } else {
+        request.read_scopes.clone()
+    };
+    let partition_key = request.partition.key();
+    if cap.run_id != request.run_id
+        || cap.org_id != request.partition.org_id
+        || cap.workspace_id != request.partition.workspace_id
+        || cap.project_id != request.partition.project_id
+    {
+        return emit_blocked_memory_search_guardrail(
+            StatusCode::FORBIDDEN,
+            "capability context mismatch",
+            cap.subject.clone(),
+            state,
+            request,
+            &requested_scopes,
+            &partition_key,
+        )
+        .await;
+    }
+    if cap.expires_at < crate::now_ms() {
+        return emit_blocked_memory_search_guardrail(
+            StatusCode::UNAUTHORIZED,
+            "capability expired",
+            cap.subject.clone(),
+            state,
+            request,
+            &requested_scopes,
+            &partition_key,
+        )
+        .await;
+    }
+    Ok(cap)
+}
+
+async fn emit_blocked_memory_search_guardrail(
+    status_code: StatusCode,
+    detail: &str,
+    actor: String,
+    state: &AppState,
+    request: &MemorySearchRequest,
+    requested_scopes: &[tandem_memory::GovernedMemoryTier],
+    partition_key: &str,
+) -> Result<MemoryCapabilityToken, StatusCode> {
+    let audit_id = Uuid::new_v4().to_string();
+    let search_detail = format!(
+        "query={} result_count=0 result_ids= result_kinds= requested_scopes={} scopes_used= blocked_scopes= detail={}",
+        request.query,
+        requested_scopes
+            .iter()
+            .map(|scope| scope.to_string())
+            .collect::<Vec<_>>()
+            .join(","),
+        detail
+    );
+    append_memory_audit(
+        state,
+        crate::MemoryAuditEvent {
+            audit_id: audit_id.clone(),
+            action: "memory_search".to_string(),
+            run_id: request.run_id.clone(),
+            memory_id: None,
+            source_memory_id: None,
+            to_tier: None,
+            partition_key: partition_key.to_string(),
+            actor,
+            status: "blocked".to_string(),
+            detail: Some(search_detail),
+            created_at_ms: crate::now_ms(),
+        },
+    )
+    .await?;
+    state.event_bus.publish(EngineEvent::new(
+        "memory.search",
+        json!({
+            "runID": request.run_id,
+            "query": request.query,
+            "partitionKey": partition_key,
+            "resultCount": 0,
+            "resultIDs": [],
+            "resultKinds": [],
+            "requestedScopes": requested_scopes,
+            "scopesUsed": [],
+            "blockedScopes": [],
+            "status": "blocked",
+            "detail": detail,
+            "auditID": audit_id,
+        }),
+    ));
+    Err(status_code)
+}
+
 fn memory_promote_metadata(
     metadata: Option<&Value>,
     request: &MemoryPromoteRequest,
@@ -2289,7 +2390,8 @@ pub(super) async fn memory_search(
 ) -> Result<Json<MemorySearchResponse>, StatusCode> {
     let request = input.request;
     let capability =
-        validate_memory_capability(&request.run_id, &request.partition, input.capability)?;
+        validate_memory_search_capability_with_guardrail(&state, &request, input.capability)
+            .await?;
     let requested_scopes = if request.read_scopes.is_empty() {
         capability.memory.read_tiers.clone()
     } else {

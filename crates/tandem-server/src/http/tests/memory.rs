@@ -2330,3 +2330,106 @@ async fn memory_search_returns_empty_when_all_requested_scopes_are_blocked() {
         .unwrap_or(false);
     assert!(blocked_search_exists);
 }
+
+#[tokio::test]
+async fn memory_search_rejects_expired_capability_and_emits_blocked_audit() {
+    let state = test_state().await;
+    let app = app_router(state.clone());
+    let mut rx = state.event_bus.subscribe();
+
+    let search_req = Request::builder()
+        .method("POST")
+        .uri("/memory/search")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "run_id": "run-6-expired",
+                "query": "expired capability search",
+                "partition": {
+                    "org_id": "org-1",
+                    "workspace_id": "ws-1",
+                    "project_id": "proj-1",
+                    "tier": "session"
+                },
+                "read_scopes": ["session"],
+                "capability": {
+                    "run_id": "run-6-expired",
+                    "subject": "expired-user",
+                    "org_id": "org-1",
+                    "workspace_id": "ws-1",
+                    "project_id": "proj-1",
+                    "memory": {
+                        "read_tiers": ["session"],
+                        "write_tiers": ["session"],
+                        "promote_targets": ["project"],
+                        "require_review_for_promote": true,
+                        "allow_auto_use_tiers": ["curated"]
+                    },
+                    "expires_at": 1
+                },
+                "limit": 5
+            })
+            .to_string(),
+        ))
+        .expect("search request");
+    let search_resp = app
+        .clone()
+        .oneshot(search_req)
+        .await
+        .expect("search response");
+    assert_eq!(search_resp.status(), StatusCode::UNAUTHORIZED);
+
+    let search_event = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        next_event_of_type(&mut rx, "memory.search"),
+    )
+    .await
+    .expect("blocked memory.search event");
+    assert_eq!(
+        search_event
+            .properties
+            .get("status")
+            .and_then(Value::as_str),
+        Some("blocked")
+    );
+    assert_eq!(
+        search_event.properties.get("query").and_then(Value::as_str),
+        Some("expired capability search")
+    );
+    assert!(search_event
+        .properties
+        .get("detail")
+        .and_then(Value::as_str)
+        .is_some_and(|detail| detail.contains("capability expired")));
+
+    let audit_req = Request::builder()
+        .method("GET")
+        .uri("/memory/audit?run_id=run-6-expired")
+        .body(Body::empty())
+        .expect("audit request");
+    let audit_resp = app
+        .clone()
+        .oneshot(audit_req)
+        .await
+        .expect("audit response");
+    assert_eq!(audit_resp.status(), StatusCode::OK);
+    let audit_body = to_bytes(audit_resp.into_body(), usize::MAX)
+        .await
+        .expect("audit body");
+    let audit_payload: Value = serde_json::from_slice(&audit_body).expect("audit json");
+    let blocked_search_exists = audit_payload
+        .get("events")
+        .and_then(Value::as_array)
+        .map(|rows| {
+            rows.iter().any(|row| {
+                row.get("action").and_then(Value::as_str) == Some("memory_search")
+                    && row.get("status").and_then(Value::as_str) == Some("blocked")
+                    && row
+                        .get("detail")
+                        .and_then(Value::as_str)
+                        .is_some_and(|detail| detail.contains("capability expired"))
+            })
+        })
+        .unwrap_or(false);
+    assert!(blocked_search_exists);
+}
