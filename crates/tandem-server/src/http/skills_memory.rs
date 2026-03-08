@@ -1157,12 +1157,6 @@ async fn validate_memory_search_capability_with_guardrail(
             .await;
         }
     };
-    let requested_scopes = if request.read_scopes.is_empty() {
-        cap.memory.read_tiers.clone()
-    } else {
-        request.read_scopes.clone()
-    };
-    let partition_key = request.partition.key();
     Ok(cap)
 }
 
