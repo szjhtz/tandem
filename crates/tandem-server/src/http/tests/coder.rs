@@ -2454,7 +2454,7 @@ async fn coder_merge_follow_on_execution_waits_for_completed_review() {
             .get("merge_submit_policy")
             .and_then(|row| row.get("auto_execute_block_reason"))
             .and_then(Value::as_str),
-        Some("preferred_submit_mode_manual")
+        Some("requires_merge_execution_request")
     );
     assert_eq!(
         merge_follow_on_payload
@@ -5583,7 +5583,7 @@ async fn coder_merge_submit_blocks_auto_mode_for_manual_follow_on() {
             .get("merge_submit_policy")
             .and_then(|row| row.get("auto_execute_block_reason"))
             .and_then(Value::as_str),
-        Some("preferred_submit_mode_manual")
+        Some("requires_auto_spawned_merge_follow_on")
     );
     assert_eq!(
         approve_payload
@@ -7641,6 +7641,24 @@ async fn coder_issue_triage_execute_next_drives_task_runtime_to_completion() {
         .await
         .expect("context run state");
     assert_eq!(run.status, ContextRunStatus::Completed);
+    let blackboard = load_context_blackboard(&state, &linked_context_run_id);
+    let triage_summary_path = blackboard
+        .artifacts
+        .iter()
+        .find(|artifact| artifact.artifact_type == "coder_triage_summary")
+        .map(|artifact| artifact.path.clone())
+        .expect("triage summary path");
+    let triage_summary_payload: Value = serde_json::from_str(
+        &tokio::fs::read_to_string(&triage_summary_path)
+            .await
+            .expect("read triage summary"),
+    )
+    .expect("triage summary json");
+    assert!(triage_summary_payload
+        .get("duplicate_candidates")
+        .and_then(Value::as_array)
+        .map(|rows| !rows.is_empty())
+        .unwrap_or(false));
     assert_eq!(
         run.tasks
             .iter()

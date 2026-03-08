@@ -2395,6 +2395,8 @@ async fn dispatch_issue_triage_task(
         }
         Some("write_triage_artifact") => {
             let memory_hits_used = summarize_workflow_memory_hits(record, &run, "retrieve_memory");
+            let duplicate_candidates =
+                summarize_workflow_duplicate_candidates(record, &run, "retrieve_memory");
             let prior_runs_considered =
                 summarize_workflow_prior_runs_considered(record, &run, "retrieve_memory");
             let worker_payload = load_latest_coder_artifact_payload(
@@ -2436,7 +2438,7 @@ async fn dispatch_issue_triage_task(
                                 .collect::<Vec<_>>()
                         })
                         .unwrap_or_default(),
-                    duplicate_candidates: Vec::new(),
+                    duplicate_candidates,
                     prior_runs_considered,
                     memory_hits_used,
                     reproduction: Some(json!({
@@ -4959,6 +4961,20 @@ fn summarize_workflow_prior_runs_considered(
         .unwrap_or_default()
 }
 
+fn summarize_workflow_duplicate_candidates(
+    _record: &CoderRunRecord,
+    run: &ContextRunState,
+    workflow_node_id: &str,
+) -> Vec<Value> {
+    run.tasks
+        .iter()
+        .find(|task| task.workflow_node_id.as_deref() == Some(workflow_node_id))
+        .and_then(|task| task.payload.get("duplicate_candidates"))
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default()
+}
+
 fn parse_issue_fix_plan_from_worker_payload(worker_payload: &Value) -> Value {
     let assistant_text = worker_payload
         .get("assistant_text")
@@ -7241,6 +7257,15 @@ fn merge_submit_policy_envelope(
     })
 }
 
+fn blocked_policy_reason(policy: &Value) -> Option<&str> {
+    policy.get("reason").and_then(Value::as_str).or_else(|| {
+        policy
+            .get("policy")
+            .and_then(|row| row.get("reason"))
+            .and_then(Value::as_str)
+    })
+}
+
 async fn coder_merge_submit_policy_summary(
     state: &AppState,
     record: &CoderRunRecord,
@@ -7274,29 +7299,35 @@ async fn coder_merge_submit_policy_summary(
             "manual",
             false,
             project_policy.auto_merge_enabled,
-            "preferred_submit_mode_manual",
+            "requires_merge_execution_request",
         ));
     };
     if let Some(policy) = merge_submit_request_readiness_block(&merge_request_payload) {
+        let block_reason = blocked_policy_reason(&policy)
+            .unwrap_or("merge_submit_blocked")
+            .to_string();
         return Ok(merge_submit_policy_envelope(
             blocked_merge_submit_policy("manual", policy.clone()),
             blocked_merge_submit_policy("auto", policy),
             "manual",
             false,
             project_policy.auto_merge_enabled,
-            "preferred_submit_mode_manual",
+            &block_reason,
         ));
     }
     if let Some(policy) = merge_submit_review_policy_block(state, record).await? {
         let auto_policy =
             merge_submit_auto_mode_policy_block(record).unwrap_or_else(|| policy.clone());
+        let block_reason = blocked_policy_reason(&policy)
+            .unwrap_or("merge_submit_blocked")
+            .to_string();
         return Ok(merge_submit_policy_envelope(
             blocked_merge_submit_policy("manual", policy),
             blocked_merge_submit_policy("auto", auto_policy),
             "manual",
             false,
             project_policy.auto_merge_enabled,
-            "preferred_submit_mode_manual",
+            &block_reason,
         ));
     }
     let auto = if let Some(policy) = merge_submit_auto_mode_policy_block(record) {
@@ -7316,9 +7347,13 @@ async fn coder_merge_submit_policy_summary(
     let auto_execute_eligible =
         project_policy.auto_merge_enabled && preferred_submit_mode == "auto";
     let auto_execute_block_reason = if !project_policy.auto_merge_enabled {
-        "project_auto_merge_policy_disabled"
+        "project_auto_merge_policy_disabled".to_string()
+    } else if preferred_submit_mode == "manual" {
+        blocked_policy_reason(&auto)
+            .unwrap_or("preferred_submit_mode_manual")
+            .to_string()
     } else {
-        "explicit_submit_required_policy"
+        "explicit_submit_required_policy".to_string()
     };
     Ok(merge_submit_policy_envelope(
         allowed_merge_submit_policy("manual"),
@@ -7326,7 +7361,7 @@ async fn coder_merge_submit_policy_summary(
         preferred_submit_mode,
         auto_execute_eligible,
         project_policy.auto_merge_enabled,
-        auto_execute_block_reason,
+        &auto_execute_block_reason,
     ))
 }
 
