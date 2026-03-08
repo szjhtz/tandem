@@ -162,6 +162,29 @@ async fn memory_put_then_search_in_session_scope() {
     );
     let search_event = next_event_of_type(&mut rx, "memory.search").await;
     assert_eq!(
+        search_event.properties.get("query").and_then(Value::as_str),
+        Some("budget extension")
+    );
+    assert_eq!(
+        search_event
+            .properties
+            .get("resultIDs")
+            .and_then(Value::as_array)
+            .map(|rows| rows.iter().filter_map(Value::as_str).collect::<Vec<_>>()),
+        Some(vec![first_result
+            .get("id")
+            .and_then(Value::as_str)
+            .expect("first result id")])
+    );
+    assert_eq!(
+        search_event
+            .properties
+            .get("resultKinds")
+            .and_then(Value::as_array)
+            .map(|rows| rows.iter().filter_map(Value::as_str).collect::<Vec<_>>()),
+        Some(vec!["solution_capsule"])
+    );
+    assert_eq!(
         search_event
             .properties
             .get("requestedScopes")
@@ -1459,6 +1482,26 @@ async fn memory_search_returns_empty_when_all_requested_scopes_are_blocked() {
             .get("status")
             .and_then(Value::as_str),
         Some("blocked")
+    );
+    assert_eq!(
+        search_event.properties.get("query").and_then(Value::as_str),
+        Some("blocked scopes should return no results")
+    );
+    assert_eq!(
+        search_event
+            .properties
+            .get("resultIDs")
+            .and_then(Value::as_array)
+            .map(|rows| rows.len()),
+        Some(0)
+    );
+    assert_eq!(
+        search_event
+            .properties
+            .get("resultKinds")
+            .and_then(Value::as_array)
+            .map(|rows| rows.len()),
+        Some(0)
     );
     assert_eq!(
         search_event

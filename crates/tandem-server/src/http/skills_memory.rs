@@ -2132,6 +2132,16 @@ pub(super) async fn memory_search(
             })
         })
         .collect::<Vec<_>>();
+    let result_ids = results
+        .iter()
+        .filter_map(|row| row.get("id").and_then(Value::as_str))
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
+    let result_kinds = results
+        .iter()
+        .filter_map(|row| row.get("kind").and_then(Value::as_str))
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
     let audit_id = Uuid::new_v4().to_string();
     let now = crate::now_ms();
     let search_status = if scopes_used.is_empty() && !blocked_scopes.is_empty() {
@@ -2174,8 +2184,11 @@ pub(super) async fn memory_search(
         "memory.search",
         json!({
             "runID": request.run_id,
+            "query": request.query,
             "partitionKey": request.partition.key(),
             "resultCount": results.len(),
+            "resultIDs": result_ids,
+            "resultKinds": result_kinds,
             "requestedScopes": requested_scopes,
             "scopesUsed": scopes_used.clone(),
             "blockedScopes": blocked_scopes.clone(),
