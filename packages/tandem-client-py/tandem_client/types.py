@@ -23,6 +23,63 @@ class SystemHealth(BaseModel):
     phase: Optional[str] = None
 
 
+# ─── Browser ──────────────────────────────────────────────────────────────────
+
+
+class BrowserBlockingIssue(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    code: Optional[str] = None
+    message: Optional[str] = None
+
+
+class BrowserBinaryStatus(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    found: Optional[bool] = None
+    path: Optional[str] = None
+    version: Optional[str] = None
+    channel: Optional[str] = None
+
+
+class BrowserStatusResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    enabled: Optional[bool] = None
+    runnable: Optional[bool] = None
+    headless_default: Optional[bool] = None
+    sidecar: Optional[BrowserBinaryStatus] = None
+    browser: Optional[BrowserBinaryStatus] = None
+    blocking_issues: list[BrowserBlockingIssue] = []
+    recommendations: list[str] = []
+    install_hints: list[str] = []
+    last_error: Optional[str] = None
+
+
+class BrowserInstallResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    ok: Optional[bool] = None
+    code: Optional[str] = None
+    error: Optional[str] = None
+    version: Optional[str] = None
+    asset_name: Optional[str] = None
+    installed_path: Optional[str] = None
+    downloaded_bytes: Optional[int] = None
+    status: Optional[BrowserStatusResponse] = None
+
+
+class BrowserSmokeTestResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    ok: Optional[bool] = None
+    code: Optional[str] = None
+    error: Optional[str] = None
+    status: Optional[BrowserStatusResponse] = None
+    url: Optional[str] = None
+    final_url: Optional[str] = None
+    title: Optional[str] = None
+    load_state: Optional[str] = None
+    element_count: Optional[int] = None
+    excerpt: Optional[str] = None
+    closed: Optional[bool] = None
+
+
 # ─── Sessions ─────────────────────────────────────────────────────────────────
 
 
@@ -410,6 +467,187 @@ class ResourceWriteResponse(BaseModel):
     rev: Optional[int] = None
 
 
+# ─── Workflows ────────────────────────────────────────────────────────────────
+
+
+class WorkflowRecord(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    id: Optional[str] = None
+    workflow_id: Optional[str] = Field(
+        None, validation_alias=AliasChoices("workflowId", "workflow_id")
+    )
+    name: Optional[str] = None
+    description: Optional[str] = None
+    enabled: Optional[bool] = None
+
+
+class WorkflowListResponse(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    workflows: list[WorkflowRecord] = []
+    count: int = 0
+
+
+class WorkflowRunRecord(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    id: Optional[str] = None
+    run_id: Optional[str] = Field(
+        None, validation_alias=AliasChoices("runId", "runID", "run_id")
+    )
+    workflow_id: Optional[str] = Field(
+        None, validation_alias=AliasChoices("workflowId", "workflowID", "workflow_id")
+    )
+    status: Optional[str] = None
+    created_at_ms: Optional[int] = Field(
+        None, validation_alias=AliasChoices("createdAtMs", "created_at_ms")
+    )
+    updated_at_ms: Optional[int] = Field(
+        None, validation_alias=AliasChoices("updatedAtMs", "updated_at_ms")
+    )
+
+
+class WorkflowRunListResponse(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    runs: list[WorkflowRunRecord] = []
+    count: int = 0
+
+
+class WorkflowHookRecord(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    id: Optional[str] = None
+    workflow_id: Optional[str] = Field(
+        None, validation_alias=AliasChoices("workflowId", "workflowID", "workflow_id")
+    )
+    event_type: Optional[str] = Field(
+        None, validation_alias=AliasChoices("eventType", "event_type")
+    )
+    enabled: Optional[bool] = None
+
+
+class WorkflowHookListResponse(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    hooks: list[WorkflowHookRecord] = []
+    count: int = 0
+
+
+# ─── Bug Monitor ──────────────────────────────────────────────────────────────
+
+
+class BugMonitorConfigRow(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    enabled: Optional[bool] = None
+    paused: Optional[bool] = None
+    workspace_root: Optional[str] = None
+    repo: Optional[str] = None
+    mcp_server: Optional[str] = None
+    provider_preference: Optional[str] = None
+    model_policy: Optional[dict[str, Any]] = None
+    auto_create_new_issues: Optional[bool] = None
+    require_approval_for_new_issues: Optional[bool] = None
+    auto_comment_on_matched_open_issues: Optional[bool] = None
+    label_mode: Optional[str] = None
+
+
+class BugMonitorConfigResponse(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    bug_monitor: BugMonitorConfigRow
+
+
+class BugMonitorStatusRow(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    config: Optional[BugMonitorConfigRow] = None
+    readiness: Optional[dict[str, bool]] = None
+    runtime: Optional[dict[str, Any]] = None
+    required_capabilities: Optional[dict[str, bool]] = None
+    missing_required_capabilities: list[str] = []
+    resolved_capabilities: list[dict[str, Any]] = []
+    discovered_mcp_tools: list[str] = []
+    selected_server_binding_candidates: list[dict[str, Any]] = []
+    binding_source_version: Optional[str] = None
+    bindings_last_merged_at_ms: Optional[int] = None
+    selected_model: Optional[dict[str, Any]] = None
+    pending_drafts: Optional[int] = None
+    pending_posts: Optional[int] = None
+    last_activity_at_ms: Optional[int] = None
+    last_error: Optional[str] = None
+
+
+class BugMonitorStatusResponse(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    status: BugMonitorStatusRow
+
+
+class BugMonitorIncidentRecord(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    incident_id: str
+    fingerprint: Optional[str] = None
+    event_type: Optional[str] = None
+    status: Optional[str] = None
+    repo: Optional[str] = None
+    workspace_root: Optional[str] = None
+    title: Optional[str] = None
+    detail: Optional[str] = None
+    excerpt: Optional[list[str]] = None
+    occurrence_count: Optional[int] = None
+    created_at_ms: Optional[int] = None
+    updated_at_ms: Optional[int] = None
+    draft_id: Optional[str] = None
+    triage_run_id: Optional[str] = None
+    last_error: Optional[str] = None
+
+
+class BugMonitorIncidentListResponse(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    incidents: list[BugMonitorIncidentRecord] = []
+    count: int = 0
+
+
+class BugMonitorDraftRecord(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    draft_id: str
+    fingerprint: Optional[str] = None
+    repo: Optional[str] = None
+    status: Optional[str] = None
+    created_at_ms: Optional[int] = None
+    triage_run_id: Optional[str] = None
+    issue_number: Optional[int] = None
+    title: Optional[str] = None
+    detail: Optional[str] = None
+    github_status: Optional[str] = None
+    github_issue_url: Optional[str] = None
+    github_comment_url: Optional[str] = None
+    github_posted_at_ms: Optional[int] = None
+    matched_issue_number: Optional[int] = None
+    matched_issue_state: Optional[str] = None
+    evidence_digest: Optional[str] = None
+    last_post_error: Optional[str] = None
+
+
+class BugMonitorDraftListResponse(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    drafts: list[BugMonitorDraftRecord] = []
+    count: int = 0
+
+
+class BugMonitorPostRecord(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    post_id: str
+    draft_id: Optional[str] = None
+    repo: Optional[str] = None
+    operation: Optional[str] = None
+    status: Optional[str] = None
+    issue_number: Optional[int] = None
+    issue_url: Optional[str] = None
+    comment_url: Optional[str] = None
+    error: Optional[str] = None
+    updated_at_ms: Optional[int] = None
+
+
+class BugMonitorPostListResponse(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    posts: list[BugMonitorPostRecord] = []
+    count: int = 0
+
+
 # ─── Routines & Automations ───────────────────────────────────────────────────
 
 
@@ -483,6 +721,103 @@ class RunRecord(BaseModel):
     status: Optional[RunStatus] = None
     started_at_ms: Optional[int] = Field(None, validation_alias=AliasChoices("startedAtMs", "started_at_ms"))
     finished_at_ms: Optional[int] = Field(None, validation_alias=AliasChoices("finishedAtMs", "finished_at_ms"))
+
+
+# ─── Coder ────────────────────────────────────────────────────────────────────
+
+
+class CoderRepoBinding(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    project_id: Optional[str] = Field(None, validation_alias=AliasChoices("projectId", "project_id"))
+    workspace_id: Optional[str] = Field(None, validation_alias=AliasChoices("workspaceId", "workspace_id"))
+    workspace_root: Optional[str] = Field(None, validation_alias=AliasChoices("workspaceRoot", "workspace_root"))
+    repo_slug: str = Field(validation_alias=AliasChoices("repoSlug", "repo_slug"))
+    default_branch: Optional[str] = Field(None, validation_alias=AliasChoices("defaultBranch", "default_branch"))
+
+
+class CoderGithubRef(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    kind: str
+    number: int
+    url: Optional[str] = None
+
+
+class CoderRunRecord(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    coder_run_id: Optional[str] = Field(None, validation_alias=AliasChoices("coderRunId", "coder_run_id"))
+    workflow_mode: Optional[str] = Field(None, validation_alias=AliasChoices("workflowMode", "workflow_mode"))
+    linked_context_run_id: Optional[str] = Field(
+        None, validation_alias=AliasChoices("linkedContextRunId", "linked_context_run_id")
+    )
+    repo_binding: Optional[CoderRepoBinding] = Field(
+        None, validation_alias=AliasChoices("repoBinding", "repo_binding")
+    )
+    github_ref: Optional[CoderGithubRef] = Field(
+        None, validation_alias=AliasChoices("githubRef", "github_ref")
+    )
+    source_client: Optional[str] = Field(None, validation_alias=AliasChoices("sourceClient", "source_client"))
+    status: Optional[str] = None
+    phase: Optional[str] = None
+    created_at_ms: Optional[int] = Field(None, validation_alias=AliasChoices("createdAtMs", "created_at_ms"))
+    updated_at_ms: Optional[int] = Field(None, validation_alias=AliasChoices("updatedAtMs", "updated_at_ms"))
+
+
+class CoderRunsListResponse(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    runs: list[CoderRunRecord] = []
+    count: int = 0
+
+
+class CoderRunGetResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    coder_run: Optional[CoderRunRecord] = Field(
+        None, validation_alias=AliasChoices("coderRun", "coder_run")
+    )
+    run: Optional[dict[str, Any]] = None
+
+
+class CoderArtifactRecord(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    id: str
+    ts_ms: Optional[int] = Field(None, validation_alias=AliasChoices("tsMs", "ts_ms"))
+    path: str
+    artifact_type: Optional[str] = Field(None, validation_alias=AliasChoices("artifactType", "artifact_type"))
+    step_id: Optional[str] = Field(None, validation_alias=AliasChoices("stepId", "step_id"))
+    source_event_id: Optional[str] = Field(
+        None, validation_alias=AliasChoices("sourceEventId", "source_event_id")
+    )
+
+
+class CoderArtifactsResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    artifacts: list[CoderArtifactRecord] = []
+    count: int = 0
+
+
+class CoderMemoryHitRecord(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+
+class CoderMemoryHitsResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    hits: list[CoderMemoryHitRecord] = []
+    count: int = 0
+
+
+class CoderMemoryCandidateRecord(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    candidate_id: Optional[str] = Field(None, validation_alias=AliasChoices("candidateId", "candidate_id"))
+    kind: Optional[str] = None
+    summary: Optional[str] = None
+    payload: Optional[dict[str, Any]] = None
+    artifact: Optional[CoderArtifactRecord] = None
+    created_at_ms: Optional[int] = Field(None, validation_alias=AliasChoices("createdAtMs", "created_at_ms"))
+
+
+class CoderMemoryCandidatesResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    candidates: list[CoderMemoryCandidateRecord] = []
+    count: int = 0
 
 
 # ─── Agent Teams ──────────────────────────────────────────────────────────────

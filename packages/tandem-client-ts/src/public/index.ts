@@ -28,6 +28,62 @@ export interface SystemHealth {
   [key: string]: unknown;
 }
 
+// ─── Browser ─────────────────────────────────────────────────────────────────
+
+export interface BrowserBlockingIssue {
+  code?: string;
+  message?: string;
+  [key: string]: unknown;
+}
+
+export interface BrowserBinaryStatus {
+  found?: boolean;
+  path?: string | null;
+  version?: string | null;
+  channel?: string | null;
+  [key: string]: unknown;
+}
+
+export interface BrowserStatusResponse {
+  enabled?: boolean;
+  runnable?: boolean;
+  headless_default?: boolean;
+  sidecar?: BrowserBinaryStatus;
+  browser?: BrowserBinaryStatus;
+  blocking_issues?: BrowserBlockingIssue[];
+  recommendations?: string[];
+  install_hints?: string[];
+  last_error?: string | null;
+  [key: string]: unknown;
+}
+
+export interface BrowserInstallResponse {
+  ok?: boolean;
+  code?: string;
+  error?: string;
+  version?: string;
+  asset_name?: string;
+  installed_path?: string;
+  downloaded_bytes?: number;
+  status?: BrowserStatusResponse;
+  [key: string]: unknown;
+}
+
+export interface BrowserSmokeTestResponse {
+  ok?: boolean;
+  code?: string;
+  error?: string;
+  status?: BrowserStatusResponse;
+  url?: string;
+  final_url?: string;
+  title?: string;
+  load_state?: string;
+  element_count?: number;
+  excerpt?: string | null;
+  closed?: boolean;
+  [key: string]: unknown;
+}
+
 // ─── Sessions ────────────────────────────────────────────────────────────────
 
 export interface CreateSessionOptions {
@@ -587,6 +643,170 @@ export interface ResourceWriteResponse {
   [key: string]: unknown;
 }
 
+// ─── Workflows ───────────────────────────────────────────────────────────────
+
+export interface WorkflowRecord {
+  id?: string;
+  workflowId?: string;
+  workflow_id?: string;
+  name?: string;
+  description?: string;
+  enabled?: boolean;
+  [key: string]: unknown;
+}
+
+export interface WorkflowListResponse {
+  workflows: WorkflowRecord[];
+  count: number;
+}
+
+export interface WorkflowRunRecord {
+  id?: string;
+  runId?: string;
+  run_id?: string;
+  workflowId?: string;
+  workflow_id?: string;
+  status?: string;
+  createdAtMs?: number;
+  created_at_ms?: number;
+  updatedAtMs?: number;
+  updated_at_ms?: number;
+  [key: string]: unknown;
+}
+
+export interface WorkflowRunListResponse {
+  runs: WorkflowRunRecord[];
+  count: number;
+}
+
+export interface WorkflowHookRecord {
+  id?: string;
+  workflowId?: string;
+  workflow_id?: string;
+  eventType?: string;
+  event_type?: string;
+  enabled?: boolean;
+  [key: string]: unknown;
+}
+
+export interface WorkflowHookListResponse {
+  hooks: WorkflowHookRecord[];
+  count: number;
+}
+
+// ─── Bug Monitor ─────────────────────────────────────────────────────────────
+
+export interface BugMonitorConfigRow {
+  enabled?: boolean;
+  paused?: boolean;
+  workspace_root?: string | null;
+  repo?: string | null;
+  mcp_server?: string | null;
+  provider_preference?: string | null;
+  model_policy?: JsonObject | null;
+  auto_create_new_issues?: boolean;
+  require_approval_for_new_issues?: boolean;
+  auto_comment_on_matched_open_issues?: boolean;
+  label_mode?: string | null;
+  [key: string]: unknown;
+}
+
+export interface BugMonitorConfigResponse {
+  bug_monitor: BugMonitorConfigRow;
+}
+
+export interface BugMonitorStatusRow {
+  config?: BugMonitorConfigRow;
+  readiness?: Record<string, boolean>;
+  runtime?: JsonObject;
+  required_capabilities?: Record<string, boolean>;
+  missing_required_capabilities?: string[];
+  resolved_capabilities?: JsonObject[];
+  discovered_mcp_tools?: string[];
+  selected_server_binding_candidates?: JsonObject[];
+  binding_source_version?: string | null;
+  bindings_last_merged_at_ms?: number | null;
+  selected_model?: JsonObject | null;
+  pending_drafts?: number;
+  pending_posts?: number;
+  last_activity_at_ms?: number | null;
+  last_error?: string | null;
+  [key: string]: unknown;
+}
+
+export interface BugMonitorStatusResponse {
+  status: BugMonitorStatusRow;
+}
+
+export interface BugMonitorIncidentRecord {
+  incident_id: string;
+  fingerprint?: string;
+  event_type?: string;
+  status?: string;
+  repo?: string;
+  workspace_root?: string;
+  title?: string;
+  detail?: string | null;
+  excerpt?: string[];
+  occurrence_count?: number;
+  created_at_ms?: number;
+  updated_at_ms?: number;
+  draft_id?: string | null;
+  triage_run_id?: string | null;
+  last_error?: string | null;
+  [key: string]: unknown;
+}
+
+export interface BugMonitorIncidentListResponse {
+  incidents: BugMonitorIncidentRecord[];
+  count: number;
+}
+
+export interface BugMonitorDraftRecord {
+  draft_id: string;
+  fingerprint?: string;
+  repo?: string;
+  status?: string;
+  created_at_ms?: number;
+  triage_run_id?: string | null;
+  issue_number?: number | null;
+  title?: string | null;
+  detail?: string | null;
+  github_status?: string | null;
+  github_issue_url?: string | null;
+  github_comment_url?: string | null;
+  github_posted_at_ms?: number | null;
+  matched_issue_number?: number | null;
+  matched_issue_state?: string | null;
+  evidence_digest?: string | null;
+  last_post_error?: string | null;
+  [key: string]: unknown;
+}
+
+export interface BugMonitorDraftListResponse {
+  drafts: BugMonitorDraftRecord[];
+  count: number;
+}
+
+export interface BugMonitorPostRecord {
+  post_id: string;
+  draft_id?: string;
+  repo?: string;
+  operation?: string;
+  status?: string;
+  issue_number?: number | null;
+  issue_url?: string | null;
+  comment_url?: string | null;
+  error?: string | null;
+  updated_at_ms?: number | null;
+  [key: string]: unknown;
+}
+
+export interface BugMonitorPostListResponse {
+  posts: BugMonitorPostRecord[];
+  count: number;
+}
+
 // ─── Packs + Capabilities ────────────────────────────────────────────────────
 
 export interface PackInstallRecord {
@@ -859,6 +1079,109 @@ export interface RoutineHistoryEntry {
 export interface RoutineHistoryResponse {
   history: RoutineHistoryEntry[];
   count: number;
+}
+
+// ─── Coder ───────────────────────────────────────────────────────────────────
+
+export interface CoderRepoBinding {
+  projectId?: string;
+  project_id?: string;
+  workspaceId?: string;
+  workspace_id?: string;
+  workspaceRoot?: string;
+  workspace_root?: string;
+  repoSlug: string;
+  repo_slug?: string;
+  defaultBranch?: string | null;
+  default_branch?: string | null;
+}
+
+export interface CoderGithubRef {
+  kind: "issue" | "pull_request" | string;
+  number: number;
+  url?: string | null;
+}
+
+export interface CoderRunRecord {
+  coderRunId?: string;
+  coder_run_id?: string;
+  workflowMode?: string;
+  workflow_mode?: string;
+  linkedContextRunId?: string;
+  linked_context_run_id?: string;
+  repoBinding?: CoderRepoBinding;
+  repo_binding?: CoderRepoBinding;
+  githubRef?: CoderGithubRef | null;
+  github_ref?: CoderGithubRef | null;
+  sourceClient?: string | null;
+  source_client?: string | null;
+  status?: string;
+  phase?: string;
+  createdAtMs?: number;
+  created_at_ms?: number;
+  updatedAtMs?: number;
+  updated_at_ms?: number;
+  [key: string]: unknown;
+}
+
+export interface CoderRunsListResponse {
+  runs: CoderRunRecord[];
+  count?: number;
+}
+
+export interface CoderRunGetResponse {
+  coderRun?: CoderRunRecord;
+  coder_run?: CoderRunRecord;
+  run?: JsonObject;
+  [key: string]: unknown;
+}
+
+export interface CoderArtifactRecord {
+  id: string;
+  tsMs?: number;
+  ts_ms?: number;
+  path: string;
+  artifactType?: string;
+  artifact_type?: string;
+  stepId?: string | null;
+  step_id?: string | null;
+  sourceEventId?: string | null;
+  source_event_id?: string | null;
+  [key: string]: unknown;
+}
+
+export interface CoderArtifactsResponse {
+  artifacts: CoderArtifactRecord[];
+  count?: number;
+  [key: string]: unknown;
+}
+
+export interface CoderMemoryHitRecord {
+  [key: string]: unknown;
+}
+
+export interface CoderMemoryHitsResponse {
+  hits: CoderMemoryHitRecord[];
+  count?: number;
+  [key: string]: unknown;
+}
+
+export interface CoderMemoryCandidateRecord {
+  candidateId?: string;
+  candidate_id?: string;
+  kind?: string;
+  summary?: string | null;
+  payload?: JsonObject;
+  artifact?: CoderArtifactRecord | null;
+  createdAtMs?: number;
+  created_at_ms?: number;
+  [key: string]: unknown;
+}
+
+export interface CoderMemoryCandidatesResponse {
+  candidates: CoderMemoryCandidateRecord[];
+  count?: number;
+  [key: string]: unknown;
 }
 
 // ─── Agent Teams ─────────────────────────────────────────────────────────────

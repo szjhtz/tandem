@@ -48,7 +48,7 @@ cargo run -p tandem-ai -- serve --host 127.0.0.1 --port 39731
 In another terminal:
 
 ```bash
-cargo run -p tandem-tui
+cargo run -p tandem-tui --bin tandem-tui
 ```
 
 ## 5. Development and testing references

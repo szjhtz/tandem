@@ -2617,28 +2617,90 @@ async fn dispatch_pr_review_task(
         }
         Some("review_pull_request") => {
             let memory_hits_used = summarize_workflow_memory_hits(record, &run, "retrieve_memory");
+            let (worker_artifact, worker_payload) =
+                run_pr_review_worker(&state, record, &run).await?;
+            let parsed_review = parse_pr_review_from_worker_payload(&worker_payload);
             let response = coder_pr_review_evidence_create(
                 State(state),
                 Path(record.coder_run_id.clone()),
                 Json(CoderPrReviewEvidenceCreateInput {
-                    verdict: Some("needs_changes".to_string()),
-                    summary: Some(format!(
-                        "Engine worker reviewed {} pull request #{}.",
-                        record.repo_binding.repo_slug, pull_number
-                    )),
-                    risk_level: Some("medium".to_string()),
-                    changed_files: Vec::new(),
-                    blockers: vec!["Follow-up human review is still recommended.".to_string()],
-                    requested_changes: vec![
-                        "Validate the constrained change set against broader repo context."
-                            .to_string(),
-                    ],
-                    regression_signals: vec![json!({
-                        "kind": "engine_worker_regression_signal",
-                        "summary": "Automated review flagged residual regression risk."
-                    })],
+                    verdict: parsed_review
+                        .get("verdict")
+                        .and_then(Value::as_str)
+                        .map(ToString::to_string)
+                        .or_else(|| Some("needs_changes".to_string())),
+                    summary: parsed_review
+                        .get("summary")
+                        .and_then(Value::as_str)
+                        .map(ToString::to_string)
+                        .or_else(|| Some(format!(
+                            "Engine worker reviewed {} pull request #{}.",
+                            record.repo_binding.repo_slug, pull_number
+                        ))),
+                    risk_level: parsed_review
+                        .get("risk_level")
+                        .and_then(Value::as_str)
+                        .map(ToString::to_string)
+                        .or_else(|| Some("medium".to_string())),
+                    changed_files: parsed_review
+                        .get("changed_files")
+                        .and_then(Value::as_array)
+                        .map(|rows| {
+                            rows.iter()
+                                .filter_map(Value::as_str)
+                                .map(ToString::to_string)
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_default(),
+                    blockers: parsed_review
+                        .get("blockers")
+                        .and_then(Value::as_array)
+                        .map(|rows| {
+                            rows.iter()
+                                .filter_map(Value::as_str)
+                                .map(ToString::to_string)
+                                .collect::<Vec<_>>()
+                        })
+                        .filter(|rows| !rows.is_empty())
+                        .unwrap_or_else(|| {
+                            vec!["Follow-up human review is still recommended.".to_string()]
+                        }),
+                    requested_changes: parsed_review
+                        .get("requested_changes")
+                        .and_then(Value::as_array)
+                        .map(|rows| {
+                            rows.iter()
+                                .filter_map(Value::as_str)
+                                .map(ToString::to_string)
+                                .collect::<Vec<_>>()
+                        })
+                        .filter(|rows| !rows.is_empty())
+                        .unwrap_or_else(|| {
+                            vec![
+                                "Validate the constrained change set against broader repo context."
+                                    .to_string(),
+                            ]
+                        }),
+                    regression_signals: parsed_review
+                        .get("regression_signals")
+                        .and_then(Value::as_array)
+                        .cloned()
+                        .filter(|rows| !rows.is_empty())
+                        .unwrap_or_else(|| {
+                            vec![json!({
+                                "kind": "engine_worker_regression_signal",
+                                "summary": "Automated review flagged residual regression risk."
+                            })]
+                        }),
                     memory_hits_used,
-                    notes: Some("Auto-generated by coder engine worker dispatch.".to_string()),
+                    notes: Some(format!(
+                        "Auto-generated by coder engine worker dispatch. Worker session: {}. Worker artifact: {}.",
+                        worker_payload
+                            .get("session_id")
+                            .and_then(Value::as_str)
+                            .unwrap_or("unknown"),
+                        worker_artifact.path
+                    )),
                 }),
             )
             .await?;
@@ -2646,28 +2708,99 @@ async fn dispatch_pr_review_task(
         }
         Some("write_review_artifact") => {
             let memory_hits_used = summarize_workflow_memory_hits(record, &run, "retrieve_memory");
+            let worker_payload = load_latest_coder_artifact_payload(
+                &state,
+                record,
+                "coder_pr_review_worker_session",
+            )
+            .await;
+            let parsed_review = worker_payload
+                .as_ref()
+                .map(parse_pr_review_from_worker_payload);
             let response = coder_pr_review_summary_create(
                 State(state),
                 Path(record.coder_run_id.clone()),
                 Json(CoderPrReviewSummaryCreateInput {
-                    verdict: Some("needs_changes".to_string()),
-                    summary: Some(format!(
-                        "Engine worker completed an initial review pass for {} pull request #{}.",
-                        record.repo_binding.repo_slug, pull_number
-                    )),
-                    risk_level: Some("medium".to_string()),
-                    changed_files: Vec::new(),
-                    blockers: vec!["Follow-up human review is still recommended.".to_string()],
-                    requested_changes: vec![
-                        "Validate the constrained change set against broader repo context."
-                            .to_string(),
-                    ],
-                    regression_signals: vec![json!({
-                        "kind": "engine_worker_regression_signal",
-                        "summary": "Automated review flagged residual regression risk."
-                    })],
+                    verdict: parsed_review
+                        .as_ref()
+                        .and_then(|payload| payload.get("verdict"))
+                        .and_then(Value::as_str)
+                        .map(ToString::to_string)
+                        .or_else(|| Some("needs_changes".to_string())),
+                    summary: parsed_review
+                        .as_ref()
+                        .and_then(|payload| payload.get("summary"))
+                        .and_then(Value::as_str)
+                        .map(ToString::to_string)
+                        .or_else(|| Some(format!(
+                            "Engine worker completed an initial review pass for {} pull request #{}.",
+                            record.repo_binding.repo_slug, pull_number
+                        ))),
+                    risk_level: parsed_review
+                        .as_ref()
+                        .and_then(|payload| payload.get("risk_level"))
+                        .and_then(Value::as_str)
+                        .map(ToString::to_string)
+                        .or_else(|| Some("medium".to_string())),
+                    changed_files: parsed_review
+                        .as_ref()
+                        .and_then(|payload| payload.get("changed_files"))
+                        .and_then(Value::as_array)
+                        .map(|rows| {
+                            rows.iter()
+                                .filter_map(Value::as_str)
+                                .map(ToString::to_string)
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_default(),
+                    blockers: parsed_review
+                        .as_ref()
+                        .and_then(|payload| payload.get("blockers"))
+                        .and_then(Value::as_array)
+                        .map(|rows| {
+                            rows.iter()
+                                .filter_map(Value::as_str)
+                                .map(ToString::to_string)
+                                .collect::<Vec<_>>()
+                        })
+                        .filter(|rows| !rows.is_empty())
+                        .unwrap_or_else(|| {
+                            vec!["Follow-up human review is still recommended.".to_string()]
+                        }),
+                    requested_changes: parsed_review
+                        .as_ref()
+                        .and_then(|payload| payload.get("requested_changes"))
+                        .and_then(Value::as_array)
+                        .map(|rows| {
+                            rows.iter()
+                                .filter_map(Value::as_str)
+                                .map(ToString::to_string)
+                                .collect::<Vec<_>>()
+                        })
+                        .filter(|rows| !rows.is_empty())
+                        .unwrap_or_else(|| {
+                            vec![
+                                "Validate the constrained change set against broader repo context."
+                                    .to_string(),
+                            ]
+                        }),
+                    regression_signals: parsed_review
+                        .as_ref()
+                        .and_then(|payload| payload.get("regression_signals"))
+                        .and_then(Value::as_array)
+                        .cloned()
+                        .filter(|rows| !rows.is_empty())
+                        .unwrap_or_else(|| {
+                            vec![json!({
+                                "kind": "engine_worker_regression_signal",
+                                "summary": "Automated review flagged residual regression risk."
+                            })]
+                        }),
                     memory_hits_used,
-                    notes: Some("Auto-generated by coder engine worker dispatch.".to_string()),
+                    notes: Some(format!(
+                        "Auto-generated by coder engine worker dispatch. Review worker artifact available: {}",
+                        worker_payload.is_some()
+                    )),
                 }),
             )
             .await?;
@@ -4131,6 +4264,51 @@ fn build_issue_fix_worker_prompt(
     )
 }
 
+fn build_pr_review_worker_prompt(
+    record: &CoderRunRecord,
+    run: &ContextRunState,
+    memory_hits_used: &[String],
+) -> String {
+    let pull_number = record
+        .github_ref
+        .as_ref()
+        .map(|row| row.number)
+        .unwrap_or_default();
+    let memory_hint = if memory_hits_used.is_empty() {
+        "none".to_string()
+    } else {
+        memory_hits_used.join(", ")
+    };
+    format!(
+        concat!(
+            "You are the Tandem coder PR-review worker.\n",
+            "Repository: {repo_slug}\n",
+            "Workspace root: {workspace_root}\n",
+            "Pull request number: #{pull_number}\n",
+            "Context run ID: {context_run_id}\n",
+            "Memory hits already surfaced: {memory_hint}\n\n",
+            "Task:\n",
+            "1. Inspect the pull request context and changed areas.\n",
+            "2. Identify the highest-signal review findings.\n",
+            "3. Call out blockers and requested changes.\n",
+            "4. Flag any regression risk.\n\n",
+            "Return a compact response with these headings:\n",
+            "Summary:\n",
+            "Verdict:\n",
+            "Risk Level:\n",
+            "Changed Files:\n",
+            "Blockers:\n",
+            "Requested Changes:\n",
+            "Regression Signals:\n"
+        ),
+        repo_slug = record.repo_binding.repo_slug,
+        workspace_root = record.repo_binding.workspace_root,
+        pull_number = pull_number,
+        context_run_id = run.run_id,
+        memory_hint = memory_hint,
+    )
+}
+
 fn extract_labeled_section(text: &str, label: &str) -> Option<String> {
     let marker = format!("{label}:");
     let start = text.find(&marker)?;
@@ -4157,6 +4335,20 @@ fn extract_labeled_section(text: &str, label: &str) -> Option<String> {
         return None;
     }
     Some(section.to_string())
+}
+
+fn parse_bulleted_lines(section: Option<String>) -> Vec<String> {
+    section
+        .map(|section| {
+            section
+                .lines()
+                .map(str::trim)
+                .map(|line| line.trim_start_matches("-").trim())
+                .filter(|line| !line.is_empty())
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default()
 }
 
 fn parse_issue_fix_plan_from_worker_payload(worker_payload: &Value) -> Value {
@@ -4209,6 +4401,48 @@ fn parse_issue_fix_plan_from_worker_payload(worker_payload: &Value) -> Value {
         "fix_strategy": fix_strategy,
         "changed_files": changed_files,
         "validation_steps": validation_steps,
+        "worker_session_id": worker_payload.get("session_id").cloned(),
+        "worker_session_run_id": worker_payload.get("session_run_id").cloned(),
+        "worker_model": worker_payload.get("model").cloned(),
+        "assistant_text": worker_payload.get("assistant_text").cloned(),
+    })
+}
+
+fn parse_pr_review_from_worker_payload(worker_payload: &Value) -> Value {
+    let assistant_text = worker_payload
+        .get("assistant_text")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    let summary = extract_labeled_section(assistant_text, "Summary").or_else(|| {
+        (!assistant_text.trim().is_empty()).then(|| crate::truncate_text(assistant_text, 240))
+    });
+    let verdict = extract_labeled_section(assistant_text, "Verdict");
+    let risk_level = extract_labeled_section(assistant_text, "Risk Level");
+    let changed_files =
+        parse_bulleted_lines(extract_labeled_section(assistant_text, "Changed Files"));
+    let blockers = parse_bulleted_lines(extract_labeled_section(assistant_text, "Blockers"));
+    let requested_changes =
+        parse_bulleted_lines(extract_labeled_section(assistant_text, "Requested Changes"));
+    let regression_signals = parse_bulleted_lines(extract_labeled_section(
+        assistant_text,
+        "Regression Signals",
+    ))
+    .into_iter()
+    .map(|summary| {
+        json!({
+            "kind": "worker_regression_signal",
+            "summary": summary,
+        })
+    })
+    .collect::<Vec<_>>();
+    json!({
+        "summary": summary,
+        "verdict": verdict,
+        "risk_level": risk_level,
+        "changed_files": changed_files,
+        "blockers": blockers,
+        "requested_changes": requested_changes,
+        "regression_signals": regression_signals,
         "worker_session_id": worker_payload.get("session_id").cloned(),
         "worker_session_run_id": worker_payload.get("session_run_id").cloned(),
         "worker_model": worker_payload.get("model").cloned(),
@@ -5368,7 +5602,16 @@ async fn run_issue_fix_worker_session(
             provider_id: "local".to_string(),
             model_id: "echo-1".to_string(),
         });
-    let session_title = format!("Coder Issue Fix {} / {}", record.coder_run_id, worker_kind);
+    let workflow_label = match record.workflow_mode {
+        CoderWorkflowMode::IssueTriage => "Issue Triage",
+        CoderWorkflowMode::IssueFix => "Issue Fix",
+        CoderWorkflowMode::PrReview => "PR Review",
+        CoderWorkflowMode::MergeRecommendation => "Merge Recommendation",
+    };
+    let session_title = format!(
+        "Coder {workflow_label} {} / {}",
+        record.coder_run_id, worker_kind
+    );
     let mut session = Session::new(
         Some(session_title),
         Some(record.repo_binding.workspace_root.clone()),
@@ -5436,7 +5679,7 @@ async fn run_issue_fix_worker_session(
         session_id.clone(),
         run_id.clone(),
         request,
-        Some(format!("coder:{}:prepare_fix", record.coder_run_id)),
+        Some(format!("coder:{}:{worker_kind}", record.coder_run_id)),
         client_id,
     )
     .await;
@@ -5618,6 +5861,27 @@ async fn run_issue_fix_validation_worker(
         "issue_fix_validation",
         "coder_issue_fix_validation_session",
         "artifacts/issue_fix.validation_session.json",
+    )
+    .await
+}
+
+async fn run_pr_review_worker(
+    state: &AppState,
+    record: &CoderRunRecord,
+    run: &ContextRunState,
+) -> Result<(ContextBlackboardArtifact, Value), StatusCode> {
+    let prompt = build_pr_review_worker_prompt(
+        record,
+        run,
+        &summarize_workflow_memory_hits(record, run, "retrieve_memory"),
+    );
+    run_issue_fix_worker_session(
+        state,
+        record,
+        prompt,
+        "pr_review_analysis",
+        "coder_pr_review_worker_session",
+        "artifacts/pr_review.worker_session.json",
     )
     .await
 }

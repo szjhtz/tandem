@@ -23,6 +23,21 @@ from .types import (
     AutomationV2RunListResponse,
     AutomationV2RunRecord,
     ArtifactRecord,
+    BrowserInstallResponse,
+    BrowserSmokeTestResponse,
+    BrowserStatusResponse,
+    BugMonitorConfigResponse,
+    BugMonitorDraftListResponse,
+    BugMonitorDraftRecord,
+    BugMonitorIncidentListResponse,
+    BugMonitorIncidentRecord,
+    BugMonitorPostListResponse,
+    BugMonitorStatusResponse,
+    CoderArtifactsResponse,
+    CoderMemoryCandidatesResponse,
+    CoderMemoryHitsResponse,
+    CoderRunGetResponse,
+    CoderRunsListResponse,
     ChannelsConfigResponse,
     ChannelsStatusResponse,
     DefinitionCreateResponse,
@@ -51,6 +66,7 @@ from .types import (
     QuestionsListResponse,
     QuestionRecord,
     ResourceListResponse,
+    ResourceRecord,
     ResourceWriteResponse,
     RoutineHistoryResponse,
     RoutineRecord,
@@ -71,6 +87,11 @@ from .types import (
     ToolSchema,
     ToolMode,
     ContextMode,
+    WorkflowHookListResponse,
+    WorkflowListResponse,
+    WorkflowRecord,
+    WorkflowRunListResponse,
+    WorkflowRunRecord,
 )
 
 _engine_event_adapter = TypeAdapter(EngineEvent)
@@ -109,15 +130,19 @@ class TandemClient:
         self.providers = _Providers(self._http)
         self.identity = _Identity(self._http)
         self.channels = _Channels(self._http)
+        self.browser = _Browser(self._http)
         self.mcp = _Mcp(self._http)
-        self.routines = _Routines(self._http)
-        self.automations = _Automations(self._http)
-        self.automations_v2 = _AutomationsV2(self._http)
+        self.workflows = _Workflows(self._base_url, self._token, self._http)
+        self.routines = _Routines(self._base_url, self._token, self._http)
+        self.automations = _Automations(self._base_url, self._token, self._http)
+        self.automations_v2 = _AutomationsV2(self._base_url, self._token, self._http)
         self.memory = _Memory(self._http)
         self.skills = _Skills(self._http)
         self.packs = _Packs(self._http)
         self.capabilities = _Capabilities(self._http)
-        self.resources = _Resources(self._http)
+        self.resources = _Resources(self._base_url, self._token, self._http)
+        self.bug_monitor = _BugMonitor(self._http)
+        self.coder = _Coder(self._http)
         self.agent_teams = _AgentTeams(self._http)
         self.missions = _Missions(self._http)
 
@@ -213,6 +238,216 @@ class TandemClient:
         if isinstance(raw, list):
             return [_engine_event_adapter.validate_python(e) for e in raw]
         return []
+
+
+class _Browser:
+    def __init__(self, http: httpx.AsyncClient) -> None:
+        self._http = http
+
+    async def status(self) -> BrowserStatusResponse:
+        res = await self._http.get("/browser/status")
+        res.raise_for_status()
+        return BrowserStatusResponse.model_validate(res.json())
+
+    async def install(self) -> BrowserInstallResponse:
+        res = await self._http.post("/browser/install")
+        res.raise_for_status()
+        return BrowserInstallResponse.model_validate(res.json())
+
+    async def smoke_test(self, url: Optional[str] = None) -> BrowserSmokeTestResponse:
+        payload: dict[str, Any] = {}
+        if url is not None:
+            payload["url"] = url
+        res = await self._http.post("/browser/smoke-test", json=payload)
+        res.raise_for_status()
+        return BrowserSmokeTestResponse.model_validate(res.json())
+
+
+class _Workflows:
+    def __init__(self, base_url: str, token: str, http: httpx.AsyncClient) -> None:
+        self._base_url = base_url
+        self._token = token
+        self._http = http
+
+    async def list(self) -> WorkflowListResponse:
+        res = await self._http.get("/workflows")
+        res.raise_for_status()
+        return WorkflowListResponse.model_validate(res.json())
+
+    async def get(self, workflow_id: str) -> WorkflowRecord:
+        res = await self._http.get(f"/workflows/{quote(workflow_id)}")
+        res.raise_for_status()
+        return WorkflowRecord.model_validate(res.json().get("workflow", {}))
+
+    async def validate(self, payload: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        res = await self._http.post("/workflows/validate", json=payload or {})
+        res.raise_for_status()
+        return res.json()  # type: ignore[no-any-return]
+
+    async def simulate(self, payload: dict[str, Any]) -> dict[str, Any]:
+        res = await self._http.post("/workflows/simulate", json=payload)
+        res.raise_for_status()
+        return res.json()  # type: ignore[no-any-return]
+
+    def events(
+        self,
+        *,
+        workflow_id: Optional[str] = None,
+        run_id: Optional[str] = None,
+    ) -> AsyncGenerator[EngineEvent, None]:
+        params: list[str] = []
+        if workflow_id:
+            params.append(f"workflow_id={quote(workflow_id)}")
+        if run_id:
+            params.append(f"run_id={quote(run_id)}")
+        qs = f"?{'&'.join(params)}" if params else ""
+        return stream_sse(f"{self._base_url}/workflows/events{qs}", self._token, client=self._http)
+
+    async def list_runs(
+        self, *, workflow_id: Optional[str] = None, limit: Optional[int] = None
+    ) -> WorkflowRunListResponse:
+        params: dict[str, Any] = {}
+        if workflow_id is not None:
+            params["workflow_id"] = workflow_id
+        if limit is not None:
+            params["limit"] = limit
+        res = await self._http.get("/workflows/runs", params=params)
+        res.raise_for_status()
+        return WorkflowRunListResponse.model_validate(res.json())
+
+    async def get_run(self, run_id: str) -> WorkflowRunRecord:
+        res = await self._http.get(f"/workflows/runs/{quote(run_id)}")
+        res.raise_for_status()
+        return WorkflowRunRecord.model_validate(res.json().get("run", {}))
+
+    async def run(self, workflow_id: str, payload: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        res = await self._http.post(f"/workflows/{quote(workflow_id)}/run", json=payload or {})
+        res.raise_for_status()
+        return res.json()  # type: ignore[no-any-return]
+
+    async def list_hooks(self, workflow_id: Optional[str] = None) -> WorkflowHookListResponse:
+        params = {"workflow_id": workflow_id} if workflow_id else {}
+        res = await self._http.get("/workflow-hooks", params=params)
+        res.raise_for_status()
+        return WorkflowHookListResponse.model_validate(res.json())
+
+    async def patch_hook(self, hook_id: str, patch: dict[str, Any]) -> dict[str, Any]:
+        res = await self._http.patch(f"/workflow-hooks/{quote(hook_id)}", json=patch)
+        res.raise_for_status()
+        return res.json()  # type: ignore[no-any-return]
+
+
+class _BugMonitor:
+    def __init__(self, http: httpx.AsyncClient) -> None:
+        self._http = http
+
+    async def get_config(self) -> BugMonitorConfigResponse:
+        res = await self._http.get("/config/bug-monitor")
+        res.raise_for_status()
+        return BugMonitorConfigResponse.model_validate(res.json())
+
+    async def patch_config(self, config: dict[str, Any]) -> BugMonitorConfigResponse:
+        res = await self._http.patch("/config/bug-monitor", json=config)
+        res.raise_for_status()
+        return BugMonitorConfigResponse.model_validate(res.json())
+
+    async def get_status(self) -> BugMonitorStatusResponse:
+        res = await self._http.get("/bug-monitor/status")
+        res.raise_for_status()
+        return BugMonitorStatusResponse.model_validate(res.json())
+
+    async def recompute_status(self) -> BugMonitorStatusResponse:
+        res = await self._http.post("/bug-monitor/status/recompute")
+        res.raise_for_status()
+        return BugMonitorStatusResponse.model_validate(res.json())
+
+    async def pause(self) -> dict[str, Any]:
+        res = await self._http.post("/bug-monitor/pause")
+        res.raise_for_status()
+        return res.json()  # type: ignore[no-any-return]
+
+    async def resume(self) -> dict[str, Any]:
+        res = await self._http.post("/bug-monitor/resume")
+        res.raise_for_status()
+        return res.json()  # type: ignore[no-any-return]
+
+    async def debug(self) -> dict[str, Any]:
+        res = await self._http.get("/bug-monitor/debug")
+        res.raise_for_status()
+        return res.json()  # type: ignore[no-any-return]
+
+    async def list_incidents(self, limit: Optional[int] = None) -> BugMonitorIncidentListResponse:
+        params = {"limit": limit} if limit is not None else {}
+        res = await self._http.get("/bug-monitor/incidents", params=params)
+        res.raise_for_status()
+        return BugMonitorIncidentListResponse.model_validate(res.json())
+
+    async def get_incident(self, incident_id: str) -> BugMonitorIncidentRecord:
+        res = await self._http.get(f"/bug-monitor/incidents/{quote(incident_id)}")
+        res.raise_for_status()
+        return BugMonitorIncidentRecord.model_validate(res.json().get("incident", {}))
+
+    async def replay_incident(self, incident_id: str, payload: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        res = await self._http.post(f"/bug-monitor/incidents/{quote(incident_id)}/replay", json=payload or {})
+        res.raise_for_status()
+        return res.json()  # type: ignore[no-any-return]
+
+    async def list_drafts(self, limit: Optional[int] = None) -> BugMonitorDraftListResponse:
+        params = {"limit": limit} if limit is not None else {}
+        res = await self._http.get("/bug-monitor/drafts", params=params)
+        res.raise_for_status()
+        return BugMonitorDraftListResponse.model_validate(res.json())
+
+    async def list_posts(self, limit: Optional[int] = None) -> BugMonitorPostListResponse:
+        params = {"limit": limit} if limit is not None else {}
+        res = await self._http.get("/bug-monitor/posts", params=params)
+        res.raise_for_status()
+        return BugMonitorPostListResponse.model_validate(res.json())
+
+    async def get_draft(self, draft_id: str) -> BugMonitorDraftRecord:
+        res = await self._http.get(f"/bug-monitor/drafts/{quote(draft_id)}")
+        res.raise_for_status()
+        return BugMonitorDraftRecord.model_validate(res.json().get("draft", {}))
+
+    async def approve_draft(self, draft_id: str, reason: str = "") -> dict[str, Any]:
+        res = await self._http.post(f"/bug-monitor/drafts/{quote(draft_id)}/approve", json={"reason": reason})
+        res.raise_for_status()
+        return res.json()  # type: ignore[no-any-return]
+
+    async def deny_draft(self, draft_id: str, reason: str = "") -> dict[str, Any]:
+        res = await self._http.post(f"/bug-monitor/drafts/{quote(draft_id)}/deny", json={"reason": reason})
+        res.raise_for_status()
+        return res.json()  # type: ignore[no-any-return]
+
+    async def report(self, payload: dict[str, Any]) -> dict[str, Any]:
+        res = await self._http.post("/bug-monitor/report", json=payload)
+        res.raise_for_status()
+        return res.json()  # type: ignore[no-any-return]
+
+    async def create_triage_run(self, draft_id: str) -> dict[str, Any]:
+        res = await self._http.post(f"/bug-monitor/drafts/{quote(draft_id)}/triage-run")
+        res.raise_for_status()
+        return res.json()  # type: ignore[no-any-return]
+
+    async def create_triage_summary(self, draft_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        res = await self._http.post(f"/bug-monitor/drafts/{quote(draft_id)}/triage-summary", json=payload)
+        res.raise_for_status()
+        return res.json()  # type: ignore[no-any-return]
+
+    async def create_issue_draft(self, draft_id: str, payload: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        res = await self._http.post(f"/bug-monitor/drafts/{quote(draft_id)}/issue-draft", json=payload or {})
+        res.raise_for_status()
+        return res.json()  # type: ignore[no-any-return]
+
+    async def publish_draft(self, draft_id: str, payload: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        res = await self._http.post(f"/bug-monitor/drafts/{quote(draft_id)}/publish", json=payload or {})
+        res.raise_for_status()
+        return res.json()  # type: ignore[no-any-return]
+
+    async def recheck_match(self, draft_id: str, payload: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        res = await self._http.post(f"/bug-monitor/drafts/{quote(draft_id)}/recheck-match", json=payload or {})
+        res.raise_for_status()
+        return res.json()  # type: ignore[no-any-return]
 
 
 # ─── Sessions namespace ────────────────────────────────────────────────────────
@@ -651,6 +886,36 @@ class _Mcp:
         res.raise_for_status()
         return res.json()  # type: ignore[no-any-return]
 
+    async def delete(self, name: str) -> dict[str, Any]:
+        res = await self._http.delete(f"/mcp/{quote(name)}")
+        res.raise_for_status()
+        return res.json()  # type: ignore[no-any-return]
+
+    async def auth(self, name: str, payload: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        res = await self._http.post(f"/mcp/{quote(name)}/auth", json=payload or {})
+        res.raise_for_status()
+        return res.json()  # type: ignore[no-any-return]
+
+    async def delete_auth(self, name: str) -> dict[str, Any]:
+        res = await self._http.delete(f"/mcp/{quote(name)}/auth")
+        res.raise_for_status()
+        return res.json()  # type: ignore[no-any-return]
+
+    async def auth_callback(self, name: str, payload: dict[str, Any]) -> dict[str, Any]:
+        res = await self._http.post(f"/mcp/{quote(name)}/auth/callback", json=payload)
+        res.raise_for_status()
+        return res.json()  # type: ignore[no-any-return]
+
+    async def authenticate(self, name: str, payload: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        res = await self._http.post(f"/mcp/{quote(name)}/auth/authenticate", json=payload or {})
+        res.raise_for_status()
+        return res.json()  # type: ignore[no-any-return]
+
+    async def catalog_toml(self, slug: str) -> str:
+        res = await self._http.get(f"/mcp/catalog/{quote(slug)}/toml")
+        res.raise_for_status()
+        return res.text
+
 
 # ─── Memory ───────────────────────────────────────────────────────────────────
 
@@ -787,7 +1052,9 @@ class _Skills:
 
 
 class _Resources:
-    def __init__(self, http: httpx.AsyncClient) -> None:
+    def __init__(self, base_url: str, token: str, http: httpx.AsyncClient) -> None:
+        self._base_url = base_url
+        self._token = token
         self._http = http
 
     async def list(self, *, prefix: Optional[str] = None, limit: Optional[int] = None) -> ResourceListResponse:
@@ -812,12 +1079,48 @@ class _Resources:
         res.raise_for_status()
         return ResourceWriteResponse.model_validate(res.json())
 
+    async def get(self, key: str) -> ResourceRecord:
+        res = await self._http.get(f"/resource/{quote(key)}")
+        res.raise_for_status()
+        return ResourceRecord.model_validate(res.json())
+
+    async def put_key(
+        self, key: str, value: Any, *, if_match_rev: Optional[int] = None,
+        updated_by: Optional[str] = None, ttl_ms: Optional[int] = None
+    ) -> ResourceWriteResponse:
+        payload: dict[str, Any] = {"value": value}
+        if if_match_rev is not None: payload["if_match_rev"] = if_match_rev
+        if updated_by: payload["updated_by"] = updated_by
+        if ttl_ms is not None: payload["ttl_ms"] = ttl_ms
+        res = await self._http.put(f"/resource/{quote(key)}", json=payload)
+        res.raise_for_status()
+        return ResourceWriteResponse.model_validate(res.json())
+
+    async def patch_key(self, key: str, patch: dict[str, Any]) -> ResourceWriteResponse:
+        res = await self._http.patch(f"/resource/{quote(key)}", json=patch)
+        res.raise_for_status()
+        return ResourceWriteResponse.model_validate(res.json())
+
     async def delete(self, key: str, *, if_match_rev: Optional[int] = None) -> dict[str, Any]:
         payload: dict[str, Any] = {"key": key}
         if if_match_rev is not None: payload["if_match_rev"] = if_match_rev
         res = await self._http.delete("/resource", json=payload)
         res.raise_for_status()
         return res.json()  # type: ignore[no-any-return]
+
+    async def delete_key(self, key: str) -> dict[str, Any]:
+        res = await self._http.delete(f"/resource/{quote(key)}")
+        res.raise_for_status()
+        return res.json()  # type: ignore[no-any-return]
+
+    def events(self, *, since_seq: Optional[int] = None, tail: Optional[int] = None) -> AsyncGenerator[EngineEvent, None]:
+        params: list[str] = []
+        if since_seq is not None:
+            params.append(f"since_seq={since_seq}")
+        if tail is not None:
+            params.append(f"tail={tail}")
+        qs = f"?{'&'.join(params)}" if params else ""
+        return stream_sse(f"{self._base_url}/resource/events{qs}", self._token, client=self._http)
 
 
 # ─── Packs ────────────────────────────────────────────────────────────────────
@@ -937,6 +1240,189 @@ class _Packs:
         return res.json()  # type: ignore[no-any-return]
 
 
+# ─── Coder ────────────────────────────────────────────────────────────────────
+
+
+class _Coder:
+    def __init__(self, http: httpx.AsyncClient) -> None:
+        self._http = http
+
+    async def create_run(self, payload: dict[str, Any]) -> dict[str, Any]:
+        res = await self._http.post("/coder/runs", json=payload)
+        res.raise_for_status()
+        return res.json()  # type: ignore[no-any-return]
+
+    async def list_runs(
+        self,
+        *,
+        limit: Optional[int] = None,
+        workflow_mode: Optional[str] = None,
+        repo_slug: Optional[str] = None,
+    ) -> CoderRunsListResponse:
+        params: dict[str, Any] = {}
+        if limit is not None:
+            params["limit"] = limit
+        if workflow_mode is not None:
+            params["workflow_mode"] = workflow_mode
+        if repo_slug is not None:
+            params["repo_slug"] = repo_slug
+        res = await self._http.get("/coder/runs", params=params)
+        res.raise_for_status()
+        raw = res.json()
+        response = CoderRunsListResponse.model_validate(raw)
+        if response.count == 0 and response.runs:
+            response.count = len(response.runs)
+        return response
+
+    async def get_run(self, run_id: str) -> CoderRunGetResponse:
+        res = await self._http.get(f"/coder/runs/{quote(run_id)}")
+        res.raise_for_status()
+        return CoderRunGetResponse.model_validate(res.json())
+
+    async def execute_next(
+        self, run_id: str, payload: Optional[dict[str, Any]] = None
+    ) -> dict[str, Any]:
+        res = await self._http.post(f"/coder/runs/{quote(run_id)}/execute-next", json=payload or {})
+        res.raise_for_status()
+        return res.json()  # type: ignore[no-any-return]
+
+    async def execute_all(
+        self, run_id: str, payload: Optional[dict[str, Any]] = None
+    ) -> dict[str, Any]:
+        res = await self._http.post(f"/coder/runs/{quote(run_id)}/execute-all", json=payload or {})
+        res.raise_for_status()
+        return res.json()  # type: ignore[no-any-return]
+
+    async def create_follow_on_run(self, run_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        res = await self._http.post(f"/coder/runs/{quote(run_id)}/follow-on-run", json=payload)
+        res.raise_for_status()
+        return res.json()  # type: ignore[no-any-return]
+
+    async def approve_run(self, run_id: str, reason: str = "") -> dict[str, Any]:
+        res = await self._http.post(f"/coder/runs/{quote(run_id)}/approve", json={"reason": reason})
+        res.raise_for_status()
+        return res.json()  # type: ignore[no-any-return]
+
+    async def cancel_run(self, run_id: str, reason: str = "") -> dict[str, Any]:
+        res = await self._http.post(f"/coder/runs/{quote(run_id)}/cancel", json={"reason": reason})
+        res.raise_for_status()
+        return res.json()  # type: ignore[no-any-return]
+
+    async def list_artifacts(self, run_id: str) -> CoderArtifactsResponse:
+        res = await self._http.get(f"/coder/runs/{quote(run_id)}/artifacts")
+        res.raise_for_status()
+        raw = res.json()
+        response = CoderArtifactsResponse.model_validate(raw)
+        if response.count == 0 and response.artifacts:
+            response.count = len(response.artifacts)
+        return response
+
+    async def get_memory_hits(
+        self, run_id: str, *, query: Optional[str] = None, limit: Optional[int] = None
+    ) -> CoderMemoryHitsResponse:
+        params: dict[str, Any] = {}
+        if query is not None:
+            params["q"] = query
+        if limit is not None:
+            params["limit"] = limit
+        res = await self._http.get(f"/coder/runs/{quote(run_id)}/memory-hits", params=params)
+        res.raise_for_status()
+        raw = res.json()
+        response = CoderMemoryHitsResponse.model_validate(raw)
+        if response.count == 0 and response.hits:
+            response.count = len(response.hits)
+        return response
+
+    async def create_triage_inspection_report(self, run_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        res = await self._http.post(f"/coder/runs/{quote(run_id)}/triage-inspection-report", json=payload)
+        res.raise_for_status()
+        return res.json()  # type: ignore[no-any-return]
+
+    async def create_triage_reproduction_report(self, run_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        res = await self._http.post(f"/coder/runs/{quote(run_id)}/triage-reproduction-report", json=payload)
+        res.raise_for_status()
+        return res.json()  # type: ignore[no-any-return]
+
+    async def create_triage_summary(self, run_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        res = await self._http.post(f"/coder/runs/{quote(run_id)}/triage-summary", json=payload)
+        res.raise_for_status()
+        return res.json()  # type: ignore[no-any-return]
+
+    async def create_pr_review_evidence(self, run_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        res = await self._http.post(f"/coder/runs/{quote(run_id)}/pr-review-evidence", json=payload)
+        res.raise_for_status()
+        return res.json()  # type: ignore[no-any-return]
+
+    async def create_pr_review_summary(self, run_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        res = await self._http.post(f"/coder/runs/{quote(run_id)}/pr-review-summary", json=payload)
+        res.raise_for_status()
+        return res.json()  # type: ignore[no-any-return]
+
+    async def create_issue_fix_validation_report(
+        self, run_id: str, payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        res = await self._http.post(
+            f"/coder/runs/{quote(run_id)}/issue-fix-validation-report", json=payload
+        )
+        res.raise_for_status()
+        return res.json()  # type: ignore[no-any-return]
+
+    async def create_issue_fix_summary(self, run_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        res = await self._http.post(f"/coder/runs/{quote(run_id)}/issue-fix-summary", json=payload)
+        res.raise_for_status()
+        return res.json()  # type: ignore[no-any-return]
+
+    async def create_pr_draft(
+        self, run_id: str, payload: Optional[dict[str, Any]] = None
+    ) -> dict[str, Any]:
+        res = await self._http.post(f"/coder/runs/{quote(run_id)}/pr-draft", json=payload or {})
+        res.raise_for_status()
+        return res.json()  # type: ignore[no-any-return]
+
+    async def submit_pr(self, run_id: str, payload: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        res = await self._http.post(f"/coder/runs/{quote(run_id)}/pr-submit", json=payload or {})
+        res.raise_for_status()
+        return res.json()  # type: ignore[no-any-return]
+
+    async def create_merge_readiness_report(self, run_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        res = await self._http.post(f"/coder/runs/{quote(run_id)}/merge-readiness-report", json=payload)
+        res.raise_for_status()
+        return res.json()  # type: ignore[no-any-return]
+
+    async def create_merge_recommendation_summary(
+        self, run_id: str, payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        res = await self._http.post(
+            f"/coder/runs/{quote(run_id)}/merge-recommendation-summary", json=payload
+        )
+        res.raise_for_status()
+        return res.json()  # type: ignore[no-any-return]
+
+    async def list_memory_candidates(self, run_id: str) -> CoderMemoryCandidatesResponse:
+        res = await self._http.get(f"/coder/runs/{quote(run_id)}/memory-candidates")
+        res.raise_for_status()
+        raw = res.json()
+        response = CoderMemoryCandidatesResponse.model_validate(raw)
+        if response.count == 0 and response.candidates:
+            response.count = len(response.candidates)
+        return response
+
+    async def create_memory_candidate(self, run_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        res = await self._http.post(f"/coder/runs/{quote(run_id)}/memory-candidates", json=payload)
+        res.raise_for_status()
+        return res.json()  # type: ignore[no-any-return]
+
+    async def promote_memory_candidate(
+        self, run_id: str, candidate_id: str, payload: Optional[dict[str, Any]] = None
+    ) -> dict[str, Any]:
+        res = await self._http.post(
+            f"/coder/runs/{quote(run_id)}/memory-candidates/{quote(candidate_id)}/promote",
+            json=payload or {},
+        )
+        res.raise_for_status()
+        return res.json()  # type: ignore[no-any-return]
+
+
 # ─── Capabilities ─────────────────────────────────────────────────────────────
 
 
@@ -969,7 +1455,9 @@ class _Capabilities:
 
 
 class _Routines:
-    def __init__(self, http: httpx.AsyncClient) -> None:
+    def __init__(self, base_url: str, token: str, http: httpx.AsyncClient) -> None:
+        self._base_url = base_url
+        self._token = token
         self._http = http
 
     async def list(self) -> DefinitionListResponse:
@@ -1022,6 +1510,11 @@ class _Routines:
         res.raise_for_status()
         return RunArtifactsResponse.model_validate(res.json())
 
+    async def add_artifact(self, run_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        res = await self._http.post(f"/routines/runs/{quote(run_id)}/artifacts", json=payload)
+        res.raise_for_status()
+        return res.json()  # type: ignore[no-any-return]
+
     async def approve_run(self, run_id: str, reason: str = "") -> dict[str, Any]:
         res = await self._http.post(f"/routines/runs/{quote(run_id)}/approve", json={"reason": reason})
         res.raise_for_status()
@@ -1052,12 +1545,18 @@ class _Routines:
             return RoutineHistoryResponse(history=[RoutineHistoryEntry.model_validate(e) for e in raw], count=len(raw))
         return RoutineHistoryResponse.model_validate(raw)
 
+    def events(self, *, routine_id: Optional[str] = None) -> AsyncGenerator[EngineEvent, None]:
+        qs = f"?routine_id={quote(routine_id)}" if routine_id else ""
+        return stream_sse(f"{self._base_url}/routines/events{qs}", self._token, client=self._http)
+
 
 # ─── Automations ──────────────────────────────────────────────────────────────
 
 
 class _Automations:
-    def __init__(self, http: httpx.AsyncClient) -> None:
+    def __init__(self, base_url: str, token: str, http: httpx.AsyncClient) -> None:
+        self._base_url = base_url
+        self._token = token
         self._http = http
 
     async def list(self) -> DefinitionListResponse:
@@ -1108,6 +1607,11 @@ class _Automations:
         res.raise_for_status()
         return RunArtifactsResponse.model_validate(res.json())
 
+    async def add_artifact(self, run_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        res = await self._http.post(f"/automations/runs/{quote(run_id)}/artifacts", json=payload)
+        res.raise_for_status()
+        return res.json()  # type: ignore[no-any-return]
+
     async def approve_run(self, run_id: str, reason: str = "") -> dict[str, Any]:
         res = await self._http.post(f"/automations/runs/{quote(run_id)}/approve", json={"reason": reason})
         res.raise_for_status()
@@ -1138,9 +1642,22 @@ class _Automations:
             return RoutineHistoryResponse(history=[RoutineHistoryEntry.model_validate(e) for e in raw], count=len(raw))
         return RoutineHistoryResponse.model_validate(raw)
 
+    def events(
+        self, *, automation_id: Optional[str] = None, run_id: Optional[str] = None
+    ) -> AsyncGenerator[EngineEvent, None]:
+        params: list[str] = []
+        if automation_id:
+            params.append(f"automation_id={quote(automation_id)}")
+        if run_id:
+            params.append(f"run_id={quote(run_id)}")
+        qs = f"?{'&'.join(params)}" if params else ""
+        return stream_sse(f"{self._base_url}/automations/events{qs}", self._token, client=self._http)
+
 
 class _AutomationsV2:
-    def __init__(self, http: httpx.AsyncClient) -> None:
+    def __init__(self, base_url: str, token: str, http: httpx.AsyncClient) -> None:
+        self._base_url = base_url
+        self._token = token
         self._http = http
 
     async def list(self) -> AutomationV2ListResponse:
@@ -1217,6 +1734,17 @@ class _AutomationsV2:
         )
         res.raise_for_status()
         return AutomationV2RunRecord.model_validate(res.json().get("run", {}))
+
+    def events(
+        self, *, automation_id: Optional[str] = None, run_id: Optional[str] = None
+    ) -> AsyncGenerator[EngineEvent, None]:
+        params: list[str] = []
+        if automation_id:
+            params.append(f"automation_id={quote(automation_id)}")
+        if run_id:
+            params.append(f"run_id={quote(run_id)}")
+        qs = f"?{'&'.join(params)}" if params else ""
+        return stream_sse(f"{self._base_url}/automations/v2/events{qs}", self._token, client=self._http)
 
 
 # ─── Agent Teams ──────────────────────────────────────────────────────────────

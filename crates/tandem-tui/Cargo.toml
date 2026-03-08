@@ -5,6 +5,7 @@ description = "Terminal user interface for the Tandem engine"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/frumu-ai/tandem"
 edition = "2021"
+default-run = "tandem-tui"
 
 [dependencies]
 # UI
@@ -48,7 +49,6 @@ flate2 = "1.0"
 arboard = "3"
 portable-pty = "0.9"
 vt100 = "0.15"
-
 
 
 

@@ -2,7 +2,7 @@
   "schema_version": 1,
   "source_root": "guide/src/content/docs",
   "docs_site_base_url": "https://tandem.docs.frumu.ai/",
-  "generated_at": "2023-11-29T03:32:51.000Z",
+  "generated_at": "2026-04-09T13:36:56.000Z",
   "docs": [
     {
       "relative_path": "agent-teams.md",
@@ -31,8 +31,8 @@
     {
       "relative_path": "build-from-source.md",
       "source_url": "https://tandem.docs.frumu.ai/build-from-source",
-      "content": "---\ntitle: Build from Source\n---\n\nUse this path for contributors and advanced local development.\n\n## Prerequisites\n\n- Rust (stable)\n- Node.js 20+\n- `pnpm`\n\nPlatform-specific dependencies are listed in the repository README.\n\n## 1. Clone\n\n```bash\ngit clone https://github.com/frumu-ai/tandem.git\ncd tandem\n```\n\n## 2. Install JS dependencies\n\n```bash\npnpm install\n```\n\n## 3. Build engine binary\n\n```bash\ncargo build -p tandem-ai\n```\n\nThis produces the `tandem-engine` binary from the `tandem-ai` package.\n\nIf you need browser automation from source as well:\n\n```bash\ncargo build -p tandem-browser\n```\n\n## 4. Run\n\n```bash\ncargo run -p tandem-ai -- serve --host 127.0.0.1 --port 39731\n```\n\nIn another terminal:\n\n```bash\ncargo run -p tandem-tui\n```\n\n## 5. Development and testing references\n\n- [Engine Testing](./engine-testing/)\n- `docs/ENGINE_TESTING.md`\n- `docs/ENGINE_CLI.md`\n\n## 6. Build docs (Starlight)\n\nFrom `guide/`:\n\n```bash\npnpm install\nDOCS_SITE_URL=https://tandem.docs.frumu.ai/ DOCS_BASE_PATH=/ pnpm build\n```\n\nNotes:\n\n- Root-hosted docs (`https://tandem.docs.frumu.ai/`) should use `DOCS_BASE_PATH=/`.\n- Reverse-proxy docs at subpath (`https://tandem.frumu.ai/docs/`) should use:\n\n```bash\nDOCS_SITE_URL=https://tandem.frumu.ai/ DOCS_BASE_PATH=/docs/ pnpm build\n```\n\n- Whatever base path you build with, your proxy/static host must serve both:\n  - `<base>_astro/*`\n  - `<base>pagefind/*`\n",
-      "content_hash": "50238e4a1a659dcb5e07c0b101441e0c2edf78083641a085e19d0039696024e1"
+      "content": "---\ntitle: Build from Source\n---\n\nUse this path for contributors and advanced local development.\n\n## Prerequisites\n\n- Rust (stable)\n- Node.js 20+\n- `pnpm`\n\nPlatform-specific dependencies are listed in the repository README.\n\n## 1. Clone\n\n```bash\ngit clone https://github.com/frumu-ai/tandem.git\ncd tandem\n```\n\n## 2. Install JS dependencies\n\n```bash\npnpm install\n```\n\n## 3. Build engine binary\n\n```bash\ncargo build -p tandem-ai\n```\n\nThis produces the `tandem-engine` binary from the `tandem-ai` package.\n\nIf you need browser automation from source as well:\n\n```bash\ncargo build -p tandem-browser\n```\n\n## 4. Run\n\n```bash\ncargo run -p tandem-ai -- serve --host 127.0.0.1 --port 39731\n```\n\nIn another terminal:\n\n```bash\ncargo run -p tandem-tui --bin tandem-tui\n```\n\n## 5. Development and testing references\n\n- [Engine Testing](./engine-testing/)\n- `docs/ENGINE_TESTING.md`\n- `docs/ENGINE_CLI.md`\n\n## 6. Build docs (Starlight)\n\nFrom `guide/`:\n\n```bash\npnpm install\nDOCS_SITE_URL=https://tandem.docs.frumu.ai/ DOCS_BASE_PATH=/ pnpm build\n```\n\nNotes:\n\n- Root-hosted docs (`https://tandem.docs.frumu.ai/`) should use `DOCS_BASE_PATH=/`.\n- Reverse-proxy docs at subpath (`https://tandem.frumu.ai/docs/`) should use:\n\n```bash\nDOCS_SITE_URL=https://tandem.frumu.ai/ DOCS_BASE_PATH=/docs/ pnpm build\n```\n\n- Whatever base path you build with, your proxy/static host must serve both:\n  - `<base>_astro/*`\n  - `<base>pagefind/*`\n",
+      "content_hash": "a779d5fbbc42f0ce2dd5cb28a26666c0d720c81986d914077ea3146f6a1caf51"
     },
     {
       "relative_path": "channel-integrations.md",

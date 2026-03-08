@@ -2809,6 +2809,19 @@ async fn coder_pr_review_execute_next_drives_task_runtime_to_completion() {
         .await
         .expect("context run state");
     assert_eq!(run.status, ContextRunStatus::Completed);
+    let blackboard = load_context_blackboard(&state, &linked_context_run_id);
+    assert!(blackboard
+        .artifacts
+        .iter()
+        .any(|artifact| artifact.artifact_type == "coder_pr_review_worker_session"));
+    assert!(blackboard
+        .artifacts
+        .iter()
+        .any(|artifact| artifact.artifact_type == "coder_review_evidence"));
+    assert!(blackboard
+        .artifacts
+        .iter()
+        .any(|artifact| artifact.artifact_type == "coder_pr_review_summary"));
     for workflow_node_id in [
         "inspect_pull_request",
         "retrieve_memory",

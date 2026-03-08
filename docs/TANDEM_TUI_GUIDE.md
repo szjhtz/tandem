@@ -10,7 +10,7 @@ The Tandem TUI (Terminal User Interface) provides a lightweight, keyboard-driven
 To run the TUI, you must be in the `tandem` directory of the project.
 
 ```bash
-cargo run -p tandem-tui
+cargo run -p tandem-tui --bin tandem-tui
 ```
 
 ### Connectivity Options

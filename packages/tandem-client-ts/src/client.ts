@@ -57,6 +57,31 @@ import type {
   ResourceListResponse,
   ResourceWriteOptions,
   ResourceWriteResponse,
+  BrowserStatusResponse,
+  BrowserInstallResponse,
+  BrowserSmokeTestResponse,
+  WorkflowRecord,
+  WorkflowListResponse,
+  WorkflowRunRecord,
+  WorkflowRunListResponse,
+  WorkflowHookRecord,
+  WorkflowHookListResponse,
+  BugMonitorConfigResponse,
+  BugMonitorStatusResponse,
+  BugMonitorIncidentRecord,
+  BugMonitorIncidentListResponse,
+  BugMonitorDraftRecord,
+  BugMonitorDraftListResponse,
+  BugMonitorPostListResponse,
+  CoderRunRecord,
+  CoderRunsListResponse,
+  CoderRunGetResponse,
+  CoderArtifactRecord,
+  CoderArtifactsResponse,
+  CoderMemoryHitRecord,
+  CoderMemoryHitsResponse,
+  CoderMemoryCandidateRecord,
+  CoderMemoryCandidatesResponse,
   PackInstallRecord,
   PacksListResponse,
   PackInspectionResponse,
@@ -209,6 +234,14 @@ export class TandemClient {
   readonly capabilities: Capabilities;
   /** Key-value resource store */
   readonly resources: Resources;
+  /** Browser lifecycle and diagnostics */
+  readonly browser: Browser;
+  /** Workflow registry, runs, and hooks */
+  readonly workflows: Workflows;
+  /** Bug monitor incident and draft operations */
+  readonly bugMonitor: BugMonitor;
+  /** Coder workflow runs and artifacts */
+  readonly coder: Coder;
   /** Agent team orchestration */
   readonly agentTeams: AgentTeams;
   /** Multi-agent mission management */
@@ -226,15 +259,20 @@ export class TandemClient {
     this.providers = new Providers(req);
     this.identity = new Identity(req);
     this.channels = new Channels(req);
-    this.mcp = new Mcp(req);
-    this.routines = new Routines(req);
-    this.automations = new Automations(req);
-    this.automationsV2 = new AutomationsV2(req);
+    this.mcp = new Mcp(req, this._requestText.bind(this));
+    const getToken = () => this.token;
+    this.routines = new Routines(this.baseUrl, getToken, req);
+    this.automations = new Automations(this.baseUrl, getToken, req);
+    this.automationsV2 = new AutomationsV2(this.baseUrl, getToken, req);
     this.memory = new Memory(req);
     this.skills = new Skills(req);
     this.packs = new Packs(req);
     this.capabilities = new Capabilities(req);
-    this.resources = new Resources(req);
+    this.resources = new Resources(this.baseUrl, getToken, req);
+    this.browser = new Browser(req);
+    this.workflows = new Workflows(this.baseUrl, getToken, req);
+    this.bugMonitor = new BugMonitor(req);
+    this.coder = new Coder(req);
     this.agentTeams = new AgentTeams(req);
     this.missions = new Missions(req);
   }
@@ -371,9 +409,291 @@ export class TandemClient {
     }
     return res.json() as Promise<T>;
   }
+
+  async _requestText(path: string, init: RequestInit = {}): Promise<string> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+
+    let res: Response;
+    try {
+      res = await fetch(`${this.baseUrl}${path}`, {
+        ...init,
+        headers: {
+          Authorization: `Bearer ${this.token}`,
+          ...(init.headers ?? {}),
+        },
+        signal: controller.signal,
+      });
+    } catch (err) {
+      if (err instanceof Error && err.name === "AbortError") {
+        throw new Error(`Request timed out after ${this.timeoutMs}ms: ${path}`);
+      }
+      throw err;
+    } finally {
+      clearTimeout(timer);
+    }
+
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      throw new Error(`Request failed (${res.status} ${res.statusText}): ${body}`);
+    }
+    return res.text();
+  }
 }
 
 // ─── Sessions namespace ───────────────────────────────────────────────────────
+
+class Browser {
+  constructor(private req: TandemClient["_request"]) {}
+
+  async status(): Promise<BrowserStatusResponse> {
+    return this.req<BrowserStatusResponse>("/browser/status");
+  }
+
+  async install(): Promise<BrowserInstallResponse> {
+    return this.req<BrowserInstallResponse>("/browser/install", { method: "POST" });
+  }
+
+  async smokeTest(options?: { url?: string }): Promise<BrowserSmokeTestResponse> {
+    return this.req<BrowserSmokeTestResponse>("/browser/smoke-test", {
+      method: "POST",
+      body: JSON.stringify(options ?? {}),
+    });
+  }
+}
+
+class Workflows {
+  constructor(
+    private baseUrl: string,
+    private getToken: () => string,
+    private req: TandemClient["_request"]
+  ) {}
+
+  async list(): Promise<WorkflowListResponse> {
+    const raw = await this.req<unknown>("/workflows");
+    const asObj = ((raw as JsonObject | null) ?? {}) as JsonObject;
+    const workflows = Array.isArray(asObj.workflows) ? (asObj.workflows as WorkflowRecord[]) : [];
+    return { workflows, count: typeof asObj.count === "number" ? asObj.count : workflows.length };
+  }
+
+  async get(id: string): Promise<WorkflowRecord> {
+    const raw = await this.req<{ workflow?: WorkflowRecord }>(
+      `/workflows/${encodeURIComponent(id)}`
+    );
+    return raw.workflow ?? ({} as WorkflowRecord);
+  }
+
+  async validate(payload?: JsonObject): Promise<JsonObject> {
+    return this.req<JsonObject>("/workflows/validate", {
+      method: "POST",
+      body: JSON.stringify(payload ?? {}),
+    });
+  }
+
+  async simulate(payload: JsonObject): Promise<JsonObject> {
+    return this.req<JsonObject>("/workflows/simulate", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  }
+
+  events(options?: {
+    workflowId?: string;
+    workflow_id?: string;
+    runId?: string;
+    run_id?: string;
+    signal?: AbortSignal;
+  }): AsyncGenerator<EngineEvent> {
+    const params = new URLSearchParams();
+    const workflowId = options?.workflow_id ?? options?.workflowId;
+    const runId = options?.run_id ?? options?.runId;
+    if (workflowId) params.set("workflow_id", workflowId);
+    if (runId) params.set("run_id", runId);
+    const qs = params.toString() ? `?${params.toString()}` : "";
+    return streamSse(`${this.baseUrl}/workflows/events${qs}`, this.getToken(), {
+      signal: options?.signal,
+    });
+  }
+
+  async listRuns(options?: {
+    workflowId?: string;
+    workflow_id?: string;
+    limit?: number;
+  }): Promise<WorkflowRunListResponse> {
+    const params = new URLSearchParams();
+    const workflowId = options?.workflow_id ?? options?.workflowId;
+    if (workflowId) params.set("workflow_id", workflowId);
+    if (options?.limit !== undefined) params.set("limit", String(options.limit));
+    const qs = params.toString() ? `?${params.toString()}` : "";
+    const raw = await this.req<unknown>(`/workflows/runs${qs}`);
+    const asObj = ((raw as JsonObject | null) ?? {}) as JsonObject;
+    const runs = Array.isArray(asObj.runs) ? (asObj.runs as WorkflowRunRecord[]) : [];
+    return { runs, count: typeof asObj.count === "number" ? asObj.count : runs.length };
+  }
+
+  async getRun(id: string): Promise<WorkflowRunRecord> {
+    const raw = await this.req<{ run?: WorkflowRunRecord }>(
+      `/workflows/runs/${encodeURIComponent(id)}`
+    );
+    return raw.run ?? ({} as WorkflowRunRecord);
+  }
+
+  async run(id: string, payload?: JsonObject): Promise<JsonObject> {
+    return this.req<JsonObject>(`/workflows/${encodeURIComponent(id)}/run`, {
+      method: "POST",
+      body: JSON.stringify(payload ?? {}),
+    });
+  }
+
+  async listHooks(options?: {
+    workflowId?: string;
+    workflow_id?: string;
+  }): Promise<WorkflowHookListResponse> {
+    const params = new URLSearchParams();
+    const workflowId = options?.workflow_id ?? options?.workflowId;
+    if (workflowId) params.set("workflow_id", workflowId);
+    const qs = params.toString() ? `?${params.toString()}` : "";
+    const raw = await this.req<unknown>(`/workflow-hooks${qs}`);
+    const asObj = ((raw as JsonObject | null) ?? {}) as JsonObject;
+    const hooks = Array.isArray(asObj.hooks) ? (asObj.hooks as WorkflowHookRecord[]) : [];
+    return { hooks, count: typeof asObj.count === "number" ? asObj.count : hooks.length };
+  }
+
+  async patchHook(id: string, patch: JsonObject): Promise<JsonObject> {
+    return this.req<JsonObject>(`/workflow-hooks/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: JSON.stringify(patch),
+    });
+  }
+}
+
+class BugMonitor {
+  constructor(private req: TandemClient["_request"]) {}
+
+  async getConfig(): Promise<BugMonitorConfigResponse> {
+    return this.req<BugMonitorConfigResponse>("/config/bug-monitor");
+  }
+
+  async patchConfig(config: JsonObject): Promise<BugMonitorConfigResponse> {
+    return this.req<BugMonitorConfigResponse>("/config/bug-monitor", {
+      method: "PATCH",
+      body: JSON.stringify(config),
+    });
+  }
+
+  async getStatus(): Promise<BugMonitorStatusResponse> {
+    return this.req<BugMonitorStatusResponse>("/bug-monitor/status");
+  }
+
+  async recomputeStatus(): Promise<BugMonitorStatusResponse> {
+    return this.req<BugMonitorStatusResponse>("/bug-monitor/status/recompute", {
+      method: "POST",
+    });
+  }
+
+  async pause(): Promise<JsonObject> {
+    return this.req<JsonObject>("/bug-monitor/pause", { method: "POST" });
+  }
+
+  async resume(): Promise<JsonObject> {
+    return this.req<JsonObject>("/bug-monitor/resume", { method: "POST" });
+  }
+
+  async debug(): Promise<JsonObject> {
+    return this.req<JsonObject>("/bug-monitor/debug");
+  }
+
+  async listIncidents(options?: { limit?: number }): Promise<BugMonitorIncidentListResponse> {
+    const qs = options?.limit !== undefined ? `?limit=${options.limit}` : "";
+    return this.req<BugMonitorIncidentListResponse>(`/bug-monitor/incidents${qs}`);
+  }
+
+  async getIncident(id: string): Promise<BugMonitorIncidentRecord> {
+    const raw = await this.req<{ incident?: BugMonitorIncidentRecord }>(
+      `/bug-monitor/incidents/${encodeURIComponent(id)}`
+    );
+    return raw.incident ?? ({} as BugMonitorIncidentRecord);
+  }
+
+  async replayIncident(id: string, payload?: JsonObject): Promise<JsonObject> {
+    return this.req<JsonObject>(`/bug-monitor/incidents/${encodeURIComponent(id)}/replay`, {
+      method: "POST",
+      body: JSON.stringify(payload ?? {}),
+    });
+  }
+
+  async listDrafts(options?: { limit?: number }): Promise<BugMonitorDraftListResponse> {
+    const qs = options?.limit !== undefined ? `?limit=${options.limit}` : "";
+    return this.req<BugMonitorDraftListResponse>(`/bug-monitor/drafts${qs}`);
+  }
+
+  async listPosts(options?: { limit?: number }): Promise<BugMonitorPostListResponse> {
+    const qs = options?.limit !== undefined ? `?limit=${options.limit}` : "";
+    return this.req<BugMonitorPostListResponse>(`/bug-monitor/posts${qs}`);
+  }
+
+  async getDraft(id: string): Promise<BugMonitorDraftRecord> {
+    const raw = await this.req<{ draft?: BugMonitorDraftRecord }>(
+      `/bug-monitor/drafts/${encodeURIComponent(id)}`
+    );
+    return raw.draft ?? ({} as BugMonitorDraftRecord);
+  }
+
+  async approveDraft(id: string, reason?: string): Promise<JsonObject> {
+    return this.req<JsonObject>(`/bug-monitor/drafts/${encodeURIComponent(id)}/approve`, {
+      method: "POST",
+      body: JSON.stringify({ reason }),
+    });
+  }
+
+  async denyDraft(id: string, reason?: string): Promise<JsonObject> {
+    return this.req<JsonObject>(`/bug-monitor/drafts/${encodeURIComponent(id)}/deny`, {
+      method: "POST",
+      body: JSON.stringify({ reason }),
+    });
+  }
+
+  async report(payload: JsonObject): Promise<JsonObject> {
+    return this.req<JsonObject>("/bug-monitor/report", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async createTriageRun(id: string): Promise<JsonObject> {
+    return this.req<JsonObject>(`/bug-monitor/drafts/${encodeURIComponent(id)}/triage-run`, {
+      method: "POST",
+    });
+  }
+
+  async createTriageSummary(id: string, payload: JsonObject): Promise<JsonObject> {
+    return this.req<JsonObject>(`/bug-monitor/drafts/${encodeURIComponent(id)}/triage-summary`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async createIssueDraft(id: string, payload?: JsonObject): Promise<JsonObject> {
+    return this.req<JsonObject>(`/bug-monitor/drafts/${encodeURIComponent(id)}/issue-draft`, {
+      method: "POST",
+      body: JSON.stringify(payload ?? {}),
+    });
+  }
+
+  async publishDraft(id: string, payload?: JsonObject): Promise<JsonObject> {
+    return this.req<JsonObject>(`/bug-monitor/drafts/${encodeURIComponent(id)}/publish`, {
+      method: "POST",
+      body: JSON.stringify(payload ?? {}),
+    });
+  }
+
+  async recheckMatch(id: string, payload?: JsonObject): Promise<JsonObject> {
+    return this.req<JsonObject>(`/bug-monitor/drafts/${encodeURIComponent(id)}/recheck-match`, {
+      method: "POST",
+      body: JSON.stringify(payload ?? {}),
+    });
+  }
+}
 
 class Sessions {
   constructor(
@@ -796,7 +1116,10 @@ class Channels {
 // ─── MCP namespace ────────────────────────────────────────────────────────────
 
 class Mcp {
-  constructor(private req: TandemClient["_request"]) {}
+  constructor(
+    private req: TandemClient["_request"],
+    private reqText?: TandemClient["_requestText"]
+  ) {}
 
   /** List registered MCP servers. */
   async list(): Promise<Record<string, unknown>> {
@@ -857,6 +1180,44 @@ class Mcp {
       method: "PATCH",
       body: JSON.stringify({ enabled }),
     });
+  }
+
+  async delete(name: string): Promise<{ ok?: boolean; deleted?: boolean }> {
+    return this.req<{ ok?: boolean; deleted?: boolean }>(`/mcp/${encodeURIComponent(name)}`, {
+      method: "DELETE",
+    });
+  }
+
+  async auth(name: string, payload?: JsonObject): Promise<JsonObject> {
+    return this.req<JsonObject>(`/mcp/${encodeURIComponent(name)}/auth`, {
+      method: "POST",
+      body: JSON.stringify(payload ?? {}),
+    });
+  }
+
+  async deleteAuth(name: string): Promise<JsonObject> {
+    return this.req<JsonObject>(`/mcp/${encodeURIComponent(name)}/auth`, {
+      method: "DELETE",
+    });
+  }
+
+  async authCallback(name: string, payload: JsonObject): Promise<JsonObject> {
+    return this.req<JsonObject>(`/mcp/${encodeURIComponent(name)}/auth/callback`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async authenticate(name: string, payload?: JsonObject): Promise<JsonObject> {
+    return this.req<JsonObject>(`/mcp/${encodeURIComponent(name)}/auth/authenticate`, {
+      method: "POST",
+      body: JSON.stringify(payload ?? {}),
+    });
+  }
+
+  async catalogToml(slug: string): Promise<string> {
+    if (!this.reqText) throw new Error("Text request helper unavailable");
+    return this.reqText(`/mcp/catalog/${encodeURIComponent(slug)}/toml`);
   }
 }
 
@@ -1320,7 +1681,11 @@ class Capabilities {
 // ─── Resources namespace ──────────────────────────────────────────────────────
 
 class Resources {
-  constructor(private req: TandemClient["_request"]) {}
+  constructor(
+    private baseUrl: string,
+    private getToken: () => string,
+    private req: TandemClient["_request"]
+  ) {}
 
   /** List stored resource records. */
   async list(options?: { prefix?: string; limit?: number }): Promise<ResourceListResponse> {
@@ -1350,6 +1715,31 @@ class Resources {
     });
   }
 
+  async get(key: string): Promise<ResourceRecord> {
+    const raw = await this.req<unknown>(`/resource/${encodeURIComponent(key)}`);
+    return parseResponse(ResourceRecordSchema, raw, `/resource/${key}`, 200);
+  }
+
+  async putKey(
+    key: string,
+    value: JsonValue,
+    options?: JsonObject
+  ): Promise<ResourceWriteResponse> {
+    const raw = await this.req<unknown>(`/resource/${encodeURIComponent(key)}`, {
+      method: "PUT",
+      body: JSON.stringify({ value, ...(options ?? {}) }),
+    });
+    return parseResponse(ResourceWriteResponseSchema, raw, `/resource/${key}`, 200);
+  }
+
+  async patchKey(key: string, patch: JsonObject): Promise<ResourceWriteResponse> {
+    const raw = await this.req<unknown>(`/resource/${encodeURIComponent(key)}`, {
+      method: "PATCH",
+      body: JSON.stringify(patch),
+    });
+    return parseResponse(ResourceWriteResponseSchema, raw, `/resource/${key}`, 200);
+  }
+
   /** Delete a resource entry. */
   async delete(key: string, options?: { if_match_rev?: number }): Promise<{ ok: boolean }> {
     return this.req<{ ok: boolean }>("/resource", {
@@ -1357,12 +1747,294 @@ class Resources {
       body: JSON.stringify({ key, ...options }),
     });
   }
+
+  async deleteKey(key: string): Promise<{ ok: boolean }> {
+    return this.req<{ ok: boolean }>(`/resource/${encodeURIComponent(key)}`, {
+      method: "DELETE",
+    });
+  }
+
+  events(options?: { sinceSeq?: number; tail?: number }): AsyncGenerator<EngineEvent> {
+    const params = new URLSearchParams();
+    if (options?.sinceSeq !== undefined) params.set("since_seq", String(options.sinceSeq));
+    if (options?.tail !== undefined) params.set("tail", String(options.tail));
+    const qs = params.toString() ? `?${params.toString()}` : "";
+    return streamSse(`${this.baseUrl}/resource/events${qs}`, this.getToken());
+  }
+}
+
+// ─── Coder namespace ─────────────────────────────────────────────────────────
+
+class Coder {
+  constructor(private req: TandemClient["_request"]) {}
+
+  /** Create a coder workflow run. */
+  async createRun(payload: JsonObject): Promise<JsonObject> {
+    return this.req<JsonObject>("/coder/runs", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  }
+
+  /** List coder runs with optional filters. */
+  async listRuns(options?: {
+    limit?: number;
+    workflowMode?: string;
+    workflow_mode?: string;
+    repoSlug?: string;
+    repo_slug?: string;
+  }): Promise<CoderRunsListResponse> {
+    const params = new URLSearchParams();
+    if (options?.limit !== undefined) params.set("limit", String(options.limit));
+    const workflowMode = options?.workflow_mode ?? options?.workflowMode;
+    const repoSlug = options?.repo_slug ?? options?.repoSlug;
+    if (workflowMode) params.set("workflow_mode", workflowMode);
+    if (repoSlug) params.set("repo_slug", repoSlug);
+    const qs = params.toString() ? `?${params.toString()}` : "";
+    const raw = await this.req<unknown>(`/coder/runs${qs}`);
+    const asObj = ((raw as JsonObject | null) ?? {}) as JsonObject;
+    const runs = Array.isArray(asObj.runs) ? (asObj.runs as CoderRunRecord[]) : [];
+    return {
+      runs,
+      count: typeof asObj.count === "number" ? asObj.count : runs.length,
+    };
+  }
+
+  /** Get a single coder run plus linked context run details. */
+  async getRun(runId: string): Promise<CoderRunGetResponse> {
+    const raw = await this.req<unknown>(`/coder/runs/${encodeURIComponent(runId)}`);
+    const asObj = ((raw as JsonObject | null) ?? {}) as JsonObject;
+    return {
+      ...asObj,
+      coderRun: (asObj.coder_run as CoderRunRecord | undefined) ?? undefined,
+      coder_run: (asObj.coder_run as CoderRunRecord | undefined) ?? undefined,
+      run: (asObj.run as JsonObject | undefined) ?? undefined,
+    };
+  }
+
+  /** Execute the next runnable task in a coder workflow. */
+  async executeNext(runId: string, payload?: JsonObject): Promise<JsonObject> {
+    return this.req<JsonObject>(`/coder/runs/${encodeURIComponent(runId)}/execute-next`, {
+      method: "POST",
+      body: JSON.stringify(payload ?? {}),
+    });
+  }
+
+  /** Continue executing runnable tasks until the run stops or completes. */
+  async executeAll(runId: string, payload?: JsonObject): Promise<JsonObject> {
+    return this.req<JsonObject>(`/coder/runs/${encodeURIComponent(runId)}/execute-all`, {
+      method: "POST",
+      body: JSON.stringify(payload ?? {}),
+    });
+  }
+
+  /** Spawn a follow-on coder workflow from an existing run. */
+  async createFollowOnRun(runId: string, payload: JsonObject): Promise<JsonObject> {
+    return this.req<JsonObject>(`/coder/runs/${encodeURIComponent(runId)}/follow-on-run`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  }
+
+  /** Approve a coder run that is waiting on human review. */
+  async approveRun(runId: string, reason?: string): Promise<JsonObject> {
+    return this.req<JsonObject>(`/coder/runs/${encodeURIComponent(runId)}/approve`, {
+      method: "POST",
+      body: JSON.stringify({ reason }),
+    });
+  }
+
+  /** Cancel a coder run. */
+  async cancelRun(runId: string, reason?: string): Promise<JsonObject> {
+    return this.req<JsonObject>(`/coder/runs/${encodeURIComponent(runId)}/cancel`, {
+      method: "POST",
+      body: JSON.stringify({ reason }),
+    });
+  }
+
+  /** List artifacts emitted by a coder run. */
+  async listArtifacts(runId: string): Promise<CoderArtifactsResponse> {
+    const raw = await this.req<unknown>(`/coder/runs/${encodeURIComponent(runId)}/artifacts`);
+    const asObj = ((raw as JsonObject | null) ?? {}) as JsonObject;
+    const artifacts = Array.isArray(asObj.artifacts)
+      ? (asObj.artifacts as CoderArtifactRecord[])
+      : [];
+    return {
+      ...asObj,
+      artifacts,
+      count: typeof asObj.count === "number" ? asObj.count : artifacts.length,
+    };
+  }
+
+  /** Inspect ranked memory hits for a coder run. */
+  async getMemoryHits(
+    runId: string,
+    options?: { query?: string; limit?: number }
+  ): Promise<CoderMemoryHitsResponse> {
+    const params = new URLSearchParams();
+    if (options?.query) params.set("q", options.query);
+    if (options?.limit !== undefined) params.set("limit", String(options.limit));
+    const qs = params.toString() ? `?${params.toString()}` : "";
+    const raw = await this.req<unknown>(
+      `/coder/runs/${encodeURIComponent(runId)}/memory-hits${qs}`
+    );
+    const asObj = ((raw as JsonObject | null) ?? {}) as JsonObject;
+    const hits = Array.isArray(asObj.hits) ? (asObj.hits as CoderMemoryHitRecord[]) : [];
+    return {
+      ...asObj,
+      hits,
+      count: typeof asObj.count === "number" ? asObj.count : hits.length,
+    };
+  }
+
+  /** Create a triage inspection report artifact. */
+  async createTriageInspectionReport(runId: string, payload: JsonObject): Promise<JsonObject> {
+    return this.req<JsonObject>(
+      `/coder/runs/${encodeURIComponent(runId)}/triage-inspection-report`,
+      {
+        method: "POST",
+        body: JSON.stringify(payload),
+      }
+    );
+  }
+
+  /** Create a triage reproduction report artifact. */
+  async createTriageReproductionReport(runId: string, payload: JsonObject): Promise<JsonObject> {
+    return this.req<JsonObject>(
+      `/coder/runs/${encodeURIComponent(runId)}/triage-reproduction-report`,
+      {
+        method: "POST",
+        body: JSON.stringify(payload),
+      }
+    );
+  }
+
+  /** Create a triage summary artifact. */
+  async createTriageSummary(runId: string, payload: JsonObject): Promise<JsonObject> {
+    return this.req<JsonObject>(`/coder/runs/${encodeURIComponent(runId)}/triage-summary`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  }
+
+  /** Create PR review evidence for a coder run. */
+  async createPrReviewEvidence(runId: string, payload: JsonObject): Promise<JsonObject> {
+    return this.req<JsonObject>(`/coder/runs/${encodeURIComponent(runId)}/pr-review-evidence`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  }
+
+  /** Create a PR review summary artifact. */
+  async createPrReviewSummary(runId: string, payload: JsonObject): Promise<JsonObject> {
+    return this.req<JsonObject>(`/coder/runs/${encodeURIComponent(runId)}/pr-review-summary`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  }
+
+  /** Create an issue-fix validation report artifact. */
+  async createIssueFixValidationReport(runId: string, payload: JsonObject): Promise<JsonObject> {
+    return this.req<JsonObject>(
+      `/coder/runs/${encodeURIComponent(runId)}/issue-fix-validation-report`,
+      {
+        method: "POST",
+        body: JSON.stringify(payload),
+      }
+    );
+  }
+
+  /** Create an issue-fix summary artifact. */
+  async createIssueFixSummary(runId: string, payload: JsonObject): Promise<JsonObject> {
+    return this.req<JsonObject>(`/coder/runs/${encodeURIComponent(runId)}/issue-fix-summary`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  }
+
+  /** Draft a pull request for an issue-fix coder run. */
+  async createPrDraft(runId: string, payload?: JsonObject): Promise<JsonObject> {
+    return this.req<JsonObject>(`/coder/runs/${encodeURIComponent(runId)}/pr-draft`, {
+      method: "POST",
+      body: JSON.stringify(payload ?? {}),
+    });
+  }
+
+  /** Submit a pull request for an issue-fix coder run. */
+  async submitPr(runId: string, payload?: JsonObject): Promise<JsonObject> {
+    return this.req<JsonObject>(`/coder/runs/${encodeURIComponent(runId)}/pr-submit`, {
+      method: "POST",
+      body: JSON.stringify(payload ?? {}),
+    });
+  }
+
+  /** Create a merge readiness report artifact. */
+  async createMergeReadinessReport(runId: string, payload: JsonObject): Promise<JsonObject> {
+    return this.req<JsonObject>(`/coder/runs/${encodeURIComponent(runId)}/merge-readiness-report`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  }
+
+  /** Create a merge recommendation summary artifact. */
+  async createMergeRecommendationSummary(runId: string, payload: JsonObject): Promise<JsonObject> {
+    return this.req<JsonObject>(
+      `/coder/runs/${encodeURIComponent(runId)}/merge-recommendation-summary`,
+      {
+        method: "POST",
+        body: JSON.stringify(payload),
+      }
+    );
+  }
+
+  /** List pending or emitted memory candidates for a coder run. */
+  async listMemoryCandidates(runId: string): Promise<CoderMemoryCandidatesResponse> {
+    const raw = await this.req<unknown>(
+      `/coder/runs/${encodeURIComponent(runId)}/memory-candidates`
+    );
+    const asObj = ((raw as JsonObject | null) ?? {}) as JsonObject;
+    const candidates = Array.isArray(asObj.candidates)
+      ? (asObj.candidates as CoderMemoryCandidateRecord[])
+      : [];
+    return {
+      ...asObj,
+      candidates,
+      count: typeof asObj.count === "number" ? asObj.count : candidates.length,
+    };
+  }
+
+  /** Persist a memory candidate generated by a coder workflow. */
+  async createMemoryCandidate(runId: string, payload: JsonObject): Promise<JsonObject> {
+    return this.req<JsonObject>(`/coder/runs/${encodeURIComponent(runId)}/memory-candidates`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  }
+
+  /** Promote a reviewed memory candidate into governed memory. */
+  async promoteMemoryCandidate(
+    runId: string,
+    candidateId: string,
+    payload?: JsonObject
+  ): Promise<JsonObject> {
+    return this.req<JsonObject>(
+      `/coder/runs/${encodeURIComponent(runId)}/memory-candidates/${encodeURIComponent(candidateId)}/promote`,
+      {
+        method: "POST",
+        body: JSON.stringify(payload ?? {}),
+      }
+    );
+  }
 }
 
 // ─── Routines namespace ───────────────────────────────────────────────────────
 
 class Routines {
-  constructor(private req: TandemClient["_request"]) {}
+  constructor(
+    private baseUrl: string,
+    private getToken: () => string,
+    private req: TandemClient["_request"]
+  ) {}
 
   /** List all scheduled routines. */
   async list(): Promise<DefinitionListResponse> {
@@ -1479,12 +2151,33 @@ class Routines {
     if (Array.isArray(raw)) return { history: raw as JsonObject[], count: raw.length };
     return raw as RoutineHistoryResponse;
   }
+
+  events(options?: { routineId?: string; routine_id?: string; signal?: AbortSignal }) {
+    const params = new URLSearchParams();
+    const routineId = options?.routine_id ?? options?.routineId;
+    if (routineId) params.set("routine_id", routineId);
+    const qs = params.toString() ? `?${params.toString()}` : "";
+    return streamSse(`${this.baseUrl}/routines/events${qs}`, this.getToken(), {
+      signal: options?.signal,
+    });
+  }
+
+  addArtifact(runId: string, payload: JsonObject): Promise<JsonObject> {
+    return this.req<JsonObject>(`/routines/runs/${encodeURIComponent(runId)}/artifacts`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  }
 }
 
 // ─── Automations namespace ────────────────────────────────────────────────────
 
 class Automations {
-  constructor(private req: TandemClient["_request"]) {}
+  constructor(
+    private baseUrl: string,
+    private getToken: () => string,
+    private req: TandemClient["_request"]
+  ) {}
 
   /** List all automations. */
   async list(): Promise<DefinitionListResponse> {
@@ -1605,12 +2298,41 @@ class Automations {
     if (Array.isArray(raw)) return { history: raw as JsonObject[], count: raw.length };
     return raw as RoutineHistoryResponse;
   }
+
+  events(options?: {
+    automationId?: string;
+    automation_id?: string;
+    runId?: string;
+    run_id?: string;
+    signal?: AbortSignal;
+  }) {
+    const params = new URLSearchParams();
+    const automationId = options?.automation_id ?? options?.automationId;
+    const runId = options?.run_id ?? options?.runId;
+    if (automationId) params.set("automation_id", automationId);
+    if (runId) params.set("run_id", runId);
+    const qs = params.toString() ? `?${params.toString()}` : "";
+    return streamSse(`${this.baseUrl}/automations/events${qs}`, this.getToken(), {
+      signal: options?.signal,
+    });
+  }
+
+  addArtifact(runId: string, payload: JsonObject): Promise<JsonObject> {
+    return this.req<JsonObject>(`/automations/runs/${encodeURIComponent(runId)}/artifacts`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  }
 }
 
 // ─── AutomationsV2 namespace ─────────────────────────────────────────────────
 
 class AutomationsV2 {
-  constructor(private req: TandemClient["_request"]) {}
+  constructor(
+    private baseUrl: string,
+    private getToken: () => string,
+    private req: TandemClient["_request"]
+  ) {}
 
   async create(spec: AutomationV2Spec): Promise<{ automation: JsonObject }> {
     return this.req<{ automation: JsonObject }>("/automations/v2", {
@@ -1705,6 +2427,24 @@ class AutomationsV2 {
       `/automations/v2/runs/${encodeURIComponent(runId)}/cancel`,
       { method: "POST", body: JSON.stringify({ reason: reason ?? "" }) }
     );
+  }
+
+  events(options?: {
+    automationId?: string;
+    automation_id?: string;
+    runId?: string;
+    run_id?: string;
+    signal?: AbortSignal;
+  }) {
+    const params = new URLSearchParams();
+    const automationId = options?.automation_id ?? options?.automationId;
+    const runId = options?.run_id ?? options?.runId;
+    if (automationId) params.set("automation_id", automationId);
+    if (runId) params.set("run_id", runId);
+    const qs = params.toString() ? `?${params.toString()}` : "";
+    return streamSse(`${this.baseUrl}/automations/v2/events${qs}`, this.getToken(), {
+      signal: options?.signal,
+    });
   }
 }
 
