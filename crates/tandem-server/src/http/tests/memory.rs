@@ -441,6 +441,36 @@ async fn memory_promote_preserves_artifact_refs_and_shared_visibility() {
         .and_then(Value::as_str)
         .expect("put audit id")
         .to_string();
+    let put_event = next_event_of_type(&mut rx, "memory.put").await;
+    assert_eq!(
+        put_event.properties.get("memoryID").and_then(Value::as_str),
+        Some(memory_id.as_str())
+    );
+    assert_eq!(
+        put_event.properties.get("kind").and_then(Value::as_str),
+        Some("solution_capsule")
+    );
+    assert_eq!(
+        put_event
+            .properties
+            .get("classification")
+            .and_then(Value::as_str),
+        Some("internal")
+    );
+    assert_eq!(
+        put_event
+            .properties
+            .get("artifactRefs")
+            .and_then(Value::as_array),
+        Some(&artifact_refs)
+    );
+    assert_eq!(
+        put_event
+            .properties
+            .get("visibility")
+            .and_then(Value::as_str),
+        Some("private")
+    );
     let put_updated_event = next_event_of_type(&mut rx, "memory.updated").await;
     assert_eq!(
         put_updated_event
@@ -462,6 +492,41 @@ async fn memory_promote_preserves_artifact_refs_and_shared_visibility() {
             .get("action")
             .and_then(Value::as_str),
         Some("put")
+    );
+    assert_eq!(
+        put_updated_event
+            .properties
+            .get("kind")
+            .and_then(Value::as_str),
+        Some("solution_capsule")
+    );
+    assert_eq!(
+        put_updated_event
+            .properties
+            .get("classification")
+            .and_then(Value::as_str),
+        Some("internal")
+    );
+    assert_eq!(
+        put_updated_event
+            .properties
+            .get("artifactRefs")
+            .and_then(Value::as_array),
+        Some(&artifact_refs)
+    );
+    assert_eq!(
+        put_updated_event
+            .properties
+            .get("visibility")
+            .and_then(Value::as_str),
+        Some("private")
+    );
+    assert_eq!(
+        put_updated_event
+            .properties
+            .get("tier")
+            .and_then(Value::as_str),
+        Some("session")
     );
     assert_eq!(
         put_updated_event
@@ -561,6 +626,60 @@ async fn memory_promote_preserves_artifact_refs_and_shared_visibility() {
         .and_then(Value::as_str)
         .expect("promote audit id")
         .to_string();
+    let promote_event = next_event_of_type(&mut rx, "memory.promote").await;
+    assert_eq!(
+        promote_event
+            .properties
+            .get("memoryID")
+            .and_then(Value::as_str),
+        Some(memory_id.as_str())
+    );
+    assert_eq!(
+        promote_event
+            .properties
+            .get("sourceMemoryID")
+            .and_then(Value::as_str),
+        Some(memory_id.as_str())
+    );
+    assert_eq!(
+        promote_event.properties.get("kind").and_then(Value::as_str),
+        Some("solution_capsule")
+    );
+    assert_eq!(
+        promote_event
+            .properties
+            .get("classification")
+            .and_then(Value::as_str),
+        Some("internal")
+    );
+    assert_eq!(
+        promote_event
+            .properties
+            .get("artifactRefs")
+            .and_then(Value::as_array),
+        Some(&artifact_refs)
+    );
+    assert_eq!(
+        promote_event
+            .properties
+            .get("visibility")
+            .and_then(Value::as_str),
+        Some("shared")
+    );
+    assert_eq!(
+        promote_event
+            .properties
+            .get("toTier")
+            .and_then(Value::as_str),
+        Some("project")
+    );
+    assert_eq!(
+        promote_event
+            .properties
+            .get("approvalID")
+            .and_then(Value::as_str),
+        Some("appr-1")
+    );
     let promote_updated_event = next_event_of_type(&mut rx, "memory.updated").await;
     assert_eq!(
         promote_updated_event
@@ -582,6 +701,55 @@ async fn memory_promote_preserves_artifact_refs_and_shared_visibility() {
             .get("action")
             .and_then(Value::as_str),
         Some("promote")
+    );
+    assert_eq!(
+        promote_updated_event
+            .properties
+            .get("kind")
+            .and_then(Value::as_str),
+        Some("solution_capsule")
+    );
+    assert_eq!(
+        promote_updated_event
+            .properties
+            .get("classification")
+            .and_then(Value::as_str),
+        Some("internal")
+    );
+    assert_eq!(
+        promote_updated_event
+            .properties
+            .get("artifactRefs")
+            .and_then(Value::as_array),
+        Some(&artifact_refs)
+    );
+    assert_eq!(
+        promote_updated_event
+            .properties
+            .get("visibility")
+            .and_then(Value::as_str),
+        Some("shared")
+    );
+    assert_eq!(
+        promote_updated_event
+            .properties
+            .get("tier")
+            .and_then(Value::as_str),
+        Some("project")
+    );
+    assert_eq!(
+        promote_updated_event
+            .properties
+            .get("sourceMemoryID")
+            .and_then(Value::as_str),
+        Some(memory_id.as_str())
+    );
+    assert_eq!(
+        promote_updated_event
+            .properties
+            .get("approvalID")
+            .and_then(Value::as_str),
+        Some("appr-1")
     );
     assert_eq!(
         promote_updated_event

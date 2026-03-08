@@ -1063,6 +1063,14 @@ fn memory_kind_label(source_type: &str) -> &str {
     }
 }
 
+fn memory_kind_for_request(kind: tandem_memory::MemoryContentKind) -> &'static str {
+    match kind {
+        tandem_memory::MemoryContentKind::SolutionCapsule => "solution_capsule",
+        tandem_memory::MemoryContentKind::Note => "note",
+        tandem_memory::MemoryContentKind::Fact => "fact",
+    }
+}
+
 fn memory_tier_for_visibility(visibility: &str) -> tandem_memory::GovernedMemoryTier {
     if visibility.eq_ignore_ascii_case("shared") {
         tandem_memory::GovernedMemoryTier::Project
@@ -1739,6 +1747,7 @@ pub(super) async fn memory_put_impl(
     }
     let id = Uuid::new_v4().to_string();
     let partition_key = request.partition.key();
+    let kind = memory_kind_for_request(request.kind);
     let now = crate::now_ms();
     let audit_id = Uuid::new_v4().to_string();
     let db = open_global_memory_db()
@@ -1807,6 +1816,10 @@ pub(super) async fn memory_put_impl(
         json!({
             "runID": request.run_id,
             "memoryID": id,
+            "kind": kind,
+            "classification": request.classification,
+            "artifactRefs": artifact_refs,
+            "visibility": "private",
             "tier": request.partition.tier,
             "partitionKey": partition_key,
             "auditID": audit_id,
@@ -1818,6 +1831,12 @@ pub(super) async fn memory_put_impl(
             "memoryID": id,
             "runID": request.run_id,
             "action": "put",
+            "kind": kind,
+            "classification": request.classification,
+            "artifactRefs": artifact_refs,
+            "visibility": "private",
+            "tier": request.partition.tier,
+            "partitionKey": partition_key,
             "auditID": audit_id,
         }),
     ));
@@ -1938,6 +1957,9 @@ pub(super) async fn memory_promote_impl(
     let next_metadata = memory_promote_metadata(source.metadata.as_ref(), &request, now);
     let next_provenance =
         memory_promote_provenance(source.provenance.as_ref(), &request, &partition_key, now);
+    let classification = memory_classification_label(next_metadata.as_ref());
+    let artifact_refs = memory_artifact_refs(next_metadata.as_ref());
+    let kind = memory_kind_label(&source.source_type);
     db.update_global_memory_context(
         &new_id,
         "shared",
@@ -1976,7 +1998,13 @@ pub(super) async fn memory_promote_impl(
             "runID": request.run_id,
             "sourceMemoryID": source_memory_id,
             "memoryID": new_id,
+            "kind": kind,
+            "classification": classification,
+            "artifactRefs": artifact_refs,
+            "visibility": "shared",
             "toTier": request.to_tier,
+            "partitionKey": partition_key,
+            "approvalID": request.review.approval_id,
             "auditID": audit_id,
             "scrubStatus": scrub_report.status,
         }),
@@ -1987,6 +2015,14 @@ pub(super) async fn memory_promote_impl(
             "memoryID": new_id,
             "runID": request.run_id,
             "action": "promote",
+            "kind": kind,
+            "classification": classification,
+            "artifactRefs": artifact_refs,
+            "visibility": "shared",
+            "tier": request.to_tier,
+            "partitionKey": partition_key,
+            "sourceMemoryID": source_memory_id,
+            "approvalID": request.review.approval_id,
             "auditID": audit_id,
         }),
     ));
