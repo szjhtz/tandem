@@ -57,6 +57,7 @@ It is not a wishlist for future planner features.
   - `Workspace default` for cleared model override
   - `None` for cleared MCP constraints
 - [x] Show the latest planned step list in review
+- [x] Add explicit planner-model controls in the Automations wizard so broader planner fallback can be enabled without editing raw role-model JSON
 - [x] Add planner-chat deterministic revisions for:
   - schedule updates
   - switching back to manual execution
@@ -73,7 +74,7 @@ It is not a wishlist for future planner features.
 
 ## Deferred After This Slice
 - [~] Replace deterministic planner-chat rules with a true LLM-backed revision loop
-- Current state: planner chat now has an engine-owned LLM fallback path for unsupported general revisions when explicit planner model preferences are present, but deterministic revisions still remain the primary path and provider-backed coverage is not yet in place.
+- Current state: planner chat now has an engine-owned LLM fallback path for unsupported general revisions when explicit planner model preferences are present, and the control panel exposes a dedicated planner-model override. Deterministic revisions still remain the primary path and provider-backed coverage is not yet in place.
 - [~] Add optional export/persistence to Pack Builder after planning
 - Current state: `POST /workflow-plans/apply` accepts optional `pack_builder_export` and can persist a Pack Builder preview for pending/apply follow-ups.
 - [ ] Expand planner-chat semantics beyond the current safe deterministic field set

@@ -31,6 +31,8 @@ interface WizardState {
   routingConfidence: string;
   modelProvider: string;
   modelId: string;
+  plannerModelProvider: string;
+  plannerModelId: string;
   roleModelsJson: string;
   selectedMcpServers: string[];
   exportPackDraft: boolean;
@@ -209,6 +211,15 @@ function buildOperatorPreferences(wizard: WizardState) {
     } catch {
       roleModels = undefined;
     }
+  }
+  const plannerModelProvider = String(wizard.plannerModelProvider || "").trim();
+  const plannerModelId = String(wizard.plannerModelId || "").trim();
+  if (plannerModelProvider || plannerModelId) {
+    roleModels = { ...(roleModels || {}) };
+    roleModels.planner = {
+      provider_id: plannerModelProvider,
+      model_id: plannerModelId,
+    };
   }
   const maxParallelAgents =
     wizard.mode === "swarm"
@@ -784,8 +795,12 @@ function Step3Mode({
   providerOptions,
   providerId,
   modelId,
+  plannerProviderId,
+  plannerModelId,
   onProviderChange,
   onModelChange,
+  onPlannerProviderChange,
+  onPlannerModelChange,
   roleModelsJson,
   onRoleModelsChange,
   roleModelsError,
@@ -804,8 +819,12 @@ function Step3Mode({
   providerOptions: ProviderOption[];
   providerId: string;
   modelId: string;
+  plannerProviderId: string;
+  plannerModelId: string;
   onProviderChange: (v: string) => void;
   onModelChange: (v: string) => void;
+  onPlannerProviderChange: (v: string) => void;
+  onPlannerModelChange: (v: string) => void;
   roleModelsJson: string;
   onRoleModelsChange: (v: string) => void;
   roleModelsError: string;
@@ -816,6 +835,7 @@ function Step3Mode({
   workspaceRootError: string;
 }) {
   const modelOptions = providerOptions.find((p) => p.id === providerId)?.models || [];
+  const plannerModelOptions = providerOptions.find((p) => p.id === plannerProviderId)?.models || [];
   return (
     <div className="grid gap-4">
       <p className="text-sm text-slate-400">
@@ -915,6 +935,49 @@ function Step3Mode({
                 ))}
               </datalist>
             ) : null}
+          </div>
+        </div>
+        <div className="grid gap-2 rounded-lg border border-slate-800/70 bg-slate-950/30 p-3">
+          <div className="text-xs uppercase tracking-wide text-slate-500">
+            Planner fallback model
+          </div>
+          <div className="text-xs text-slate-400">
+            Optional. Use this only if you want planning chat to try broader engine-side revisions
+            beyond the built-in deterministic edits.
+          </div>
+          <div className="grid gap-2 sm:grid-cols-2">
+            <div className="grid gap-1">
+              <label className="text-xs text-slate-400">Planner provider</label>
+              <select
+                className="tcp-input text-sm"
+                value={plannerProviderId}
+                onInput={(e) => onPlannerProviderChange((e.target as HTMLSelectElement).value)}
+              >
+                <option value="">Disabled</option>
+                {providerOptions.map((provider) => (
+                  <option key={`planner-${provider.id}`} value={provider.id}>
+                    {provider.id}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="grid gap-1">
+              <label className="text-xs text-slate-400">Planner model</label>
+              <input
+                className="tcp-input text-sm"
+                value={plannerModelId}
+                list={plannerProviderId ? `planner-models-${plannerProviderId}` : undefined}
+                onInput={(e) => onPlannerModelChange((e.target as HTMLInputElement).value)}
+                placeholder="Disabled unless provider and model are set"
+              />
+              {plannerProviderId ? (
+                <datalist id={`planner-models-${plannerProviderId}`}>
+                  {plannerModelOptions.map((model) => (
+                    <option key={model} value={model} />
+                  ))}
+                </datalist>
+              ) : null}
+            </div>
           </div>
         </div>
         <div className="grid gap-1">
@@ -1023,6 +1086,21 @@ function Step4Review({
           ""
       : wizard.modelId || ""
   ).trim();
+  const effectivePlannerRoleModel =
+    planOperatorPreferences &&
+    typeof planOperatorPreferences === "object" &&
+    ((planOperatorPreferences as any)?.role_models?.planner ||
+      (planOperatorPreferences as any)?.roleModels?.planner);
+  const effectivePlannerModelProvider = String(
+    hasPlanPreview
+      ? effectivePlannerRoleModel?.provider_id || effectivePlannerRoleModel?.providerId || ""
+      : wizard.plannerModelProvider || ""
+  ).trim();
+  const effectivePlannerModelId = String(
+    hasPlanPreview
+      ? effectivePlannerRoleModel?.model_id || effectivePlannerRoleModel?.modelId || ""
+      : wizard.plannerModelId || ""
+  ).trim();
   const effectiveWorkspaceRoot = String(
     planPreview?.workspace_root || planPreview?.workspaceRoot || wizard.workspaceRoot || ""
   ).trim();
@@ -1074,6 +1152,16 @@ function Step4Review({
               {effectiveModelProvider || effectiveModelId
                 ? `${effectiveModelProvider || "default provider"} / ${effectiveModelId || "default model"}`
                 : "Workspace default"}
+            </span>
+          </div>
+        ) : null}
+        {hasPlanPreview || effectivePlannerModelProvider || effectivePlannerModelId ? (
+          <div className="grid gap-1">
+            <span className="text-xs text-slate-500 uppercase tracking-wide">Planner Model</span>
+            <span className="text-sm font-medium text-slate-200">
+              {effectivePlannerModelProvider || effectivePlannerModelId
+                ? `${effectivePlannerModelProvider || "default provider"} / ${effectivePlannerModelId || "default model"}`
+                : "Disabled"}
             </span>
           </div>
         ) : null}
@@ -1327,6 +1415,8 @@ function CreateWizard({
     routingConfidence: "",
     modelProvider: String(defaultProvider || ""),
     modelId: String(defaultModel || ""),
+    plannerModelProvider: "",
+    plannerModelId: "",
     roleModelsJson: "",
     selectedMcpServers: [],
     exportPackDraft: false,
@@ -1645,6 +1735,8 @@ function CreateWizard({
         routingConfidence: "",
         modelProvider: String(defaultProvider || ""),
         modelId: String(defaultModel || ""),
+        plannerModelProvider: "",
+        plannerModelId: "",
         roleModelsJson: "",
         selectedMcpServers: [],
         exportPackDraft: false,
@@ -1855,6 +1947,8 @@ function CreateWizard({
               providerOptions={providerOptions}
               providerId={wizard.modelProvider}
               modelId={wizard.modelId}
+              plannerProviderId={wizard.plannerModelProvider}
+              plannerModelId={wizard.plannerModelId}
               onProviderChange={(v) =>
                 setWizard((s) => ({
                   ...s,
@@ -1863,6 +1957,14 @@ function CreateWizard({
                 }))
               }
               onModelChange={(v) => setWizard((s) => ({ ...s, modelId: v }))}
+              onPlannerProviderChange={(v) =>
+                setWizard((s) => ({
+                  ...s,
+                  plannerModelProvider: v,
+                  plannerModelId: v === s.plannerModelProvider ? s.plannerModelId : "",
+                }))
+              }
+              onPlannerModelChange={(v) => setWizard((s) => ({ ...s, plannerModelId: v }))}
               roleModelsJson={wizard.roleModelsJson}
               onRoleModelsChange={(v) => setWizard((s) => ({ ...s, roleModelsJson: v }))}
               roleModelsError={roleModelsError}
