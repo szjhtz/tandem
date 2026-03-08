@@ -616,6 +616,13 @@ fn revise_workflow_plan_from_message(
         || text.contains("make this simpler")
     {
         Some(WorkflowPlanShape::Single)
+    } else if text.contains("notification workflow")
+        || text.contains("notify workflow")
+        || text.contains("alert workflow")
+        || text.contains("collect and notify")
+        || text.contains("notify instead of reporting")
+    {
+        Some(WorkflowPlanShape::Notify)
     } else if text.contains("compare workflow")
         || text.contains("comparison workflow")
         || text.contains("compare and report")
@@ -798,6 +805,7 @@ fn supported_planner_revision_hint() -> &'static str {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum WorkflowPlanShape {
     Single,
+    Notify,
     Compare,
     Research,
 }
@@ -805,6 +813,7 @@ enum WorkflowPlanShape {
 fn apply_plan_shape(plan: &mut crate::WorkflowPlan, shape: WorkflowPlanShape) -> bool {
     let (next_confidence, next_steps, next_description) = match shape {
         WorkflowPlanShape::Single => single_shape_definition(),
+        WorkflowPlanShape::Notify => notify_shape_definition(),
         WorkflowPlanShape::Compare => compare_shape_definition(),
         WorkflowPlanShape::Research => research_shape_definition(),
     };
@@ -1349,30 +1358,7 @@ fn choose_plan_shape(
         return research_shape_definition();
     }
     if contains_any(normalized_prompt, &["notify", "alert", "post", "send"]) {
-        return (
-            "medium",
-            vec![
-                plan_step_with_dep(
-                    "collect_inputs",
-                    "collect",
-                    "Collect the inputs needed before sending a notification.",
-                    "researcher",
-                    &[],
-                    Vec::new(),
-                    Some("structured_json"),
-                ),
-                plan_step_with_dep(
-                    "notify_user",
-                    "notify",
-                    "Prepare the final notification using the collected inputs.",
-                    "writer",
-                    &["collect_inputs"],
-                    vec![input_ref("collect_inputs", "notification_inputs")],
-                    Some("text_summary"),
-                ),
-            ],
-            "Collect the needed inputs and prepare a notification.".to_string(),
-        );
+        return notify_shape_definition();
     }
     if normalized_prompt.split_whitespace().count() >= 5 {
         return single_shape_definition_with_confidence("medium");
@@ -1410,6 +1396,33 @@ fn compare_shape_definition() -> (&'static str, Vec<crate::WorkflowPlanStep>, St
             ),
         ],
         "Collect inputs, compare them, and produce a report.".to_string(),
+    )
+}
+
+fn notify_shape_definition() -> (&'static str, Vec<crate::WorkflowPlanStep>, String) {
+    (
+        "medium",
+        vec![
+            plan_step_with_dep(
+                "collect_inputs",
+                "collect",
+                "Collect the inputs needed before sending a notification.",
+                "researcher",
+                &[],
+                Vec::new(),
+                Some("structured_json"),
+            ),
+            plan_step_with_dep(
+                "notify_user",
+                "notify",
+                "Prepare the final notification using the collected inputs.",
+                "writer",
+                &["collect_inputs"],
+                vec![input_ref("collect_inputs", "notification_inputs")],
+                Some("text_summary"),
+            ),
+        ],
+        "Collect the needed inputs and prepare a notification.".to_string(),
     )
 }
 

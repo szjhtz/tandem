@@ -63,6 +63,7 @@ It is not a wishlist for future planner features.
   - title updates
   - workspace root updates
   - safe workflow-shape switching
+    Current shapes: single-step, compare/report, research/report, notification
   - analysis-step add/remove
   - MCP add/remove/clear
   - MCP `only` narrowing semantics

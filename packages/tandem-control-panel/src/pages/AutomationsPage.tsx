@@ -1208,7 +1208,7 @@ function Step4Review({
           Planning chat is currently limited to deterministic edits like schedule, workspace root,
           title, MCP servers, execution mode, model overrides, switching between safe workflow
           shapes, and small workflow-step changes like adding or removing analysis/notifications.
-          Broader workflow rewrites are not supported in this slice yet.
+          Broader workflow rewrites and custom step types are not supported in this slice yet.
         </div>
         <div className="max-h-56 overflow-auto rounded-lg border border-slate-800 bg-slate-950/50 p-3">
           {Array.isArray(planningConversation?.messages) && planningConversation.messages.length ? (

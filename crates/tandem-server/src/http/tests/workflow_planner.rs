@@ -1079,6 +1079,88 @@ async fn workflow_plan_chat_message_switches_to_compare_workflow() {
 }
 
 #[tokio::test]
+async fn workflow_plan_chat_message_switches_to_notification_workflow() {
+    let state = test_state().await;
+    let app = app_router(state);
+
+    let start_req = Request::builder()
+        .method("POST")
+        .uri("/workflow-plans/chat/start")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "prompt": "Research the market and generate a report",
+                "plan_source": "automations_page",
+                "workspace_root": "/tmp/initial-workspace"
+            })
+            .to_string(),
+        ))
+        .expect("start request");
+    let start_resp = app
+        .clone()
+        .oneshot(start_req)
+        .await
+        .expect("start response");
+    assert_eq!(start_resp.status(), StatusCode::OK);
+    let start_body = to_bytes(start_resp.into_body(), usize::MAX)
+        .await
+        .expect("start body");
+    let start_payload: Value = serde_json::from_slice(&start_body).expect("start json");
+    let plan_id = start_payload
+        .get("plan")
+        .and_then(|row| row.get("plan_id"))
+        .and_then(Value::as_str)
+        .expect("plan id")
+        .to_string();
+
+    let message_req = Request::builder()
+        .method("POST")
+        .uri("/workflow-plans/chat/message")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "plan_id": plan_id,
+                "message": "Use a notification workflow instead."
+            })
+            .to_string(),
+        ))
+        .expect("message request");
+    let message_resp = app
+        .clone()
+        .oneshot(message_req)
+        .await
+        .expect("message response");
+    assert_eq!(message_resp.status(), StatusCode::OK);
+    let message_body = to_bytes(message_resp.into_body(), usize::MAX)
+        .await
+        .expect("message body");
+    let message_payload: Value = serde_json::from_slice(&message_body).expect("message json");
+    let steps = message_payload
+        .get("plan")
+        .and_then(|row| row.get("steps"))
+        .and_then(Value::as_array)
+        .cloned()
+        .expect("steps");
+    let step_ids = steps
+        .iter()
+        .filter_map(|row| row.get("step_id").and_then(Value::as_str))
+        .collect::<Vec<_>>();
+    assert_eq!(step_ids, vec!["collect_inputs", "notify_user"]);
+    assert_eq!(
+        message_payload
+            .get("change_summary")
+            .and_then(Value::as_array)
+            .map(|rows| {
+                rows.iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_string)
+                    .collect::<Vec<_>>()
+            }),
+        Some(vec!["updated workflow shape".to_string()])
+    );
+}
+
+#[tokio::test]
 async fn workflow_plan_chat_message_updates_execution_mode_preferences() {
     let state = test_state().await;
     let app = app_router(state.clone());
