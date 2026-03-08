@@ -290,6 +290,22 @@ async fn memory_put_then_search_in_session_scope() {
             .map(|rows| rows.iter().filter_map(Value::as_str).collect::<Vec<_>>()),
         Some(vec!["session"])
     );
+    assert_eq!(
+        search_event
+            .properties
+            .get("linkage")
+            .and_then(|v| v.get("origin_run_id"))
+            .and_then(Value::as_str),
+        Some("run-2")
+    );
+    assert_eq!(
+        search_event
+            .properties
+            .get("linkage")
+            .and_then(|v| v.get("project_id"))
+            .and_then(Value::as_str),
+        Some("proj-1")
+    );
 
     let audit_req = Request::builder()
         .method("GET")
@@ -2770,6 +2786,22 @@ async fn memory_search_returns_empty_when_all_requested_scopes_are_blocked() {
     assert_eq!(
         search_event
             .properties
+            .get("linkage")
+            .and_then(|v| v.get("origin_run_id"))
+            .and_then(Value::as_str),
+        Some("run-6")
+    );
+    assert_eq!(
+        search_event
+            .properties
+            .get("linkage")
+            .and_then(|v| v.get("project_id"))
+            .and_then(Value::as_str),
+        Some("proj-1")
+    );
+    assert_eq!(
+        search_event
+            .properties
             .get("auditID")
             .and_then(Value::as_str),
         Some(search_audit_id)
@@ -2891,6 +2923,22 @@ async fn memory_search_rejects_expired_capability_and_emits_blocked_audit() {
             .and_then(Value::as_array)
             .map(|rows| rows.iter().filter_map(Value::as_str).collect::<Vec<_>>()),
         Some(vec!["session"])
+    );
+    assert_eq!(
+        search_event
+            .properties
+            .get("linkage")
+            .and_then(|v| v.get("origin_run_id"))
+            .and_then(Value::as_str),
+        Some("run-6-expired")
+    );
+    assert_eq!(
+        search_event
+            .properties
+            .get("linkage")
+            .and_then(|v| v.get("project_id"))
+            .and_then(Value::as_str),
+        Some("proj-1")
     );
 
     let audit_req = Request::builder()

@@ -1196,6 +1196,18 @@ async fn emit_blocked_memory_search_guardrail(
     partition_key: &str,
 ) -> Result<MemoryCapabilityToken, StatusCode> {
     let audit_id = Uuid::new_v4().to_string();
+    let linkage = json!({
+        "run_id": request.run_id,
+        "project_id": request.partition.project_id,
+        "origin_event_type": "memory.search",
+        "origin_run_id": request.run_id,
+        "origin_session_id": Value::Null,
+        "origin_message_id": Value::Null,
+        "partition_key": partition_key,
+        "promote_run_id": Value::Null,
+        "approval_id": Value::Null,
+        "artifact_refs": [],
+    });
     let search_detail = format!(
         "query={} result_count=0 result_ids= result_kinds= requested_scopes={} scopes_used= blocked_scopes={} detail={}",
         request.query,
@@ -1240,6 +1252,7 @@ async fn emit_blocked_memory_search_guardrail(
             "requestedScopes": requested_scopes,
             "scopesUsed": [],
             "blockedScopes": requested_scopes,
+            "linkage": linkage,
             "status": "blocked",
             "detail": detail,
             "auditID": audit_id,
@@ -2628,6 +2641,18 @@ pub(super) async fn memory_search(
         .filter_map(|row| row.get("kind").and_then(Value::as_str))
         .map(ToString::to_string)
         .collect::<Vec<_>>();
+    let linkage = json!({
+        "run_id": request.run_id,
+        "project_id": request.partition.project_id,
+        "origin_event_type": "memory.search",
+        "origin_run_id": request.run_id,
+        "origin_session_id": Value::Null,
+        "origin_message_id": Value::Null,
+        "partition_key": request.partition.key(),
+        "promote_run_id": Value::Null,
+        "approval_id": Value::Null,
+        "artifact_refs": [],
+    });
     let audit_id = Uuid::new_v4().to_string();
     let now = crate::now_ms();
     let search_status = if scopes_used.is_empty() && !blocked_scopes.is_empty() {
@@ -2686,6 +2711,7 @@ pub(super) async fn memory_search(
             "requestedScopes": requested_scopes,
             "scopesUsed": scopes_used.clone(),
             "blockedScopes": blocked_scopes.clone(),
+            "linkage": linkage,
             "status": search_status,
             "auditID": audit_id,
         }),
