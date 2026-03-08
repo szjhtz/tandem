@@ -4009,6 +4009,7 @@ async fn seed_issue_triage_tasks(
     );
     let memory_hits =
         collect_issue_triage_memory_hits(&state, coder_run, &retrieval_query, 6).await?;
+    let duplicate_candidates = derive_failure_pattern_duplicate_matches(&memory_hits, None, 3);
     let tasks = vec![
         ContextTaskCreateInput {
             command_id: Some(format!("coder:{run_id}:ingest_reference")),
@@ -4041,6 +4042,7 @@ async fn seed_issue_triage_tasks(
                 "github_issue_number": issue_number,
                 "memory_recipe": "issue_triage",
                 "memory_hits": memory_hits,
+                "duplicate_candidates": duplicate_candidates,
             }),
             status: Some(ContextBlackboardTaskStatus::Pending),
             workflow_id: Some(workflow_id.clone()),

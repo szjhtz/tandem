@@ -8142,6 +8142,13 @@ async fn coder_issue_triage_seeds_ranked_memory_hits() {
         .map(|rows| rows.len())
         .unwrap_or(0);
     assert!(hint_count >= 1);
+    let duplicate_count = retrieve_task
+        .get("payload")
+        .and_then(|row| row.get("duplicate_candidates"))
+        .and_then(Value::as_array)
+        .map(|rows| rows.len())
+        .unwrap_or(0);
+    assert!(duplicate_count >= 1);
 }
 
 #[tokio::test]
