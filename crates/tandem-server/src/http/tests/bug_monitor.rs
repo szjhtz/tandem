@@ -1629,6 +1629,20 @@ async fn bug_monitor_triage_run_created_from_approved_draft() {
             .and_then(Value::as_str),
         Some("bug_monitor_issue_draft")
     );
+    assert_eq!(
+        replay_payload
+            .get("duplicate_summary")
+            .and_then(|row| row.get("match_count"))
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        replay_payload
+            .get("duplicate_matches")
+            .and_then(Value::as_array)
+            .map(|rows| rows.len()),
+        Some(1)
+    );
 }
 
 #[tokio::test]
@@ -1797,6 +1811,20 @@ async fn bug_monitor_triage_run_writes_duplicate_match_artifact() {
             .and_then(|row| row.get("artifact_type"))
             .and_then(Value::as_str),
         Some("failure_duplicate_matches")
+    );
+    assert_eq!(
+        triage_payload
+            .get("duplicate_summary")
+            .and_then(|row| row.get("match_count"))
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        triage_payload
+            .get("duplicate_matches")
+            .and_then(Value::as_array)
+            .map(|rows| rows.len()),
+        Some(1)
     );
     assert!(triage_payload
         .get("duplicate_matches_artifact")
