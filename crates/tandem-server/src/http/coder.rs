@@ -6943,6 +6943,7 @@ pub(super) async fn coder_run_create(
     Ok(Json(json!({
         "ok": true,
         "coder_run": coder_run_payload(&record, &final_run),
+        "execution_policy": coder_execution_policy_summary(&state, &record).await?,
         "run": final_run,
     }))
     .into_response())

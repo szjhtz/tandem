@@ -2027,6 +2027,13 @@ async fn coder_issue_fix_pr_submit_real_submit_writes_canonical_pr_identity() {
             .map(|rows| rows.iter().filter_map(Value::as_str).collect::<Vec<_>>()),
         Some(Vec::<&str>::new())
     );
+    assert_eq!(
+        follow_on_payload
+            .get("execution_policy")
+            .and_then(|row| row.get("blocked"))
+            .and_then(Value::as_bool),
+        Some(false)
+    );
 
     let submitted_event = next_event_of_type(&mut rx, "coder.pr.submitted").await;
     assert_eq!(
@@ -2430,6 +2437,27 @@ async fn coder_merge_follow_on_execution_waits_for_completed_review() {
         .await
         .expect("merge follow-on response");
     assert_eq!(merge_follow_on_resp.status(), StatusCode::OK);
+    let merge_follow_on_payload: Value = serde_json::from_slice(
+        &to_bytes(merge_follow_on_resp.into_body(), usize::MAX)
+            .await
+            .expect("merge follow-on body"),
+    )
+    .expect("merge follow-on json");
+    assert_eq!(
+        merge_follow_on_payload
+            .get("execution_policy")
+            .and_then(|row| row.get("blocked"))
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        merge_follow_on_payload
+            .get("execution_policy")
+            .and_then(|row| row.get("policy"))
+            .and_then(|row| row.get("reason"))
+            .and_then(Value::as_str),
+        Some("requires_completed_pr_review_follow_on")
+    );
 
     let blocked_execute_req = Request::builder()
         .method("POST")
