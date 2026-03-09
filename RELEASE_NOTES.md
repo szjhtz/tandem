@@ -9,12 +9,17 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
   - Added explicit workflow tool access controls in both the creation wizard and edit modal: `All tools` or `Custom allowlist`.
   - Surfaced selected tool access in the wizard review step before deploy.
   - Improved run debugger sizing and scrolling so the workflow board can grow instead of being cut off in the modal.
+  - Fixed right-rail blocker/failure card cropping and reduced lower log-panel height pressure so live workflow boards remain visible.
   - Tightened workflow prompt-editor cards by removing duplicated step text and redundant labels.
+  - Made the final workflow review step easier to read by collapsing long plan/prompt text into expandable markdown previews.
 
 - Workflow automation engine/planner integration fixes
   - Fixed workflow automation save payloads to use the server-required tagged `misfire_policy` shape.
   - Updated workflow-plan apply so new workflow automations honor `tool_access_mode` and `tool_allowlist` from operator preferences.
   - Made workflow tool access explicit instead of relying on the old hidden narrow allowlist behavior.
+  - Fixed duplicate workflow automation list rows in the control panel by normalizing Automation V2 list rendering by id.
+  - Hardened the engine loop so malformed tool calls get bounded inline self-repair retries before burning workflow node attempts.
+  - Added targeted malformed-tool recovery guidance for empty `bash`, missing `webfetch` URL, and missing file/write arguments.
 
 - Registry publish fix for the TypeScript client
   - Fixed `@frumu/tandem-client` publish builds by restoring missing `AgentStandupComposeInput` and `AgentStandupComposeResponse` imports.

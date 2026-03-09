@@ -5,6 +5,7 @@ import { renderIcons } from "../app/icons.js";
 import { projectOrchestrationRun } from "../features/orchestrator/blackboardProjection";
 import { TaskBoard } from "../features/orchestration/TaskBoard";
 import { useEngineStream } from "../features/stream/useEngineStream";
+import { renderMarkdownSafe } from "../lib/markdown";
 import { PageCard, EmptyState, formatJson } from "./ui";
 import type { AppPageProps } from "./pageTypes";
 
@@ -1028,6 +1029,21 @@ function eventReason(event: any) {
   ).trim();
 }
 
+function explainRunFailure(run: any) {
+  const detail = String(run?.detail || "").trim();
+  if (!detail) return "";
+  if (detail.includes("BASH_COMMAND_MISSING")) {
+    return "This workflow failed because the agent called the `bash` tool without providing a shell command. The tool was available, but the request payload was missing its required `command` field.";
+  }
+  if (detail.includes("WEBFETCH_URL_MISSING")) {
+    return "This workflow failed because a web fetch tool call was made without a URL.";
+  }
+  if (detail.includes("No such file or directory")) {
+    return "This workflow failed because the agent tried to read a path that does not exist from the configured workspace root.";
+  }
+  return detail;
+}
+
 function buildRunBlockers(run: any, sessionEvents: any[], runEvents: any[]) {
   const blockers: Array<{
     key: string;
@@ -1062,12 +1078,15 @@ function buildRunBlockers(run: any, sessionEvents: any[], runEvents: any[]) {
     const detail = String(run.detail).trim();
     if (
       detail.toLowerCase().includes("tool") ||
+      detail.toLowerCase().includes("bash_command_missing") ||
+      detail.toLowerCase().includes("command_missing") ||
       detail.toLowerCase().includes("permission") ||
       detail.toLowerCase().includes("approval") ||
       detail.toLowerCase().includes("mcp") ||
-      detail.toLowerCase().includes("auth")
+      detail.toLowerCase().includes("auth") ||
+      detail.toLowerCase().includes("failed after")
     ) {
-      push("detail", "Run detail", detail, "run");
+      push("detail", "Failure reason", explainRunFailure(run), "run");
     }
   }
   if (!extractSessionIdsFromRun(run).length) {
@@ -1876,6 +1895,9 @@ function Step4Review({
   installStatus: string;
 }) {
   const [planningNote, setPlanningNote] = useState("");
+  const [goalExpanded, setGoalExpanded] = useState(false);
+  const [descriptionExpanded, setDescriptionExpanded] = useState(false);
+  const [expandedStepIds, setExpandedStepIds] = useState<Record<string, boolean>>({});
   const wizardSchedule = wizard.cron
     ? wizard.cron
     : SCHEDULE_PRESETS.find((p) => p.label === wizard.schedulePreset)?.intervalSeconds
@@ -1960,6 +1982,8 @@ function Step4Review({
     plannerDiagnostics?.fallback_reason || plannerDiagnostics?.fallbackReason || ""
   ).trim();
   const plannerFallbackDetail = String(plannerDiagnostics?.detail || "").trim();
+  const toggleStepExpanded = (stepId: string) =>
+    setExpandedStepIds((current) => ({ ...current, [stepId]: !current[stepId] }));
 
   return (
     <div className="grid gap-4">
@@ -1975,7 +1999,24 @@ function Step4Review({
         ) : null}
         <div className="grid gap-1">
           <span className="text-xs text-slate-500 uppercase tracking-wide">Goal</span>
-          <span className="text-sm text-slate-100 italic">"{wizard.goal}"</span>
+          <div className="rounded-lg border border-slate-800 bg-slate-950/40">
+            <button
+              type="button"
+              className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left"
+              onClick={() => setGoalExpanded((current) => !current)}
+            >
+              <span className="text-sm text-slate-100 italic">
+                {goalExpanded ? "Hide goal" : "View goal"}
+              </span>
+              <span className="tcp-subtle text-xs">{goalExpanded ? "Collapse" : "Expand"}</span>
+            </button>
+            <div className="border-t border-slate-800 px-3 py-3">
+              <div
+                className={`tcp-markdown tcp-markdown-ai text-sm ${goalExpanded ? "" : "max-h-28 overflow-hidden"}`}
+                dangerouslySetInnerHTML={{ __html: renderMarkdownSafe(wizard.goal || "") }}
+              />
+            </div>
+          </div>
         </div>
         <div className="grid grid-cols-2 gap-3">
           <div className="grid gap-1">
@@ -2107,28 +2148,80 @@ function Step4Review({
               </span>
               {Array.isArray(planPreview?.steps) && planPreview.steps.length ? (
                 <div className="mt-1 grid gap-1">
-                  {planPreview.steps.map((step: any, index: number) => (
-                    <div
-                      key={`${String(step?.step_id || step?.stepId || index)}-${index}`}
-                      className="rounded-lg border border-slate-800 bg-slate-950/40 px-2 py-1"
-                    >
-                      <div className="text-xs font-medium text-slate-200">
-                        {String(step?.step_id || step?.stepId || `step-${index + 1}`)}
-                        {step?.kind ? (
-                          <span className="ml-2 text-[11px] uppercase tracking-wide text-slate-500">
-                            {String(step.kind)}
-                          </span>
-                        ) : null}
-                      </div>
-                      {typeof step?.objective === "string" && step.objective.trim() ? (
-                        <div className="text-xs text-slate-400">{step.objective}</div>
-                      ) : null}
-                    </div>
-                  ))}
+                  {planPreview.steps.map((step: any, index: number) =>
+                    (() => {
+                      const stepId = String(step?.step_id || step?.stepId || `step-${index + 1}`);
+                      const expanded = !!expandedStepIds[stepId];
+                      return (
+                        <div
+                          key={`${stepId}-${index}`}
+                          className="rounded-lg border border-slate-800 bg-slate-950/40"
+                        >
+                          <button
+                            type="button"
+                            className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left"
+                            onClick={() => toggleStepExpanded(stepId)}
+                          >
+                            <div className="min-w-0">
+                              <div className="text-xs font-medium text-slate-200">
+                                {stepId}
+                                {step?.kind ? (
+                                  <span className="ml-2 text-[11px] uppercase tracking-wide text-slate-500">
+                                    {String(step.kind)}
+                                  </span>
+                                ) : null}
+                              </div>
+                              {typeof step?.objective === "string" && step.objective.trim() ? (
+                                <div className="mt-1 line-clamp-2 text-xs text-slate-400">
+                                  {step.objective}
+                                </div>
+                              ) : null}
+                            </div>
+                            <span className="tcp-subtle shrink-0 text-xs">
+                              {expanded ? "Hide" : "Details"}
+                            </span>
+                          </button>
+                          {expanded &&
+                          typeof step?.objective === "string" &&
+                          step.objective.trim() ? (
+                            <div className="border-t border-slate-800 px-3 py-3">
+                              <div
+                                className="tcp-markdown tcp-markdown-ai text-sm"
+                                dangerouslySetInnerHTML={{
+                                  __html: renderMarkdownSafe(step.objective || ""),
+                                }}
+                              />
+                            </div>
+                          ) : null}
+                        </div>
+                      );
+                    })()
+                  )}
                 </div>
               ) : null}
               {typeof planPreview?.description === "string" && planPreview.description.trim() ? (
-                <span>{planPreview.description}</span>
+                <div className="rounded-lg border border-slate-800 bg-slate-950/40">
+                  <button
+                    type="button"
+                    className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left"
+                    onClick={() => setDescriptionExpanded((current) => !current)}
+                  >
+                    <span className="text-sm text-slate-200">Plan description</span>
+                    <span className="tcp-subtle text-xs">
+                      {descriptionExpanded ? "Collapse" : "Expand"}
+                    </span>
+                  </button>
+                  <div className="border-t border-slate-800 px-3 py-3">
+                    <div
+                      className={`tcp-markdown tcp-markdown-ai text-sm ${
+                        descriptionExpanded ? "" : "max-h-24 overflow-hidden"
+                      }`}
+                      dangerouslySetInnerHTML={{
+                        __html: renderMarkdownSafe(String(planPreview.description || "")),
+                      }}
+                    />
+                  </div>
+                </div>
               ) : null}
             </div>
           ) : (
@@ -3120,16 +3213,26 @@ function MyAutomations({
       Promise.resolve({ automations: [] }),
     refetchInterval: 20000,
   });
+  const automationsV2 = useMemo(() => {
+    const rows = toArray(automationsV2Query.data, "automations");
+    const byId = new Map<string, any>();
+    for (const row of rows) {
+      const id = String(row?.automation_id || row?.automationId || row?.id || "").trim();
+      if (!id) continue;
+      if (!byId.has(id)) byId.set(id, row);
+    }
+    return Array.from(byId.values());
+  }, [automationsV2Query.data]);
   const workflowAutomationIds = useMemo(
     () =>
-      toArray(automationsV2Query.data, "automations")
+      automationsV2
         .map((automation: any) =>
           String(
             automation?.automation_id || automation?.automationId || automation?.id || ""
           ).trim()
         )
         .filter(Boolean),
-    [automationsV2Query.data]
+    [automationsV2]
   );
   const providerCatalogQuery = useQuery({
     queryKey: ["providers", "catalog", "workflow-edit"],
@@ -3527,7 +3630,6 @@ function MyAutomations({
     return Array.from(byId.values());
   }, [automationsQuery.data]);
   const legacyRuns = toArray(runsQuery.data, "runs");
-  const automationsV2 = toArray(automationsV2Query.data, "automations");
   const providerOptions = useMemo<ProviderOption[]>(() => {
     const rows = Array.isArray((providerCatalogQuery.data as any)?.providers)
       ? (providerCatalogQuery.data as any).providers
@@ -3757,6 +3859,7 @@ function MyAutomations({
     workflowContextPatches.length,
     workflowProjection.tasks.length,
   ]);
+  const failureReason = useMemo(() => explainRunFailure(selectedRun), [selectedRun]);
 
   useEffect(() => {
     setSelectedSessionId((current) => {
@@ -4690,7 +4793,7 @@ function MyAutomations({
                       </div>
                     </div>
                   ) : null}
-                  <div className="tcp-list-item min-h-0">
+                  <div className="tcp-list-item min-h-0 xl:order-2">
                     <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
                       <div>
                         <div className="font-medium">Live Session Log</div>
@@ -4768,7 +4871,7 @@ function MyAutomations({
                     </div>
                     <div
                       ref={sessionLogRef}
-                      className="grid min-h-[36vh] gap-2 overflow-auto pr-1 sm:min-h-[18rem] sm:max-h-[30rem]"
+                      className="grid min-h-[12rem] gap-2 overflow-auto pr-1 sm:min-h-[14rem] sm:max-h-[18rem]"
                       onScroll={(event) => {
                         const el = event.currentTarget;
                         const pinned = el.scrollHeight - (el.scrollTop + el.clientHeight) < 48;
@@ -4843,7 +4946,7 @@ function MyAutomations({
                       )}
                     </div>
                   </div>
-                  <div className="tcp-list-item min-h-0">
+                  <div className="tcp-list-item min-h-0 xl:order-3">
                     <div className="mb-2 flex items-center justify-between gap-2">
                       <div className="font-medium">Run Telemetry</div>
                       <div className="flex w-full flex-wrap gap-1 sm:w-auto">
@@ -4876,7 +4979,7 @@ function MyAutomations({
                       </div>
                     </div>
                     {filteredRunEvents.length ? (
-                      <div className="grid gap-2 overflow-auto pr-1 sm:max-h-[18rem]">
+                      <div className="grid gap-2 overflow-auto pr-1 sm:max-h-[12rem]">
                         {filteredRunEvents
                           .slice(-40)
                           .reverse()
@@ -4913,9 +5016,9 @@ function MyAutomations({
                     )}
                   </div>
                 </div>
-                <div className="grid min-h-0 gap-3">
+                <div className="grid min-h-0 content-start gap-3 overflow-visible">
                   {blockers.length ? (
-                    <div className="tcp-list-item">
+                    <div className="tcp-list-item overflow-visible">
                       <div className="mb-2 font-medium">Blockers</div>
                       <div className="grid gap-2">
                         {blockers.map((blocker) => (
@@ -4932,14 +5035,16 @@ function MyAutomations({
                                 </span>
                               ) : null}
                             </div>
-                            <div className="text-sm text-amber-100/90">{blocker.reason}</div>
+                            <div className="whitespace-pre-wrap break-words text-sm text-amber-100/90">
+                              {blocker.reason}
+                            </div>
                           </div>
                         ))}
                       </div>
                     </div>
                   ) : null}
                   {runHints.length ? (
-                    <div className="tcp-list-item">
+                    <div className="tcp-list-item overflow-visible">
                       <div className="mb-1 font-medium">Debug hints</div>
                       <div className="grid gap-1 text-xs text-slate-300">
                         {runHints.map((hint) => (
@@ -4948,7 +5053,7 @@ function MyAutomations({
                       </div>
                     </div>
                   ) : null}
-                  <div className="tcp-list-item">
+                  <div className="tcp-list-item overflow-visible">
                     <div className="font-medium">Run Summary</div>
                     <div className="mt-2 grid gap-2 text-xs text-slate-300">
                       {runSummaryRows.map((row) => (
@@ -4958,15 +5063,13 @@ function MyAutomations({
                       ))}
                     </div>
                   </div>
-                  <div className="tcp-list-item">
+                  <div className="tcp-list-item overflow-visible">
                     <div className="font-medium">Mission Objective</div>
                     <pre className="tcp-code mt-2 max-h-40 overflow-auto whitespace-pre-wrap break-words">
-                      {String(
-                        selectedRun?.mission_snapshot?.objective || selectedRun?.detail || "n/a"
-                      )}
+                      {String(selectedRun?.mission_snapshot?.objective || "n/a")}
                     </pre>
                   </div>
-                  <div className="tcp-list-item">
+                  <div className="tcp-list-item overflow-visible">
                     <div className="font-medium">Artifacts ({runArtifacts.length})</div>
                     {runArtifacts.length ? (
                       <div className="mt-2 grid gap-2 overflow-auto pr-1 sm:max-h-40">

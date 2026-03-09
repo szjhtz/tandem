@@ -405,6 +405,7 @@ impl EngineLoop {
             let mut productive_write_tool_calls_total = 0usize;
             let mut required_tool_retry_count = 0usize;
             let mut required_write_retry_count = 0usize;
+            let mut invalid_tool_args_retry_count = 0usize;
             let strict_write_retry_max_attempts = strict_write_retry_max_attempts();
             let mut required_tool_unsatisfied_emitted = false;
             let mut latest_required_tool_failure_kind = RequiredToolFailureKind::NoToolCallEmitted;
@@ -1427,6 +1428,32 @@ impl EngineLoop {
                                 }),
                             ));
                             break;
+                        }
+                        if invalid_tool_args_retry_count < invalid_tool_args_retry_max_attempts() {
+                            if let Some(retry_context) =
+                                build_invalid_tool_args_retry_context_from_outputs(
+                                    &outputs,
+                                    invalid_tool_args_retry_count,
+                                )
+                            {
+                                invalid_tool_args_retry_count += 1;
+                                followup_context = Some(format!(
+                                    "Previous tool call arguments were invalid. {}",
+                                    retry_context
+                                ));
+                                self.event_bus.publish(EngineEvent::new(
+                                    "provider.call.iteration.finish",
+                                    json!({
+                                        "sessionID": session_id,
+                                        "messageID": user_message_id,
+                                        "iteration": iteration,
+                                        "finishReason": "invalid_tool_args_retry",
+                                        "acceptedToolCalls": accepted_tool_calls_in_cycle,
+                                        "rejectedToolCalls": 0,
+                                    }),
+                                ));
+                                continue;
+                            }
                         }
                         let guard_budget_hit =
                             outputs.iter().any(|o| is_guard_budget_tool_output(o));
@@ -3247,6 +3274,62 @@ fn build_write_required_retry_context(
         ));
     }
     prompt
+}
+
+fn invalid_tool_args_retry_max_attempts() -> usize {
+    2
+}
+
+fn build_invalid_tool_args_retry_context_from_outputs(
+    outputs: &[String],
+    previous_attempts: usize,
+) -> Option<String> {
+    if outputs
+        .iter()
+        .any(|output| output.contains("BASH_COMMAND_MISSING"))
+    {
+        let emphasis = if previous_attempts > 0 {
+            "You already tried `bash` without a valid command. Do not repeat an empty bash call."
+        } else {
+            "If you use `bash`, include a full non-empty command string."
+        };
+        return Some(format!(
+            "Previous bash tool call was invalid because it did not include the required `command` field. {emphasis} Good examples: `pwd`, `ls -la`, `find docs -maxdepth 2 -type f`, or `rg -n \"workflow\" docs src`. Prefer `ls`, `glob`, `search`, and `read` for repository inspection when they are sufficient."
+        ));
+    }
+    if outputs
+        .iter()
+        .any(|output| output.contains("WEBSEARCH_QUERY_MISSING"))
+    {
+        return Some(
+            "Previous websearch tool call was invalid because it did not include a query. If you use `websearch`, include a specific non-empty search query.".to_string(),
+        );
+    }
+    if outputs
+        .iter()
+        .any(|output| output.contains("WEBFETCH_URL_MISSING"))
+    {
+        return Some(
+            "Previous webfetch tool call was invalid because it did not include a URL. If you use `webfetch`, include a full absolute `url`.".to_string(),
+        );
+    }
+    if outputs
+        .iter()
+        .any(|output| output.contains("FILE_PATH_MISSING"))
+    {
+        return Some(
+            "Previous file tool call was invalid because it did not include a `path`. If you use `read`, `write`, or `edit`, include the exact workspace-relative file path.".to_string(),
+        );
+    }
+    if outputs
+        .iter()
+        .any(|output| output.contains("WRITE_CONTENT_MISSING"))
+    {
+        return Some(
+            "Previous write tool call was invalid because it did not include `content`. If you use `write`, include both `path` and the full `content`.".to_string(),
+        );
+    }
+    None
 }
 
 fn looks_like_unparsed_tool_payload(output: &str) -> bool {
@@ -7480,6 +7563,29 @@ Required output target:
             "Tool `read` result:\nok".to_string(),
         ];
         assert!(summarize_auth_pending_outputs(&outputs).is_none());
+    }
+
+    #[test]
+    fn invalid_tool_args_retry_context_handles_missing_bash_command() {
+        let outputs = vec!["Tool `bash` result:\nBASH_COMMAND_MISSING".to_string()];
+        let message = build_invalid_tool_args_retry_context_from_outputs(&outputs, 0)
+            .expect("retry expected");
+        assert!(message.contains("required `command` field"));
+        assert!(message.contains("Prefer `ls`, `glob`, `search`, and `read`"));
+    }
+
+    #[test]
+    fn invalid_tool_args_retry_context_escalates_on_repeat_bash_failure() {
+        let outputs = vec!["Tool `bash` result:\nBASH_COMMAND_MISSING".to_string()];
+        let message = build_invalid_tool_args_retry_context_from_outputs(&outputs, 1)
+            .expect("retry expected");
+        assert!(message.contains("Do not repeat an empty bash call"));
+    }
+
+    #[test]
+    fn invalid_tool_args_retry_context_ignores_unrelated_outputs() {
+        let outputs = vec!["Tool `read` result:\nok".to_string()];
+        assert!(build_invalid_tool_args_retry_context_from_outputs(&outputs, 0).is_none());
     }
 
     #[test]

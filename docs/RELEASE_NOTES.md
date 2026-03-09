@@ -8,13 +8,18 @@
   - `Custom allowlist`
 - Added review-step visibility for the selected workflow tool policy before deploy.
 - Improved run debugger sizing and scrolling so workflow boards can grow without being cut off inside the modal.
+- Fixed right-rail blocker/failure card cropping and reduced lower log-panel height pressure so live workflow boards remain visible.
 - Tightened workflow prompt-editor cards by removing duplicated step text and redundant labels.
+- Made the final workflow review step easier to read by collapsing long plan/prompt text into expandable markdown previews.
 
 ### Workflow Engine / Planner Compatibility
 
 - Fixed workflow automation save payloads to use the server-required tagged `misfire_policy` shape.
 - Updated workflow-plan apply so new workflow automations honor `tool_access_mode` and `tool_allowlist` from operator preferences.
 - Replaced the old hidden narrow workflow tool default with explicit configurable access.
+- Fixed duplicate workflow automation list rows in the control panel by normalizing Automation V2 list rendering by id.
+- Hardened the engine loop so malformed tool calls get bounded inline self-repair retries before burning workflow node attempts.
+- Added targeted malformed-tool recovery guidance for empty `bash`, missing `webfetch` URL, and missing file/write arguments.
 
 ### TypeScript Client Publish Fix
 

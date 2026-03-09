@@ -20,14 +20,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Workflow automation editing and run-debug UX refinements**:
   - expanded the workflow edit modal into a large editor layout with a dedicated prompt-editing area for step objectives
   - made workflow provider/model selectors preserve saved values and use the panel’s styled selector treatment
-  - improved the run debugger modal and workflow board sizing so the board can grow and the modal body scrolls instead of clipping content
+  - improved the run debugger modal and workflow board sizing so the board can grow, the right rail no longer crops blocker/failure text, and lower log panels stop starving the board of height
   - tightened workflow prompt-editor cards by removing duplicated step text and redundant node-id badges
+  - improved workflow review-step readability by collapsing long plan/prompt text into expandable markdown previews
 
 ### Fixed
 
 - **Workflow automation schedule/tooling and publish reliability**:
   - fixed workflow automation save payloads to use the server-required tagged `misfire_policy` shape
   - fixed workflow agents defaulting to an overly narrow tool subset by making tool access explicit and configurable
+  - fixed duplicate workflow-automation list rows in the control panel by normalizing rendered Automation V2 entries by id
+  - corrected workflow debugger failure reporting for malformed shell tool calls and surfaced a clearer failure reason in the run debugger
+  - hardened the engine loop so malformed tool calls such as `BASH_COMMAND_MISSING`, `WEBFETCH_URL_MISSING`, and missing file/write args get bounded inline self-repair retries before burning workflow node attempts
   - fixed `@frumu/tandem-client` publish builds by restoring missing `AgentStandupCompose*` type imports in the TypeScript client
 
 ## [0.4.4] - 2026-03-09

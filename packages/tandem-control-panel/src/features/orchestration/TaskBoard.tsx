@@ -286,7 +286,7 @@ export function TaskBoard({
               <div className="text-xs font-semibold">{column.label}</div>
               <div className="tcp-subtle text-xs">{column.tasks.length}</div>
             </div>
-            <div className="grid max-h-[42rem] gap-2 overflow-auto">
+            <div className="grid gap-2">
               {column.tasks.map((task) => (
                 <TaskCard
                   key={task.id}
