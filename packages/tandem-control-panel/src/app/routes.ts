@@ -23,7 +23,6 @@ export type RouteId =
 
 // Legacy routes that should redirect to modern surfaces
 const LEGACY_ROUTE_REDIRECTS = new Map<string, RouteId>([
-  ["agents", "automations"],
   ["packs", "automations"],
   ["teams", "automations"],
   ["swarm", "orchestrator"],

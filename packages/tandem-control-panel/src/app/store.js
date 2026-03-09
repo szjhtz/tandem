@@ -3,12 +3,12 @@ export const ROUTES = [
   ["dashboard", "Dashboard", "home"],
   ["chat", "Chat", "message-square"],
   ["automations", "Automations", "bot"],
+  ["agents", "Agents", "users"],
   ["orchestrator", "Orchestrator", "sparkles"],
   ["memory", "Memory", "database"],
   ["feed", "Live Feed", "radio"],
   ["settings", "Settings", "settings"],
   // Legacy routes kept for backwards compat (not in primary nav)
-  ["agents", "Routines", "clock"],
   ["packs", "Packs", "package"],
   ["teams", "Teams", "users"],
   ["channels", "Channels", "message-circle"],
@@ -22,7 +22,16 @@ export const ROUTES = [
 
 // Primary nav — 7 items your grandma can understand
 export const NAV_ROUTES = ROUTES.filter(([id]) =>
-  ["dashboard", "chat", "automations", "orchestrator", "memory", "feed", "settings"].includes(id)
+  [
+    "dashboard",
+    "chat",
+    "automations",
+    "agents",
+    "orchestrator",
+    "memory",
+    "feed",
+    "settings",
+  ].includes(id)
 );
 
 export const providerHints = {

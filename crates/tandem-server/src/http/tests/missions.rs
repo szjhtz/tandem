@@ -275,6 +275,124 @@ async fn mission_apply_event_moves_item_to_rework_on_reviewer_denial() {
 }
 
 #[tokio::test]
+async fn agent_standup_compose_builds_workflow_automation_from_templates() {
+    let state = test_state().await;
+    let workspace_root =
+        tandem_core::normalize_workspace_path(&state.workspace_index.snapshot().await.root)
+            .expect("normalized workspace root");
+    state
+        .agent_teams
+        .upsert_template(
+            &workspace_root,
+            tandem_orchestrator::AgentTemplate {
+                template_id: "frontend-ui".to_string(),
+                display_name: Some("Alice (Frontend UI)".to_string()),
+                avatar_url: None,
+                role: tandem_orchestrator::AgentRole::Worker,
+                system_prompt: Some("You own frontend delivery.".to_string()),
+                default_model: Some(json!({
+                    "provider_id": "openai",
+                    "model_id": "gpt-5-mini"
+                })),
+                skills: Vec::new(),
+                default_budget: tandem_orchestrator::BudgetLimit::default(),
+                capabilities: tandem_orchestrator::CapabilitySpec::default(),
+            },
+        )
+        .await
+        .expect("template upsert");
+    let app = app_router(state.clone());
+
+    let req = Request::builder()
+        .method("POST")
+        .uri("/agent-standup/compose")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "name": "Daily Engineering Standup",
+                "workspace_root": workspace_root,
+                "schedule": {
+                    "type": "cron",
+                    "cron_expression": "0 9 * * *",
+                    "timezone": "UTC",
+                    "misfire_policy": {
+                        "type": "run_once"
+                    }
+                },
+                "participant_template_ids": ["frontend-ui"],
+                "report_path_template": "docs/standups/{{date}}.md"
+            })
+            .to_string(),
+        ))
+        .expect("compose request");
+    let resp = app.clone().oneshot(req).await.expect("compose response");
+    let status = resp.status();
+    let body = to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .expect("compose body");
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "compose response body: {}",
+        String::from_utf8_lossy(&body)
+    );
+    let payload: Value = serde_json::from_slice(&body).expect("compose json");
+
+    let automation = payload.get("automation").expect("automation");
+    assert_eq!(
+        automation
+            .get("metadata")
+            .and_then(|value| value.get("feature"))
+            .and_then(Value::as_str),
+        Some("agent_standup")
+    );
+    assert_eq!(
+        automation
+            .get("metadata")
+            .and_then(|value| value.get("standup"))
+            .and_then(|value| value.get("participant_template_ids"))
+            .and_then(Value::as_array)
+            .map(|rows| rows.len()),
+        Some(1)
+    );
+    assert_eq!(
+        automation
+            .get("flow")
+            .and_then(|value| value.get("nodes"))
+            .and_then(Value::as_array)
+            .map(|rows| rows.len()),
+        Some(2)
+    );
+    assert_eq!(
+        automation
+            .get("agents")
+            .and_then(Value::as_array)
+            .and_then(|rows| rows.first())
+            .and_then(|value| value.get("template_id"))
+            .and_then(Value::as_str),
+        Some("frontend-ui")
+    );
+    assert!(automation
+        .get("flow")
+        .and_then(|value| value.get("nodes"))
+        .and_then(Value::as_array)
+        .and_then(|rows| rows.first())
+        .and_then(|value| value.get("objective"))
+        .and_then(Value::as_str)
+        .is_some_and(|value| value.contains("memory_search")));
+    assert!(automation
+        .get("agents")
+        .and_then(Value::as_array)
+        .and_then(|rows| rows.get(1))
+        .and_then(|value| value.get("tool_policy"))
+        .and_then(|value| value.get("allowlist"))
+        .and_then(Value::as_array)
+        .is_some_and(|rows| rows
+            .iter()
+            .any(|value| value.as_str() == Some("memory_store"))));
+}
+
+#[tokio::test]
 async fn mission_started_triggers_orchestrator_runtime_spawn_for_assigned_agent() {
     let state = test_state().await;
     let workspace_root = state.workspace_index.snapshot().await.root;
@@ -307,8 +425,11 @@ async fn mission_started_triggers_orchestrator_runtime_spawn_for_assigned_agent(
             }),
             vec![tandem_orchestrator::AgentTemplate {
                 template_id: "worker-default".to_string(),
+                display_name: None,
+                avatar_url: None,
                 role: tandem_orchestrator::AgentRole::Worker,
                 system_prompt: Some("You are a worker".to_string()),
+                default_model: None,
                 skills: vec![],
                 default_budget: tandem_orchestrator::BudgetLimit::default(),
                 capabilities: tandem_orchestrator::CapabilitySpec::default(),
@@ -450,8 +571,11 @@ async fn mission_total_budget_exhaustion_blocks_followup_spawn() {
             }),
             vec![tandem_orchestrator::AgentTemplate {
                 template_id: "worker-default".to_string(),
+                display_name: None,
+                avatar_url: None,
                 role: tandem_orchestrator::AgentRole::Worker,
                 system_prompt: None,
+                default_model: None,
                 skills: vec![],
                 default_budget: tandem_orchestrator::BudgetLimit::default(),
                 capabilities: tandem_orchestrator::CapabilitySpec::default(),
@@ -569,8 +693,11 @@ async fn mission_canceled_triggers_orchestrator_runtime_instance_cancellation() 
             }),
             vec![tandem_orchestrator::AgentTemplate {
                 template_id: "worker-default".to_string(),
+                display_name: None,
+                avatar_url: None,
                 role: tandem_orchestrator::AgentRole::Worker,
                 system_prompt: Some("You are a worker".to_string()),
+                default_model: None,
                 skills: vec![],
                 default_budget: tandem_orchestrator::BudgetLimit::default(),
                 capabilities: tandem_orchestrator::CapabilitySpec::default(),

@@ -89,11 +89,24 @@ pub(super) struct AgentTeamTemplateCreateInput {
 
 #[derive(Debug, Deserialize, Default)]
 pub(super) struct AgentTeamTemplatePatchInput {
+    pub display_name: Option<String>,
+    pub avatar_url: Option<String>,
     pub role: Option<tandem_orchestrator::AgentRole>,
     pub system_prompt: Option<String>,
+    pub default_model: Option<Value>,
     pub skills: Option<Vec<tandem_orchestrator::SkillRef>>,
     pub default_budget: Option<tandem_orchestrator::BudgetLimit>,
     pub capabilities: Option<tandem_orchestrator::CapabilitySpec>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct AgentStandupComposeInput {
+    pub name: String,
+    pub workspace_root: String,
+    pub schedule: crate::AutomationV2Schedule,
+    pub participant_template_ids: Vec<String>,
+    #[serde(default)]
+    pub report_path_template: Option<String>,
 }
 
 pub(super) fn mission_event_id(event: &MissionEvent) -> &str {
@@ -110,6 +123,52 @@ pub(super) fn mission_event_id(event: &MissionEvent) -> &str {
         | MissionEvent::TimerFired { mission_id, .. }
         | MissionEvent::ResourceChanged { mission_id, .. } => mission_id,
     }
+}
+
+fn standup_slug(raw: &str, fallback: &str) -> String {
+    let mut out = String::new();
+    let mut previous_dash = false;
+    for ch in raw.trim().chars() {
+        if ch.is_ascii_alphanumeric() {
+            out.push(ch.to_ascii_lowercase());
+            previous_dash = false;
+        } else if !previous_dash {
+            out.push('-');
+            previous_dash = true;
+        }
+    }
+    let cleaned = out.trim_matches('-').to_string();
+    if cleaned.is_empty() {
+        fallback.to_string()
+    } else {
+        cleaned
+    }
+}
+
+fn validate_standup_report_path(raw: &str) -> Result<String, &'static str> {
+    let value = raw.trim();
+    if value.is_empty() {
+        return Err("report_path_template is required");
+    }
+    if value.starts_with('/') {
+        return Err("report_path_template must be workspace-relative");
+    }
+    if value.contains("..") {
+        return Err("report_path_template must not traverse parent directories");
+    }
+    Ok(value.to_string())
+}
+
+fn standup_participant_objective(template_name: &str) -> String {
+    format!(
+        "You are preparing your daily standup update for {template_name}. Review relevant workspace context and use `memory_search` for prior conversations and history. `memory_search` defaults to the current session, current workspace/project, and global Tandem memory, so use it directly unless you need to narrow scope. Use `glob` to enumerate files and directories, `grep` to find relevant text, and `read` only on concrete files. Return valid JSON with keys `yesterday`, `today`, and `blockers`. Keep each field concise and evidence-based. If evidence is unavailable, say so plainly instead of guessing."
+    )
+}
+
+fn standup_synthesis_objective(report_path_template: &str) -> String {
+    format!(
+        "Synthesize all participant standup updates into a clear markdown engineering standup. Include sections for Yesterday, Today, and Blockers grouped by participant. Write the final markdown report to `{report_path_template}` relative to the workspace root. After writing the report, store a concise standup summary in project memory with `memory_store`, using `tier: \"project\"`, source `agent_standup_summary`, and metadata that includes the report path. Then return a short confirmation summary."
+    )
 }
 
 pub(super) async fn mission_create(
@@ -431,11 +490,20 @@ pub(super) async fn agent_team_template_patch(
             )
         })?;
     let mut updated = existing;
+    if let Some(display_name) = input.display_name {
+        updated.display_name = Some(display_name);
+    }
+    if let Some(avatar_url) = input.avatar_url {
+        updated.avatar_url = Some(avatar_url);
+    }
     if let Some(role) = input.role {
         updated.role = role;
     }
     if let Some(system_prompt) = input.system_prompt {
         updated.system_prompt = Some(system_prompt);
+    }
+    if let Some(default_model) = input.default_model {
+        updated.default_model = Some(default_model);
     }
     if let Some(skills) = input.skills {
         updated.skills = skills;
@@ -502,6 +570,256 @@ pub(super) async fn agent_team_template_delete(
         "ok": true,
         "deleted": true,
         "templateID": id,
+    })))
+}
+
+pub(super) async fn agent_standup_compose(
+    State(state): State<AppState>,
+    Json(input): Json<AgentStandupComposeInput>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let name = input.name.trim();
+    if name.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "ok": false,
+                "code": "INVALID_STANDUP_NAME",
+                "error": "name is required",
+            })),
+        ));
+    }
+    let workspace_root =
+        crate::normalize_absolute_workspace_root(&input.workspace_root).map_err(|error| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(json!({
+                    "ok": false,
+                    "code": "INVALID_WORKSPACE_ROOT",
+                    "error": error,
+                })),
+            )
+        })?;
+    let report_path_template = validate_standup_report_path(
+        input
+            .report_path_template
+            .as_deref()
+            .unwrap_or("docs/standups/{{date}}.md"),
+    )
+    .map_err(|error| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "ok": false,
+                "code": "INVALID_REPORT_PATH",
+                "error": error,
+            })),
+        )
+    })?;
+    state
+        .agent_teams
+        .ensure_loaded_for_workspace(&workspace_root)
+        .await
+        .map_err(|error| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({
+                    "ok": false,
+                    "code": "TEMPLATE_LOAD_FAILED",
+                    "error": error.to_string(),
+                })),
+            )
+        })?;
+
+    let participant_ids = input
+        .participant_template_ids
+        .into_iter()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>();
+    if participant_ids.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "ok": false,
+                "code": "EMPTY_PARTICIPANTS",
+                "error": "at least one participant template is required",
+            })),
+        ));
+    }
+
+    let templates = state.agent_teams.list_templates().await;
+    let template_map = templates
+        .into_iter()
+        .map(|template| (template.template_id.clone(), template))
+        .collect::<std::collections::HashMap<_, _>>();
+    let mut participants = Vec::new();
+    for template_id in &participant_ids {
+        let Some(template) = template_map.get(template_id).cloned() else {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(json!({
+                    "ok": false,
+                    "code": "TEMPLATE_NOT_FOUND",
+                    "error": format!("unknown participant template `{template_id}`"),
+                })),
+            ));
+        };
+        participants.push(template);
+    }
+
+    let now = crate::now_ms();
+    let automation_id = format!("standup-{}", Uuid::new_v4());
+    let schedule_timezone = input.schedule.timezone.clone();
+    let mut agents = Vec::new();
+    let mut nodes = Vec::new();
+    let mut participant_node_ids = Vec::new();
+    for (index, template) in participants.iter().enumerate() {
+        let participant_slug = standup_slug(
+            template
+                .display_name
+                .as_deref()
+                .unwrap_or(template.template_id.as_str()),
+            "participant",
+        );
+        let agent_id = format!("standup-agent-{}-{}", index + 1, participant_slug);
+        let node_id = format!("standup-participant-{}-{}", index + 1, participant_slug);
+        let allowlist = {
+            let mut tools = vec![
+                "read".to_string(),
+                "glob".to_string(),
+                "grep".to_string(),
+                "memory_search".to_string(),
+            ];
+            tools.extend(template.capabilities.tool_allowlist.clone());
+            tools.sort();
+            tools.dedup();
+            tools
+        };
+        agents.push(crate::AutomationAgentProfile {
+            agent_id: agent_id.clone(),
+            template_id: Some(template.template_id.clone()),
+            display_name: template
+                .display_name
+                .clone()
+                .unwrap_or_else(|| template.template_id.clone()),
+            avatar_url: template.avatar_url.clone(),
+            model_policy: None,
+            skills: template
+                .skills
+                .iter()
+                .map(|skill| {
+                    skill
+                        .id
+                        .clone()
+                        .or_else(|| skill.path.clone())
+                        .unwrap_or_default()
+                })
+                .filter(|value| !value.is_empty())
+                .collect(),
+            tool_policy: crate::AutomationAgentToolPolicy {
+                allowlist,
+                denylist: template.capabilities.tool_denylist.clone(),
+            },
+            mcp_policy: crate::AutomationAgentMcpPolicy {
+                allowed_servers: Vec::new(),
+                allowed_tools: None,
+            },
+            approval_policy: None,
+        });
+        nodes.push(crate::AutomationFlowNode {
+            node_id: node_id.clone(),
+            agent_id,
+            objective: standup_participant_objective(
+                template
+                    .display_name
+                    .as_deref()
+                    .unwrap_or(template.template_id.as_str()),
+            ),
+            depends_on: Vec::new(),
+            input_refs: Vec::new(),
+            output_contract: Some(crate::AutomationFlowOutputContract {
+                kind: "structured_json".to_string(),
+            }),
+            retry_policy: Some(json!({ "max_attempts": 2 })),
+            timeout_ms: None,
+        });
+        participant_node_ids.push(node_id);
+    }
+
+    let coordinator_agent_id = "standup-coordinator".to_string();
+    agents.push(crate::AutomationAgentProfile {
+        agent_id: coordinator_agent_id.clone(),
+        template_id: None,
+        display_name: "Standup Coordinator".to_string(),
+        avatar_url: None,
+        model_policy: None,
+        skills: Vec::new(),
+        tool_policy: crate::AutomationAgentToolPolicy {
+            allowlist: vec![
+                "read".to_string(),
+                "write".to_string(),
+                "memory_store".to_string(),
+            ],
+            denylist: Vec::new(),
+        },
+        mcp_policy: crate::AutomationAgentMcpPolicy {
+            allowed_servers: Vec::new(),
+            allowed_tools: None,
+        },
+        approval_policy: None,
+    });
+    nodes.push(crate::AutomationFlowNode {
+        node_id: "standup_synthesis".to_string(),
+        agent_id: coordinator_agent_id,
+        objective: standup_synthesis_objective(&report_path_template),
+        depends_on: participant_node_ids.clone(),
+        input_refs: participant_node_ids
+            .iter()
+            .map(|node_id| crate::AutomationFlowInputRef {
+                from_step_id: node_id.clone(),
+                alias: node_id.clone(),
+            })
+            .collect(),
+        output_contract: Some(crate::AutomationFlowOutputContract {
+            kind: "report_markdown".to_string(),
+        }),
+        retry_policy: Some(json!({ "max_attempts": 2 })),
+        timeout_ms: None,
+    });
+
+    let automation = crate::AutomationV2Spec {
+        automation_id,
+        name: name.to_string(),
+        description: Some("Agent standup automation".to_string()),
+        status: crate::AutomationV2Status::Draft,
+        schedule: input.schedule,
+        agents,
+        flow: crate::AutomationFlowSpec { nodes },
+        execution: crate::AutomationExecutionPolicy {
+            max_parallel_agents: Some(participant_node_ids.len().clamp(1, 16) as u32),
+            max_total_runtime_ms: None,
+            max_total_tool_calls: None,
+        },
+        output_targets: vec![report_path_template.clone()],
+        created_at_ms: now,
+        updated_at_ms: now,
+        creator_id: "agent_standup".to_string(),
+        workspace_root: Some(workspace_root.clone()),
+        metadata: Some(json!({
+            "feature": "agent_standup",
+            "standup": {
+                "participant_template_ids": participant_ids,
+                "report_path_template": report_path_template,
+                "timezone": schedule_timezone,
+            },
+        })),
+        next_fire_at_ms: None,
+        last_fired_at_ms: None,
+    };
+
+    Ok(Json(json!({
+        "ok": true,
+        "automation": automation,
     })))
 }
 

@@ -389,6 +389,43 @@ async fn create_session_accepts_camel_case_model_spec() {
         Some("openai/gpt-4o-mini")
     );
     assert!(payload.get("environment").is_some());
+    assert!(payload.get("projectID").and_then(|v| v.as_str()).is_some());
+}
+
+#[tokio::test]
+async fn create_session_binds_workspace_project_id() {
+    let state = test_state().await;
+    let workspace_root = std::env::temp_dir()
+        .join(format!("tandem-http-create-session-{}", Uuid::new_v4()))
+        .to_string_lossy()
+        .to_string();
+    let app = app_router(state);
+    let req = Request::builder()
+        .method("POST")
+        .uri("/session")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "title": "workspace-bound",
+                "workspace_root": workspace_root,
+            })
+            .to_string(),
+        ))
+        .expect("request");
+    let resp = app.oneshot(req).await.expect("response");
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = to_bytes(resp.into_body(), usize::MAX).await.expect("body");
+    let payload: Value = serde_json::from_slice(&body).expect("json");
+    assert_eq!(
+        payload.get("projectID").and_then(|v| v.as_str()),
+        tandem_core::workspace_project_id(
+            payload
+                .get("workspaceRoot")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+        )
+        .as_deref()
+    );
 }
 
 #[tokio::test]
@@ -503,6 +540,16 @@ async fn attach_session_route_updates_workspace_metadata() {
         .get("workspaceRoot")
         .and_then(|v| v.as_str())
         .is_some());
+    assert_eq!(
+        payload.get("projectID").and_then(|v| v.as_str()),
+        tandem_core::workspace_project_id(
+            payload
+                .get("workspaceRoot")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+        )
+        .as_deref()
+    );
 }
 
 #[tokio::test]

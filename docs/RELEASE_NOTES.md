@@ -16,6 +16,12 @@
 - Updated the control-panel runtime to bind explicitly to the configured panel host and load managed env files before startup.
 - Updated package/docs/example guidance so headless installs flow through the control-panel gateway layer instead of the old quickstart bootstrap path.
 
+### Automation Save Reliability
+
+- Fixed `WORKFLOW_PLAN_APPLY_FAILED` automation save failures caused by persistence verification treating stale legacy `automations_v2.json` migration files as authoritative.
+- Kept persistence verification strict on the active canonical automation file and downgraded stale fallback-file mismatches to warnings.
+- Added regression coverage for successful automation save/apply when a stale legacy automation file is still present.
+
 ## Tandem v0.4.3 Release Notes (Unreleased)
 
 ### Automation Persistence Fixes

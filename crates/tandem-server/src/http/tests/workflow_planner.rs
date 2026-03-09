@@ -696,6 +696,139 @@ async fn workflow_plan_apply_normalizes_mcp_server_prefixes_into_tool_allowlist(
 }
 
 #[tokio::test]
+async fn workflow_plan_apply_succeeds_when_legacy_automations_file_is_stale() {
+    let _guard = PlannerEnvGuard::new(&[
+        "TANDEM_STATE_DIR",
+        "TANDEM_WORKFLOW_PLANNER_TEST_BUILD_RESPONSE",
+        "TANDEM_WORKFLOW_PLANNER_TEST_RESPONSE",
+    ]);
+    let state_root =
+        std::env::temp_dir().join(format!("tandem-workflow-plan-legacy-{}", Uuid::new_v4()));
+    std::fs::create_dir_all(&state_root).expect("state root");
+    std::fs::write(
+        state_root.join("automations_v2.json"),
+        r#"{
+  "legacy-automation": {
+    "automation_id": "legacy-automation",
+    "name": "Legacy Automation",
+    "description": "stale legacy file",
+    "enabled": true,
+    "trigger": {
+      "type": "manual"
+    },
+    "schedule": {
+      "type": "manual",
+      "timezone": "UTC",
+      "misfire_policy": {
+        "type": "run_once"
+      }
+    },
+    "agents": [],
+    "flow": {
+      "nodes": [],
+      "edges": []
+    },
+    "created_at_ms": 1,
+    "updated_at_ms": 1
+  }
+}"#,
+    )
+    .expect("write stale legacy automations file");
+    _guard.set("TANDEM_STATE_DIR", state_root.display().to_string());
+
+    let state = test_state().await;
+    configure_openai_provider(&state).await;
+    let app = app_router(state.clone());
+    _guard.set(
+        "TANDEM_WORKFLOW_PLANNER_TEST_BUILD_RESPONSE",
+        json!({
+            "action": "build",
+            "plan": llm_plan_json(
+                "Delivery Workflow",
+                "Write a report and notify the operator.",
+                manual_schedule_json(),
+                "/tmp/ignored",
+                vec![
+                    step_json("generate_report", "report", "Generate the report.", &[], "writer", json!([]), "report_markdown"),
+                    step_json("notify_user", "notify", "Notify the operator.", &["generate_report"], "operator", json!([
+                        {"from_step_id":"generate_report","alias":"final_report"}
+                    ]), "text_summary")
+                ],
+                Some(json!({
+                    "model_provider": "openai",
+                    "model_id": "gpt-5.1"
+                }))
+            )
+        })
+        .to_string(),
+    );
+
+    let preview_resp = app
+        .clone()
+        .oneshot(preview_request(json!({
+            "prompt": "Generate a report and notify the operator",
+            "plan_source": "automations_page",
+            "workspace_root": "/tmp/custom-workspace",
+            "operator_preferences": {
+                "model_provider": "openai",
+                "model_id": "gpt-5.1"
+            }
+        })))
+        .await
+        .expect("preview response");
+    assert_eq!(preview_resp.status(), StatusCode::OK);
+    let preview_body = to_bytes(preview_resp.into_body(), usize::MAX)
+        .await
+        .expect("preview body");
+    let preview_payload: Value = serde_json::from_slice(&preview_body).expect("preview json");
+    let plan_id = preview_payload
+        .get("plan")
+        .and_then(|plan| plan.get("plan_id"))
+        .and_then(Value::as_str)
+        .expect("plan id");
+
+    let apply_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/workflow-plans/apply")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "plan_id": plan_id,
+                        "creator_id": "control-panel"
+                    })
+                    .to_string(),
+                ))
+                .expect("apply request"),
+        )
+        .await
+        .expect("apply response");
+    assert_eq!(apply_resp.status(), StatusCode::OK);
+    let apply_body = to_bytes(apply_resp.into_body(), usize::MAX)
+        .await
+        .expect("apply body");
+    let apply_payload: Value = serde_json::from_slice(&apply_body).expect("apply json");
+    let automation_id = apply_payload
+        .get("automation")
+        .and_then(|row| row.get("automation_id"))
+        .and_then(Value::as_str)
+        .expect("automation id");
+
+    let canonical_path = state_root.join("data").join("automations_v2.json");
+    let canonical_raw =
+        std::fs::read_to_string(&canonical_path).expect("read canonical automations file");
+    let canonical_json: Value = serde_json::from_str(&canonical_raw).expect("canonical json");
+    assert!(canonical_json.get(automation_id).is_some());
+
+    let legacy_raw = std::fs::read_to_string(state_root.join("automations_v2.json"))
+        .expect("read legacy automations file");
+    let legacy_json: Value = serde_json::from_str(&legacy_raw).expect("legacy json");
+    assert!(legacy_json.get(automation_id).is_none());
+}
+
+#[tokio::test]
 async fn workflow_plan_chat_message_returns_planner_model_hint_without_model() {
     let state = test_state().await;
     let app = app_router(state);

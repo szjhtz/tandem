@@ -125,9 +125,15 @@ pub struct SkillRequirement {
 pub struct AgentTemplate {
     #[serde(rename = "templateID")]
     pub template_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub avatar_url: Option<String>,
     pub role: AgentRole,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub system_prompt: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_model: Option<Value>,
     #[serde(default)]
     pub skills: Vec<SkillRef>,
     #[serde(default)]

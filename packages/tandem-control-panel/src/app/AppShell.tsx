@@ -17,6 +17,11 @@ const ROUTE_META: Record<string, { title: string; subtitle: string }> = {
     title: "Automations",
     subtitle: "Templates, routines, approvals, and execution history.",
   },
+  agents: {
+    title: "Agents",
+    subtitle:
+      "Persistent personalities, default models, and prompts reused across automation workflows.",
+  },
   orchestrator: {
     title: "Orchestrator",
     subtitle: "Plan-driven task execution with workspace visibility and approvals.",

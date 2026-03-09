@@ -1212,6 +1212,11 @@ export interface AgentTeamSpawnResponse {
 export interface AgentTeamTemplate {
   id: string;
   name?: string;
+  templateID?: string;
+  displayName?: string;
+  avatarUrl?: string;
+  defaultModel?: JsonObject;
+  systemPrompt?: string;
   role?: string;
   [key: string]: unknown;
 }
@@ -1226,11 +1231,27 @@ export interface AgentTeamTemplateCreateInput {
 }
 
 export interface AgentTeamTemplatePatchInput {
+  displayName?: string;
+  avatarUrl?: string;
   role?: string;
   systemPrompt?: string;
+  defaultModel?: JsonObject;
   skills?: JsonObject[];
   defaultBudget?: JsonObject;
   capabilities?: JsonObject;
+}
+
+export interface AgentStandupComposeInput {
+  name: string;
+  workspaceRoot: string;
+  schedule: JsonObject;
+  participantTemplateIds: string[];
+  reportPathTemplate?: string;
+}
+
+export interface AgentStandupComposeResponse {
+  ok?: boolean;
+  automation?: JsonObject;
 }
 
 export interface AgentTeamInstance {

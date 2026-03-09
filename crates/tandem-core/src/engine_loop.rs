@@ -2036,7 +2036,7 @@ impl EngineLoop {
 
         let mut args = self.plugins.inject_tool_args(&tool, effective_args).await;
         let tool_context = self.resolve_tool_execution_context(session_id).await;
-        if let Some((workspace_root, effective_cwd)) = tool_context.as_ref() {
+        if let Some((workspace_root, effective_cwd, project_id)) = tool_context.as_ref() {
             if let Some(obj) = args.as_object_mut() {
                 obj.insert(
                     "__workspace_root".to_string(),
@@ -2050,13 +2050,17 @@ impl EngineLoop {
                     "__session_id".to_string(),
                     Value::String(session_id.to_string()),
                 );
+                if let Some(project_id) = project_id.clone() {
+                    obj.insert("__project_id".to_string(), Value::String(project_id));
+                }
             }
             tracing::info!(
-                "tool execution context session_id={} tool={} workspace_root={} effective_cwd={}",
+                "tool execution context session_id={} tool={} workspace_root={} effective_cwd={} project_id={}",
                 session_id,
                 tool,
                 workspace_root,
-                effective_cwd
+                effective_cwd,
+                project_id.clone().unwrap_or_default()
             );
         }
         let mut invoke_part =
@@ -2411,7 +2415,10 @@ impl EngineLoop {
         ))
     }
 
-    async fn resolve_tool_execution_context(&self, session_id: &str) -> Option<(String, String)> {
+    async fn resolve_tool_execution_context(
+        &self,
+        session_id: &str,
+    ) -> Option<(String, String, Option<String>)> {
         let session = self.storage.get_session(session_id).await?;
         let workspace_root = session
             .workspace_root
@@ -2423,7 +2430,11 @@ impl EngineLoop {
         } else {
             crate::normalize_workspace_path(&session.directory).unwrap_or(workspace_root.clone())
         };
-        Some((workspace_root, effective_cwd))
+        let project_id = session
+            .project_id
+            .clone()
+            .or_else(|| crate::workspace_project_id(&workspace_root));
+        Some((workspace_root, effective_cwd, project_id))
     }
 
     async fn workspace_override_active(&self, session_id: &str) -> bool {

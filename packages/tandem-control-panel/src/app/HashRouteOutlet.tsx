@@ -18,10 +18,11 @@ export function HashRouteOutlet({ routeId, pageProps }: { routeId: string; pageP
     case "chat":
       return <ChatPage {...pageProps} />;
     case "automations":
-    case "agents":
     case "packs":
     case "teams":
       return <AutomationsPage {...pageProps} />;
+    case "agents":
+      return <TeamsPage {...pageProps} />;
     case "channels":
       return <ChannelsPage {...pageProps} />;
     case "mcp":

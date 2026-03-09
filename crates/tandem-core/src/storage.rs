@@ -12,7 +12,10 @@ use uuid::Uuid;
 
 use tandem_types::{Message, MessagePart, MessageRole, Session};
 
-use crate::{derive_session_title_from_prompt, normalize_workspace_path, title_needs_repair};
+use crate::{
+    derive_session_title_from_prompt, normalize_workspace_path, title_needs_repair,
+    workspace_project_id,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SessionMeta {
@@ -757,6 +760,7 @@ impl Storage {
         session.attach_timestamp_ms = Some(Utc::now().timestamp_millis().max(0) as u64);
         session.attach_reason = Some(reason_tag.trim().to_string());
         session.workspace_root = Some(target_workspace.clone());
+        session.project_id = workspace_project_id(&target_workspace);
         session.directory = target_workspace;
         session.time.updated = Utc::now();
         let updated = session.clone();

@@ -1,5 +1,6 @@
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -38,6 +39,13 @@ pub fn normalize_workspace_path(input: &str) -> Option<String> {
         absolute
     };
     Some(normalized.to_string_lossy().to_string())
+}
+
+pub fn workspace_project_id(input: &str) -> Option<String> {
+    let normalized = normalize_workspace_path(input)?;
+    let mut hasher = Sha256::new();
+    hasher.update(normalized.to_ascii_lowercase().as_bytes());
+    Some(format!("workspace-{:x}", hasher.finalize())[..22].to_string())
 }
 
 pub fn is_within_workspace_root(path: &Path, workspace_root: &Path) -> bool {

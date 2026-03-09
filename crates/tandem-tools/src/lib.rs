@@ -3430,7 +3430,7 @@ impl Tool for MemorySearchTool {
     fn schema(&self) -> ToolSchema {
         ToolSchema {
             name: "memory_search".to_string(),
-            description: "Search tandem memory across session/project/global tiers. Global scope is opt-in via allow_global=true (or TANDEM_ENABLE_GLOBAL_MEMORY=1).".to_string(),
+            description: "Search tandem memory across session/project/global tiers. If scope fields are omitted, the tool defaults to the current session/project context and may include global memory when policy allows it.".to_string(),
             input_schema: json!({
                 "type":"object",
                 "properties":{
@@ -3461,22 +3461,12 @@ impl Tool for MemorySearchTool {
             });
         }
 
-        let session_id = args
-            .get("session_id")
-            .and_then(|v| v.as_str())
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .map(ToString::to_string);
-        let project_id = args
-            .get("project_id")
-            .and_then(|v| v.as_str())
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .map(ToString::to_string);
+        let session_id = memory_session_id(&args);
+        let project_id = memory_project_id(&args);
         let allow_global = global_memory_enabled(&args);
         if session_id.is_none() && project_id.is_none() && !allow_global {
             return Ok(ToolResult {
-                output: "memory_search requires at least one scope: session_id or project_id (or allow_global=true)"
+                output: "memory_search requires a current session/project context or global memory enabled by policy"
                     .to_string(),
                 metadata: json!({"ok": false, "reason": "missing_scope"}),
             });
@@ -3676,7 +3666,7 @@ impl Tool for MemoryStoreTool {
     fn schema(&self) -> ToolSchema {
         ToolSchema {
             name: "memory_store".to_string(),
-            description: "Store memory chunks in session/project/global tiers. Global writes are opt-in via allow_global=true (or TANDEM_ENABLE_GLOBAL_MEMORY=1).".to_string(),
+            description: "Store memory chunks in session/project/global tiers. If scope is omitted, the tool defaults to the current project, then session, and only uses global memory when policy allows it.".to_string(),
             input_schema: json!({
                 "type":"object",
                 "properties":{
@@ -3707,18 +3697,8 @@ impl Tool for MemoryStoreTool {
             });
         }
 
-        let session_id = args
-            .get("session_id")
-            .and_then(|v| v.as_str())
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .map(ToString::to_string);
-        let project_id = args
-            .get("project_id")
-            .and_then(|v| v.as_str())
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .map(ToString::to_string);
+        let session_id = memory_session_id(&args);
+        let project_id = memory_project_id(&args);
         let allow_global = global_memory_enabled(&args);
 
         let tier = match args
@@ -3745,7 +3725,7 @@ impl Tool for MemoryStoreTool {
                     MemoryTier::Global
                 } else {
                     return Ok(ToolResult {
-                        output: "memory_store requires scope: session_id or project_id (or allow_global=true)"
+                        output: "memory_store requires a current session/project context or global memory enabled by policy"
                             .to_string(),
                         metadata: json!({"ok": false, "reason": "missing_scope"}),
                     });
@@ -3852,18 +3832,8 @@ impl Tool for MemoryListTool {
     }
 
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
-        let session_id = args
-            .get("session_id")
-            .and_then(|v| v.as_str())
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .map(ToString::to_string);
-        let project_id = args
-            .get("project_id")
-            .and_then(|v| v.as_str())
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .map(ToString::to_string);
+        let session_id = memory_session_id(&args);
+        let project_id = memory_project_id(&args);
         let allow_global = global_memory_enabled(&args);
         let limit = args
             .get("limit")
@@ -3884,7 +3854,7 @@ impl Tool for MemoryListTool {
         }
         if session_id.is_none() && project_id.is_none() && tier != "global" && !allow_global {
             return Ok(ToolResult {
-                output: "memory_list requires session_id/project_id, or allow_global=true for global listing".to_string(),
+                output: "memory_list requires a current session/project context or global memory enabled by policy".to_string(),
                 metadata: json!({"ok": false, "reason": "missing_scope"}),
             });
         }
@@ -3996,21 +3966,70 @@ fn resolve_memory_db_path(args: &Value) -> PathBuf {
     PathBuf::from("memory.sqlite")
 }
 
-fn global_memory_enabled(args: &Value) -> bool {
-    if args
-        .get("allow_global")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false)
-    {
-        return true;
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum MemoryVisibleScope {
+    Session,
+    Project,
+    Global,
+}
+
+fn parse_memory_visible_scope(raw: &str) -> Option<MemoryVisibleScope> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "session" => Some(MemoryVisibleScope::Session),
+        "project" | "workspace" => Some(MemoryVisibleScope::Project),
+        "global" => Some(MemoryVisibleScope::Global),
+        _ => None,
     }
-    let Ok(raw) = std::env::var("TANDEM_ENABLE_GLOBAL_MEMORY") else {
+}
+
+fn memory_visible_scope(args: &Value) -> MemoryVisibleScope {
+    if let Some(scope) = args
+        .get("__memory_max_visible_scope")
+        .and_then(|v| v.as_str())
+        .and_then(parse_memory_visible_scope)
+    {
+        return scope;
+    }
+    if let Ok(raw) = std::env::var("TANDEM_MEMORY_MAX_VISIBLE_SCOPE") {
+        if let Some(scope) = parse_memory_visible_scope(&raw) {
+            return scope;
+        }
+    }
+    MemoryVisibleScope::Global
+}
+
+fn memory_session_id(args: &Value) -> Option<String> {
+    args.get("session_id")
+        .or_else(|| args.get("__session_id"))
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(ToString::to_string)
+}
+
+fn memory_project_id(args: &Value) -> Option<String> {
+    args.get("project_id")
+        .or_else(|| args.get("__project_id"))
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(ToString::to_string)
+}
+
+fn global_memory_enabled(args: &Value) -> bool {
+    if memory_visible_scope(args) != MemoryVisibleScope::Global {
         return false;
-    };
-    matches!(
-        raw.trim().to_ascii_lowercase().as_str(),
-        "1" | "true" | "yes" | "on"
-    )
+    }
+    if let Some(explicit) = args.get("allow_global").and_then(|v| v.as_bool()) {
+        return explicit;
+    }
+    match std::env::var("TANDEM_ENABLE_GLOBAL_MEMORY") {
+        Ok(raw) => !matches!(
+            raw.trim().to_ascii_lowercase().as_str(),
+            "0" | "false" | "no" | "off"
+        ),
+        Err(_) => true,
+    }
 }
 
 struct SkillTool;
@@ -4654,47 +4673,78 @@ mod tests {
         assert!(text.contains("link"));
     }
 
-    #[tokio::test]
-    async fn memory_search_requires_scope() {
-        let tool = MemorySearchTool;
-        let result = tool
-            .execute(json!({"query": "deployment strategy"}))
-            .await
-            .expect("memory_search should return ToolResult");
-        assert!(result.output.contains("requires at least one scope"));
-        assert_eq!(result.metadata["ok"], json!(false));
-        assert_eq!(result.metadata["reason"], json!("missing_scope"));
+    #[test]
+    fn memory_scope_defaults_to_hidden_context() {
+        let args = json!({
+            "__session_id": "session-123",
+            "__project_id": "workspace-abc"
+        });
+        assert_eq!(memory_session_id(&args).as_deref(), Some("session-123"));
+        assert_eq!(memory_project_id(&args).as_deref(), Some("workspace-abc"));
+        assert!(global_memory_enabled(&args));
+    }
+
+    #[test]
+    fn memory_scope_policy_can_disable_global_visibility() {
+        let args = json!({
+            "__session_id": "session-123",
+            "__project_id": "workspace-abc",
+            "__memory_max_visible_scope": "project"
+        });
+        assert_eq!(memory_visible_scope(&args), MemoryVisibleScope::Project);
+        assert!(!global_memory_enabled(&args));
     }
 
     #[tokio::test]
-    async fn memory_search_global_requires_opt_in() {
+    async fn memory_search_uses_global_by_default() {
         let tool = MemorySearchTool;
         let result = tool
             .execute(json!({
-                "query": "deployment strategy",
-                "session_id": "ses_1",
+                "query": "global pattern",
                 "tier": "global"
             }))
             .await
             .expect("memory_search should return ToolResult");
-        assert!(result.output.contains("requires allow_global=true"));
+        assert!(
+            result.output.contains("memory database not found")
+                || result.output.contains("memory embeddings unavailable")
+        );
         assert_eq!(result.metadata["ok"], json!(false));
-        assert_eq!(result.metadata["reason"], json!("global_scope_disabled"));
+        let reason = result
+            .metadata
+            .get("reason")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default();
+        assert!(matches!(
+            reason,
+            "memory_db_missing" | "embeddings_unavailable"
+        ));
     }
 
     #[tokio::test]
-    async fn memory_store_global_requires_opt_in() {
+    async fn memory_store_uses_hidden_project_scope_by_default() {
         let tool = MemoryStoreTool;
         let result = tool
             .execute(json!({
-                "content": "global pattern",
-                "tier": "global"
+                "content": "remember this",
+                "__session_id": "session-123",
+                "__project_id": "workspace-abc"
             }))
             .await
             .expect("memory_store should return ToolResult");
-        assert!(result.output.contains("requires allow_global=true"));
-        assert_eq!(result.metadata["ok"], json!(false));
-        assert_eq!(result.metadata["reason"], json!("global_scope_disabled"));
+        assert!(
+            result.output.contains("memory embeddings unavailable")
+                || result.output.contains("memory database not found")
+        );
+        let reason = result
+            .metadata
+            .get("reason")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default();
+        assert!(matches!(
+            reason,
+            "embeddings_unavailable" | "memory_db_missing"
+        ));
     }
 
     #[test]

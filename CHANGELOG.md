@@ -25,6 +25,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - updated the control-panel runtime to bind explicitly to the configured panel host and to load managed env files before startup
   - updated package/docs/example guidance to point headless installs at the control-panel gateway layer instead of the old quickstart bootstrap path
 
+### Fixed
+
+- **Automation V2 save verification after storage migration**:
+  - fixed workflow-plan apply and control-panel automation saves failing with `WORKFLOW_PLAN_APPLY_FAILED` when stale legacy `automations_v2.json` files were still present alongside the canonical data file
+  - kept strict persistence verification on the active canonical automation file while downgrading mismatched legacy fallback files to warnings instead of rejecting the save
+  - added a regression test covering successful automation save/apply with a stale legacy `automations_v2.json` migration artifact present
+
 ## [0.4.3] - Unreleased
 
 ### Fixed

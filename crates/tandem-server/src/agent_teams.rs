@@ -395,6 +395,15 @@ impl AgentTeamRuntime {
         Ok(existed)
     }
 
+    pub async fn get_template_for_workspace(
+        &self,
+        workspace_root: &str,
+        template_id: &str,
+    ) -> anyhow::Result<Option<AgentTemplate>> {
+        self.ensure_loaded_for_workspace(workspace_root).await?;
+        Ok(self.templates.read().await.get(template_id).cloned())
+    }
+
     pub async fn list_instances(
         &self,
         mission_id: Option<&str>,
@@ -703,8 +712,11 @@ impl AgentTeamRuntime {
 
         let template = template.unwrap_or_else(|| AgentTemplate {
             template_id: "default-template".to_string(),
+            display_name: None,
+            avatar_url: None,
             role: req.role.clone(),
             system_prompt: None,
+            default_model: None,
             skills: Vec::new(),
             default_budget: BudgetLimit::default(),
             capabilities: Default::default(),

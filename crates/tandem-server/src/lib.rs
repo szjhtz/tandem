@@ -2329,9 +2329,33 @@ impl AppState {
         automation_id: &str,
         expected_present: bool,
     ) -> anyhow::Result<()> {
-        let candidate_paths = candidate_automations_v2_paths(&self.automations_v2_path);
-        let mut mismatches = Vec::new();
-        for path in candidate_paths {
+        let active_raw = if self.automations_v2_path.exists() {
+            fs::read_to_string(&self.automations_v2_path).await?
+        } else {
+            String::new()
+        };
+        let active_parsed = parse_automation_v2_file(&active_raw);
+        let active_present = active_parsed.contains_key(automation_id);
+        if active_present != expected_present {
+            let active_path = self.automations_v2_path.display().to_string();
+            tracing::error!(
+                automation_id,
+                expected_present,
+                actual_present = active_present,
+                count = active_parsed.len(),
+                active_path,
+                "automation v2 persistence verification failed"
+            );
+            anyhow::bail!(
+                "automation v2 persistence verification failed for `{}`",
+                automation_id
+            );
+        }
+        let mut alternate_mismatches = Vec::new();
+        for path in candidate_automations_v2_paths(&self.automations_v2_path) {
+            if path == self.automations_v2_path {
+                continue;
+            }
             let raw = if path.exists() {
                 fs::read_to_string(&path).await?
             } else {
@@ -2340,7 +2364,7 @@ impl AppState {
             let parsed = parse_automation_v2_file(&raw);
             let present = parsed.contains_key(automation_id);
             if present != expected_present {
-                mismatches.push(format!(
+                alternate_mismatches.push(format!(
                     "{} expected_present={} actual_present={} count={}",
                     path.display(),
                     expected_present,
@@ -2349,18 +2373,14 @@ impl AppState {
                 ));
             }
         }
-        if !mismatches.is_empty() {
+        if !alternate_mismatches.is_empty() {
             let active_path = self.automations_v2_path.display().to_string();
-            tracing::error!(
+            tracing::warn!(
                 automation_id,
                 expected_present,
-                mismatches = ?mismatches,
+                mismatches = ?alternate_mismatches,
                 active_path,
-                "automation v2 persistence verification failed"
-            );
-            anyhow::bail!(
-                "automation v2 persistence verification failed for `{}`",
-                automation_id
+                "automation v2 alternate persistence paths are stale"
             );
         }
         Ok(())
@@ -4628,6 +4648,40 @@ impl ServerPromptContextHook {
         }
         Some(lines.join("\n"))
     }
+
+    fn build_memory_scope_block(
+        session_id: &str,
+        project_id: Option<&str>,
+        workspace_root: Option<&str>,
+    ) -> String {
+        let mut lines = vec![
+            "<memory_scope>".to_string(),
+            format!("- current_session_id: {}", session_id),
+        ];
+        if let Some(project_id) = project_id.map(str::trim).filter(|value| !value.is_empty()) {
+            lines.push(format!("- current_project_id: {}", project_id));
+        }
+        if let Some(workspace_root) = workspace_root
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            lines.push(format!("- workspace_root: {}", workspace_root));
+        }
+        lines.push(
+            "- default_memory_search_behavior: search current session, then current project/workspace, then global memory"
+                .to_string(),
+        );
+        lines.push(
+            "- use memory_search without IDs for normal recall; only pass tier/session_id/project_id when narrowing scope"
+                .to_string(),
+        );
+        lines.push(
+            "- when memory is sparse or stale, inspect the workspace with glob, grep, and read"
+                .to_string(),
+        );
+        lines.push("</memory_scope>".to_string());
+        lines.join("\n")
+    }
 }
 
 impl PromptContextHook for ServerPromptContextHook {
@@ -4654,6 +4708,17 @@ impl PromptContextHook for ServerPromptContextHook {
                 messages.push(ChatMessage {
                     role: "system".to_string(),
                     content: identity_block,
+                    attachments: Vec::new(),
+                });
+            }
+            if let Some(session) = this.state.storage.get_session(&ctx.session_id).await {
+                messages.push(ChatMessage {
+                    role: "system".to_string(),
+                    content: Self::build_memory_scope_block(
+                        &ctx.session_id,
+                        session.project_id.as_deref(),
+                        session.workspace_root.as_deref(),
+                    ),
                     attachments: Vec::new(),
                 });
             }
@@ -5843,16 +5908,27 @@ fn render_automation_v2_prompt(
     node: &AutomationFlowNode,
     agent: &AutomationAgentProfile,
     upstream_inputs: &[Value],
+    template_system_prompt: Option<&str>,
+    standup_report_path: Option<&str>,
+    memory_project_id: Option<&str>,
 ) -> String {
     let contract_kind = node
         .output_contract
         .as_ref()
         .map(|contract| contract.kind.as_str())
         .unwrap_or("structured_json");
-    let mut prompt = format!(
+    let mut sections = Vec::new();
+    if let Some(system_prompt) = template_system_prompt
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        sections.push(format!("Template system prompt:\n{}", system_prompt));
+    }
+    sections.push(format!(
         "Automation ID: {}\nRun ID: {}\nNode ID: {}\nAgent: {}\nObjective: {}\nOutput contract kind: {}",
         automation.automation_id, run_id, node.node_id, agent.display_name, node.objective, contract_kind
-    );
+    ));
+    let mut prompt = sections.join("\n\n");
     if !upstream_inputs.is_empty() {
         prompt.push_str("\n\nUpstream Inputs:");
         for input in upstream_inputs {
@@ -5884,10 +5960,102 @@ fn render_automation_v2_prompt(
             "\n\nDelivery rules:\n- Prefer inline email body delivery by default.\n- Only include an email attachment when upstream inputs contain a concrete attachment artifact with a non-empty s3key or upload result.\n- Never send an attachment parameter with an empty or null s3key.\n- If no attachment artifact exists, omit the attachment parameter entirely.",
         );
     }
+    if let Some(report_path) = standup_report_path
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        prompt.push_str(&format!(
+            "\n\nStandup report path:\n- Write the final markdown report to `{}` relative to the workspace root.\n- Use the `write` tool for the report.\n- The report must remain inside the workspace.",
+            report_path
+        ));
+    }
+    if let Some(project_id) = memory_project_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        prompt.push_str(&format!(
+            "\n\nMemory search scope:\n- `memory_search` defaults to the current session, current project, and global memory.\n- Current project_id: `{}`.\n- Use `tier: \"project\"` when you need recall limited to this workspace.\n- Use workspace files via `glob`, `grep`, and `read` when memory is sparse or stale.",
+            project_id
+        ));
+    }
     prompt.push_str(
         "\n\nReturn a concise completion. If you produce structured content, keep it valid JSON inside the response body.",
     );
     prompt
+}
+
+fn is_agent_standup_automation(automation: &AutomationV2Spec) -> bool {
+    automation
+        .metadata
+        .as_ref()
+        .and_then(|value| value.get("feature"))
+        .and_then(Value::as_str)
+        .map(|value| value == "agent_standup")
+        .unwrap_or(false)
+}
+
+fn resolve_standup_report_path_template(automation: &AutomationV2Spec) -> Option<String> {
+    automation
+        .metadata
+        .as_ref()
+        .and_then(|value| value.get("standup"))
+        .and_then(|value| value.get("report_path_template"))
+        .and_then(Value::as_str)
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn resolve_standup_report_path_for_run(
+    automation: &AutomationV2Spec,
+    started_at_ms: u64,
+) -> Option<String> {
+    let template = resolve_standup_report_path_template(automation)?;
+    if !template.contains("{{date}}") {
+        return Some(template);
+    }
+    let date = chrono::DateTime::<chrono::Utc>::from_timestamp_millis(started_at_ms as i64)
+        .unwrap_or_else(chrono::Utc::now)
+        .format("%Y-%m-%d")
+        .to_string();
+    Some(template.replace("{{date}}", &date))
+}
+
+fn automation_workspace_project_id(workspace_root: &str) -> String {
+    tandem_core::workspace_project_id(workspace_root)
+        .unwrap_or_else(|| "workspace-unknown".to_string())
+}
+
+fn merge_automation_agent_allowlist(
+    agent: &AutomationAgentProfile,
+    template: Option<&tandem_orchestrator::AgentTemplate>,
+) -> Vec<String> {
+    let mut allowlist = if agent.tool_policy.allowlist.is_empty() {
+        template
+            .map(|value| value.capabilities.tool_allowlist.clone())
+            .unwrap_or_default()
+    } else {
+        agent.tool_policy.allowlist.clone()
+    };
+    allowlist.sort();
+    allowlist.dedup();
+    allowlist
+}
+
+fn resolve_automation_agent_model(
+    agent: &AutomationAgentProfile,
+    template: Option<&tandem_orchestrator::AgentTemplate>,
+) -> Option<ModelSpec> {
+    if let Some(model) = agent
+        .model_policy
+        .as_ref()
+        .and_then(|policy| policy.get("default_model"))
+        .and_then(parse_model_spec)
+    {
+        return Some(model);
+    }
+    template
+        .and_then(|value| value.default_model.as_ref())
+        .and_then(parse_model_spec)
 }
 
 fn extract_session_text_output(session: &Session) -> String {
@@ -6010,6 +6178,20 @@ async fn execute_automation_v2_node(
             automation.automation_id
         );
     }
+    let template = if let Some(template_id) = agent.template_id.as_deref().map(str::trim) {
+        if template_id.is_empty() {
+            None
+        } else {
+            state
+                .agent_teams
+                .get_template_for_workspace(&workspace_root, template_id)
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("agent template `{}` not found", template_id))
+                .map(Some)?
+        }
+    } else {
+        None
+    };
     let mut session = Session::new(
         Some(format!(
             "Automation {} / {}",
@@ -6018,12 +6200,14 @@ async fn execute_automation_v2_node(
         Some(workspace_root.clone()),
     );
     let session_id = session.id.clone();
+    let project_id = automation_workspace_project_id(&workspace_root);
+    session.project_id = Some(project_id.clone());
     session.workspace_root = Some(workspace_root);
     state.storage.save_session(session).await?;
 
     state.add_automation_v2_session(run_id, &session_id).await;
 
-    let mut allowlist = agent.tool_policy.allowlist.clone();
+    let mut allowlist = merge_automation_agent_allowlist(agent, template.as_ref());
     if let Some(mcp_tools) = agent.mcp_policy.allowed_tools.as_ref() {
         allowlist.extend(mcp_tools.clone());
     }
@@ -6036,12 +6220,30 @@ async fn execute_automation_v2_node(
         .set_session_auto_approve_permissions(&session_id, true)
         .await;
 
-    let model = agent
-        .model_policy
-        .as_ref()
-        .and_then(|policy| policy.get("default_model"))
-        .and_then(parse_model_spec);
-    let prompt = render_automation_v2_prompt(automation, run_id, node, agent, &upstream_inputs);
+    let model = resolve_automation_agent_model(agent, template.as_ref());
+    let standup_report_path = if is_agent_standup_automation(automation)
+        && node.node_id == "standup_synthesis"
+    {
+        resolve_standup_report_path_for_run(automation, run.started_at_ms.unwrap_or_else(now_ms))
+    } else {
+        None
+    };
+    let prompt = render_automation_v2_prompt(
+        automation,
+        run_id,
+        node,
+        agent,
+        &upstream_inputs,
+        template
+            .as_ref()
+            .and_then(|value| value.system_prompt.as_deref()),
+        standup_report_path.as_deref(),
+        if is_agent_standup_automation(automation) {
+            Some(project_id.as_str())
+        } else {
+            None
+        },
+    );
     let req = SendMessageRequest {
         parts: vec![MessagePartInput::Text { text: prompt }],
         model,

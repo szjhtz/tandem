@@ -18,6 +18,11 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
   - Updated the runtime to bind explicitly to the configured panel host and load managed env files before startup.
   - Updated package/docs/example guidance so headless installs flow through the control-panel gateway layer instead of the old quickstart bootstrap path.
 
+- Automation V2 save reliability after storage migration
+  - Fixed `WORKFLOW_PLAN_APPLY_FAILED` automation save failures caused by persistence verification treating stale legacy `automations_v2.json` migration files as authoritative.
+  - Kept save verification strict on the active canonical automation file and downgraded stale fallback-file mismatches to warnings.
+  - Added regression coverage for successful automation save/apply when a stale legacy automation file is still present.
+
 ## v0.4.3 (Unreleased)
 
 - Automation V2 restart persistence is fixed.

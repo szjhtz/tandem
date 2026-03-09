@@ -2641,6 +2641,20 @@ class AgentTeams {
     );
   }
 
+  /** Compose an Agent Standup automation spec from selected templates. */
+  async composeStandup(input: AgentStandupComposeInput): Promise<AgentStandupComposeResponse> {
+    return this.req<AgentStandupComposeResponse>("/agent-standup/compose", {
+      method: "POST",
+      body: JSON.stringify({
+        name: input.name,
+        workspace_root: input.workspaceRoot,
+        schedule: input.schedule,
+        participant_template_ids: input.participantTemplateIds,
+        report_path_template: input.reportPathTemplate,
+      }),
+    });
+  }
+
   /** List agent team instances. */
   async listInstances(options?: {
     missionID?: string;

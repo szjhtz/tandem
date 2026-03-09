@@ -27,6 +27,7 @@ pub(super) async fn create_session(
         .or(workspace_from_runtime);
     if let Some(workspace) = workspace {
         session.workspace_root = Some(workspace.clone());
+        session.project_id = tandem_core::workspace_project_id(&workspace);
         if session.directory.trim() == "." || session.directory.trim().is_empty() {
             session.directory = workspace;
         }
@@ -42,7 +43,7 @@ pub(super) async fn create_session(
     apply_session_permission_rules(&state, requested_permission_rules).await;
     state.event_bus.publish(EngineEvent::new(
         "session.created",
-        json!({"sessionID": session.id}),
+        json!({"sessionID": session.id, "projectID": session.project_id}),
     ));
     Ok(Json(session.into()))
 }

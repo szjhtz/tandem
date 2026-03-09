@@ -18,6 +18,7 @@ pub(super) fn apply(router: Router<AppState>) -> Router<AppState> {
             "/agent-team/templates/{id}",
             patch(agent_team_template_patch).delete(agent_team_template_delete),
         )
+        .route("/agent-standup/compose", post(agent_standup_compose))
         .route("/agent-team/instances", get(agent_team_instances))
         .route("/agent-team/missions", get(agent_team_missions))
         .route("/agent-team/approvals", get(agent_team_approvals))

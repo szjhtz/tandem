@@ -1,7 +1,9 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { renderIcons } from "../app/icons.js";
+import { projectOrchestrationRun } from "../features/orchestrator/blackboardProjection";
+import { TaskBoard } from "../features/orchestration/TaskBoard";
 import { useEngineStream } from "../features/stream/useEngineStream";
 import { PageCard, EmptyState, formatJson } from "./ui";
 import type { AppPageProps } from "./pageTypes";
@@ -68,6 +70,13 @@ interface WorkflowEditDraft {
   plannerModelProvider: string;
   plannerModelId: string;
   selectedMcpServers: string[];
+}
+
+interface StandupTemplateOption {
+  templateId: string;
+  displayName: string;
+  role: string;
+  modelLabel: string;
 }
 
 // ─── Constants ──────────────────────────────────────────────────────────────
@@ -464,6 +473,58 @@ function workflowEditToSchedule(draft: WorkflowEditDraft) {
   };
 }
 
+function standupScheduleToAutomationSchedule(selectedPreset: string, customCron: string) {
+  const cronExpression = String(customCron || "").trim();
+  if (cronExpression) {
+    return {
+      type: "cron",
+      cron_expression: cronExpression,
+      timezone: "UTC",
+      misfire_policy: "run_once",
+    };
+  }
+  const preset = SCHEDULE_PRESETS.find((row) => row.label === selectedPreset);
+  if (preset?.intervalSeconds) {
+    return {
+      type: "interval",
+      interval_seconds: preset.intervalSeconds,
+      timezone: "UTC",
+      misfire_policy: "run_once",
+    };
+  }
+  if (preset?.cron) {
+    return {
+      type: "cron",
+      cron_expression: preset.cron,
+      timezone: "UTC",
+      misfire_policy: "run_once",
+    };
+  }
+  return {
+    type: "manual",
+    timezone: "UTC",
+    misfire_policy: "run_once",
+  };
+}
+
+function isStandupAutomation(automation: any) {
+  return String(automation?.metadata?.feature || "").trim() === "agent_standup";
+}
+
+function normalizeStandupTemplateOption(row: any): StandupTemplateOption | null {
+  const templateId = String(row?.template_id || row?.templateID || row?.id || "").trim();
+  if (!templateId) return null;
+  const defaultModel = row?.default_model || row?.defaultModel || {};
+  const modelProvider = String(defaultModel?.provider_id || defaultModel?.providerId || "").trim();
+  const modelId = String(defaultModel?.model_id || defaultModel?.modelId || "").trim();
+  return {
+    templateId,
+    displayName: String(row?.display_name || row?.displayName || row?.name || templateId).trim(),
+    role: String(row?.role || "worker").trim(),
+    modelLabel: modelProvider && modelId ? `${modelProvider}/${modelId}` : "",
+  };
+}
+
 function workflowEditToOperatorPreferences(draft: WorkflowEditDraft) {
   const prefs: Record<string, any> = {
     execution_mode: draft.executionMode,
@@ -590,6 +651,61 @@ function normalizeTimestamp(raw: any) {
   return value < 1_000_000_000_000 ? value * 1000 : value;
 }
 
+function timestampOrNull(raw: any) {
+  const value = Number(raw || 0);
+  if (!Number.isFinite(value) || value <= 0) return null;
+  return value < 1_000_000_000_000 ? value * 1000 : value;
+}
+
+function formatTimestampLabel(raw: any) {
+  const value = timestampOrNull(raw);
+  return value ? new Date(value).toLocaleTimeString() : "time unavailable";
+}
+
+function compactIdentifier(raw: any, max = 28) {
+  const value = String(raw || "").trim();
+  if (!value) return "";
+  if (value.length <= max) return value;
+  const head = Math.max(8, Math.floor((max - 1) / 2));
+  const tail = Math.max(6, max - head - 1);
+  return `${value.slice(0, head)}…${value.slice(-tail)}`;
+}
+
+function workflowHistoryEntries(events: any[], patches: any[]) {
+  const eventRows = (Array.isArray(events) ? events : []).map((event: any) => ({
+    id: `event:${String(event?.seq || "")}:${String(event?.event_type || event?.eventType || "")}`,
+    family: "event",
+    type: String(event?.event_type || event?.eventType || "context_event"),
+    detail: String(
+      event?.payload?.reason ||
+        event?.payload?.detail ||
+        event?.payload?.error ||
+        event?.payload?.status ||
+        event?.status ||
+        ""
+    ).trim(),
+    at:
+      timestampOrNull(event?.created_at_ms || event?.timestamp_ms || event?.timestampMs) ||
+      Number(event?.seq || 0),
+    raw: event,
+  }));
+  const patchRows = (Array.isArray(patches) ? patches : []).map((patch: any) => ({
+    id: `patch:${String(patch?.seq || "")}:${String(patch?.op || "")}`,
+    family: "patch",
+    type: String(patch?.op || "blackboard_patch"),
+    detail: String(
+      patch?.payload?.status ||
+        patch?.payload?.task_id ||
+        patch?.payload?.artifact_id ||
+        patch?.payload?.title ||
+        ""
+    ).trim(),
+    at: timestampOrNull(patch?.created_at_ms || patch?.timestamp_ms) || Number(patch?.seq || 0),
+    raw: patch,
+  }));
+  return [...eventRows, ...patchRows].sort((a, b) => Number(b.at || 0) - Number(a.at || 0));
+}
+
 function shortText(raw: any, max = 88) {
   const text = String(raw || "")
     .replace(/\s+/g, " ")
@@ -652,10 +768,13 @@ function extractSessionIdsFromRun(run: any) {
 }
 
 function extractRunNodeOutputs(run: any) {
-  const outputs = run?.checkpoint?.node_outputs || run?.checkpoint?.nodeOutputs || {};
+  const outputs = (run?.checkpoint?.node_outputs || run?.checkpoint?.nodeOutputs || {}) as Record<
+    string,
+    any
+  >;
   return Object.entries(outputs).map(([nodeId, value]) => ({
     nodeId,
-    value,
+    value: value as any,
   }));
 }
 
@@ -697,6 +816,155 @@ function sessionMessageVariant(message: any) {
 
 function sessionMessageParts(message: any) {
   return Array.isArray(message?.parts) ? message.parts : [];
+}
+
+function sessionMessageCreatedAt(message: any) {
+  return normalizeTimestamp(
+    message?.info?.time?.created || message?.info?.created_at_ms || message?.created_at_ms || 0
+  );
+}
+
+function sessionMessageId(message: any, index: number) {
+  return (
+    String(message?.info?.id || message?.id || `message-${index}`).trim() || `message-${index}`
+  );
+}
+
+function sessionLabel(sessionId: string) {
+  const value = String(sessionId || "").trim();
+  return value ? `session ${compactIdentifier(value, 18)}` : "session";
+}
+
+function normalizeWorkflowTaskId(raw: string) {
+  const value = String(raw || "").trim();
+  if (!value) return "";
+  return value.startsWith("node-") ? value : `node-${value}`;
+}
+
+function workflowNodeIdFromText(raw: string) {
+  const text = String(raw || "").trim();
+  if (!text) return "";
+  for (const pattern of [
+    /node id:\s*([a-z0-9._-]+)/i,
+    /step[_\s]id:\s*([a-z0-9._-]+)/i,
+    /task[_\s]id:\s*(?:node-)?([a-z0-9._-]+)/i,
+  ]) {
+    const match = text.match(pattern);
+    if (match?.[1]) return normalizeWorkflowTaskId(match[1]);
+  }
+  return "";
+}
+
+function workflowTaskStateFromCheckpoint(
+  nodeId: string,
+  checkpoint: any,
+  dependencyTaskIds: string[]
+): "pending" | "runnable" | "done" | "failed" {
+  const completed = new Set(
+    Array.isArray(checkpoint?.completed_nodes) ? checkpoint.completed_nodes.map(String) : []
+  );
+  const pending = new Set(
+    Array.isArray(checkpoint?.pending_nodes) ? checkpoint.pending_nodes.map(String) : []
+  );
+  const taskId = String(nodeId || "").trim();
+  if (completed.has(taskId)) return "done";
+  const output = checkpoint?.node_outputs?.[taskId] || checkpoint?.nodeOutputs?.[taskId];
+  const errorText = String(
+    output?.error ||
+      output?.content?.error ||
+      output?.content?.message ||
+      output?.content?.status_message ||
+      ""
+  )
+    .trim()
+    .toLowerCase();
+  if (errorText && (errorText.includes("failed") || errorText.includes("error"))) return "failed";
+  if (!pending.has(taskId)) {
+    return dependencyTaskIds.length ? "pending" : "runnable";
+  }
+  return dependencyTaskIds.length ? "pending" : "runnable";
+}
+
+function buildWorkflowProjectionFromRunSnapshot(run: any, activeTaskId = "") {
+  const snapshotNodes = Array.isArray(run?.automation_snapshot?.flow?.nodes)
+    ? run.automation_snapshot.flow.nodes
+    : [];
+  if (!snapshotNodes.length) {
+    return { currentTaskId: "", taskSource: "empty" as const, tasks: [] };
+  }
+  const checkpoint = run?.checkpoint || {};
+  const completed = new Set(
+    Array.isArray(checkpoint?.completed_nodes) ? checkpoint.completed_nodes.map(String) : []
+  );
+  const tasks = snapshotNodes.map((node: any) => {
+    const nodeId = String(node?.node_id || "").trim();
+    const taskId = `node-${nodeId}`;
+    const dependencies = Array.isArray(node?.depends_on)
+      ? node.depends_on.map((dep: unknown) => `node-${String(dep || "").trim()}`).filter(Boolean)
+      : [];
+    const ready = dependencies.every((depId) => completed.has(depId.replace(/^node-/, "")));
+    const state = workflowTaskStateFromCheckpoint(nodeId, checkpoint, ready ? [] : dependencies);
+    const output = checkpoint?.node_outputs?.[nodeId] || checkpoint?.nodeOutputs?.[nodeId] || {};
+    const inferredState =
+      activeTaskId === taskId &&
+      String(run?.status || "")
+        .trim()
+        .toLowerCase() === "running"
+        ? "in_progress"
+        : state === "pending" && ready
+          ? "runnable"
+          : state;
+    return {
+      id: taskId,
+      title: String(node?.objective || nodeId || "Workflow node"),
+      description: String(node?.agent_id ? `agent: ${node.agent_id}` : ""),
+      dependencies,
+      state: inferredState,
+      retry_count: Number(
+        checkpoint?.node_attempts?.[nodeId] || checkpoint?.nodeAttempts?.[nodeId] || 0
+      ),
+      error_message: String(output?.error || output?.content?.error || ""),
+      runtime_status: String(output?.content?.status || ""),
+      runtime_detail: String(output?.summary || output?.content?.message || ""),
+      assigned_role: String(node?.agent_id || ""),
+      workflow_id: String(run?.automation_id || ""),
+      session_id: String(output?.content?.session_id || output?.content?.sessionId || ""),
+    };
+  });
+  const currentTaskId =
+    activeTaskId ||
+    tasks.find((task) => task.state === "in_progress" || task.state === "assigned")?.id ||
+    tasks.find((task) => task.state === "runnable")?.id ||
+    "";
+  return { currentTaskId, taskSource: "checkpoint" as const, tasks };
+}
+
+function detectWorkflowActiveTaskId(
+  run: any,
+  sessionMessages: Array<{ sessionId: string; message: any }>,
+  sessionEvents: Array<{ id: string; at: number; event: any }>
+) {
+  const status = String(run?.status || "")
+    .trim()
+    .toLowerCase();
+  if (!["running", "pausing", "paused"].includes(status)) return "";
+  for (let i = sessionEvents.length - 1; i >= 0; i -= 1) {
+    const payload = sessionEvents[i]?.event?.properties || sessionEvents[i]?.event || {};
+    const explicit = normalizeWorkflowTaskId(
+      String(payload?.task_id || payload?.step_id || payload?.node_id || "").trim()
+    );
+    if (explicit) return explicit;
+    const fromText = workflowNodeIdFromText(
+      String(payload?.message || payload?.detail || payload?.reason || "")
+    );
+    if (fromText) return fromText;
+  }
+  for (let i = sessionMessages.length - 1; i >= 0; i -= 1) {
+    const fromText = workflowNodeIdFromText(sessionMessageText(sessionMessages[i]?.message));
+    if (fromText) return fromText;
+  }
+  const pending = Array.isArray(run?.checkpoint?.pending_nodes) ? run.checkpoint.pending_nodes : [];
+  return pending.length ? normalizeWorkflowTaskId(String(pending[0] || "")) : "";
 }
 
 function eventReason(event: any) {
@@ -2636,6 +2904,255 @@ function CreateWizard({
   );
 }
 
+function StandupBuilder({
+  client,
+  toast,
+  navigate,
+}: {
+  client: any;
+  toast: any;
+  navigate: (route: string) => void;
+}) {
+  const queryClient = useQueryClient();
+  const [name, setName] = useState("Daily Engineering Standup");
+  const [workspaceRoot, setWorkspaceRoot] = useState("");
+  const [schedulePreset, setSchedulePreset] = useState("Every morning");
+  const [customCron, setCustomCron] = useState("");
+  const [reportPathTemplate, setReportPathTemplate] = useState("docs/standups/{{date}}.md");
+  const [participantTemplateIds, setParticipantTemplateIds] = useState<string[]>([]);
+  const [preview, setPreview] = useState<any>(null);
+
+  const templatesQuery = useQuery({
+    queryKey: ["automations", "standup", "templates"],
+    queryFn: () =>
+      client?.agentTeams?.listTemplates?.().catch(() => ({ templates: [] })) ??
+      Promise.resolve({ templates: [] }),
+    refetchInterval: 12000,
+  });
+  const healthQuery = useQuery({
+    queryKey: ["automations", "standup", "health"],
+    queryFn: () => client?.health?.().catch(() => ({})) ?? Promise.resolve({}),
+    refetchInterval: 30000,
+  });
+
+  useEffect(() => {
+    const defaultWorkspaceRoot = String(
+      (healthQuery.data as any)?.workspaceRoot || (healthQuery.data as any)?.workspace_root || ""
+    ).trim();
+    if (!defaultWorkspaceRoot) return;
+    setWorkspaceRoot((current) => current || defaultWorkspaceRoot);
+  }, [healthQuery.data]);
+
+  const templates = useMemo(
+    () =>
+      toArray(templatesQuery.data, "templates")
+        .map(normalizeStandupTemplateOption)
+        .filter((row): row is StandupTemplateOption => !!row),
+    [templatesQuery.data]
+  );
+
+  const composeMutation = useMutation({
+    mutationFn: async () => {
+      const trimmedName = String(name || "").trim();
+      const trimmedWorkspaceRoot = String(workspaceRoot || "").trim();
+      if (!trimmedName) throw new Error("Standup name is required.");
+      const workspaceError = validateWorkspaceRootInput(trimmedWorkspaceRoot);
+      if (workspaceError) throw new Error(workspaceError);
+      if (!participantTemplateIds.length) {
+        throw new Error("Select at least one participant template.");
+      }
+      const response = await client?.agentTeams?.composeStandup?.({
+        name: trimmedName,
+        workspaceRoot: trimmedWorkspaceRoot,
+        schedule: standupScheduleToAutomationSchedule(schedulePreset, customCron),
+        participantTemplateIds,
+        reportPathTemplate: String(reportPathTemplate || "").trim() || undefined,
+      });
+      return response || null;
+    },
+    onSuccess: (response) => {
+      setPreview(response?.automation || null);
+    },
+    onError: (error) => toast("err", error instanceof Error ? error.message : String(error)),
+  });
+
+  const createMutation = useMutation({
+    mutationFn: async () => {
+      const automation = preview || (await composeMutation.mutateAsync())?.automation;
+      if (!automation) throw new Error("Standup compose failed.");
+      return client?.automationsV2?.create?.(automation);
+    },
+    onSuccess: async () => {
+      toast("ok", "Agent standup automation created.");
+      setPreview(null);
+      await queryClient.invalidateQueries({ queryKey: ["automations"] });
+    },
+    onError: (error) => toast("err", error instanceof Error ? error.message : String(error)),
+  });
+
+  return (
+    <div className="grid gap-4 rounded-2xl border border-emerald-500/20 bg-emerald-500/5 p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="text-xs font-medium uppercase tracking-[0.24em] text-emerald-300">
+            Agent Standup
+          </div>
+          <h3 className="mt-1 text-lg font-semibold text-white">
+            Build a scheduled standup from saved agent templates
+          </h3>
+          <p className="mt-1 text-sm text-slate-300">
+            This creates a workflow automation that gathers per-agent updates, synthesizes them, and
+            writes a markdown standup report into the workspace.
+          </p>
+        </div>
+        <span className="tcp-badge-ok">MVP</span>
+      </div>
+
+      <div className="grid gap-3 md:grid-cols-2">
+        <input
+          className="tcp-input"
+          placeholder="Standup name"
+          value={name}
+          onInput={(event) => setName((event.target as HTMLInputElement).value)}
+        />
+        <input
+          className="tcp-input"
+          placeholder="/absolute/workspace/root"
+          value={workspaceRoot}
+          onInput={(event) => setWorkspaceRoot((event.target as HTMLInputElement).value)}
+        />
+        <select
+          className="tcp-input"
+          value={schedulePreset}
+          onInput={(event) => setSchedulePreset((event.target as HTMLSelectElement).value)}
+        >
+          {SCHEDULE_PRESETS.map((preset) => (
+            <option key={preset.label} value={preset.label}>
+              {preset.label}
+            </option>
+          ))}
+        </select>
+        <input
+          className="tcp-input font-mono text-sm"
+          placeholder="Custom cron (optional)"
+          value={customCron}
+          onInput={(event) => setCustomCron((event.target as HTMLInputElement).value)}
+        />
+      </div>
+
+      <input
+        className="tcp-input font-mono text-sm"
+        placeholder="docs/standups/{{date}}.md"
+        value={reportPathTemplate}
+        onInput={(event) => setReportPathTemplate((event.target as HTMLInputElement).value)}
+      />
+
+      <div className="rounded-2xl border border-slate-800/80 bg-slate-950/40 px-4 py-3 text-sm text-slate-300">
+        Standup participants come from saved agent personalities. Create or edit them on the Agents
+        page, then return here to pick which personalities join the standup.
+        <div className="mt-3">
+          <button className="tcp-btn" onClick={() => navigate("agents")}>
+            <i data-lucide="users"></i>
+            Open Agents
+          </button>
+        </div>
+      </div>
+
+      <div className="grid gap-2">
+        <div className="text-xs font-medium uppercase tracking-[0.24em] text-slate-500">
+          Participant templates
+        </div>
+        {templates.length ? (
+          <div className="grid gap-2 md:grid-cols-2">
+            {templates.map((template) => {
+              const selected = participantTemplateIds.includes(template.templateId);
+              return (
+                <button
+                  key={template.templateId}
+                  className={`tcp-list-item text-left transition-all ${
+                    selected ? "border-emerald-400/60 bg-emerald-400/10" : ""
+                  }`}
+                  onClick={() =>
+                    setParticipantTemplateIds((current) =>
+                      current.includes(template.templateId)
+                        ? current.filter((row) => row !== template.templateId)
+                        : [...current, template.templateId]
+                    )
+                  }
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <strong>{template.displayName}</strong>
+                    <span className="tcp-badge-info">{template.role}</span>
+                  </div>
+                  <div className="tcp-subtle mt-1 text-xs">{template.templateId}</div>
+                  {template.modelLabel ? (
+                    <div className="mt-2 text-xs text-emerald-200">{template.modelLabel}</div>
+                  ) : null}
+                </button>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="grid gap-3">
+            <EmptyState text="No standup agents found yet. Create them on the Agents page first." />
+            <div>
+              <button className="tcp-btn" onClick={() => navigate("agents")}>
+                <i data-lucide="users"></i>
+                Create Standup Agents
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="flex flex-wrap gap-2">
+        <button
+          className="tcp-btn"
+          disabled={composeMutation.isPending || !templates.length}
+          onClick={() => composeMutation.mutate()}
+        >
+          <i data-lucide="file-search"></i>
+          {composeMutation.isPending ? "Composing…" : "Preview Standup Workflow"}
+        </button>
+        <button
+          className="tcp-btn-primary"
+          disabled={createMutation.isPending || !templates.length}
+          onClick={() => createMutation.mutate()}
+        >
+          <i data-lucide="rocket"></i>
+          {createMutation.isPending ? "Creating…" : "Create Standup Automation"}
+        </button>
+      </div>
+
+      {preview ? (
+        <div className="rounded-xl border border-slate-700/50 bg-slate-950/40 p-3">
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <strong>{String(preview?.name || "Standup preview")}</strong>
+            <span className="tcp-badge-info">
+              {Array.isArray(preview?.flow?.nodes) ? preview.flow.nodes.length : 0} nodes
+            </span>
+          </div>
+          <div className="grid gap-2 text-xs text-slate-300">
+            <div>schedule: {formatAutomationV2ScheduleLabel(preview?.schedule)}</div>
+            <div>
+              report:{" "}
+              {String(preview?.metadata?.standup?.report_path_template || reportPathTemplate)}
+            </div>
+            <div>
+              participants:{" "}
+              {String(
+                (
+                  preview?.metadata?.standup?.participant_template_ids || participantTemplateIds
+                ).join(", ")
+              )}
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 // ─── My Automations (combined routines + packs) ─────────────────────────────
 
 function MyAutomations({
@@ -2672,31 +3189,23 @@ function MyAutomations({
     cronExpression: string;
     intervalSeconds: string;
   } | null>(null);
-  const [selectedLogSource, setSelectedLogSource] = useState<"all" | "automations" | "global">(
-    "all"
-  );
+  const [selectedLogSource, setSelectedLogSource] = useState<
+    "all" | "automations" | "context" | "global"
+  >("all");
   const [runEvents, setRunEvents] = useState<
     Array<{ id: string; source: "automations" | "global"; at: number; event: any }>
   >([]);
   const [selectedSessionId, setSelectedSessionId] = useState<string>("");
+  const [selectedSessionFilterId, setSelectedSessionFilterId] = useState<string>("all");
+  const [selectedBoardTaskId, setSelectedBoardTaskId] = useState<string>("");
   const [sessionEvents, setSessionEvents] = useState<Array<{ id: string; at: number; event: any }>>(
     []
   );
+  const boardDetailRef = useRef<HTMLDivElement | null>(null);
   const sessionLogRef = useRef<HTMLDivElement | null>(null);
   const [sessionLogPinnedToBottom, setSessionLogPinnedToBottom] = useState(true);
   const [workflowEditDraft, setWorkflowEditDraft] = useState<WorkflowEditDraft | null>(null);
   const isWorkflowRun = selectedRunId.startsWith("automation-v2-run-");
-  const workflowAutomationIds = useMemo(
-    () =>
-      toArray(automationsV2Query.data, "automations")
-        .map((automation: any) =>
-          String(
-            automation?.automation_id || automation?.automationId || automation?.id || ""
-          ).trim()
-        )
-        .filter(Boolean),
-    [automationsV2Query.data]
-  );
 
   const automationsQuery = useQuery({
     queryKey: ["automations", "list"],
@@ -2712,6 +3221,17 @@ function MyAutomations({
       Promise.resolve({ automations: [] }),
     refetchInterval: 20000,
   });
+  const workflowAutomationIds = useMemo(
+    () =>
+      toArray(automationsV2Query.data, "automations")
+        .map((automation: any) =>
+          String(
+            automation?.automation_id || automation?.automationId || automation?.id || ""
+          ).trim()
+        )
+        .filter(Boolean),
+    [automationsV2Query.data]
+  );
   const providerCatalogQuery = useQuery({
     queryKey: ["providers", "catalog", "workflow-edit"],
     queryFn: () =>
@@ -2772,29 +3292,89 @@ function MyAutomations({
     () => extractSessionIdsFromRun((runDetailQuery.data as any)?.run),
     [runDetailQuery.data]
   );
-  const sessionMessagesQuery = useQuery({
-    queryKey: ["automations", "run", "session", selectedRunId, selectedSessionId, "messages"],
-    enabled: !!selectedRunId && !!selectedSessionId,
-    queryFn: () =>
-      client?.sessions?.messages?.(selectedSessionId).catch(() => []) ?? Promise.resolve([]),
-    refetchInterval:
-      selectedRunId &&
-      selectedSessionId &&
-      isActiveRunStatus((runDetailQuery.data as any)?.run?.status)
-        ? 4000
-        : false,
+  const sessionMessageQueries = useQueries({
+    queries: availableSessionIds.map((sessionId) => ({
+      queryKey: ["automations", "run", "session", selectedRunId, sessionId, "messages"],
+      enabled: !!selectedRunId && !!sessionId,
+      queryFn: () => client?.sessions?.messages?.(sessionId).catch(() => []) ?? Promise.resolve([]),
+      refetchInterval:
+        selectedRunId && sessionId && isActiveRunStatus((runDetailQuery.data as any)?.run?.status)
+          ? 4000
+          : false,
+    })),
   });
   const selectedAutomationId = String(
     (runDetailQuery.data as any)?.run?.automation_id ||
       (runDetailQuery.data as any)?.run?.routine_id ||
       ""
   ).trim();
+  const selectedContextRunId = String(
+    (runDetailQuery.data as any)?.contextRunID ||
+      (isWorkflowRun && selectedRunId ? `automation-v2-${selectedRunId}` : "")
+  ).trim();
   const runHistoryQuery = useQuery({
     queryKey: ["automations", "history", selectedAutomationId],
-    enabled: !!selectedAutomationId,
+    enabled: !!selectedAutomationId && !isWorkflowRun,
     queryFn: () =>
       client?.automations?.history?.(selectedAutomationId, 80).catch(() => ({ events: [] })),
     refetchInterval: selectedRunId ? 10000 : false,
+  });
+  const persistedRunEventsQuery = useQuery({
+    queryKey: ["automations", "run", "events", selectedRunId],
+    enabled: !!selectedRunId && !!client?.runEvents,
+    queryFn: () => client.runEvents(selectedRunId, { tail: 400 }).catch(() => []),
+    refetchInterval:
+      selectedRunId && isActiveRunStatus((runDetailQuery.data as any)?.run?.status) ? 5000 : false,
+  });
+  const workflowContextRunQuery = useQuery({
+    queryKey: ["automations", "run", "context", selectedContextRunId],
+    enabled: !!selectedContextRunId,
+    queryFn: () =>
+      api(`/api/engine/context/runs/${encodeURIComponent(selectedContextRunId)}`).catch(() => ({
+        run: null,
+      })),
+    refetchInterval:
+      selectedContextRunId && isActiveRunStatus((runDetailQuery.data as any)?.run?.status)
+        ? 5000
+        : false,
+  });
+  const workflowContextBlackboardQuery = useQuery({
+    queryKey: ["automations", "run", "context", selectedContextRunId, "blackboard"],
+    enabled: !!selectedContextRunId,
+    queryFn: () =>
+      api(`/api/engine/context/runs/${encodeURIComponent(selectedContextRunId)}/blackboard`).catch(
+        () => ({
+          blackboard: null,
+        })
+      ),
+    refetchInterval:
+      selectedContextRunId && isActiveRunStatus((runDetailQuery.data as any)?.run?.status)
+        ? 5000
+        : false,
+  });
+  const workflowContextEventsQuery = useQuery({
+    queryKey: ["automations", "run", "context", selectedContextRunId, "events"],
+    enabled: !!selectedContextRunId,
+    queryFn: () =>
+      api(`/api/engine/context/runs/${encodeURIComponent(selectedContextRunId)}/events`).catch(
+        () => ({ events: [] })
+      ),
+    refetchInterval:
+      selectedContextRunId && isActiveRunStatus((runDetailQuery.data as any)?.run?.status)
+        ? 5000
+        : false,
+  });
+  const workflowContextPatchesQuery = useQuery({
+    queryKey: ["automations", "run", "context", selectedContextRunId, "patches"],
+    enabled: !!selectedContextRunId,
+    queryFn: () =>
+      api(
+        `/api/engine/context/runs/${encodeURIComponent(selectedContextRunId)}/blackboard/patches`
+      ).catch(() => ({ patches: [] })),
+    refetchInterval:
+      selectedContextRunId && isActiveRunStatus((runDetailQuery.data as any)?.run?.status)
+        ? 5000
+        : false,
   });
   const packsQuery = useQuery({
     queryKey: ["automations", "packs"],
@@ -3071,17 +3651,189 @@ function MyAutomations({
     return status === "failed" || status === "error";
   });
   const selectedRun = (runDetailQuery.data as any)?.run || null;
-  const runArtifacts = toArray(runArtifactsQuery.data, "artifacts");
+  const workflowBlackboard = (workflowContextBlackboardQuery.data as any)?.blackboard || null;
+  const workflowContextEvents = Array.isArray((workflowContextEventsQuery.data as any)?.events)
+    ? (workflowContextEventsQuery.data as any).events
+    : [];
+  const workflowContextPatches = Array.isArray((workflowContextPatchesQuery.data as any)?.patches)
+    ? (workflowContextPatchesQuery.data as any).patches
+    : [];
+  const workflowProjection = useMemo(() => {
+    if (!isWorkflowRun) return { tasks: [], currentTaskId: "", taskSource: "empty" as const };
+    const activeTaskId = detectWorkflowActiveTaskId(selectedRun, [], sessionEvents);
+    const contextProjection = projectOrchestrationRun({
+      run: (workflowContextRunQuery.data as any)?.run || null,
+      tasks: Array.isArray((workflowContextRunQuery.data as any)?.run?.steps)
+        ? (workflowContextRunQuery.data as any)?.run.steps
+        : [],
+      blackboard: workflowBlackboard,
+      events: workflowContextEvents,
+    });
+    if (contextProjection.tasks.length) {
+      const normalizedTasks = activeTaskId
+        ? contextProjection.tasks.map((task) =>
+            task.id === activeTaskId && ["pending", "runnable", "assigned"].includes(task.state)
+              ? { ...task, state: "in_progress" as const }
+              : task
+          )
+        : contextProjection.tasks;
+      return {
+        ...contextProjection,
+        tasks: normalizedTasks,
+        currentTaskId: contextProjection.currentTaskId || activeTaskId,
+      };
+    }
+    return buildWorkflowProjectionFromRunSnapshot(selectedRun, activeTaskId);
+  }, [
+    isWorkflowRun,
+    selectedRun,
+    sessionEvents,
+    workflowBlackboard,
+    workflowContextEvents,
+    workflowContextRunQuery.data,
+  ]);
+  const selectedBoardTask = useMemo(
+    () => workflowProjection.tasks.find((task) => task.id === selectedBoardTaskId) || null,
+    [selectedBoardTaskId, workflowProjection.tasks]
+  );
+  useEffect(() => {
+    if (!selectedBoardTask || !boardDetailRef.current) return;
+    boardDetailRef.current.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, [selectedBoardTask]);
+  const runArtifacts = isWorkflowRun
+    ? Array.isArray(workflowBlackboard?.artifacts)
+      ? workflowBlackboard.artifacts
+      : []
+    : toArray(runArtifactsQuery.data, "artifacts");
   const runHints = deriveRunDebugHints(selectedRun, runArtifacts);
-  const runHistoryEvents = Array.isArray((runHistoryQuery.data as any)?.events)
-    ? (runHistoryQuery.data as any).events
-    : Array.isArray((runHistoryQuery.data as any)?.history)
-      ? (runHistoryQuery.data as any).history
-      : [];
-  const filteredRunEvents = runEvents.filter((item) =>
+  const runHistoryEvents = isWorkflowRun
+    ? (() => {
+        const contextHistory = workflowHistoryEntries(
+          workflowContextEvents,
+          workflowContextPatches
+        );
+        if (contextHistory.length) return contextHistory;
+        const persisted = Array.isArray(persistedRunEventsQuery.data)
+          ? persistedRunEventsQuery.data
+          : [];
+        return persisted
+          .map((event: any, index: number) => ({
+            id: `persisted:${selectedRunId}:${index}`,
+            family: "run_event",
+            type: String(eventType(event) || "run.event"),
+            detail: String(eventReason(event) || "").trim(),
+            at: eventAt(event),
+            raw: event,
+          }))
+          .sort((a, b) => Number(b.at || 0) - Number(a.at || 0));
+      })()
+    : Array.isArray((runHistoryQuery.data as any)?.events)
+      ? (runHistoryQuery.data as any).events
+      : Array.isArray((runHistoryQuery.data as any)?.history)
+        ? (runHistoryQuery.data as any).history
+        : [];
+  const telemetrySeedEvents = useMemo(() => {
+    const persisted = (
+      Array.isArray(persistedRunEventsQuery.data) ? persistedRunEventsQuery.data : []
+    ).map((event: any, index: number) => ({
+      id: `persisted:${selectedRunId}:${String(event?.seq || index)}:${String(eventType(event) || "")}`,
+      source: "automations" as const,
+      at: eventAt(event),
+      event,
+    }));
+    if (!isWorkflowRun) return persisted;
+    return [
+      ...persisted,
+      ...workflowContextEvents.map((event: any) => ({
+        id: `context:${String(event?.seq || "")}:${String(event?.event_type || "")}`,
+        source: "context",
+        at:
+          timestampOrNull(event?.created_at_ms || event?.timestamp_ms || event?.timestampMs) ||
+          Date.now(),
+        event,
+      })),
+    ];
+  }, [isWorkflowRun, persistedRunEventsQuery.data, selectedRunId, workflowContextEvents]);
+  const telemetryEvents = useMemo(() => {
+    const all = [...telemetrySeedEvents, ...runEvents];
+    const seen = new Set<string>();
+    return all
+      .filter((item) => {
+        if (!item?.id || seen.has(item.id)) return false;
+        seen.add(item.id);
+        return true;
+      })
+      .sort((a, b) => Number(a.at || 0) - Number(b.at || 0));
+  }, [telemetrySeedEvents, runEvents]);
+  const filteredRunEvents = telemetryEvents.filter((item) =>
     selectedLogSource === "all" ? true : item.source === selectedLogSource
   );
-  const sessionMessages = Array.isArray(sessionMessagesQuery.data) ? sessionMessagesQuery.data : [];
+  const sessionMessages = useMemo(
+    () =>
+      sessionMessageQueries.flatMap((query, index) => {
+        const sessionId = availableSessionIds[index] || "";
+        const messages = Array.isArray(query.data) ? query.data : [];
+        return messages.map((message: any) => ({
+          sessionId,
+          message,
+        }));
+      }),
+    [availableSessionIds, sessionMessageQueries]
+  );
+  const runSummaryRows = useMemo(() => {
+    const rows: Array<{ label: string; value: string }> = [];
+    rows.push({ label: "status", value: String(selectedRun?.status || "unknown") });
+    rows.push({ label: "artifacts", value: String(runArtifacts.length) });
+    if (isWorkflowRun) {
+      rows.push({ label: "tasks", value: String(workflowProjection.tasks.length) });
+      rows.push({
+        label: "context events",
+        value: String(workflowContextEvents.length),
+      });
+      rows.push({
+        label: "blackboard patches",
+        value: String(workflowContextPatches.length),
+      });
+      if (Array.isArray(selectedRun?.checkpoint?.completed_nodes)) {
+        rows.push({
+          label: "completed nodes",
+          value: String(selectedRun.checkpoint.completed_nodes.length),
+        });
+      }
+      if (Array.isArray(selectedRun?.checkpoint?.pending_nodes)) {
+        rows.push({
+          label: "pending nodes",
+          value: String(selectedRun.checkpoint.pending_nodes.length),
+        });
+      }
+    }
+    if (String(selectedRun?.detail || "").trim()) {
+      rows.push({ label: "detail", value: String(selectedRun.detail).trim() });
+    }
+    if (selectedRun?.requires_approval !== undefined) {
+      rows.push({
+        label: "requires approval",
+        value: String(Boolean(selectedRun?.requires_approval)),
+      });
+    }
+    if (String(selectedRun?.approval_reason || "").trim()) {
+      rows.push({ label: "approval reason", value: String(selectedRun.approval_reason).trim() });
+    }
+    if (String(selectedRun?.denial_reason || "").trim()) {
+      rows.push({ label: "denial reason", value: String(selectedRun.denial_reason).trim() });
+    }
+    if (String(selectedRun?.paused_reason || "").trim()) {
+      rows.push({ label: "paused reason", value: String(selectedRun.paused_reason).trim() });
+    }
+    return rows;
+  }, [
+    isWorkflowRun,
+    runArtifacts.length,
+    selectedRun,
+    workflowContextEvents.length,
+    workflowContextPatches.length,
+    workflowProjection.tasks.length,
+  ]);
 
   useEffect(() => {
     setSelectedSessionId((current) => {
@@ -3091,15 +3843,26 @@ function MyAutomations({
   }, [availableSessionIds]);
 
   useEffect(() => {
+    setSelectedSessionFilterId((current) => {
+      if (current === "all") return current;
+      if (current && availableSessionIds.includes(current)) return current;
+      return "all";
+    });
+  }, [availableSessionIds]);
+
+  useEffect(() => {
     setRunEvents([]);
     setSelectedLogSource("all");
+    setSelectedBoardTaskId("");
     setSessionEvents([]);
     setSessionLogPinnedToBottom(true);
-  }, [selectedRunId]);
+  }, [selectedRunId, selectedContextRunId]);
 
   useEngineStream(
     selectedRunId
-      ? `/api/engine/automations/events?run_id=${encodeURIComponent(selectedRunId)}`
+      ? isWorkflowRun
+        ? `/api/engine/automations/v2/events?run_id=${encodeURIComponent(selectedRunId)}`
+        : `/api/engine/automations/events?run_id=${encodeURIComponent(selectedRunId)}`
       : "",
     (msg) => {
       try {
@@ -3119,6 +3882,30 @@ function MyAutomations({
       }
     },
     { enabled: !!selectedRunId }
+  );
+
+  useEngineStream(
+    selectedContextRunId
+      ? `/api/engine/context/runs/${encodeURIComponent(selectedContextRunId)}/events/stream?tail=50`
+      : "",
+    (msg) => {
+      try {
+        const payload = JSON.parse(String(msg?.data || "{}"));
+        if (!payload || payload.status === "ready") return;
+        const id = `context:${String(payload?.seq || "")}:${String(payload?.event_type || "")}`;
+        const at =
+          timestampOrNull(
+            payload?.created_at_ms || payload?.timestamp_ms || payload?.timestampMs
+          ) || Date.now();
+        setRunEvents((prev) => {
+          if (prev.some((row) => row.id === id)) return prev;
+          return [...prev.slice(-399), { id, source: "context", at, event: payload }];
+        });
+      } catch {
+        return;
+      }
+    },
+    { enabled: !!selectedContextRunId }
   );
 
   useEngineStream(
@@ -3185,6 +3972,7 @@ function MyAutomations({
     !!editDraft,
     !!selectedRunId,
     !!selectedSessionId,
+    !!selectedBoardTask,
     runEvents.length,
     sessionEvents.length,
     updateAutomationMutation.isPending,
@@ -3223,7 +4011,7 @@ function MyAutomations({
       requiresApproval:
         automation?.requires_approval === true ||
         automation?.policy?.approval?.requires_approval === true,
-      scheduleKind: scheduleEditor.scheduleKind,
+      scheduleKind: scheduleEditor.scheduleKind === "cron" ? "cron" : "interval",
       cronExpression: scheduleEditor.cronExpression,
       intervalSeconds: String(scheduleEditor.intervalSeconds),
     });
@@ -3244,19 +4032,24 @@ function MyAutomations({
     [selectedRun, sessionEvents, runEvents]
   );
   const sessionLogEntries = useMemo(() => {
-    const messageEntries = sessionMessages.map((message: any, index: number) => ({
-      id: `message:${String(message?.info?.id || index)}`,
+    const messageEntries = sessionMessages.map(({ sessionId, message }: any, index: number) => ({
+      id: `message:${sessionId}:${sessionMessageId(message, index)}`,
       kind: "message" as const,
-      at: normalizeTimestamp(message?.info?.time?.created),
+      sessionId,
+      at: sessionMessageCreatedAt(message),
       variant: sessionMessageVariant(message),
       label: String(message?.info?.role || "session").trim() || "session",
       body: sessionMessageText(message),
       raw: message,
       parts: sessionMessageParts(message),
+      sessionLabel: sessionLabel(sessionId),
     }));
     const liveEntries = sessionEvents.map((item) => ({
       id: `event:${item.id}`,
       kind: "event" as const,
+      sessionId: String(
+        item?.event?.properties?.sessionID || item?.event?.sessionID || selectedSessionId || ""
+      ).trim(),
       at: item.at,
       variant:
         eventType(item.event) === "session.error"
@@ -3268,9 +4061,16 @@ function MyAutomations({
       body: eventReason(item.event),
       raw: item.event,
       parts: [],
+      sessionLabel: sessionLabel(
+        String(
+          item?.event?.properties?.sessionID || item?.event?.sessionID || selectedSessionId || ""
+        ).trim()
+      ),
     }));
-    return [...messageEntries, ...liveEntries].sort((a, b) => a.at - b.at);
-  }, [sessionMessages, sessionEvents]);
+    const rows = [...messageEntries, ...liveEntries].sort((a, b) => a.at - b.at);
+    if (selectedSessionFilterId === "all") return rows;
+    return rows.filter((entry) => entry.sessionId === selectedSessionFilterId);
+  }, [selectedSessionFilterId, selectedSessionId, sessionMessages, sessionEvents]);
 
   useEffect(() => {
     const el = sessionLogRef.current;
@@ -3438,12 +4238,14 @@ function MyAutomations({
               const id = String(automation?.automation_id || automation?.automationId || "").trim();
               const status = String(automation?.status || "draft").trim();
               const paused = status.toLowerCase() === "paused";
+              const standup = isStandupAutomation(automation);
               return (
                 <div key={id} className="tcp-list-item">
                   <div className="mb-1 flex items-center justify-between gap-2">
                     <div className="flex items-center gap-2">
                       <span>🧩</span>
                       <strong>{String(automation?.name || id || "Workflow automation")}</strong>
+                      {standup ? <span className="tcp-badge-ok">Standup</span> : null}
                     </div>
                     <div className="flex items-center gap-2">
                       <button
@@ -3462,6 +4264,11 @@ function MyAutomations({
                   </div>
                   {String(automation?.description || "").trim() ? (
                     <div className="tcp-subtle text-xs">{String(automation.description)}</div>
+                  ) : null}
+                  {standup ? (
+                    <div className="mt-1 text-xs text-emerald-200">
+                      report: {String(automation?.metadata?.standup?.report_path_template || "")}
+                    </div>
                   ) : null}
                   <div className="tcp-subtle mt-1 text-xs">
                     {formatAutomationV2ScheduleLabel(automation?.schedule)}
@@ -3710,7 +4517,7 @@ function MyAutomations({
                   }}
                 >
                   <i data-lucide="info"></i>
-                  {viewMode === "running" ? "View logs" : "Details"}
+                  {viewMode === "running" ? "Logs" : "Details"}
                 </button>
               </div>
             </div>
@@ -3719,7 +4526,7 @@ function MyAutomations({
       ) : null}
 
       {!runs.length && viewMode === "running" ? (
-        <EmptyState text="Run one automation, then use View logs to inspect full execution events." />
+        <EmptyState text="Run one automation, then use Logs to inspect full execution events." />
       ) : null}
       {!totalSavedAutomations && !packs.length && !runs.length && viewMode === "list" ? (
         <EmptyState text="No automations yet. Create your first one with the wizard!" />
@@ -3734,13 +4541,13 @@ function MyAutomations({
             onClick={() => onSelectRunId("")}
           >
             <motion.div
-              className="tcp-confirm-dialog tcp-run-debugger-modal overflow-hidden"
+              className="tcp-confirm-dialog tcp-run-debugger-modal"
               initial={{ opacity: 0, y: 8, scale: 0.98 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, y: 6, scale: 0.98 }}
               onClick={(event) => event.stopPropagation()}
             >
-              <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+              <div className="mb-3 flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                 <div className="grid gap-1">
                   <h3 className="tcp-confirm-title">Run Debugger</h3>
                   <div className="tcp-subtle text-xs">
@@ -3762,29 +4569,12 @@ function MyAutomations({
                     </div>
                   ) : null}
                 </div>
-                <div className="flex flex-wrap items-center gap-2">
+                <div className="flex w-full flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center lg:w-auto">
                   <span className={statusColor(selectedRun?.status)}>
                     {String(selectedRun?.status || "unknown")}
                   </span>
-                  {availableSessionIds.length > 1 ? (
-                    <select
-                      className="tcp-input h-8 min-w-[16rem] text-xs"
-                      value={selectedSessionId}
-                      onInput={(e) => setSelectedSessionId((e.target as HTMLSelectElement).value)}
-                    >
-                      {availableSessionIds.map((sessionId) => (
-                        <option key={sessionId} value={sessionId}>
-                          {sessionId}
-                        </option>
-                      ))}
-                    </select>
-                  ) : selectedSessionId ? (
-                    <span className="tcp-badge-info">{selectedSessionId}</span>
-                  ) : (
-                    <span className="tcp-badge-warn">no session</span>
-                  )}
                   <button
-                    className="tcp-btn h-8 px-2 text-xs"
+                    className="tcp-btn h-8 w-full px-2 text-xs sm:w-auto"
                     onClick={() => {
                       void Promise.all([
                         queryClient.invalidateQueries({
@@ -3793,16 +4583,47 @@ function MyAutomations({
                         queryClient.invalidateQueries({
                           queryKey: ["automations", "run", "artifacts", selectedRunId],
                         }),
-                        selectedSessionId
+                        selectedContextRunId
+                          ? queryClient.invalidateQueries({
+                              queryKey: ["automations", "run", "context", selectedContextRunId],
+                            })
+                          : Promise.resolve(),
+                        selectedContextRunId
                           ? queryClient.invalidateQueries({
                               queryKey: [
                                 "automations",
                                 "run",
-                                "session",
-                                selectedRunId,
-                                selectedSessionId,
-                                "messages",
+                                "context",
+                                selectedContextRunId,
+                                "blackboard",
                               ],
+                            })
+                          : Promise.resolve(),
+                        selectedContextRunId
+                          ? queryClient.invalidateQueries({
+                              queryKey: [
+                                "automations",
+                                "run",
+                                "context",
+                                selectedContextRunId,
+                                "events",
+                              ],
+                            })
+                          : Promise.resolve(),
+                        selectedContextRunId
+                          ? queryClient.invalidateQueries({
+                              queryKey: [
+                                "automations",
+                                "run",
+                                "context",
+                                selectedContextRunId,
+                                "patches",
+                              ],
+                            })
+                          : Promise.resolve(),
+                        selectedRunId
+                          ? queryClient.invalidateQueries({
+                              queryKey: ["automations", "run", "session", selectedRunId],
                             })
                           : Promise.resolve(),
                       ]);
@@ -3811,49 +4632,144 @@ function MyAutomations({
                     <i data-lucide="refresh-cw"></i>
                     Refresh
                   </button>
-                  <button className="tcp-btn h-8 px-2 text-xs" onClick={() => onSelectRunId("")}>
+                  <button
+                    className="tcp-btn h-8 w-full px-2 text-xs sm:w-auto"
+                    onClick={() => onSelectRunId("")}
+                  >
                     <i data-lucide="x"></i>
                     Close
                   </button>
                 </div>
               </div>
-              <div className="grid max-h-[calc(88vh-8rem)] gap-3 overflow-hidden xl:grid-cols-[1.62fr_1fr]">
-                <div className="grid min-h-0 gap-3 overflow-hidden">
-                  {blockers.length ? (
-                    <div className="tcp-list-item">
-                      <div className="mb-2 font-medium">Blockers</div>
-                      <div className="grid gap-2">
-                        {blockers.map((blocker) => (
-                          <div
-                            key={blocker.key}
-                            className="rounded-lg border border-amber-500/30 bg-amber-950/20 p-3"
-                          >
-                            <div className="mb-1 flex flex-wrap items-center gap-2">
-                              <strong>{blocker.title}</strong>
-                              <span className="tcp-badge-warn">{blocker.source}</span>
-                              {blocker.at ? (
-                                <span className="tcp-subtle text-[11px]">
-                                  {new Date(blocker.at).toLocaleTimeString()}
-                                </span>
-                              ) : null}
-                            </div>
-                            <div className="text-sm text-amber-100/90">{blocker.reason}</div>
+              <div className="grid max-h-[calc(100dvh-8rem)] gap-3 overflow-y-auto pr-1 xl:max-h-[calc(92vh-8rem)] xl:grid-cols-[1.62fr_1fr]">
+                <div className="grid min-h-0 gap-3">
+                  {isWorkflowRun ? (
+                    <div className="tcp-list-item min-h-0 xl:min-h-[18rem]">
+                      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                        <div>
+                          <div className="font-medium">Workflow Board</div>
+                          <div className="tcp-subtle text-xs">
+                            context run: {compactIdentifier(selectedContextRunId || "unlinked", 44)}
+                            {" · "}tasks: {workflowProjection.tasks.length}
+                            {" · "}artifacts: {runArtifacts.length}
                           </div>
-                        ))}
+                        </div>
+                        <span className="tcp-badge-info">
+                          {workflowProjection.taskSource === "hybrid"
+                            ? "blackboard + context"
+                            : workflowProjection.taskSource === "checkpoint"
+                              ? "run checkpoint"
+                              : workflowProjection.taskSource}
+                        </span>
+                      </div>
+                      <TaskBoard
+                        tasks={workflowProjection.tasks}
+                        currentTaskId={workflowProjection.currentTaskId}
+                        selectedTaskId={selectedBoardTaskId}
+                        onTaskSelect={(task) =>
+                          setSelectedBoardTaskId((current) => (current === task.id ? "" : task.id))
+                        }
+                      />
+                    </div>
+                  ) : null}
+                  {selectedBoardTask ? (
+                    <div
+                      ref={boardDetailRef}
+                      className="tcp-list-item relative max-h-[56vh] overflow-y-auto sm:max-h-[28rem]"
+                    >
+                      <div className="sticky -top-3 z-10 -mx-3 -mt-3 mb-2 flex items-center justify-between gap-2 rounded-t-xl border-b border-slate-800/80 bg-[color:color-mix(in_srgb,var(--color-surface-elevated)_96%,#000_4%)] px-3 py-3 backdrop-blur-sm">
+                        <div className="font-medium">Task Details</div>
+                        <button
+                          type="button"
+                          className="chat-icon-btn h-7 w-7"
+                          aria-label="Close task details"
+                          onClick={() => setSelectedBoardTaskId("")}
+                        >
+                          <i data-lucide="x-circle"></i>
+                        </button>
+                      </div>
+                      <div className="grid gap-2 pr-1 text-sm text-slate-200">
+                        <div className="whitespace-pre-wrap break-words font-medium leading-snug">
+                          {selectedBoardTask.title}
+                        </div>
+                        {selectedBoardTask.description ? (
+                          <div className="tcp-subtle whitespace-pre-wrap break-words">
+                            {selectedBoardTask.description}
+                          </div>
+                        ) : null}
+                        <div className="flex flex-wrap gap-2 text-xs">
+                          <span className="tcp-badge-info">{selectedBoardTask.state}</span>
+                          {selectedBoardTask.assigned_role ? (
+                            <span className="tcp-badge-info">
+                              agent: {selectedBoardTask.assigned_role}
+                            </span>
+                          ) : null}
+                          {selectedBoardTask.session_id ? (
+                            <span className="tcp-badge-info">
+                              {sessionLabel(selectedBoardTask.session_id)}
+                            </span>
+                          ) : null}
+                        </div>
+                        {selectedBoardTask.runtime_detail ? (
+                          <div className="whitespace-pre-wrap break-words rounded-lg border border-slate-700/60 bg-slate-950/30 p-3 text-xs text-slate-300">
+                            {selectedBoardTask.runtime_detail}
+                          </div>
+                        ) : null}
+                        {selectedBoardTask.error_message ? (
+                          <div className="whitespace-pre-wrap break-words rounded-lg border border-rose-500/30 bg-rose-950/20 p-3 text-xs text-rose-200">
+                            {selectedBoardTask.error_message}
+                          </div>
+                        ) : null}
+                        {selectedBoardTask.dependencies.length ? (
+                          <div className="flex flex-wrap gap-1 text-xs">
+                            {selectedBoardTask.dependencies.map((dep) => (
+                              <span key={dep} className="tcp-badge-info">
+                                depends on {dep}
+                              </span>
+                            ))}
+                          </div>
+                        ) : null}
                       </div>
                     </div>
                   ) : null}
-                  <div className="tcp-list-item min-h-0 overflow-hidden">
+                  <div className="tcp-list-item min-h-0">
                     <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
                       <div>
                         <div className="font-medium">Live Session Log</div>
                         <div className="tcp-subtle text-xs">
                           {selectedSessionId
-                            ? `Streaming session ${selectedSessionId}`
+                            ? selectedSessionFilterId === "all"
+                              ? `Merged timeline across ${availableSessionIds.length || 1} session${availableSessionIds.length === 1 ? "" : "s"}`
+                              : `Filtered to ${selectedSessionFilterId}`
                             : "This run does not expose a session transcript."}
                         </div>
                       </div>
                       <div className="flex flex-wrap gap-2">
+                        {availableSessionIds.length > 1 ? (
+                          <select
+                            className="tcp-select h-7 min-w-[12rem] max-w-full shrink-0 text-xs sm:min-w-[14rem]"
+                            value={selectedSessionFilterId}
+                            onInput={(e) =>
+                              setSelectedSessionFilterId((e.target as HTMLSelectElement).value)
+                            }
+                          >
+                            <option value="all">All sessions</option>
+                            {availableSessionIds.map((sessionId) => (
+                              <option key={sessionId} value={sessionId} title={sessionId}>
+                                {sessionLabel(sessionId)}
+                              </option>
+                            ))}
+                          </select>
+                        ) : selectedSessionId ? (
+                          <span className="tcp-badge-info" title={selectedSessionId}>
+                            {sessionLabel(selectedSessionId)}
+                          </span>
+                        ) : null}
+                        {selectedSessionId ? (
+                          <span className="tcp-badge-info" title={selectedSessionId}>
+                            live: {compactIdentifier(selectedSessionId, 24)}
+                          </span>
+                        ) : null}
                         <button
                           className="tcp-btn h-7 px-2 text-xs"
                           disabled={!sessionLogEntries.length}
@@ -3863,7 +4779,10 @@ function MyAutomations({
                                 sessionLogEntries
                                   .map((entry) => {
                                     const ts = new Date(entry.at).toLocaleTimeString();
-                                    return `[${ts}] ${entry.label}\n${entry.body || formatJson(entry.raw)}`;
+                                    const sessionTag = entry.sessionId
+                                      ? ` · ${entry.sessionLabel}`
+                                      : "";
+                                    return `[${ts}] ${entry.label}${sessionTag}\n${entry.body || formatJson(entry.raw)}`;
                                   })
                                   .join("\n\n")
                               );
@@ -3891,7 +4810,7 @@ function MyAutomations({
                     </div>
                     <div
                       ref={sessionLogRef}
-                      className="grid max-h-[30rem] min-h-[18rem] gap-2 overflow-auto pr-1"
+                      className="grid min-h-[36vh] gap-2 overflow-auto pr-1 sm:min-h-[18rem] sm:max-h-[30rem]"
                       onScroll={(event) => {
                         const el = event.currentTarget;
                         const pinned = el.scrollHeight - (el.scrollTop + el.clientHeight) < 48;
@@ -3913,9 +4832,16 @@ function MyAutomations({
                             }`}
                           >
                             <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
-                              <span className="text-xs font-medium uppercase tracking-wide text-slate-200">
-                                {entry.label}
-                              </span>
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className="text-xs font-medium uppercase tracking-wide text-slate-200">
+                                  {entry.label}
+                                </span>
+                                {entry.sessionId ? (
+                                  <span className="tcp-badge-info text-[10px]">
+                                    {entry.sessionLabel}
+                                  </span>
+                                ) : null}
+                              </div>
                               <span className="tcp-subtle text-[11px]">
                                 {new Date(entry.at).toLocaleTimeString()}
                               </span>
@@ -3952,31 +4878,39 @@ function MyAutomations({
                         ))
                       ) : (
                         <div className="tcp-subtle text-xs">
-                          {selectedSessionId
+                          {availableSessionIds.length
                             ? "Waiting for session transcript or live session events."
                             : "This run does not expose a session transcript."}
                         </div>
                       )}
                     </div>
                   </div>
-                  <div className="tcp-list-item min-h-0 overflow-hidden">
+                  <div className="tcp-list-item min-h-0">
                     <div className="mb-2 flex items-center justify-between gap-2">
                       <div className="font-medium">Run Telemetry</div>
-                      <div className="flex flex-wrap gap-1">
+                      <div className="flex w-full flex-wrap gap-1 sm:w-auto">
                         <button
-                          className={`tcp-btn h-7 px-2 text-[11px] ${selectedLogSource === "all" ? "border-amber-400/60 bg-amber-400/10 text-amber-300" : ""}`}
+                          className={`tcp-btn h-7 flex-1 px-2 text-[11px] sm:flex-none ${selectedLogSource === "all" ? "border-amber-400/60 bg-amber-400/10 text-amber-300" : ""}`}
                           onClick={() => setSelectedLogSource("all")}
                         >
-                          all ({runEvents.length})
+                          all ({telemetryEvents.length})
                         </button>
                         <button
-                          className={`tcp-btn h-7 px-2 text-[11px] ${selectedLogSource === "automations" ? "border-amber-400/60 bg-amber-400/10 text-amber-300" : ""}`}
+                          className={`tcp-btn h-7 flex-1 px-2 text-[11px] sm:flex-none ${selectedLogSource === "automations" ? "border-amber-400/60 bg-amber-400/10 text-amber-300" : ""}`}
                           onClick={() => setSelectedLogSource("automations")}
                         >
                           automations
                         </button>
+                        {isWorkflowRun ? (
+                          <button
+                            className={`tcp-btn h-7 flex-1 px-2 text-[11px] sm:flex-none ${selectedLogSource === "context" ? "border-amber-400/60 bg-amber-400/10 text-amber-300" : ""}`}
+                            onClick={() => setSelectedLogSource("context")}
+                          >
+                            context
+                          </button>
+                        ) : null}
                         <button
-                          className={`tcp-btn h-7 px-2 text-[11px] ${selectedLogSource === "global" ? "border-amber-400/60 bg-amber-400/10 text-amber-300" : ""}`}
+                          className={`tcp-btn h-7 flex-1 px-2 text-[11px] sm:flex-none ${selectedLogSource === "global" ? "border-amber-400/60 bg-amber-400/10 text-amber-300" : ""}`}
                           onClick={() => setSelectedLogSource("global")}
                         >
                           global
@@ -3984,7 +4918,7 @@ function MyAutomations({
                       </div>
                     </div>
                     {filteredRunEvents.length ? (
-                      <div className="grid max-h-[18rem] gap-2 overflow-auto pr-1">
+                      <div className="grid gap-2 overflow-auto pr-1 sm:max-h-[18rem]">
                         {filteredRunEvents
                           .slice(-40)
                           .reverse()
@@ -3999,7 +4933,7 @@ function MyAutomations({
                                     {eventType(item.event) || "event"}
                                   </span>
                                   <span className="tcp-subtle text-[11px]">
-                                    {new Date(item.at).toLocaleTimeString()} · {item.source}
+                                    {formatTimestampLabel(item.at)} · {item.source}
                                   </span>
                                 </div>
                                 <div className="tcp-subtle mt-1 text-xs">
@@ -4014,12 +4948,38 @@ function MyAutomations({
                       </div>
                     ) : (
                       <div className="tcp-subtle text-xs">
-                        No automation/global telemetry captured for this run yet.
+                        {isWorkflowRun
+                          ? "No workflow, context, or global telemetry has been captured for this run yet."
+                          : "No automation/global telemetry captured for this run yet."}
                       </div>
                     )}
                   </div>
                 </div>
-                <div className="grid min-h-0 gap-3 overflow-hidden">
+                <div className="grid min-h-0 gap-3">
+                  {blockers.length ? (
+                    <div className="tcp-list-item">
+                      <div className="mb-2 font-medium">Blockers</div>
+                      <div className="grid gap-2">
+                        {blockers.map((blocker) => (
+                          <div
+                            key={blocker.key}
+                            className="rounded-lg border border-amber-500/30 bg-amber-950/20 p-3"
+                          >
+                            <div className="mb-1 flex flex-wrap items-center gap-2">
+                              <strong>{blocker.title}</strong>
+                              <span className="tcp-badge-warn">{blocker.source}</span>
+                              {blocker.at ? (
+                                <span className="tcp-subtle text-[11px]">
+                                  {new Date(blocker.at).toLocaleTimeString()}
+                                </span>
+                              ) : null}
+                            </div>
+                            <div className="text-sm text-amber-100/90">{blocker.reason}</div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
                   {runHints.length ? (
                     <div className="tcp-list-item">
                       <div className="mb-1 font-medium">Debug hints</div>
@@ -4033,15 +4993,11 @@ function MyAutomations({
                   <div className="tcp-list-item">
                     <div className="font-medium">Run Summary</div>
                     <div className="mt-2 grid gap-2 text-xs text-slate-300">
-                      <div>status: {String(selectedRun?.status || "unknown")}</div>
-                      <div>artifacts: {String(runArtifacts.length)}</div>
-                      <div>detail: {String(selectedRun?.detail || "n/a")}</div>
-                      <div>
-                        requires_approval: {String(selectedRun?.requires_approval ?? "unknown")}
-                      </div>
-                      <div>approval_reason: {String(selectedRun?.approval_reason || "none")}</div>
-                      <div>denial_reason: {String(selectedRun?.denial_reason || "none")}</div>
-                      <div>paused_reason: {String(selectedRun?.paused_reason || "none")}</div>
+                      {runSummaryRows.map((row) => (
+                        <div key={row.label} className="break-words">
+                          {row.label}: {row.value}
+                        </div>
+                      ))}
                     </div>
                   </div>
                   <div className="tcp-list-item">
@@ -4054,41 +5010,75 @@ function MyAutomations({
                   </div>
                   <div className="tcp-list-item">
                     <div className="font-medium">Artifacts ({runArtifacts.length})</div>
-                    <pre className="tcp-code mt-2 max-h-40 overflow-auto">
-                      {formatJson(runArtifacts)}
-                    </pre>
-                  </div>
-                  <div className="tcp-list-item min-h-0 overflow-hidden">
-                    <div className="font-medium">Persisted History</div>
-                    {runHistoryEvents.length ? (
-                      <div className="mt-2 grid max-h-[14rem] gap-2 overflow-auto pr-1">
-                        {runHistoryEvents.map((event: any, index: number) => (
+                    {runArtifacts.length ? (
+                      <div className="mt-2 grid gap-2 overflow-auto pr-1 sm:max-h-40">
+                        {runArtifacts.map((artifact: any, index: number) => (
                           <details
-                            key={`${String(event?.event || event?.type || "history")}-${index}`}
+                            key={`${String(artifact?.id || artifact?.artifact_id || index)}`}
                             className="rounded-lg border border-slate-700/40 bg-slate-900/25 p-2"
                           >
                             <summary className="cursor-pointer list-none">
                               <div className="flex items-center justify-between gap-2">
                                 <span className="text-xs font-medium text-slate-200">
                                   {String(
-                                    event?.event || event?.type || event?.status || "history"
+                                    artifact?.name ||
+                                      artifact?.label ||
+                                      artifact?.kind ||
+                                      artifact?.type ||
+                                      artifact?.id ||
+                                      `artifact-${index + 1}`
                                   )}
                                 </span>
                                 <span className="tcp-subtle text-[11px]">
-                                  {new Date(
-                                    normalizeTimestamp(
-                                      event?.ts_ms ||
-                                        event?.tsMs ||
-                                        event?.at ||
-                                        event?.timestamp_ms
-                                    )
-                                  ).toLocaleTimeString()}
+                                  {String(
+                                    artifact?.kind || artifact?.type || artifact?.path || ""
+                                  ).trim() || "artifact"}
+                                </span>
+                              </div>
+                            </summary>
+                            <pre className="tcp-code mt-2 max-h-32 overflow-auto text-[11px]">
+                              {formatJson(artifact)}
+                            </pre>
+                          </details>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="tcp-subtle mt-2 text-xs">
+                        {isWorkflowRun
+                          ? "No blackboard artifacts have been recorded for this workflow run yet."
+                          : "No run artifacts were persisted for this automation."}
+                      </div>
+                    )}
+                  </div>
+                  <div className="tcp-list-item min-h-0">
+                    <div className="font-medium">
+                      {isWorkflowRun ? "Run History" : "Persisted History"}
+                    </div>
+                    {runHistoryEvents.length ? (
+                      <div className="mt-2 grid gap-2 overflow-auto pr-1 sm:max-h-[14rem]">
+                        {runHistoryEvents.map((event: any, index: number) => (
+                          <details
+                            key={`${String(event?.id || event?.event || event?.type || "history")}-${index}`}
+                            className="rounded-lg border border-slate-700/40 bg-slate-900/25 p-2"
+                          >
+                            <summary className="cursor-pointer list-none">
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="text-xs font-medium text-slate-200">
+                                  {String(
+                                    event?.type || event?.event || event?.status || "history"
+                                  )}
+                                </span>
+                                <span className="tcp-subtle text-[11px]">
+                                  {formatTimestampLabel(
+                                    event?.ts_ms || event?.tsMs || event?.at || event?.timestamp_ms
+                                  )}
                                 </span>
                               </div>
                               <div className="tcp-subtle mt-1 text-xs">
                                 {String(
                                   event?.detail ||
                                     event?.reason ||
+                                    event?.family ||
                                     event?.status ||
                                     "No summary available."
                                 )}
@@ -4102,11 +5092,13 @@ function MyAutomations({
                       </div>
                     ) : (
                       <div className="tcp-subtle mt-2 text-xs">
-                        No persisted history rows returned for this automation.
+                        {isWorkflowRun
+                          ? "No context-run history has been persisted for this workflow run yet."
+                          : "No persisted history rows returned for this automation."}
                       </div>
                     )}
                   </div>
-                  <div className="tcp-list-item min-h-0 overflow-hidden">
+                  <div className="tcp-list-item min-h-0">
                     <div className="mb-2 flex items-center justify-between gap-2">
                       <div className="font-medium">Raw Run Payload</div>
                       <button
@@ -4121,6 +5113,12 @@ function MyAutomations({
                                 formatJson(runArtifacts),
                                 "=== TELEMETRY ===",
                                 formatJson(filteredRunEvents.map((row) => row.event)),
+                                "=== CONTEXT RUN ===",
+                                formatJson((workflowContextRunQuery.data as any)?.run || null),
+                                "=== BLACKBOARD ===",
+                                formatJson(workflowBlackboard),
+                                "=== HISTORY ===",
+                                formatJson(runHistoryEvents),
                                 "=== SESSION MESSAGES ===",
                                 formatJson(sessionMessages),
                               ].join("\n\n")
@@ -4135,8 +5133,12 @@ function MyAutomations({
                         Copy all debug context
                       </button>
                     </div>
-                    <pre className="tcp-code max-h-[18rem] overflow-auto">
-                      {formatJson(selectedRun)}
+                    <pre className="tcp-code overflow-auto sm:max-h-[18rem]">
+                      {formatJson({
+                        run: selectedRun,
+                        contextRun: (workflowContextRunQuery.data as any)?.run || null,
+                        blackboard: workflowBlackboard,
+                      })}
                     </pre>
                   </div>
                 </div>
@@ -4859,10 +5861,10 @@ export function AutomationsPage({ client, api, toast, navigate, providerStatus }
   const [selectedRunId, setSelectedRunId] = useState<string>("");
 
   const tabs: { id: ActiveTab; label: string; icon: string }[] = [
-    { id: "create", label: "Create New", icon: "sparkles" },
-    { id: "list", label: "My Automations", icon: "clipboard-list" },
-    { id: "running", label: "Live Tasks", icon: "activity" },
-    { id: "approvals", label: "Teams & Approvals", icon: "users" },
+    { id: "create", label: "Create", icon: "sparkles" },
+    { id: "list", label: "Automations", icon: "clipboard-list" },
+    { id: "running", label: "Tasks", icon: "activity" },
+    { id: "approvals", label: "Teams", icon: "users" },
   ];
 
   return (
@@ -4899,14 +5901,17 @@ export function AutomationsPage({ client, api, toast, navigate, providerStatus }
               title="Create an Automation"
               subtitle="Describe what you want, pick a schedule, and Tandem handles the rest"
             >
-              <CreateWizard
-                client={client}
-                api={api}
-                toast={toast}
-                navigate={navigate}
-                defaultProvider={providerStatus.defaultProvider}
-                defaultModel={providerStatus.defaultModel}
-              />
+              <div className="grid gap-6">
+                <StandupBuilder client={client} toast={toast} navigate={navigate} />
+                <CreateWizard
+                  client={client}
+                  api={api}
+                  toast={toast}
+                  navigate={navigate}
+                  defaultProvider={providerStatus.defaultProvider}
+                  defaultModel={providerStatus.defaultModel}
+                />
+              </div>
             </PageCard>
           ) : tab === "list" ? (
             <PageCard title="My Automations" subtitle="Installed packs, routines and run history">

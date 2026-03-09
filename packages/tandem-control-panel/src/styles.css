@@ -1186,6 +1186,14 @@
   backdrop-filter: blur(6px);
 }
 
+@media (max-width: 640px) {
+  .tcp-confirm-overlay {
+    place-items: stretch;
+    align-items: start;
+    padding: 0.25rem;
+  }
+}
+
 .tcp-confirm-backdrop {
   position: absolute;
   inset: 0;
@@ -1224,12 +1232,23 @@
 }
 
 .tcp-run-debugger-modal {
-  width: min(148rem, 99vw);
-  max-width: min(148rem, 99vw);
-  max-height: 90vh;
+  width: min(110rem, 96vw);
+  max-width: min(110rem, 96vw);
+  max-height: 94vh;
   display: flex;
   flex-direction: column;
   border-radius: 1.1rem;
+}
+
+@media (max-width: 640px) {
+  .tcp-run-debugger-modal {
+    width: min(100%, 100vw - 0.5rem);
+    max-width: min(100%, 100vw - 0.5rem);
+    max-height: none;
+    min-height: calc(100dvh - 0.5rem);
+    padding: 0.75rem;
+    border-radius: 0.85rem;
+  }
 }
 
 .tcp-verification-content {
