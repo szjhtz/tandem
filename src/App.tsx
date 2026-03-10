@@ -14,7 +14,6 @@ import { GitInitDialog } from "@/components/dialogs/GitInitDialog";
 import { OrchestratorPanel } from "@/components/orchestrate/OrchestratorPanel";
 import { CommandCenterPage } from "@/components/command-center/CommandCenterPage";
 import { AgentAutomationPage } from "@/components/agent-automation/AgentAutomationPage";
-import { CoderWorkspacePage } from "@/components/coder/CoderWorkspacePage";
 import { type RunSummary } from "@/components/orchestrate/types";
 import { PacksPanel } from "@/components/packs";
 import { AppUpdateOverlay } from "@/components/updates/AppUpdateOverlay";
@@ -83,7 +82,6 @@ import {
   Bot,
   Blocks,
   Loader2,
-  Workflow,
 } from "lucide-react";
 const RELEASES_BASE_URL = "https://github.com/frumu-ai/tandem/releases";
 
@@ -436,7 +434,7 @@ function App() {
   const [orchestratorOpen, setOrchestratorOpen] = useState(false);
   const [currentOrchestratorRunId, setCurrentOrchestratorRunId] = useState<string | null>(null);
   const [commandCenterRunId, setCommandCenterRunId] = useState<string | null>(null);
-  const [agentAutomationRunId, setAgentAutomationRunId] = useState<string | null>(null);
+  const [agentAutomationRunId] = useState<string | null>(null);
   const [orchestratorRuns, setOrchestratorRuns] = useState<RunSummary[]>([]);
   const skipOrchestratorAutoResumeRef = useRef(false);
 
@@ -667,6 +665,7 @@ function App() {
   }, [state?.providers_config]);
 
   const activeProviderId = activeProviderInfo?.providerId || null;
+  const requestedView = view === "coder" ? "agent-automation" : view;
 
   // Update view based on workspace state after loading
   const effectiveView =
@@ -675,15 +674,14 @@ function App() {
       : !sidecarReady
         ? "sidecar-setup"
         : (!state?.has_workspace || !hasConfiguredProvider) &&
-            view !== "settings" &&
-            view !== "about" &&
-            view !== "packs" &&
-            view !== "extensions" &&
-            view !== "command-center" &&
-            view !== "agent-automation" &&
-            view !== "coder"
+            requestedView !== "settings" &&
+            requestedView !== "about" &&
+            requestedView !== "packs" &&
+            requestedView !== "extensions" &&
+            requestedView !== "command-center" &&
+            requestedView !== "agent-automation"
           ? "onboarding"
-          : view;
+          : requestedView;
 
   const shouldShowWhatsNew =
     showWhatsNew &&
@@ -1578,17 +1576,6 @@ function App() {
                 <Sparkles className="h-5 w-5" />
               </button>
               <button
-                onClick={() => setView("coder")}
-                className={`flex h-10 w-10 items-center justify-center rounded-lg transition-colors ${
-                  effectiveView === "coder"
-                    ? "bg-primary/20 text-primary"
-                    : "text-text-muted hover:bg-surface-elevated hover:text-text"
-                }`}
-                title="Coder"
-              >
-                <Workflow className="h-5 w-5" />
-              </button>
-              <button
                 onClick={() => setView("extensions")}
                 className={`flex h-10 w-10 items-center justify-center rounded-lg transition-colors ${
                   effectiveView === "extensions"
@@ -1918,40 +1905,6 @@ function App() {
                   setView("extensions");
                 }}
               />
-            </motion.div>
-          ) : effectiveView === "coder" ? (
-            <motion.div
-              key="coder"
-              className="h-full w-full app-background"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.2, ease: "easeOut" }}
-            >
-                  <CoderWorkspacePage
-                    userProjects={userProjects}
-                    activeProject={activeProject}
-                    onSwitchProject={handleSwitchProject}
-                    onAddProject={handleAddProject}
-                    onManageProjects={handleManageProjects}
-                    projectSwitcherLoading={projectSwitcherLoading}
-                    onOpenAutomation={() => {
-                      setAgentAutomationRunId(null);
-                      setView("agent-automation");
-                    }}
-                    onOpenAutomationRun={(runId) => {
-                      setAgentAutomationRunId(runId);
-                      setView("agent-automation");
-                    }}
-                    onOpenContextRun={(runId) => {
-                      setCommandCenterRunId(runId);
-                      setView("command-center");
-                    }}
-                    onOpenMcpExtensions={() => {
-                      setExtensionsInitialTab("mcp");
-                      setView("extensions");
-                    }}
-                  />
             </motion.div>
           ) : (
             <>
