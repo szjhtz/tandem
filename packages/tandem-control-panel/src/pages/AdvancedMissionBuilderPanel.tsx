@@ -229,7 +229,7 @@ function defaultBlueprint(workspaceRoot: string): MissionBlueprint {
 }
 
 function parseMissionPreset(source: string): MissionPreset {
-  return JSON.parse(source) as MissionPreset;
+  return Function(`"use strict"; return (${source});`)() as MissionPreset;
 }
 
 const STARTER_PRESETS = [
