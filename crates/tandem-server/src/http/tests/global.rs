@@ -19,6 +19,309 @@ async fn wait_for_automation_v2_run_failure(
     }
 }
 
+async fn create_test_automation_v2(
+    state: &AppState,
+    automation_id: &str,
+) -> crate::AutomationV2Spec {
+    let automation = crate::AutomationV2Spec {
+        automation_id: automation_id.to_string(),
+        name: "Test Automation".to_string(),
+        description: Some("automation for runtime regression coverage".to_string()),
+        status: crate::AutomationV2Status::Active,
+        schedule: crate::AutomationV2Schedule {
+            schedule_type: crate::AutomationV2ScheduleType::Manual,
+            cron_expression: None,
+            interval_seconds: None,
+            timezone: "UTC".to_string(),
+            misfire_policy: crate::RoutineMisfirePolicy::RunOnce,
+        },
+        agents: vec![crate::AutomationAgentProfile {
+            agent_id: "agent-a".to_string(),
+            template_id: Some("template-a".to_string()),
+            display_name: "Agent A".to_string(),
+            avatar_url: None,
+            model_policy: Some(json!({
+                "default_model": { "provider_id": "openai", "model_id": "gpt-4.1-mini" }
+            })),
+            skills: Vec::new(),
+            tool_policy: crate::AutomationAgentToolPolicy {
+                allowlist: vec!["read".to_string()],
+                denylist: Vec::new(),
+            },
+            mcp_policy: crate::AutomationAgentMcpPolicy {
+                allowed_servers: Vec::new(),
+                allowed_tools: None,
+            },
+            approval_policy: None,
+        }],
+        flow: crate::AutomationFlowSpec {
+            nodes: vec![
+                crate::AutomationFlowNode {
+                    node_id: "draft".to_string(),
+                    agent_id: "agent-a".to_string(),
+                    objective: "Create draft".to_string(),
+                    depends_on: Vec::new(),
+                    input_refs: Vec::new(),
+                    output_contract: None,
+                    retry_policy: None,
+                    timeout_ms: None,
+                    stage_kind: Some(crate::AutomationNodeStageKind::Workstream),
+                    gate: None,
+                    metadata: Some(json!({
+                        "builder": {
+                            "title": "Draft",
+                            "prompt": "Write draft v1",
+                            "role": "writer"
+                        }
+                    })),
+                },
+                crate::AutomationFlowNode {
+                    node_id: "review".to_string(),
+                    agent_id: "agent-a".to_string(),
+                    objective: "Review draft".to_string(),
+                    depends_on: vec!["draft".to_string()],
+                    input_refs: vec![crate::AutomationFlowInputRef {
+                        from_step_id: "draft".to_string(),
+                        alias: "draft".to_string(),
+                    }],
+                    output_contract: None,
+                    retry_policy: None,
+                    timeout_ms: None,
+                    stage_kind: Some(crate::AutomationNodeStageKind::Review),
+                    gate: None,
+                    metadata: Some(json!({
+                        "builder": {
+                            "title": "Review",
+                            "prompt": "Review the draft",
+                            "role": "reviewer"
+                        }
+                    })),
+                },
+                crate::AutomationFlowNode {
+                    node_id: "approval".to_string(),
+                    agent_id: "agent-a".to_string(),
+                    objective: "Approve output".to_string(),
+                    depends_on: vec!["review".to_string()],
+                    input_refs: vec![crate::AutomationFlowInputRef {
+                        from_step_id: "review".to_string(),
+                        alias: "review".to_string(),
+                    }],
+                    output_contract: None,
+                    retry_policy: None,
+                    timeout_ms: None,
+                    stage_kind: Some(crate::AutomationNodeStageKind::Approval),
+                    gate: Some(crate::AutomationApprovalGate {
+                        required: true,
+                        decisions: vec![
+                            "approve".to_string(),
+                            "rework".to_string(),
+                            "cancel".to_string(),
+                        ],
+                        rework_targets: vec!["draft".to_string()],
+                        instructions: Some("Check the review output".to_string()),
+                    }),
+                    metadata: Some(json!({
+                        "builder": {
+                            "title": "Approval",
+                            "prompt": "",
+                            "role": "approver"
+                        }
+                    })),
+                },
+            ],
+        },
+        execution: crate::AutomationExecutionPolicy {
+            max_parallel_agents: Some(1),
+            max_total_runtime_ms: None,
+            max_total_tool_calls: None,
+            max_total_tokens: None,
+            max_total_cost_usd: None,
+        },
+        output_targets: Vec::new(),
+        created_at_ms: crate::now_ms(),
+        updated_at_ms: crate::now_ms(),
+        creator_id: "test".to_string(),
+        workspace_root: Some(".".to_string()),
+        metadata: Some(json!({
+            "builder_kind": "mission_blueprint",
+            "mission": {
+                "mission_id": "mission-test",
+                "title": "Mission Test",
+                "goal": "Verify runtime reset logic",
+                "success_criteria": ["done"],
+                "phases": [{ "phase_id": "phase_1", "title": "Phase 1", "execution_mode": "soft" }],
+                "milestones": [{ "milestone_id": "m1", "title": "Milestone 1", "required_stage_ids": ["draft", "review"] }]
+            }
+        })),
+        next_fire_at_ms: None,
+        last_fired_at_ms: None,
+    };
+    state
+        .put_automation_v2(automation)
+        .await
+        .expect("store automation")
+}
+
+async fn create_branched_test_automation_v2(
+    state: &AppState,
+    automation_id: &str,
+) -> crate::AutomationV2Spec {
+    let automation = crate::AutomationV2Spec {
+        automation_id: automation_id.to_string(),
+        name: "Branched Test Automation".to_string(),
+        description: Some("automation for branched runtime regression coverage".to_string()),
+        status: crate::AutomationV2Status::Active,
+        schedule: crate::AutomationV2Schedule {
+            schedule_type: crate::AutomationV2ScheduleType::Manual,
+            cron_expression: None,
+            interval_seconds: None,
+            timezone: "UTC".to_string(),
+            misfire_policy: crate::RoutineMisfirePolicy::RunOnce,
+        },
+        agents: vec![crate::AutomationAgentProfile {
+            agent_id: "agent-a".to_string(),
+            template_id: Some("template-a".to_string()),
+            display_name: "Agent A".to_string(),
+            avatar_url: None,
+            model_policy: Some(json!({
+                "default_model": { "provider_id": "openai", "model_id": "gpt-4.1-mini" }
+            })),
+            skills: Vec::new(),
+            tool_policy: crate::AutomationAgentToolPolicy {
+                allowlist: vec!["read".to_string()],
+                denylist: Vec::new(),
+            },
+            mcp_policy: crate::AutomationAgentMcpPolicy {
+                allowed_servers: Vec::new(),
+                allowed_tools: None,
+            },
+            approval_policy: None,
+        }],
+        flow: crate::AutomationFlowSpec {
+            nodes: vec![
+                crate::AutomationFlowNode {
+                    node_id: "research".to_string(),
+                    agent_id: "agent-a".to_string(),
+                    objective: "Research inputs".to_string(),
+                    depends_on: Vec::new(),
+                    input_refs: Vec::new(),
+                    output_contract: None,
+                    retry_policy: None,
+                    timeout_ms: None,
+                    stage_kind: Some(crate::AutomationNodeStageKind::Workstream),
+                    gate: None,
+                    metadata: Some(json!({
+                        "builder": {
+                            "title": "Research",
+                            "prompt": "Gather research",
+                            "role": "researcher"
+                        }
+                    })),
+                },
+                crate::AutomationFlowNode {
+                    node_id: "analysis".to_string(),
+                    agent_id: "agent-a".to_string(),
+                    objective: "Analyze research".to_string(),
+                    depends_on: vec!["research".to_string()],
+                    input_refs: vec![crate::AutomationFlowInputRef {
+                        from_step_id: "research".to_string(),
+                        alias: "research".to_string(),
+                    }],
+                    output_contract: None,
+                    retry_policy: None,
+                    timeout_ms: None,
+                    stage_kind: Some(crate::AutomationNodeStageKind::Workstream),
+                    gate: None,
+                    metadata: Some(json!({
+                        "builder": {
+                            "title": "Analysis",
+                            "prompt": "Analyze research findings",
+                            "role": "analyst"
+                        }
+                    })),
+                },
+                crate::AutomationFlowNode {
+                    node_id: "draft".to_string(),
+                    agent_id: "agent-a".to_string(),
+                    objective: "Draft output".to_string(),
+                    depends_on: vec!["research".to_string()],
+                    input_refs: vec![crate::AutomationFlowInputRef {
+                        from_step_id: "research".to_string(),
+                        alias: "research".to_string(),
+                    }],
+                    output_contract: None,
+                    retry_policy: None,
+                    timeout_ms: None,
+                    stage_kind: Some(crate::AutomationNodeStageKind::Workstream),
+                    gate: None,
+                    metadata: Some(json!({
+                        "builder": {
+                            "title": "Draft",
+                            "prompt": "Write draft",
+                            "role": "writer"
+                        }
+                    })),
+                },
+                crate::AutomationFlowNode {
+                    node_id: "publish".to_string(),
+                    agent_id: "agent-a".to_string(),
+                    objective: "Publish final output".to_string(),
+                    depends_on: vec!["analysis".to_string(), "draft".to_string()],
+                    input_refs: vec![
+                        crate::AutomationFlowInputRef {
+                            from_step_id: "analysis".to_string(),
+                            alias: "analysis".to_string(),
+                        },
+                        crate::AutomationFlowInputRef {
+                            from_step_id: "draft".to_string(),
+                            alias: "draft".to_string(),
+                        },
+                    ],
+                    output_contract: None,
+                    retry_policy: None,
+                    timeout_ms: None,
+                    stage_kind: Some(crate::AutomationNodeStageKind::Workstream),
+                    gate: None,
+                    metadata: Some(json!({
+                        "builder": {
+                            "title": "Publish",
+                            "prompt": "Combine analysis and draft",
+                            "role": "publisher"
+                        }
+                    })),
+                },
+            ],
+        },
+        execution: crate::AutomationExecutionPolicy {
+            max_parallel_agents: Some(2),
+            max_total_runtime_ms: None,
+            max_total_tool_calls: None,
+            max_total_tokens: None,
+            max_total_cost_usd: None,
+        },
+        output_targets: Vec::new(),
+        created_at_ms: crate::now_ms(),
+        updated_at_ms: crate::now_ms(),
+        creator_id: "test".to_string(),
+        workspace_root: Some(".".to_string()),
+        metadata: Some(json!({
+            "builder_kind": "mission_blueprint",
+            "mission": {
+                "mission_id": "branched-mission-test",
+                "title": "Branched Mission Test",
+                "goal": "Verify branch-local recovery logic",
+                "success_criteria": ["done"]
+            }
+        })),
+        next_fire_at_ms: None,
+        last_fired_at_ms: None,
+    };
+    state
+        .put_automation_v2(automation)
+        .await
+        .expect("store automation")
+}
+
 #[tokio::test]
 async fn global_health_route_returns_healthy_shape() {
     let state = test_state().await;
@@ -752,4 +1055,463 @@ async fn automations_v2_executor_fails_run_when_workspace_root_is_file() {
         .as_deref()
         .map(|detail| detail.contains("is not a directory"))
         .unwrap_or(false));
+}
+
+#[tokio::test]
+async fn automations_v2_gate_rework_clears_downstream_outputs_and_requeues_subtree() {
+    let state = test_state().await;
+    let app = app_router(state.clone());
+    let automation = create_test_automation_v2(&state, "auto-v2-rework-reset").await;
+    let run = state
+        .create_automation_v2_run(&automation, "manual")
+        .await
+        .expect("run");
+    let now = crate::now_ms();
+    let updated = state
+        .update_automation_v2_run(&run.run_id, |row| {
+            row.status = crate::AutomationRunStatus::AwaitingApproval;
+            row.checkpoint.completed_nodes = vec!["draft".to_string(), "review".to_string()];
+            row.checkpoint.pending_nodes = vec!["approval".to_string()];
+            row.checkpoint.awaiting_gate = Some(crate::AutomationPendingGate {
+                node_id: "approval".to_string(),
+                title: "Approval".to_string(),
+                instructions: Some("approve".to_string()),
+                decisions: vec![
+                    "approve".to_string(),
+                    "rework".to_string(),
+                    "cancel".to_string(),
+                ],
+                rework_targets: vec!["draft".to_string()],
+                requested_at_ms: now,
+                upstream_node_ids: vec!["review".to_string()],
+            });
+            row.checkpoint
+                .node_outputs
+                .insert("draft".to_string(), json!({"summary":"draft"}));
+            row.checkpoint
+                .node_outputs
+                .insert("review".to_string(), json!({"summary":"review"}));
+        })
+        .await
+        .expect("updated run");
+    assert_eq!(updated.status, crate::AutomationRunStatus::AwaitingApproval);
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/automations/v2/runs/{}/gate", run.run_id))
+                .header("content-type", "application/json")
+                .body(Body::from(json!({ "decision": "rework" }).to_string()))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let repaired = state
+        .get_automation_v2_run(&run.run_id)
+        .await
+        .expect("run after rework");
+    assert_eq!(repaired.status, crate::AutomationRunStatus::Queued);
+    assert_eq!(repaired.checkpoint.completed_nodes, Vec::<String>::new());
+    assert!(repaired
+        .checkpoint
+        .pending_nodes
+        .iter()
+        .any(|id| id == "draft"));
+    assert!(repaired
+        .checkpoint
+        .pending_nodes
+        .iter()
+        .any(|id| id == "review"));
+    assert!(repaired
+        .checkpoint
+        .pending_nodes
+        .iter()
+        .any(|id| id == "approval"));
+    assert!(!repaired.checkpoint.node_outputs.contains_key("draft"));
+    assert!(!repaired.checkpoint.node_outputs.contains_key("review"));
+    assert!(repaired
+        .checkpoint
+        .gate_history
+        .iter()
+        .any(|entry| entry.decision == "rework"));
+}
+
+#[tokio::test]
+async fn automations_v2_run_recover_from_pause_preserves_completed_state_and_records_history() {
+    let state = test_state().await;
+    let app = app_router(state.clone());
+    let automation = create_test_automation_v2(&state, "auto-v2-pause-recover").await;
+    let run = state
+        .create_automation_v2_run(&automation, "manual")
+        .await
+        .expect("run");
+    state
+        .update_automation_v2_run(&run.run_id, |row| {
+            row.status = crate::AutomationRunStatus::Paused;
+            row.pause_reason = Some("paused for operator review".to_string());
+            row.checkpoint.completed_nodes = vec!["draft".to_string()];
+            row.checkpoint.pending_nodes = vec!["review".to_string(), "approval".to_string()];
+            row.checkpoint
+                .node_outputs
+                .insert("draft".to_string(), json!({"summary":"draft"}));
+            row.checkpoint.awaiting_gate = Some(crate::AutomationPendingGate {
+                node_id: "approval".to_string(),
+                title: "Approval".to_string(),
+                instructions: Some("approve".to_string()),
+                decisions: vec![
+                    "approve".to_string(),
+                    "rework".to_string(),
+                    "cancel".to_string(),
+                ],
+                rework_targets: vec!["draft".to_string()],
+                requested_at_ms: crate::now_ms(),
+                upstream_node_ids: vec!["review".to_string()],
+            });
+            row.checkpoint.blocked_nodes = vec!["approval".to_string()];
+        })
+        .await
+        .expect("updated run");
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/automations/v2/runs/{}/recover", run.run_id))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({ "reason": "continue after operator pause" }).to_string(),
+                ))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let recovered = state
+        .get_automation_v2_run(&run.run_id)
+        .await
+        .expect("run after recover");
+    assert_eq!(recovered.status, crate::AutomationRunStatus::Queued);
+    assert_eq!(
+        recovered.checkpoint.completed_nodes,
+        vec!["draft".to_string()]
+    );
+    assert_eq!(
+        recovered.checkpoint.pending_nodes,
+        vec!["review".to_string(), "approval".to_string()]
+    );
+    assert!(recovered.checkpoint.node_outputs.contains_key("draft"));
+    assert!(recovered.checkpoint.awaiting_gate.is_none());
+    assert!(recovered.checkpoint.blocked_nodes.is_empty());
+    assert_eq!(
+        recovered.resume_reason.as_deref(),
+        Some("continue after operator pause")
+    );
+    let recover_event = recovered
+        .checkpoint
+        .lifecycle_history
+        .iter()
+        .find(|entry| entry.event == "run_recovered_from_pause")
+        .expect("recover from pause event");
+    assert_eq!(
+        recover_event.reason.as_deref(),
+        Some("continue after operator pause")
+    );
+}
+
+#[tokio::test]
+async fn automations_v2_run_cancel_records_operator_stop_kind_and_clears_active_ids() {
+    let state = test_state().await;
+    let app = app_router(state.clone());
+    let automation = create_test_automation_v2(&state, "auto-v2-stop-kind").await;
+    let run = state
+        .create_automation_v2_run(&automation, "manual")
+        .await
+        .expect("run");
+    state
+        .update_automation_v2_run(&run.run_id, |row| {
+            row.status = crate::AutomationRunStatus::Running;
+            row.active_session_ids = vec!["session-a".to_string(), "session-b".to_string()];
+            row.active_instance_ids = vec!["instance-a".to_string()];
+        })
+        .await
+        .expect("updated run");
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/automations/v2/runs/{}/cancel", run.run_id))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({ "reason": "kill switch triggered by operator" }).to_string(),
+                ))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let cancelled = state
+        .get_automation_v2_run(&run.run_id)
+        .await
+        .expect("cancelled run");
+    assert_eq!(cancelled.status, crate::AutomationRunStatus::Cancelled);
+    assert_eq!(
+        cancelled.stop_kind,
+        Some(crate::AutomationStopKind::OperatorStopped)
+    );
+    assert_eq!(
+        cancelled.stop_reason.as_deref(),
+        Some("kill switch triggered by operator")
+    );
+    assert!(cancelled.active_session_ids.is_empty());
+    assert!(cancelled.active_instance_ids.is_empty());
+    let stop_event = cancelled
+        .checkpoint
+        .lifecycle_history
+        .iter()
+        .find(|entry| entry.event == "run_stopped")
+        .expect("run stopped event");
+    assert_eq!(
+        stop_event.stop_kind,
+        Some(crate::AutomationStopKind::OperatorStopped)
+    );
+    assert_eq!(
+        stop_event.reason.as_deref(),
+        Some("kill switch triggered by operator")
+    );
+}
+
+#[tokio::test]
+async fn automations_v2_run_recover_on_failed_branch_preserves_completed_sibling_branch() {
+    let state = test_state().await;
+    let app = app_router(state.clone());
+    let automation = create_branched_test_automation_v2(&state, "auto-v2-branch-recover").await;
+    let run = state
+        .create_automation_v2_run(&automation, "manual")
+        .await
+        .expect("run");
+    state
+        .update_automation_v2_run(&run.run_id, |row| {
+            row.status = crate::AutomationRunStatus::Failed;
+            row.checkpoint.completed_nodes = vec![
+                "research".to_string(),
+                "analysis".to_string(),
+                "draft".to_string(),
+            ];
+            row.checkpoint.pending_nodes = vec!["publish".to_string()];
+            row.checkpoint
+                .node_outputs
+                .insert("research".to_string(), json!({"summary":"research"}));
+            row.checkpoint
+                .node_outputs
+                .insert("analysis".to_string(), json!({"summary":"analysis"}));
+            row.checkpoint
+                .node_outputs
+                .insert("draft".to_string(), json!({"summary":"draft"}));
+            row.checkpoint.last_failure = Some(crate::AutomationFailureRecord {
+                node_id: "draft".to_string(),
+                reason: "bad draft".to_string(),
+                failed_at_ms: crate::now_ms(),
+            });
+        })
+        .await
+        .expect("updated run");
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/automations/v2/runs/{}/recover", run.run_id))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({ "reason": "retry only the failed draft branch" }).to_string(),
+                ))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let recovered = state
+        .get_automation_v2_run(&run.run_id)
+        .await
+        .expect("run after recover");
+    assert_eq!(recovered.status, crate::AutomationRunStatus::Queued);
+    assert!(recovered
+        .checkpoint
+        .completed_nodes
+        .iter()
+        .any(|node_id| node_id == "research"));
+    assert!(recovered
+        .checkpoint
+        .completed_nodes
+        .iter()
+        .any(|node_id| node_id == "analysis"));
+    assert!(!recovered
+        .checkpoint
+        .completed_nodes
+        .iter()
+        .any(|node_id| node_id == "draft"));
+    assert!(!recovered
+        .checkpoint
+        .completed_nodes
+        .iter()
+        .any(|node_id| node_id == "publish"));
+    assert!(recovered.checkpoint.node_outputs.contains_key("research"));
+    assert!(recovered.checkpoint.node_outputs.contains_key("analysis"));
+    assert!(!recovered.checkpoint.node_outputs.contains_key("draft"));
+    assert!(!recovered.checkpoint.node_outputs.contains_key("publish"));
+    assert!(recovered
+        .checkpoint
+        .pending_nodes
+        .iter()
+        .any(|node_id| node_id == "draft"));
+    assert!(recovered
+        .checkpoint
+        .pending_nodes
+        .iter()
+        .any(|node_id| node_id == "publish"));
+    assert!(!recovered
+        .checkpoint
+        .pending_nodes
+        .iter()
+        .any(|node_id| node_id == "analysis"));
+    assert!(recovered.checkpoint.last_failure.is_none());
+    let recover_event = recovered
+        .checkpoint
+        .lifecycle_history
+        .iter()
+        .find(|entry| entry.event == "run_recovered")
+        .expect("recover event");
+    assert_eq!(
+        recover_event.reason.as_deref(),
+        Some("retry only the failed draft branch")
+    );
+}
+
+#[tokio::test]
+async fn automations_v2_run_repair_resets_descendants_and_records_diff_metadata() {
+    let state = test_state().await;
+    let app = app_router(state.clone());
+    let automation = create_test_automation_v2(&state, "auto-v2-step-repair").await;
+    let run = state
+        .create_automation_v2_run(&automation, "manual")
+        .await
+        .expect("run");
+    state
+        .update_automation_v2_run(&run.run_id, |row| {
+            row.status = crate::AutomationRunStatus::Failed;
+            row.checkpoint.completed_nodes = vec!["draft".to_string(), "review".to_string()];
+            row.checkpoint.pending_nodes = vec!["approval".to_string()];
+            row.checkpoint
+                .node_outputs
+                .insert("draft".to_string(), json!({"summary":"draft"}));
+            row.checkpoint
+                .node_outputs
+                .insert("review".to_string(), json!({"summary":"review"}));
+            row.checkpoint.last_failure = Some(crate::AutomationFailureRecord {
+                node_id: "draft".to_string(),
+                reason: "bad draft".to_string(),
+                failed_at_ms: crate::now_ms(),
+            });
+        })
+        .await
+        .expect("updated run");
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/automations/v2/runs/{}/repair", run.run_id))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "node_id": "draft",
+                        "prompt": "Write draft v2 with corrections",
+                        "template_id": "template-b",
+                        "model_policy": {
+                            "default_model": { "provider_id": "anthropic", "model_id": "claude-3-5-sonnet" }
+                        },
+                        "reason": "tighten draft prompt"
+                    })
+                    .to_string(),
+                ))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let repaired = state
+        .get_automation_v2_run(&run.run_id)
+        .await
+        .expect("run after repair");
+    assert_eq!(repaired.status, crate::AutomationRunStatus::Queued);
+    assert_eq!(repaired.checkpoint.completed_nodes, Vec::<String>::new());
+    assert!(repaired
+        .checkpoint
+        .pending_nodes
+        .iter()
+        .any(|id| id == "draft"));
+    assert!(repaired
+        .checkpoint
+        .pending_nodes
+        .iter()
+        .any(|id| id == "review"));
+    assert!(repaired
+        .checkpoint
+        .pending_nodes
+        .iter()
+        .any(|id| id == "approval"));
+    assert!(!repaired.checkpoint.node_outputs.contains_key("draft"));
+    assert!(!repaired.checkpoint.node_outputs.contains_key("review"));
+    let repair_event = repaired
+        .checkpoint
+        .lifecycle_history
+        .iter()
+        .find(|entry| entry.event == "run_step_repaired")
+        .expect("repair event");
+    let metadata = repair_event.metadata.as_ref().expect("repair metadata");
+    assert_eq!(
+        metadata.get("previous_prompt").and_then(Value::as_str),
+        Some("Write draft v1")
+    );
+    assert_eq!(
+        metadata.get("new_prompt").and_then(Value::as_str),
+        Some("Write draft v2 with corrections")
+    );
+    assert_eq!(
+        metadata.get("previous_template_id").and_then(Value::as_str),
+        Some("template-a")
+    );
+    assert_eq!(
+        metadata.get("new_template_id").and_then(Value::as_str),
+        Some("template-b")
+    );
+
+    let stored = state
+        .get_automation_v2("auto-v2-step-repair")
+        .await
+        .expect("stored automation");
+    let draft_node = stored
+        .flow
+        .nodes
+        .iter()
+        .find(|node| node.node_id == "draft")
+        .expect("draft node");
+    assert_eq!(
+        draft_node
+            .metadata
+            .as_ref()
+            .and_then(|metadata| metadata.get("builder"))
+            .and_then(|builder| builder.get("prompt"))
+            .and_then(Value::as_str),
+        Some("Write draft v2 with corrections")
+    );
+    assert_eq!(stored.agents[0].template_id.as_deref(), Some("template-b"));
 }
