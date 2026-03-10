@@ -1,0 +1,119 @@
+import type {
+  AutomationV2RunRecord,
+  AutomationV2Spec,
+  CoderAutomationMetadata,
+  UserProject,
+} from "@/lib/tauri";
+
+export type DerivedCoderRun = {
+  automation: AutomationV2Spec;
+  run: AutomationV2RunRecord;
+  coderMetadata: CoderAutomationMetadata;
+};
+
+export type SessionPreview = {
+  sessionId: string;
+  messageCount: number;
+  latestText: string;
+};
+
+export function coderMetadataFromAutomation(
+  automation: AutomationV2Spec | null | undefined
+): CoderAutomationMetadata | null {
+  const metadata = (automation?.metadata as Record<string, unknown> | undefined) || {};
+  const coder = metadata.coder;
+  if (!coder || typeof coder !== "object") return null;
+  const surface = String((coder as Record<string, unknown>).surface || "").trim();
+  if (surface !== "coder") return null;
+  return coder as CoderAutomationMetadata;
+}
+
+export function runStatusLabel(run: AutomationV2RunRecord | null) {
+  const status = String(run?.status || "")
+    .trim()
+    .toLowerCase();
+  const stopKind = String((run as Record<string, unknown> | null)?.stop_kind || "")
+    .trim()
+    .toLowerCase();
+  if (status === "cancelled" && stopKind === "operator_stopped") return "operator stopped";
+  if (status === "cancelled" && stopKind === "guardrail_stopped") return "guardrail stopped";
+  return status || "unknown";
+}
+
+export function shortText(raw: unknown, max = 160) {
+  const text = String(raw || "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!text) return "";
+  return text.length > max ? `${text.slice(0, max - 1).trimEnd()}...` : text;
+}
+
+export function runSummary(run: AutomationV2RunRecord | null) {
+  return String(
+    run?.stop_reason ||
+      run?.checkpoint?.summary ||
+      run?.checkpoint?.error ||
+      run?.checkpoint?.status_detail ||
+      run?.checkpoint?.statusDetail ||
+      ""
+  ).trim();
+}
+
+export function extractSessionIdsFromRun(run: AutomationV2RunRecord | null) {
+  const direct = Array.isArray(run?.active_session_ids) ? run.active_session_ids : [];
+  const checkpoint = (run?.checkpoint as Record<string, unknown> | undefined) || {};
+  const latest = [
+    String((run as Record<string, unknown> | null)?.latest_session_id || "").trim(),
+    String((run as Record<string, unknown> | null)?.latestSessionId || "").trim(),
+    String(checkpoint.latest_session_id || checkpoint.latestSessionId || "").trim(),
+  ].filter(Boolean);
+  const nodeOutputs =
+    (checkpoint.node_outputs as Record<string, Record<string, unknown>>) ||
+    (checkpoint.nodeOutputs as Record<string, Record<string, unknown>>) ||
+    {};
+  const nodeSessionIds = Object.values(nodeOutputs)
+    .map((entry) => {
+      const content = (entry?.content as Record<string, unknown> | undefined) || {};
+      return String(content.session_id || content.sessionId || "").trim();
+    })
+    .filter(Boolean);
+  return Array.from(
+    new Set([...latest, ...direct.map((row) => String(row || "").trim()), ...nodeSessionIds])
+  );
+}
+
+export function formatTimestamp(value: unknown) {
+  const asNumber = Number(value || 0);
+  if (!Number.isFinite(asNumber) || asNumber <= 0) return "Unknown";
+  return new Date(asNumber).toLocaleString();
+}
+
+export function runSortTimestamp(run: AutomationV2RunRecord | null | undefined) {
+  return Number((run as Record<string, unknown> | null)?.updated_at_ms || run?.created_at_ms || 0);
+}
+
+export function canPauseRun(run: AutomationV2RunRecord) {
+  const status = String(run.status || "").trim().toLowerCase();
+  return status === "queued" || status === "running" || status === "awaiting_approval";
+}
+
+export function canResumeRun(run: AutomationV2RunRecord) {
+  return String(run.status || "").trim().toLowerCase() === "paused";
+}
+
+export function canCancelRun(run: AutomationV2RunRecord) {
+  const status = String(run.status || "").trim().toLowerCase();
+  return ["queued", "running", "pausing", "paused", "awaiting_approval"].includes(status);
+}
+
+export function canRecoverRun(run: AutomationV2RunRecord) {
+  const status = String(run.status || "").trim().toLowerCase();
+  return ["failed", "cancelled", "paused"].includes(status);
+}
+
+export function matchesActiveProject(automation: AutomationV2Spec, activeProject: UserProject | null) {
+  if (!activeProject?.path) return true;
+  const workspaceRoot = String(automation.workspace_root || "").trim();
+  if (!workspaceRoot) return true;
+  return workspaceRoot === activeProject.path || workspaceRoot.startsWith(`${activeProject.path}/`);
+}

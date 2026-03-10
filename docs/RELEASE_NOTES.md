@@ -12,6 +12,17 @@
 - Added a native web control-panel advanced builder so `#/automations` can create and edit advanced mission automations alongside the desktop app.
 - Added a how-it-works modal, inline field guidance, and stronger AI/workflow/agentic starter mission presets.
 - Moved starter mission presets into external preset files instead of hardcoding them in the builder component.
+- Clarified current preset scope: mission-builder starter presets are still a local bundled shelf for validation, while persisted workspace-backed template storage already exists for agent-team templates.
+
+### Desktop Coder Workspace
+
+- Turned the desktop `Developer` destination into `Coder` and made it the visible home for coding-swarm creation and operation.
+- Added a dedicated Coder workspace with `Create` and `Runs` tabs instead of a legacy run-inspector-only screen.
+- Embedded coding-swarm creation in Coder on top of the existing advanced mission builder and `MissionBlueprint -> AutomationV2Spec` path, without introducing a second runtime.
+- Added coding presets, active user-repo context detection, and a lightweight local template shelf in the Coder create flow.
+- Added automation-backed Coder run projection so coder-tagged Automation V2 runs appear directly in Coder.
+- Added operator tabs for coder runs across overview, transcripts, context, artifacts, and memory.
+- Added direct cross-links from Coder runs into Agent Automation and Command Center.
 
 ### Automation V2 Recovery and Execution Hardening
 
@@ -20,6 +31,14 @@
 - Fixed advanced-builder schedule payloads to use the server-required tagged `misfire_policy` shape.
 - Fixed external mission preset loading in the control panel.
 - Fixed an engine panic during malformed automation node execution and converted node panics into normal run failures instead of leaving runs deceptively pending.
+- Fixed Telegram/Slack/Discord bots failing to reply after saving channel settings with a blank Allowed Users field by normalizing empty allowlists to wildcard `["*"]`.
+
+### Coder Integration Cleanup
+
+- Added typed coder metadata so coder-originated missions stay on the existing mission and Automation V2 contracts.
+- Switched the desktop Coder detail path to consume explicit backend-linked context run IDs instead of synthesizing them on the client.
+- Added active user-repo binding for coder missions, including repo root, remote slug, current branch, and default branch.
+- Extracted shared coder run list, detail, and operator controls so the new Coder workspace is composed from reusable pieces instead of whole-page embedding.
 
 ## Tandem v0.4.5 Release Notes (Released 2026-03-10)
 

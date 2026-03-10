@@ -626,6 +626,16 @@ export interface GitStatus {
   can_enable_undo: boolean;
 }
 
+export interface UserRepoContext {
+  workspace_root: string;
+  repo_root?: string | null;
+  repo_slug?: string | null;
+  current_branch?: string | null;
+  default_branch?: string | null;
+  git_installed: boolean;
+  is_repo: boolean;
+}
+
 export async function isGitInstalled(): Promise<boolean> {
   return invoke("is_git_installed");
 }
@@ -636,6 +646,10 @@ export async function initializeGitRepo(path: string): Promise<void> {
 
 export async function checkGitStatus(path: string): Promise<GitStatus> {
   return invoke("check_git_status", { path });
+}
+
+export async function resolveUserRepoContext(path: string): Promise<UserRepoContext> {
+  return invoke("resolve_user_repo_context", { path });
 }
 
 export async function addProject(path: string, name?: string): Promise<UserProject> {
@@ -1118,6 +1132,44 @@ export interface CoderGithubRef {
   kind: "issue" | "pull_request" | string;
   number: number;
   url?: string | null;
+}
+
+export interface CoderAutomationBranchContext {
+  current_branch?: string | null;
+  default_branch?: string | null;
+  head_branch?: string | null;
+  base_branch?: string | null;
+}
+
+export interface CoderAutomationMetadata {
+  surface: "coder";
+  workflow_kind:
+    | "coding_swarm"
+    | "issue_fix"
+    | "pr_review"
+    | "merge_recommendation"
+    | "repo_task";
+  preset_id: string;
+  repo_binding?: CoderRepoBinding | null;
+  github_ref?: CoderGithubRef | null;
+  branch_context?: CoderAutomationBranchContext | null;
+  launch_source: "desktop_coder";
+}
+
+export interface CoderWorkspaceRunRecord {
+  run_source: "legacy_coder" | "automation_v2";
+  workflow_kind: string;
+  linked_automation_id?: string | null;
+  linked_automation_run_id?: string | null;
+  linked_context_run_id: string;
+  repo_binding?: CoderRepoBinding | null;
+  github_ref?: CoderGithubRef | null;
+  active_session_ids?: string[];
+  status?: string;
+  phase?: string;
+  milestone?: string | null;
+  created_at_ms: number;
+  updated_at_ms: number;
 }
 
 export interface CoderRunRecord {
@@ -1736,6 +1788,99 @@ export interface AutomationV2RunRecord {
   [key: string]: unknown;
 }
 
+export interface AutomationV2RunGetResponse {
+  run: AutomationV2RunRecord;
+  contextRunID?: string;
+  linked_context_run_id?: string;
+}
+
+export type OrchestratorRunStatus =
+  | "queued"
+  | "planning"
+  | "running"
+  | "awaiting_approval"
+  | "paused"
+  | "blocked"
+  | "completed"
+  | "failed"
+  | "cancelled";
+
+export type OrchestratorTaskState =
+  | "pending"
+  | "runnable"
+  | "in_progress"
+  | "blocked"
+  | "done"
+  | "failed";
+
+export interface OrchestratorTaskRecord {
+  id: string;
+  title: string;
+  description: string;
+  dependencies: string[];
+  acceptance_criteria: string[];
+  assigned_role?: string;
+  template_id?: string;
+  gate?: "review" | "test";
+  state: OrchestratorTaskState;
+  retry_count: number;
+  error_message?: string;
+  session_id?: string;
+  runtime_status?: string;
+  runtime_detail?: string;
+}
+
+export interface OrchestratorRunRecord {
+  run_id: string;
+  session_id: string;
+  workspace_root?: string | null;
+  objective: string;
+  status: OrchestratorRunStatus;
+  tasks: OrchestratorTaskRecord[];
+  why_next_step?: string;
+  error_message?: string;
+}
+
+export interface BlackboardItem {
+  id: string;
+  ts_ms: number;
+  text: string;
+  step_id?: string | null;
+  source_event_id?: string | null;
+}
+
+export interface BlackboardArtifactRef {
+  id: string;
+  ts_ms: number;
+  path: string;
+  artifact_type: string;
+  step_id?: string | null;
+  source_event_id?: string | null;
+}
+
+export interface BlackboardSummaries {
+  rolling: string;
+  latest_context_pack: string;
+}
+
+export interface Blackboard {
+  facts: BlackboardItem[];
+  decisions: BlackboardItem[];
+  open_questions: BlackboardItem[];
+  artifacts: BlackboardArtifactRef[];
+  summaries: BlackboardSummaries;
+  revision: number;
+}
+
+export interface BlackboardPatchRecord {
+  patch_id: string;
+  run_id: string;
+  seq: number;
+  ts_ms: number;
+  op: string;
+  payload: JsonObject;
+}
+
 export interface AutomationV2GateDecisionRequest {
   decision: "approve" | "rework" | "cancel";
   reason?: string;
@@ -2110,8 +2255,14 @@ export async function automationsV2Runs(
   return invoke("automations_v2_runs", { automationId, limit });
 }
 
-export async function automationsV2RunGet(runId: string): Promise<{ run: AutomationV2RunRecord }> {
-  return invoke("automations_v2_run_get", { runId });
+export async function automationsV2RunGet(runId: string): Promise<AutomationV2RunGetResponse> {
+  const response = (await invoke("automations_v2_run_get", {
+    runId,
+  })) as AutomationV2RunGetResponse;
+  return {
+    ...response,
+    linked_context_run_id: response.linked_context_run_id || response.contextRunID,
+  };
 }
 
 export async function automationsV2RunPause(
@@ -2142,6 +2293,22 @@ export async function automationsV2RunCancel(
     runId,
     request: { reason: reason ?? "" },
   });
+}
+
+export async function orchestratorEngineLoadRun(runId: string): Promise<OrchestratorRunRecord> {
+  return invoke("orchestrator_engine_load_run", { runId });
+}
+
+export async function orchestratorGetBlackboard(runId: string): Promise<Blackboard> {
+  return invoke("orchestrator_get_blackboard", { runId });
+}
+
+export async function orchestratorGetBlackboardPatches(
+  runId: string,
+  sinceSeq?: number,
+  tail?: number
+): Promise<BlackboardPatchRecord[]> {
+  return invoke("orchestrator_get_blackboard_patches", { runId, sinceSeq, tail });
 }
 
 export async function automationsV2RunGateDecide(

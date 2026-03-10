@@ -55,6 +55,32 @@ struct MissionCompilePreview {
     validation: Vec<ValidationMessage>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct CoderAutomationBranchContext {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    current_branch: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    default_branch: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    head_branch: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    base_branch: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct CoderAutomationMetadata {
+    surface: String,
+    workflow_kind: String,
+    preset_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    repo_binding: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    github_ref: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    branch_context: Option<CoderAutomationBranchContext>,
+    launch_source: String,
+}
+
 pub(super) async fn mission_builder_preview(
     State(_state): State<AppState>,
     Json(input): Json<MissionBuilderPreviewRequest>,
@@ -424,6 +450,37 @@ fn compile_to_automation(
 
     nodes.sort_by(|a, b| node_sort_key(a, &phase_rank).cmp(&node_sort_key(b, &phase_rank)));
 
+    let typed_coder_metadata = extract_coder_metadata(&blueprint);
+    let mut metadata = serde_json::Map::from_iter([
+        ("builder_kind".to_string(), json!("mission_blueprint")),
+        ("mission_blueprint".to_string(), json!(blueprint.clone())),
+        (
+            "mission".to_string(),
+            json!({
+                "mission_id": blueprint.mission_id,
+                "title": blueprint.title,
+                "goal": blueprint.goal,
+                "success_criteria": blueprint.success_criteria,
+                "shared_context": blueprint.shared_context,
+                "orchestrator_template_id": blueprint.orchestrator_template_id,
+                "phases": blueprint.phases,
+                "milestones": blueprint.milestones,
+                "team": blueprint.team,
+            }),
+        ),
+    ]);
+    if let Some(extra_metadata) = blueprint.metadata.as_ref().and_then(Value::as_object) {
+        for (key, value) in extra_metadata {
+            metadata.insert(key.clone(), value.clone());
+        }
+    }
+    if let Some(coder) = typed_coder_metadata {
+        metadata.insert(
+            "coder".to_string(),
+            serde_json::to_value(coder).unwrap_or_else(|_| json!({})),
+        );
+    }
+
     crate::AutomationV2Spec {
         automation_id: format!("automation-v2-{}", Uuid::new_v4()),
         name: blueprint.title.clone(),
@@ -465,24 +522,20 @@ fn compile_to_automation(
         updated_at_ms: now,
         creator_id: creator_id.to_string(),
         workspace_root: Some(blueprint.workspace_root.clone()),
-        metadata: Some(json!({
-            "builder_kind": "mission_blueprint",
-            "mission_blueprint": blueprint.clone(),
-            "mission": {
-                "mission_id": blueprint.mission_id,
-                "title": blueprint.title,
-                "goal": blueprint.goal,
-                "success_criteria": blueprint.success_criteria,
-                "shared_context": blueprint.shared_context,
-                "orchestrator_template_id": blueprint.orchestrator_template_id,
-                "phases": blueprint.phases,
-                "milestones": blueprint.milestones,
-                "team": blueprint.team,
-            }
-        })),
+        metadata: Some(Value::Object(metadata)),
         next_fire_at_ms: None,
         last_fired_at_ms: None,
     }
+}
+
+fn extract_coder_metadata(blueprint: &MissionBlueprint) -> Option<CoderAutomationMetadata> {
+    let coder = blueprint
+        .metadata
+        .as_ref()
+        .and_then(Value::as_object)
+        .and_then(|metadata| metadata.get("coder"))
+        .cloned()?;
+    serde_json::from_value(coder).ok()
 }
 
 fn derive_node_previews(

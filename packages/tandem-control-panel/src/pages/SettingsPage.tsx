@@ -408,10 +408,11 @@ function normalizeChannelDraft(
 }
 
 function parseAllowedUsers(input: string) {
-  return String(input || "")
+  const users = String(input || "")
     .split(",")
     .map((row) => row.trim())
     .filter(Boolean);
+  return users.length ? users : ["*"];
 }
 
 function providerCatalogBadge(provider: any, modelCount: number) {

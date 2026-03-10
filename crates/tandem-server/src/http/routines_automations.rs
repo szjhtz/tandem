@@ -2090,6 +2090,7 @@ pub(super) async fn automations_v2_run_get(
     Ok(Json(json!({
         "run": run,
         "contextRunID": super::context_runs::automation_v2_context_run_id(&run_id),
+        "linked_context_run_id": super::context_runs::automation_v2_context_run_id(&run_id),
     })))
 }
 

@@ -1393,9 +1393,9 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
       setActing(action);
       try {
         if (action === "approve") {
-          await approveCoderRun(selectedRunId, "approved from desktop developer mode");
+          await approveCoderRun(selectedRunId, "approved from desktop coder compatibility view");
         } else {
-          await cancelCoderRun(selectedRunId, "cancelled from desktop developer mode");
+          await cancelCoderRun(selectedRunId, "cancelled from desktop coder compatibility view");
         }
         await Promise.all([loadRuns(), loadRunDetail(selectedRunId)]);
       } catch (err) {
@@ -1882,9 +1882,9 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
           <CardHeader className="border-b border-border px-5 py-4">
             <div className="flex items-start justify-between gap-3">
               <div>
-                <CardTitle className="text-base">Developer</CardTitle>
+                <CardTitle className="text-base">Legacy Coder Runs</CardTitle>
                 <CardDescription>
-                  Coder runs, artifacts, memory hits, and operator controls.
+                  Existing coder runs, artifacts, memory hits, and operator controls.
                 </CardDescription>
               </div>
               <Button

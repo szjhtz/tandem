@@ -86,6 +86,7 @@ interface AgentAutomationPageProps {
   onManageProjects: () => void;
   projectSwitcherLoading?: boolean;
   onOpenMcpExtensions?: () => void;
+  initialRunId?: string | null;
 }
 
 function buildDefaultWizard(
@@ -980,6 +981,7 @@ export function AgentAutomationPage({
   onManageProjects,
   projectSwitcherLoading = false,
   onOpenMcpExtensions,
+  initialRunId = null,
 }: AgentAutomationPageProps) {
   const [tab, setTab] = useState<PageTab>("create");
   const [createMode, setCreateMode] = useState<CreateMode>("simple");
@@ -1174,6 +1176,12 @@ export function AgentAutomationPage({
     }
     void loadSelectedRunDetail(selectedRunId);
   }, [selectedRunId]);
+
+  useEffect(() => {
+    if (!initialRunId) return;
+    setSelectedRunId(initialRunId);
+    setTab("runs");
+  }, [initialRunId]);
 
   const updateWizard = (patch: Partial<WizardState>) => {
     setWizard((current) => ({ ...current, ...patch }));

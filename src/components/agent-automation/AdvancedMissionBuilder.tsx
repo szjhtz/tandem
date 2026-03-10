@@ -8,6 +8,7 @@ import {
   missionBuilderPreview,
   type McpServerRecord,
   type AutomationV2Spec,
+  type JsonObject,
   type MissionBlueprint,
   type MissionBuilderCompilePreview,
   type MissionBuilderReviewStage,
@@ -29,6 +30,7 @@ interface AdvancedMissionBuilderProps {
   onShowRuns: () => void;
   onClearEditing?: () => void;
   onOpenMcpExtensions?: () => void;
+  blueprintMetadataPatch?: JsonObject | null;
 }
 
 function toModelDraft(policy: unknown): BuilderModelDraft {
@@ -131,6 +133,17 @@ function defaultBlueprint(activeProject: UserProject | null): MissionBlueprint {
     workstreams: [newWorkstream(1)],
     review_stages: [],
     metadata: null,
+  };
+}
+
+function mergeJsonObjects(
+  base: Record<string, unknown> | null | undefined,
+  patch: Record<string, unknown> | null | undefined
+): Record<string, unknown> | null {
+  if (!base && !patch) return null;
+  return {
+    ...(base || {}),
+    ...(patch || {}),
   };
 }
 
@@ -624,6 +637,7 @@ export function AdvancedMissionBuilder({
   onShowRuns,
   onClearEditing,
   onOpenMcpExtensions,
+  blueprintMetadataPatch = null,
 }: AdvancedMissionBuilderProps) {
   const [blueprint, setBlueprint] = useState<MissionBlueprint>(() =>
     defaultBlueprint(activeProject)
@@ -648,7 +662,10 @@ export function AdvancedMissionBuilder({
   useEffect(() => {
     const savedBlueprint = extractMissionBlueprintFromAutomation(editingAutomation, activeProject);
     if (!editingAutomation?.automation_id || !savedBlueprint) {
-      setBlueprint(defaultBlueprint(activeProject));
+      setBlueprint({
+        ...defaultBlueprint(activeProject),
+        metadata: mergeJsonObjects(null, blueprintMetadataPatch),
+      });
       setTeamModel({ provider: "", model: "" });
       setWorkstreamModels({});
       setPreview(null);
@@ -662,6 +679,17 @@ export function AdvancedMissionBuilder({
     setRunAfterCreate(false);
     setError(null);
   }, [editingAutomation?.automation_id, activeProject?.id]);
+
+  useEffect(() => {
+    if (editingAutomation?.automation_id) return;
+    setBlueprint((current) => ({
+      ...current,
+      metadata: mergeJsonObjects(
+        (current.metadata as Record<string, unknown> | null | undefined) || null,
+        blueprintMetadataPatch
+      ),
+    }));
+  }, [blueprintMetadataPatch, editingAutomation?.automation_id]);
 
   useEffect(() => {
     void agentTeamListTemplates()

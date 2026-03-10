@@ -14,12 +14,28 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
   - Added a native control-panel advanced builder so the browser `/automations` surface can create and edit advanced mission automations alongside the desktop app.
   - Added a how-it-works modal, inline field guidance, and AI/workflow/agentic starter mission presets in the web UI.
   - Moved starter presets out of the TSX component into external preset files for easier review and reuse.
+  - Clarified current preset scope: mission-builder starter presets are still a local bundled shelf for validation, while persisted workspace-backed template storage already exists for agent-team templates.
+
+- Desktop Coder workspace for coding swarms
+  - Turned the desktop `Developer` destination into `Coder` and made it the visible home for coding-swarm creation and operations.
+  - Added a dedicated Coder workspace with `Create` and `Runs` tabs instead of a legacy run-inspector-only screen.
+  - Embedded coding-swarm creation in Coder on top of the existing advanced mission builder and mission compile/apply flow, rather than creating a second orchestration system.
+  - Added coding presets, user-repo context detection, and a lightweight local saved-template shelf in the Coder create flow.
+  - Added automation-backed Coder run projection so coder-tagged Automation V2 runs show up directly in the Coder run list.
+  - Added operator tabs for coder runs covering overview, transcripts, context, artifacts, and memory, plus direct cross-links into Agent Automation and Command Center.
 
 - Automation V2 recovery, observability, and execution hardening
   - Added clearer stop/pause/recover semantics, branch-local repair and rework handling, richer per-step diagnostics, and milestone promotion history for advanced automation runs.
   - Fixed advanced-builder schedule payloads to use the tagged `misfire_policy` shape expected by the server.
   - Fixed external mission preset loading in the control panel.
   - Fixed an engine panic during malformed automation node execution and converted node panics into normal run failures so stuck runs surface truthfully.
+  - Fixed Telegram/Slack/Discord bots failing to reply after saving channel settings with a blank Allowed Users field by normalizing empty allowlists to wildcard `["*"]`.
+
+- Coder and automation integration cleanup
+  - Added typed coder metadata so coder-originated missions stay on the existing `MissionBlueprint` and `AutomationV2` contracts.
+  - Switched the desktop Coder run detail path to consume explicit backend-linked context run IDs instead of synthesizing them locally.
+  - Added active user-repo context binding for coder missions, including detected repo root, remote slug, current branch, and default branch.
+  - Extracted shared coder run list, detail, and operator controls so the Coder workspace reuses components instead of embedding whole legacy pages.
 
 ## v0.4.5 (Released 2026-03-10)
 

@@ -354,6 +354,7 @@ pub(super) async fn channels_put(
         "telegram" => {
             let mut cfg: TelegramConfigFile =
                 serde_json::from_value(input).map_err(|_| StatusCode::BAD_REQUEST)?;
+            cfg.allowed_users = crate::normalize_allowed_users_or_wildcard(cfg.allowed_users);
             if cfg.bot_token.trim().is_empty() {
                 cfg.bot_token = existing_bot_token("telegram").unwrap_or_default();
             }
@@ -365,6 +366,7 @@ pub(super) async fn channels_put(
         "discord" => {
             let mut cfg: DiscordConfigFile =
                 serde_json::from_value(input).map_err(|_| StatusCode::BAD_REQUEST)?;
+            cfg.allowed_users = crate::normalize_allowed_users_or_wildcard(cfg.allowed_users);
             if cfg.bot_token.trim().is_empty() {
                 cfg.bot_token = existing_bot_token("discord").unwrap_or_default();
             }
@@ -376,6 +378,7 @@ pub(super) async fn channels_put(
         "slack" => {
             let mut cfg: SlackConfigFile =
                 serde_json::from_value(input).map_err(|_| StatusCode::BAD_REQUEST)?;
+            cfg.allowed_users = crate::normalize_allowed_users_or_wildcard(cfg.allowed_users);
             if cfg.bot_token.trim().is_empty() {
                 cfg.bot_token = existing_bot_token("slack").unwrap_or_default();
             }

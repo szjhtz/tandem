@@ -577,6 +577,7 @@ pub fn run() {
             commands::is_git_installed,
             commands::initialize_git_repo,
             commands::check_git_status,
+            commands::resolve_user_repo_context,
             commands::add_project,
             commands::remove_project,
             commands::get_user_projects,

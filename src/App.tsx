@@ -14,7 +14,7 @@ import { GitInitDialog } from "@/components/dialogs/GitInitDialog";
 import { OrchestratorPanel } from "@/components/orchestrate/OrchestratorPanel";
 import { CommandCenterPage } from "@/components/command-center/CommandCenterPage";
 import { AgentAutomationPage } from "@/components/agent-automation/AgentAutomationPage";
-import { DeveloperRunViewer } from "@/components/developer/DeveloperRunViewer";
+import { CoderWorkspacePage } from "@/components/coder/CoderWorkspacePage";
 import { type RunSummary } from "@/components/orchestrate/types";
 import { PacksPanel } from "@/components/packs";
 import { AppUpdateOverlay } from "@/components/updates/AppUpdateOverlay";
@@ -99,7 +99,7 @@ type View =
   | "chat"
   | "command-center"
   | "agent-automation"
-  | "developer"
+  | "coder"
   | "extensions"
   | "settings"
   | "about"
@@ -436,6 +436,7 @@ function App() {
   const [orchestratorOpen, setOrchestratorOpen] = useState(false);
   const [currentOrchestratorRunId, setCurrentOrchestratorRunId] = useState<string | null>(null);
   const [commandCenterRunId, setCommandCenterRunId] = useState<string | null>(null);
+  const [agentAutomationRunId, setAgentAutomationRunId] = useState<string | null>(null);
   const [orchestratorRuns, setOrchestratorRuns] = useState<RunSummary[]>([]);
   const skipOrchestratorAutoResumeRef = useRef(false);
 
@@ -680,7 +681,7 @@ function App() {
             view !== "extensions" &&
             view !== "command-center" &&
             view !== "agent-automation" &&
-            view !== "developer"
+            view !== "coder"
           ? "onboarding"
           : view;
 
@@ -1577,13 +1578,13 @@ function App() {
                 <Sparkles className="h-5 w-5" />
               </button>
               <button
-                onClick={() => setView("developer")}
+                onClick={() => setView("coder")}
                 className={`flex h-10 w-10 items-center justify-center rounded-lg transition-colors ${
-                  effectiveView === "developer"
+                  effectiveView === "coder"
                     ? "bg-primary/20 text-primary"
                     : "text-text-muted hover:bg-surface-elevated hover:text-text"
                 }`}
-                title="Developer mode"
+                title="Coder"
               >
                 <Workflow className="h-5 w-5" />
               </button>
@@ -1911,27 +1912,46 @@ function App() {
                 onAddProject={handleAddProject}
                 onManageProjects={handleManageProjects}
                 projectSwitcherLoading={projectSwitcherLoading}
+                initialRunId={agentAutomationRunId}
                 onOpenMcpExtensions={() => {
                   setExtensionsInitialTab("mcp");
                   setView("extensions");
                 }}
               />
             </motion.div>
-          ) : effectiveView === "developer" ? (
+          ) : effectiveView === "coder" ? (
             <motion.div
-              key="developer"
+              key="coder"
               className="h-full w-full app-background"
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               transition={{ duration: 0.2, ease: "easeOut" }}
             >
-              <DeveloperRunViewer
-                onOpenMcpSettings={() => {
-                  setExtensionsInitialTab("mcp");
-                  setView("extensions");
-                }}
-              />
+                  <CoderWorkspacePage
+                    userProjects={userProjects}
+                    activeProject={activeProject}
+                    onSwitchProject={handleSwitchProject}
+                    onAddProject={handleAddProject}
+                    onManageProjects={handleManageProjects}
+                    projectSwitcherLoading={projectSwitcherLoading}
+                    onOpenAutomation={() => {
+                      setAgentAutomationRunId(null);
+                      setView("agent-automation");
+                    }}
+                    onOpenAutomationRun={(runId) => {
+                      setAgentAutomationRunId(runId);
+                      setView("agent-automation");
+                    }}
+                    onOpenContextRun={(runId) => {
+                      setCommandCenterRunId(runId);
+                      setView("command-center");
+                    }}
+                    onOpenMcpExtensions={() => {
+                      setExtensionsInitialTab("mcp");
+                      setView("extensions");
+                    }}
+                  />
             </motion.div>
           ) : (
             <>

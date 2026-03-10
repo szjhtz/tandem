@@ -1139,6 +1139,132 @@ pub struct GitStatus {
     pub can_enable_undo: bool,
 }
 
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct UserRepoContext {
+    pub workspace_root: String,
+    pub repo_root: Option<String>,
+    pub repo_slug: Option<String>,
+    pub current_branch: Option<String>,
+    pub default_branch: Option<String>,
+    pub git_installed: bool,
+    pub is_repo: bool,
+}
+
+fn run_git_capture(path: &Path, args: &[&str]) -> Option<String> {
+    let mut cmd = Command::new("git");
+    cmd.args(args).current_dir(path);
+
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+
+    let output = cmd.output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let value = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if value.is_empty() {
+        None
+    } else {
+        Some(value)
+    }
+}
+
+fn parse_repo_slug(remote: &str) -> Option<String> {
+    let trimmed = remote.trim().trim_end_matches('/').trim_end_matches(".git");
+    if trimmed.is_empty() {
+        return None;
+    }
+    if let Some(rest) = trimmed.strip_prefix("git@") {
+        let mut parts = rest.splitn(2, ':');
+        let _host = parts.next()?;
+        let path = parts.next()?.trim_matches('/');
+        return if path.is_empty() {
+            None
+        } else {
+            Some(path.to_string())
+        };
+    }
+    if let Some(index) = trimmed.find("://") {
+        let without_scheme = &trimmed[index + 3..];
+        let mut parts = without_scheme.splitn(2, '/');
+        let _host = parts.next()?;
+        let path = parts.next()?.trim_matches('/');
+        return if path.is_empty() {
+            None
+        } else {
+            Some(path.to_string())
+        };
+    }
+    let normalized = trimmed.trim_matches('/');
+    if normalized.contains('/') {
+        Some(normalized.to_string())
+    } else {
+        None
+    }
+}
+
+#[tauri::command]
+pub fn resolve_user_repo_context(path: String) -> Result<UserRepoContext> {
+    let path_buf = PathBuf::from(&path);
+    if !path_buf.exists() || !path_buf.is_dir() {
+        return Err(TandemError::InvalidConfig(format!(
+            "Invalid directory: {}",
+            path
+        )));
+    }
+
+    let git_installed = is_git_installed();
+    if !git_installed {
+        return Ok(UserRepoContext {
+            workspace_root: path,
+            repo_root: None,
+            repo_slug: None,
+            current_branch: None,
+            default_branch: None,
+            git_installed: false,
+            is_repo: false,
+        });
+    }
+
+    let repo_root = run_git_capture(&path_buf, &["rev-parse", "--show-toplevel"]);
+    let is_repo = repo_root.is_some();
+    let current_branch = if is_repo {
+        run_git_capture(&path_buf, &["branch", "--show-current"])
+    } else {
+        None
+    };
+    let remote_url = if is_repo {
+        run_git_capture(&path_buf, &["remote", "get-url", "origin"])
+    } else {
+        None
+    };
+    let repo_slug = remote_url.as_deref().and_then(parse_repo_slug);
+    let default_branch = if is_repo {
+        run_git_capture(
+            &path_buf,
+            &["symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+        )
+        .map(|value| value.trim_start_matches("origin/").to_string())
+        .or_else(|| run_git_capture(&path_buf, &["config", "--get", "init.defaultBranch"]))
+    } else {
+        None
+    };
+
+    Ok(UserRepoContext {
+        workspace_root: path,
+        repo_root,
+        repo_slug,
+        current_branch,
+        default_branch,
+        git_installed,
+        is_repo,
+    })
+}
+
 #[tauri::command]
 pub fn check_git_status(path: String) -> GitStatus {
     let git_installed = is_git_installed();

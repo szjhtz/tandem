@@ -17,6 +17,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - added native control-panel support for the advanced builder so web and desktop can both create and edit advanced mission automations
   - added in-product operator guidance for the web advanced builder, including a how-it-works modal, inline help text, and starter mission presets
   - added external starter-mission preset files so advanced builder examples live as content instead of hardcoded UI data
+- **Desktop Coder workspace for coding-swarm creation and operations**:
+  - turned the desktop `Developer` surface into `Coder` and made it the visible home for coding swarms
+  - added a dedicated Coder workspace with `Create` and `Runs` tabs instead of a legacy run inspector-only screen
+  - embedded coding-swarm creation in Coder on top of the existing advanced mission builder and `MissionBlueprint -> AutomationV2Spec` flow
+  - added coding preset selection, user-repo context surfacing, and a lightweight saved-template shelf in the Coder create flow
+  - added automation-backed Coder run projection so coder-tagged `AutomationV2` runs appear directly in the Coder run list
+  - added operator tabs for coder runs covering overview, transcripts, context, artifacts, and memory
+  - added direct cross-links from Coder runs into Agent Automation and Command Center
 
 ### Changed
 
@@ -26,6 +34,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - improved automation runtime scheduling with phase-open semantics, runnable frontier shaping, and priority-aware ordering without violating dependency legality
   - added advanced-automation reopen/edit continuity, including reconstruction of older sparse `mission_blueprint` records from compiled automation data
   - expanded control-panel graph preview and scope editing so per-step tools and MCP overrides are easier to inspect and edit
+  - clarified Phase 6 preset/template status: advanced mission starter presets remain a local bundled shelf pending stronger persisted preset promotion, while agent-team templates already use workspace-backed persisted storage
+- **Coder now reuses the existing mission and automation stack instead of acting as a separate coding surface**:
+  - tagged coder-originated missions with typed coder metadata instead of inventing a second coding executor or run model
+  - wired the desktop to consume explicit backend-linked context run IDs for automation-backed coder runs instead of synthesizing them locally
+  - resolved user repo context from the active user project path, including repo root, remote slug, current branch, and default branch, and merged that context into coder mission metadata
+  - extracted shared coder run list, run detail, and action toolbar components so the Coder workspace is not glued to full-page legacy surfaces
 
 ### Fixed
 
@@ -36,6 +50,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - fixed advanced-builder schedule payloads to use the server-required tagged `misfire_policy` shape
   - fixed external mission preset loading in the control panel
   - fixed an engine panic caused by malformed one-character quoted scalar values during automation execution and converted node panics into normal run failures instead of leaving runs deceptively pending
+  - fixed channel bots silently ignoring inbound messages when control-panel channel settings were saved with a blank `allowed_users` field; blank allowlists now normalize to wildcard `["*"]` in both the control panel and server runtime config
+- **Coder workspace data and operator wiring**:
+  - fixed the blank or underpowered desktop coder screen by routing it through a real creation-and-operations workspace
+  - fixed automation-backed coder detail views to rely on explicit backend context-run linkage
+  - fixed the local coder template flow to use an explicit editor instead of a prompt-only save action
 
 ## [0.4.5] - 2026-03-10
 

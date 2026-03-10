@@ -104,3 +104,36 @@ async fn channels_verify_discord_without_token_returns_setup_hint() {
         "verify should include setup hints"
     );
 }
+
+#[tokio::test]
+async fn channels_put_normalizes_empty_allowed_users_to_wildcard() {
+    let state = test_state().await;
+    let app = app_router(state.clone());
+
+    let req = Request::builder()
+        .method("PUT")
+        .uri("/channels/telegram")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "bot_token": "tg-secret",
+                "allowed_users": [],
+                "mention_only": false
+            })
+            .to_string(),
+        ))
+        .expect("request");
+    let resp = app.clone().oneshot(req).await.expect("response");
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let effective = state.config.get_effective_value().await;
+    assert_eq!(
+        effective
+            .get("channels")
+            .and_then(|v| v.get("telegram"))
+            .and_then(|v| v.get("allowed_users"))
+            .and_then(Value::as_array)
+            .cloned(),
+        Some(vec![Value::String("*".to_string())])
+    );
+}
