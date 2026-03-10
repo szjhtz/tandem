@@ -114,8 +114,8 @@ Ship an advanced power-user mission compiler that lets operators define one coor
     current state: milestone promotions are now recorded into lifecycle history as structured promotion events and surfaced in the run inspector alongside phase/milestone progress and blocker context
 - [ ] P1: Surface full operator diagnostics in the run inspector:
   - [x] gate history
-  - [~] per-step logs
-    current state: node-linked step logs are visible via grouped session transcripts, status, attempts, waiting-dependency context, and message counts, but a backend-native structured per-step event/log stream is still missing
+  - [x] per-step logs
+    current state: backend-native node lifecycle events now supplement transcript-derived step logs with structured start / completion / failure records
   - [x] transcripts
   - [x] recovery history
   - [x] blocked-node reasons

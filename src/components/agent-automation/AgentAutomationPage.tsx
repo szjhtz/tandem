@@ -623,16 +623,40 @@ function buildStepLogDiagnostics(
     sessionId: string;
     messageCount: number;
   }>,
+  lifecycleHistory: Array<{
+    event: string;
+    recorded_at_ms: number;
+    reason?: string | null;
+    metadata?: Record<string, unknown> | null;
+  }>,
   sessionMessagesBySession: Record<string, SessionMessage[]>
 ) {
   return stepStatusRows
-    .filter((step) => step.sessionId)
     .map((step) => ({
       nodeId: step.nodeId,
       objective: step.objective,
       status: step.status,
       sessionId: step.sessionId,
       messageCount: step.messageCount,
+      events: lifecycleHistory
+        .filter((entry) => {
+          const metadata = (entry.metadata || {}) as Record<string, unknown>;
+          return String(metadata.node_id || "").trim() === step.nodeId;
+        })
+        .map((entry, index) => {
+          const metadata = (entry.metadata || {}) as Record<string, unknown>;
+          return {
+            id: `${step.nodeId}-${entry.event}-${entry.recorded_at_ms}-${index}`,
+            event: String(entry.event || "").trim(),
+            createdAt: Number(entry.recorded_at_ms || 0),
+            reason: String(entry.reason || metadata.reason || "").trim(),
+            attempt: Number(metadata.attempt || 0),
+            sessionId: String(metadata.session_id || "").trim(),
+            summary: String(metadata.summary || "").trim(),
+            terminal: Boolean(metadata.terminal),
+          };
+        })
+        .sort((a, b) => a.createdAt - b.createdAt),
       messages: (sessionMessagesBySession[step.sessionId] || []).map((message) => ({
         id: String(message.info?.id || "").trim(),
         role: String(message.info?.role || "session").trim(),
@@ -641,8 +665,17 @@ function buildStepLogDiagnostics(
         text: sessionMessageText(message),
       })),
     }))
+    .filter((step) => step.events.length > 0 || step.sessionId)
     .sort((a, b) => b.messageCount - a.messageCount || a.nodeId.localeCompare(b.nodeId));
 }
+
+type StepLifecycleEntry = {
+  event: string;
+  recorded_at_ms: number;
+  reason?: string | null;
+  stop_kind?: string | null;
+  metadata?: Record<string, unknown> | null;
+};
 
 function automationMissionMetadata(automation: AutomationV2Spec | null) {
   const metadata = (automation?.metadata as Record<string, unknown> | undefined) || {};
@@ -1589,11 +1622,23 @@ export function AgentAutomationPage({
         readNumber(checkpoint.totalToolCalls),
     };
   }, [selectedRunDetail]);
-  const selectedLifecycleHistory = useMemo(() => {
+  const selectedLifecycleHistory = useMemo<StepLifecycleEntry[]>(() => {
     const checkpoint = selectedRunCheckpoint(selectedRunDetail);
     return Array.isArray(checkpoint.lifecycle_history)
       ? checkpoint.lifecycle_history
-          .map((entry) => ((entry as Record<string, unknown>) || {}) as Record<string, unknown>)
+          .map((entry) => {
+            const row = ((entry as Record<string, unknown>) || {}) as Record<string, unknown>;
+            return {
+              event: String(row.event || "").trim(),
+              recorded_at_ms: Number(row.recorded_at_ms || 0),
+              reason: row.reason ? String(row.reason) : null,
+              stop_kind: row.stop_kind ? String(row.stop_kind) : null,
+              metadata: ((row.metadata as Record<string, unknown> | undefined) || null) as Record<
+                string,
+                unknown
+              > | null,
+            };
+          })
           .sort((a, b) => Number(b.recorded_at_ms || 0) - Number(a.recorded_at_ms || 0))
       : [];
   }, [selectedRunDetail]);
@@ -1634,9 +1679,11 @@ export function AgentAutomationPage({
     if (selectedLastFailure) {
       entries.unshift({
         event: "last_failure",
-        recorded_at_ms: selectedLastFailure.recorded_at_ms,
-        reason: selectedLastFailure.reason,
-      } as Record<string, unknown>);
+        recorded_at_ms: Number(selectedLastFailure.recorded_at_ms || 0),
+        reason: selectedLastFailure.reason ? String(selectedLastFailure.reason) : null,
+        stop_kind: null,
+        metadata: null,
+      });
     }
     return entries.slice(0, 8);
   }, [selectedLifecycleHistory, selectedLastFailure]);
@@ -1698,8 +1745,13 @@ export function AgentAutomationPage({
     [selectedRunDetail, selectedRunAutomation, selectedRunMessagesBySession]
   );
   const selectedStepLogs = useMemo(
-    () => buildStepLogDiagnostics(selectedStepStatusRows, selectedRunMessagesBySession),
-    [selectedStepStatusRows, selectedRunMessagesBySession]
+    () =>
+      buildStepLogDiagnostics(
+        selectedStepStatusRows,
+        selectedLifecycleHistory,
+        selectedRunMessagesBySession
+      ),
+    [selectedStepStatusRows, selectedLifecycleHistory, selectedRunMessagesBySession]
   );
   const selectedPhaseDiagnostics = useMemo(
     () => buildPhaseDiagnostics(selectedRunDetail, selectedRunAutomation),
@@ -3468,6 +3520,36 @@ export function AgentAutomationPage({
                         <div className="mt-2 text-xs text-text-subtle">
                           Session: {step.sessionId} | Messages: {step.messageCount}
                         </div>
+                        {step.events.length ? (
+                          <div className="mt-3 space-y-2 rounded-lg border border-border bg-surface-elevated/30 p-2">
+                            {step.events.map((event) => (
+                              <div
+                                key={event.id}
+                                className="rounded-lg border border-border bg-surface px-3 py-2"
+                              >
+                                <div className="text-[10px] uppercase tracking-wide text-text-subtle">
+                                  {event.event.replace(/_/g, " ")} |{" "}
+                                  {formatDateTime(event.createdAt)}
+                                </div>
+                                <div className="mt-1 text-xs text-text-muted">
+                                  Attempt: {event.attempt || 0}
+                                  {event.sessionId ? ` | Session: ${event.sessionId}` : ""}
+                                  {event.terminal ? " | terminal" : ""}
+                                </div>
+                                {event.reason ? (
+                                  <div className="mt-1 text-xs text-text">
+                                    {shortText(event.reason, 240)}
+                                  </div>
+                                ) : null}
+                                {event.summary ? (
+                                  <div className="mt-1 text-xs text-text-muted">
+                                    Summary: {shortText(event.summary, 220)}
+                                  </div>
+                                ) : null}
+                              </div>
+                            ))}
+                          </div>
+                        ) : null}
                         <div className="mt-3 max-h-72 space-y-2 overflow-y-auto rounded-lg border border-border bg-surface-elevated/40 p-2">
                           {step.messages.map((message, index) => (
                             <div

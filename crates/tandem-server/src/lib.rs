@@ -6141,6 +6141,21 @@ pub(crate) fn record_automation_lifecycle_event_with_metadata(
         });
 }
 
+fn automation_output_session_id(output: &Value) -> Option<String> {
+    output
+        .get("content")
+        .and_then(Value::as_object)
+        .and_then(|content| {
+            content
+                .get("session_id")
+                .or_else(|| content.get("sessionId"))
+                .and_then(Value::as_str)
+        })
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
 fn build_automation_pending_gate(node: &AutomationFlowNode) -> Option<AutomationPendingGate> {
     let gate = node.gate.as_ref()?;
     Some(AutomationPendingGate {
@@ -6978,6 +6993,26 @@ pub async fn run_automation_v2_executor(state: AppState) {
                             .or_insert(0);
                         *attempts += 1;
                     }
+                    for node in &executable {
+                        let attempt = row
+                            .checkpoint
+                            .node_attempts
+                            .get(&node.node_id)
+                            .copied()
+                            .unwrap_or(0);
+                        record_automation_lifecycle_event_with_metadata(
+                            row,
+                            "node_started",
+                            Some(format!("node `{}` started", node.node_id)),
+                            None,
+                            Some(json!({
+                                "node_id": node.node_id,
+                                "agent_id": node.agent_id,
+                                "objective": node.objective,
+                                "attempt": attempt,
+                            })),
+                        );
+                    }
                 })
                 .await;
 
@@ -7020,6 +7055,20 @@ pub async fn run_automation_v2_executor(state: AppState) {
             for (node_id, result) in outcomes {
                 match result {
                     Ok(output) => {
+                        let session_id = automation_output_session_id(&output);
+                        let summary = output
+                            .get("summary")
+                            .and_then(Value::as_str)
+                            .map(str::trim)
+                            .unwrap_or_default()
+                            .to_string();
+                        let contract_kind = output
+                            .get("contract_kind")
+                            .and_then(Value::as_str)
+                            .map(str::trim)
+                            .unwrap_or_default()
+                            .to_string();
+                        let attempt = latest_attempts.get(&node_id).copied().unwrap_or(1);
                         let _ = state
                             .update_automation_v2_run(&run.run_id, |row| {
                                 row.checkpoint.pending_nodes.retain(|id| id != &node_id);
@@ -7040,6 +7089,19 @@ pub async fn run_automation_v2_executor(state: AppState) {
                                 {
                                     row.checkpoint.last_failure = None;
                                 }
+                                record_automation_lifecycle_event_with_metadata(
+                                    row,
+                                    "node_completed",
+                                    Some(format!("node `{}` completed", node_id)),
+                                    None,
+                                    Some(json!({
+                                        "node_id": node_id,
+                                        "attempt": attempt,
+                                        "session_id": session_id,
+                                        "summary": summary,
+                                        "contract_kind": contract_kind,
+                                    })),
+                                );
                                 record_milestone_promotions(&automation, row, &node_id);
                             })
                             .await;
@@ -7062,7 +7124,25 @@ pub async fn run_automation_v2_executor(state: AppState) {
                             .find(|row| row.node_id == node_id)
                             .map(automation_node_max_attempts)
                             .unwrap_or(1);
-                        if attempts >= max_attempts {
+                        let terminal = attempts >= max_attempts;
+                        let _ = state
+                            .update_automation_v2_run(&run.run_id, |row| {
+                                record_automation_lifecycle_event_with_metadata(
+                                    row,
+                                    "node_failed",
+                                    Some(format!("node `{}` failed", node_id)),
+                                    None,
+                                    Some(json!({
+                                        "node_id": node_id,
+                                        "attempt": attempts,
+                                        "max_attempts": max_attempts,
+                                        "reason": detail,
+                                        "terminal": terminal,
+                                    })),
+                                );
+                            })
+                            .await;
+                        if terminal {
                             terminal_failure = Some(format!(
                                 "node `{}` failed after {}/{} attempts: {}",
                                 node_id, attempts, max_attempts, detail
