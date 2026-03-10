@@ -23,6 +23,7 @@ import {
   mcpListServers,
   onSidecarEventV2,
   routinesList,
+  toolIds,
   type AutomationV2RunRecord,
   type AutomationV2Spec,
   type McpServerRecord,
@@ -348,10 +349,15 @@ function workflowAutomationToEditDraft(automation: AutomationV2Spec): WorkflowEd
 function isMissionBlueprintAutomation(automation: AutomationV2Spec | null | undefined) {
   const metadata = (automation?.metadata as Record<string, unknown> | undefined) || {};
   const builderKind = String(metadata.builder_kind || metadata.builderKind || "").trim();
+  const missionBlueprint =
+    (metadata.mission_blueprint as Record<string, unknown> | undefined) ||
+    (metadata.missionBlueprint as Record<string, unknown> | undefined) ||
+    null;
+  const mission = (metadata.mission as Record<string, unknown> | undefined) || null;
   return (
     builderKind === "mission_blueprint" &&
-    !!metadata.mission_blueprint &&
-    typeof metadata.mission_blueprint === "object"
+    ((!!missionBlueprint && typeof missionBlueprint === "object") ||
+      (!!mission && typeof mission === "object"))
   );
 }
 
@@ -947,6 +953,7 @@ export function AgentAutomationPage({
   const [wizardStep, setWizardStep] = useState<WizardStep>(1);
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
   const [mcpServers, setMcpServers] = useState<McpServerRecord[]>([]);
+  const [availableToolIds, setAvailableToolIds] = useState<string[]>([]);
   const [workflowAutomations, setWorkflowAutomations] = useState<AutomationV2Spec[]>([]);
   const [legacyRoutines, setLegacyRoutines] = useState<RoutineSpec[]>([]);
   const [workflowRuns, setWorkflowRuns] = useState<AutomationV2RunRecord[]>([]);
@@ -1006,12 +1013,14 @@ export function AgentAutomationPage({
   );
 
   const loadCatalog = async () => {
-    const [providerRows, mcpRows] = await Promise.all([
+    const [providerRows, mcpRows, toolRows] = await Promise.all([
       listProvidersFromSidecar(),
       mcpListServers(),
+      toolIds().catch(() => []),
     ]);
     setProviders(providerRows);
     setMcpServers(mcpRows);
+    setAvailableToolIds(Array.isArray(toolRows) ? toolRows : []);
     setWizard((current) => buildDefaultWizard(activeProject, providerRows, current));
   };
 
@@ -1638,6 +1647,16 @@ export function AgentAutomationPage({
           String(entry.event || "")
             .trim()
             .toLowerCase() === "milestone_promoted"
+      ),
+    [selectedLifecycleHistory]
+  );
+  const selectedRepairHistory = useMemo(
+    () =>
+      selectedLifecycleHistory.filter(
+        (entry) =>
+          String(entry.event || "")
+            .trim()
+            .toLowerCase() === "run_step_repaired"
       ),
     [selectedLifecycleHistory]
   );
@@ -2332,6 +2351,7 @@ export function AgentAutomationPage({
                 activeProject={activeProject}
                 providers={providers}
                 mcpServers={mcpServers}
+                toolIds={availableToolIds}
                 editingAutomation={advancedEditAutomation}
                 onOpenMcpExtensions={onOpenMcpExtensions}
                 onRefreshAutomations={loadAutomationState}
@@ -2956,6 +2976,78 @@ export function AgentAutomationPage({
                         >
                           Repair Step And Rerun Subtree
                         </Button>
+                      </div>
+                    </div>
+                  ) : null}
+                  {selectedRepairHistory.length ? (
+                    <div className="mt-3 rounded-lg border border-border bg-surface px-3 py-3">
+                      <div className="text-sm font-medium text-text">Repair History</div>
+                      <div className="mt-3 space-y-3">
+                        {selectedRepairHistory.map((entry, index) => {
+                          const metadata = ((entry.metadata as
+                            | Record<string, unknown>
+                            | undefined) || {}) as Record<string, unknown>;
+                          const previousPrompt = String(metadata.previous_prompt || "").trim();
+                          const newPrompt = String(metadata.new_prompt || "").trim();
+                          const previousTemplateId = String(
+                            metadata.previous_template_id || ""
+                          ).trim();
+                          const newTemplateId = String(metadata.new_template_id || "").trim();
+                          const promptChanged = Boolean(metadata.prompt_updated);
+                          const templateChanged = Boolean(metadata.template_updated);
+                          const modelChanged = Boolean(metadata.model_policy_updated);
+                          return (
+                            <div
+                              key={`${metadata.node_id || "repair"}-${index}`}
+                              className="rounded-lg border border-border bg-surface-elevated/40 px-3 py-3"
+                            >
+                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                <div className="text-sm font-medium text-text">
+                                  {String(metadata.node_id || "step")}
+                                </div>
+                                <div className="text-[10px] uppercase tracking-wide text-text-subtle">
+                                  repaired
+                                </div>
+                              </div>
+                              <div className="mt-1 text-xs text-text-muted">
+                                {formatDateTime(entry.recorded_at_ms)}
+                                {entry.reason ? ` | ${String(entry.reason)}` : ""}
+                              </div>
+                              <div className="mt-2 text-xs text-text-muted">
+                                Changes:
+                                {promptChanged ? " prompt" : ""}
+                                {templateChanged ? " template" : ""}
+                                {modelChanged ? " model" : ""}
+                              </div>
+                              {templateChanged ? (
+                                <div className="mt-1 text-xs text-text-muted">
+                                  Template: {previousTemplateId || "none"} →{" "}
+                                  {newTemplateId || "none"}
+                                </div>
+                              ) : null}
+                              {promptChanged ? (
+                                <div className="mt-2 grid gap-2 lg:grid-cols-2">
+                                  <div className="rounded border border-border bg-surface px-2 py-2">
+                                    <div className="text-[10px] uppercase tracking-wide text-text-subtle">
+                                      Previous Prompt
+                                    </div>
+                                    <pre className="mt-2 overflow-x-auto whitespace-pre-wrap text-xs text-text-muted">
+                                      {previousPrompt || "(empty)"}
+                                    </pre>
+                                  </div>
+                                  <div className="rounded border border-border bg-surface px-2 py-2">
+                                    <div className="text-[10px] uppercase tracking-wide text-text-subtle">
+                                      New Prompt
+                                    </div>
+                                    <pre className="mt-2 overflow-x-auto whitespace-pre-wrap text-xs text-text-muted">
+                                      {newPrompt || "(empty)"}
+                                    </pre>
+                                  </div>
+                                </div>
+                              ) : null}
+                            </div>
+                          );
+                        })}
                       </div>
                     </div>
                   ) : null}

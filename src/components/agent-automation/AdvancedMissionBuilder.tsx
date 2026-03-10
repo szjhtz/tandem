@@ -22,6 +22,7 @@ interface AdvancedMissionBuilderProps {
   activeProject: UserProject | null;
   providers: ProviderInfo[];
   mcpServers: McpServerRecord[];
+  toolIds: string[];
   editingAutomation?: AutomationV2Spec | null;
   onRefreshAutomations: () => Promise<void>;
   onShowAutomations: () => void;
@@ -133,6 +134,289 @@ function defaultBlueprint(activeProject: UserProject | null): MissionBlueprint {
   };
 }
 
+function normalizeWorkstream(
+  workstream: Partial<MissionBuilderWorkstream> | null | undefined,
+  index: number
+): MissionBuilderWorkstream {
+  const base = newWorkstream(index + 1);
+  return {
+    ...base,
+    ...workstream,
+    workstream_id: String(workstream?.workstream_id || base.workstream_id).trim(),
+    title: String(workstream?.title || base.title).trim(),
+    objective: String(workstream?.objective || "").trim(),
+    role: String(workstream?.role || base.role).trim(),
+    prompt: String(workstream?.prompt || "").trim(),
+    phase_id: String(workstream?.phase_id || "").trim(),
+    lane: String(workstream?.lane || "").trim(),
+    milestone: String(workstream?.milestone || "").trim(),
+    depends_on: Array.isArray(workstream?.depends_on) ? workstream?.depends_on.filter(Boolean) : [],
+    input_refs: Array.isArray(workstream?.input_refs) ? workstream?.input_refs.filter(Boolean) : [],
+    tool_allowlist_override: Array.isArray(workstream?.tool_allowlist_override)
+      ? workstream.tool_allowlist_override.filter(Boolean)
+      : [],
+    mcp_servers_override: Array.isArray(workstream?.mcp_servers_override)
+      ? workstream.mcp_servers_override.filter(Boolean)
+      : [],
+    output_contract: {
+      kind: String(workstream?.output_contract?.kind || base.output_contract.kind).trim(),
+      summary_guidance: String(
+        workstream?.output_contract?.summary_guidance || base.output_contract.summary_guidance || ""
+      ).trim(),
+      schema: workstream?.output_contract?.schema || null,
+    },
+  };
+}
+
+function normalizeReviewStage(
+  stage: Partial<MissionBuilderReviewStage> | null | undefined,
+  index: number
+): MissionBuilderReviewStage {
+  const base = newReviewStage(index + 1);
+  return {
+    ...base,
+    ...stage,
+    stage_id: String(stage?.stage_id || base.stage_id).trim(),
+    stage_kind: (stage?.stage_kind || base.stage_kind) as MissionBuilderReviewStage["stage_kind"],
+    title: String(stage?.title || base.title).trim(),
+    phase_id: String(stage?.phase_id || "").trim(),
+    lane: String(stage?.lane || "").trim(),
+    milestone: String(stage?.milestone || "").trim(),
+    target_ids: Array.isArray(stage?.target_ids) ? stage.target_ids.filter(Boolean) : [],
+    checklist: Array.isArray(stage?.checklist) ? stage.checklist.filter(Boolean) : [],
+    prompt: String(stage?.prompt || "").trim(),
+    tool_allowlist_override: Array.isArray(stage?.tool_allowlist_override)
+      ? stage.tool_allowlist_override.filter(Boolean)
+      : [],
+    mcp_servers_override: Array.isArray(stage?.mcp_servers_override)
+      ? stage.mcp_servers_override.filter(Boolean)
+      : [],
+    gate:
+      stage?.stage_kind === "approval" || (stage?.gate && typeof stage.gate === "object")
+        ? {
+            required: stage?.gate?.required ?? true,
+            decisions: stage?.gate?.decisions || ["approve", "rework", "cancel"],
+            rework_targets: Array.isArray(stage?.gate?.rework_targets)
+              ? stage.gate.rework_targets.filter(Boolean)
+              : [],
+            instructions: String(stage?.gate?.instructions || "").trim(),
+          }
+        : stage?.gate || null,
+  };
+}
+
+function normalizeMissionBlueprint(
+  raw: Partial<MissionBlueprint> | null | undefined,
+  activeProject: UserProject | null
+): MissionBlueprint {
+  const base = defaultBlueprint(activeProject);
+  const team = ((raw?.team as Record<string, unknown> | undefined) ||
+    {}) as MissionBlueprint["team"];
+  const workstreams = Array.isArray(raw?.workstreams) ? raw.workstreams : [];
+  const reviewStages = Array.isArray(raw?.review_stages) ? raw.review_stages : [];
+  const phases = Array.isArray(raw?.phases) ? raw.phases : base.phases || [];
+  const milestones = Array.isArray(raw?.milestones) ? raw.milestones : [];
+  return {
+    ...base,
+    ...raw,
+    mission_id: String(raw?.mission_id || base.mission_id).trim(),
+    title: String(raw?.title || "").trim(),
+    goal: String(raw?.goal || "").trim(),
+    success_criteria: Array.isArray(raw?.success_criteria)
+      ? raw.success_criteria.filter(Boolean)
+      : [],
+    shared_context: String(raw?.shared_context || "").trim(),
+    workspace_root: String(
+      raw?.workspace_root || activeProject?.path || base.workspace_root
+    ).trim(),
+    orchestrator_template_id: String(raw?.orchestrator_template_id || "").trim(),
+    phases: phases.map((phase, index) => ({
+      phase_id: String(phase?.phase_id || `phase_${index + 1}`).trim(),
+      title: String(phase?.title || phase?.phase_id || `Phase ${index + 1}`).trim(),
+      description: String(phase?.description || "").trim(),
+      execution_mode: (phase?.execution_mode || "soft") as "soft" | "barrier",
+    })),
+    milestones: milestones.map((milestone, index) => ({
+      milestone_id: String(milestone?.milestone_id || `milestone_${index + 1}`).trim(),
+      title: String(milestone?.title || milestone?.milestone_id || `Milestone ${index + 1}`).trim(),
+      description: String(milestone?.description || "").trim(),
+      phase_id: String(milestone?.phase_id || "").trim(),
+      required_stage_ids: Array.isArray(milestone?.required_stage_ids)
+        ? milestone.required_stage_ids.filter(Boolean)
+        : [],
+    })),
+    team: {
+      allowed_template_ids: Array.isArray(team.allowed_template_ids)
+        ? team.allowed_template_ids.filter(Boolean)
+        : [],
+      default_model_policy:
+        (team.default_model_policy as Record<string, unknown> | undefined) || undefined,
+      allowed_mcp_servers: Array.isArray(team.allowed_mcp_servers)
+        ? team.allowed_mcp_servers.filter(Boolean)
+        : [],
+      max_parallel_agents:
+        typeof team.max_parallel_agents === "number"
+          ? team.max_parallel_agents
+          : base.team.max_parallel_agents,
+      mission_budget: (team.mission_budget as Record<string, unknown> | undefined) || undefined,
+      orchestrator_only_tool_calls: Boolean(team.orchestrator_only_tool_calls),
+    },
+    workstreams: (workstreams.length ? workstreams : base.workstreams).map((workstream, index) =>
+      normalizeWorkstream(workstream, index)
+    ),
+    review_stages: reviewStages.map((stage, index) => normalizeReviewStage(stage, index)),
+    metadata: (raw?.metadata as Record<string, unknown> | null | undefined) || null,
+  };
+}
+
+function extractMissionBlueprintFromAutomation(
+  automation: AutomationV2Spec | null | undefined,
+  activeProject: UserProject | null
+): MissionBlueprint | null {
+  const metadata = (automation?.metadata as Record<string, unknown> | undefined) || {};
+  const direct =
+    (metadata.mission_blueprint as Partial<MissionBlueprint> | undefined) ||
+    (metadata.missionBlueprint as Partial<MissionBlueprint> | undefined) ||
+    null;
+  if (direct && typeof direct === "object") {
+    return normalizeMissionBlueprint(direct, activeProject);
+  }
+  const mission = (metadata.mission as Record<string, unknown> | undefined) || {};
+  if (!Object.keys(mission).length) return null;
+  const derivedWorkstreams =
+    Array.isArray(metadata.workstreams) && metadata.workstreams.length > 0
+      ? (metadata.workstreams as MissionBuilderWorkstream[])
+      : (automation?.flow?.nodes || [])
+          .filter((node) => {
+            const metadata = (node.metadata as Record<string, unknown> | undefined) || {};
+            const builder = (metadata.builder as Record<string, unknown> | undefined) || {};
+            const stageKind = String(node.stage_kind || "")
+              .trim()
+              .toLowerCase();
+            return stageKind === "" || stageKind === "workstream" || builder.role || builder.prompt;
+          })
+          .map((node) => {
+            const nodeMetadata = (node.metadata as Record<string, unknown> | undefined) || {};
+            const builder = (nodeMetadata.builder as Record<string, unknown> | undefined) || {};
+            const agent =
+              automation?.agents?.find((entry) => entry.agent_id === node.agent_id) || null;
+            return {
+              workstream_id: String(node.node_id || "").trim(),
+              title: String(builder.title || node.node_id || "Workstream").trim(),
+              objective: String(node.objective || "").trim(),
+              role: String(builder.role || "worker").trim(),
+              priority:
+                typeof builder.priority === "number"
+                  ? builder.priority
+                  : builder.priority
+                    ? Number.parseInt(String(builder.priority), 10) || undefined
+                    : undefined,
+              phase_id: String(builder.phase_id || "").trim(),
+              lane: String(builder.lane || "").trim(),
+              milestone: String(builder.milestone || "").trim(),
+              template_id: String(agent?.template_id || "").trim() || undefined,
+              prompt: String(builder.prompt || "").trim(),
+              depends_on: Array.isArray(node.depends_on)
+                ? node.depends_on.map((row) => String(row || "").trim()).filter(Boolean)
+                : [],
+              input_refs: Array.isArray(node.input_refs)
+                ? node.input_refs.map((row) => ({
+                    from_step_id: String(row.from_step_id || "").trim(),
+                    alias: String(row.alias || row.from_step_id || "").trim(),
+                  }))
+                : [],
+              output_contract: {
+                kind: String(node.output_contract?.kind || "report_markdown").trim(),
+                summary_guidance: String(node.output_contract?.summary_guidance || "").trim(),
+                schema: node.output_contract?.schema || null,
+              },
+              model_override:
+                (agent?.model_policy as Record<string, unknown> | undefined) || undefined,
+              tool_allowlist_override: Array.isArray(agent?.tool_policy?.allowlist)
+                ? agent.tool_policy.allowlist.filter(Boolean)
+                : [],
+              mcp_servers_override: Array.isArray(agent?.mcp_policy?.allowed_servers)
+                ? agent.mcp_policy.allowed_servers.filter(Boolean)
+                : [],
+            } satisfies MissionBuilderWorkstream;
+          });
+  const derivedReviewStages =
+    Array.isArray(metadata.review_stages) && metadata.review_stages.length > 0
+      ? (metadata.review_stages as MissionBuilderReviewStage[])
+      : (automation?.flow?.nodes || [])
+          .filter((node) => {
+            const stageKind = String(node.stage_kind || "")
+              .trim()
+              .toLowerCase();
+            return stageKind === "review" || stageKind === "test" || stageKind === "approval";
+          })
+          .map((node) => {
+            const nodeMetadata = (node.metadata as Record<string, unknown> | undefined) || {};
+            const builder = (nodeMetadata.builder as Record<string, unknown> | undefined) || {};
+            const agent =
+              automation?.agents?.find((entry) => entry.agent_id === node.agent_id) || null;
+            return {
+              stage_id: String(node.node_id || "").trim(),
+              stage_kind: (String(node.stage_kind || "review")
+                .trim()
+                .toLowerCase() || "review") as MissionBuilderReviewStage["stage_kind"],
+              title: String(builder.title || node.node_id || "Stage").trim(),
+              priority:
+                typeof builder.priority === "number"
+                  ? builder.priority
+                  : builder.priority
+                    ? Number.parseInt(String(builder.priority), 10) || undefined
+                    : undefined,
+              phase_id: String(builder.phase_id || "").trim(),
+              lane: String(builder.lane || "").trim(),
+              milestone: String(builder.milestone || "").trim(),
+              target_ids: Array.isArray(node.depends_on)
+                ? node.depends_on.map((row) => String(row || "").trim()).filter(Boolean)
+                : [],
+              role: String(builder.role || "").trim() || undefined,
+              template_id: String(agent?.template_id || "").trim() || undefined,
+              prompt: String(node.objective || builder.prompt || "").trim(),
+              checklist: Array.isArray(builder.checklist)
+                ? builder.checklist.map((row) => String(row || "").trim()).filter(Boolean)
+                : [],
+              model_override:
+                (agent?.model_policy as Record<string, unknown> | undefined) || undefined,
+              tool_allowlist_override: Array.isArray(agent?.tool_policy?.allowlist)
+                ? agent.tool_policy.allowlist.filter(Boolean)
+                : [],
+              mcp_servers_override: Array.isArray(agent?.mcp_policy?.allowed_servers)
+                ? agent.mcp_policy.allowed_servers.filter(Boolean)
+                : [],
+              gate: (node.gate as MissionBuilderReviewStage["gate"]) || null,
+            } satisfies MissionBuilderReviewStage;
+          });
+  return normalizeMissionBlueprint(
+    {
+      mission_id: String(mission.mission_id || automation?.automation_id || "").trim(),
+      title: String(mission.title || automation?.name || "").trim(),
+      goal: String(mission.goal || automation?.description || "").trim(),
+      success_criteria: Array.isArray(mission.success_criteria)
+        ? mission.success_criteria.map((row) => String(row || "").trim()).filter(Boolean)
+        : [],
+      shared_context: String(mission.shared_context || "").trim(),
+      workspace_root: String(automation?.workspace_root || activeProject?.path || "").trim(),
+      orchestrator_template_id: String(mission.orchestrator_template_id || "").trim(),
+      phases: Array.isArray(mission.phases) ? (mission.phases as MissionBlueprint["phases"]) : [],
+      milestones: Array.isArray(mission.milestones)
+        ? (mission.milestones as MissionBlueprint["milestones"])
+        : [],
+      team: (mission.team as MissionBlueprint["team"]) || baseBlueprintTeam(activeProject),
+      workstreams: derivedWorkstreams,
+      review_stages: derivedReviewStages,
+    },
+    activeProject
+  );
+}
+
+function baseBlueprintTeam(activeProject: UserProject | null): MissionBlueprint["team"] {
+  return defaultBlueprint(activeProject).team;
+}
+
 function toModelPolicy(draft: BuilderModelDraft) {
   const provider = draft.provider.trim();
   const model = draft.model.trim();
@@ -150,6 +434,87 @@ function splitCsv(raw: string) {
     .split(",")
     .map((value) => value.trim())
     .filter(Boolean);
+}
+
+function ScopeSelector({
+  label,
+  helper,
+  options,
+  selected,
+  inheritSummary,
+  emptySummary,
+  onChange,
+}: {
+  label: string;
+  helper: string;
+  options: string[];
+  selected: string[];
+  inheritSummary: string;
+  emptySummary: string;
+  onChange: (next: string[]) => void;
+}) {
+  const [query, setQuery] = useState("");
+  const normalizedQuery = query.trim().toLowerCase();
+  const filteredOptions = useMemo(
+    () =>
+      options.filter((option) =>
+        normalizedQuery ? option.toLowerCase().includes(normalizedQuery) : true
+      ),
+    [normalizedQuery, options]
+  );
+  const summary = selected.length
+    ? `${selected.length} override${selected.length === 1 ? "" : "s"} selected`
+    : inheritSummary || emptySummary;
+
+  return (
+    <div className="rounded-lg border border-border bg-surface px-3 py-3">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="text-sm font-medium text-text">{label}</div>
+          <div className="mt-1 text-xs text-text-muted">{helper}</div>
+        </div>
+        <Button size="sm" variant="secondary" onClick={() => onChange([])}>
+          Inherit
+        </Button>
+      </div>
+      <div className="mt-2 text-xs text-text-subtle">{summary}</div>
+      <input
+        value={query}
+        onChange={(event) => setQuery(event.target.value)}
+        placeholder={`Search ${label.toLowerCase()}`}
+        className="mt-3 h-10 w-full rounded-lg border border-border bg-surface-elevated/40 px-3 text-sm text-text outline-none focus:border-primary focus:ring-1 focus:ring-primary"
+      />
+      <div className="mt-3 max-h-44 space-y-2 overflow-y-auto rounded-lg border border-border bg-surface-elevated/30 p-2">
+        {filteredOptions.length ? (
+          filteredOptions.map((option) => {
+            const checked = selected.includes(option);
+            return (
+              <label
+                key={option}
+                className="flex items-center justify-between gap-3 rounded-md px-2 py-2 text-sm text-text hover:bg-surface"
+              >
+                <span className="truncate">{option}</span>
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  onChange={(event) =>
+                    onChange(
+                      event.target.checked
+                        ? [...selected, option].sort()
+                        : selected.filter((value) => value !== option)
+                    )
+                  }
+                  className="h-4 w-4 rounded border-border bg-surface"
+                />
+              </label>
+            );
+          })
+        ) : (
+          <div className="px-2 py-3 text-xs text-text-muted">{emptySummary}</div>
+        )}
+      </div>
+    </div>
+  );
 }
 
 function parseOptionalInt(raw: string) {
@@ -199,6 +564,7 @@ export function AdvancedMissionBuilder({
   activeProject,
   providers,
   mcpServers,
+  toolIds,
   editingAutomation = null,
   onRefreshAutomations,
   onShowAutomations,
@@ -227,11 +593,7 @@ export function AdvancedMissionBuilder({
   }, [activeProject?.id]);
 
   useEffect(() => {
-    const metadata = (editingAutomation?.metadata as Record<string, unknown> | undefined) || {};
-    const savedBlueprint =
-      (metadata.mission_blueprint as MissionBlueprint | undefined) ||
-      (metadata.missionBlueprint as MissionBlueprint | undefined) ||
-      null;
+    const savedBlueprint = extractMissionBlueprintFromAutomation(editingAutomation, activeProject);
     if (!editingAutomation?.automation_id || !savedBlueprint) {
       setBlueprint(defaultBlueprint(activeProject));
       setTeamModel({ provider: "", model: "" });
@@ -320,6 +682,85 @@ export function AdvancedMissionBuilder({
       workstreams: nextWorkstreams,
     };
   }, [blueprint, teamModel, workstreamModels]);
+  const previewGraphColumns = useMemo(() => {
+    if (!preview) return [];
+    const downstreamCounts = new Map<string, number>();
+    for (const node of preview.node_previews) {
+      downstreamCounts.set(node.node_id, 0);
+    }
+    for (const node of preview.node_previews) {
+      for (const upstreamId of node.depends_on) {
+        downstreamCounts.set(upstreamId, (downstreamCounts.get(upstreamId) || 0) + 1);
+      }
+    }
+    const phaseLookup = new Map(
+      (effectiveBlueprint.phases || []).map((phase) => [
+        phase.phase_id,
+        {
+          phaseId: phase.phase_id,
+          title: phase.title || phase.phase_id,
+          executionMode: phase.execution_mode || "soft",
+        },
+      ])
+    );
+    const grouped = new Map<
+      string,
+      {
+        phaseId: string;
+        title: string;
+        executionMode: string;
+        lanes: Array<{
+          laneId: string;
+          title: string;
+          nodes: Array<(typeof preview.node_previews)[number] & { downstreamCount: number }>;
+        }>;
+      }
+    >();
+    for (const node of preview.node_previews) {
+      const phaseId = node.phase_id || "unassigned";
+      const phaseMeta = phaseLookup.get(phaseId) || {
+        phaseId,
+        title: phaseId === "unassigned" ? "Unassigned" : phaseId,
+        executionMode: "n/a",
+      };
+      const existing = grouped.get(phaseId) || { ...phaseMeta, lanes: [] };
+      const laneId = node.lane || "unassigned";
+      const laneTitle = node.lane || "Unassigned Lane";
+      let lane = existing.lanes.find((entry) => entry.laneId === laneId);
+      if (!lane) {
+        lane = { laneId, title: laneTitle, nodes: [] };
+        existing.lanes.push(lane);
+      }
+      lane.nodes.push({ ...node, downstreamCount: downstreamCounts.get(node.node_id) || 0 });
+      grouped.set(phaseId, existing);
+    }
+    return Array.from(grouped.values())
+      .map((column) => ({
+        ...column,
+        lanes: column.lanes
+          .map((lane) => ({
+            ...lane,
+            nodes: lane.nodes.sort(
+              (a, b) =>
+                (a.priority ?? 0) - (b.priority ?? 0) ||
+                a.title.localeCompare(b.title) ||
+                a.node_id.localeCompare(b.node_id)
+            ),
+          }))
+          .sort((a, b) => a.title.localeCompare(b.title)),
+      }))
+      .sort((a, b) => {
+        const aIndex = (effectiveBlueprint.phases || []).findIndex(
+          (phase) => phase.phase_id === a.phaseId
+        );
+        const bIndex = (effectiveBlueprint.phases || []).findIndex(
+          (phase) => phase.phase_id === b.phaseId
+        );
+        const normalizedA = aIndex === -1 ? Number.MAX_SAFE_INTEGER : aIndex;
+        const normalizedB = bIndex === -1 ? Number.MAX_SAFE_INTEGER : bIndex;
+        return normalizedA - normalizedB || a.title.localeCompare(b.title);
+      });
+  }, [preview, effectiveBlueprint.phases]);
 
   const compilePreview = async () => {
     setBusyKey("preview");
@@ -1073,21 +1514,33 @@ export function AdvancedMissionBuilder({
                   />
                 </div>
                 <div className="mt-3 grid gap-3 lg:grid-cols-2">
-                  <Input
+                  <ScopeSelector
                     label="Allowed Tools"
-                    value={(workstream.tool_allowlist_override || []).join(", ")}
-                    onChange={(event) =>
+                    helper="Override the engine-default tool scope for this workstream."
+                    options={toolIds}
+                    selected={workstream.tool_allowlist_override || []}
+                    inheritSummary="Inheriting engine-default tool policy."
+                    emptySummary="No tool catalog loaded yet."
+                    onChange={(next) =>
                       updateWorkstream(workstream.workstream_id, {
-                        tool_allowlist_override: splitCsv(event.target.value),
+                        tool_allowlist_override: next,
                       })
                     }
                   />
-                  <Input
+                  <ScopeSelector
                     label="MCP Servers"
-                    value={(workstream.mcp_servers_override || []).join(", ")}
-                    onChange={(event) =>
+                    helper="Override the mission-level MCP selection for this workstream."
+                    options={mcpServers.map((server) => server.name).sort()}
+                    selected={workstream.mcp_servers_override || []}
+                    inheritSummary={
+                      (blueprint.team.allowed_mcp_servers || []).length
+                        ? `Inheriting ${(blueprint.team.allowed_mcp_servers || []).length} mission MCP server(s).`
+                        : "No mission-level MCP servers selected."
+                    }
+                    emptySummary="No MCP servers discovered."
+                    onChange={(next) =>
                       updateWorkstream(workstream.workstream_id, {
-                        mcp_servers_override: splitCsv(event.target.value),
+                        mcp_servers_override: next,
                       })
                     }
                   />
@@ -1228,21 +1681,33 @@ export function AdvancedMissionBuilder({
                 </label>
               </div>
               <div className="mt-3 grid gap-3 lg:grid-cols-2">
-                <Input
+                <ScopeSelector
                   label="Allowed Tools"
-                  value={(stage.tool_allowlist_override || []).join(", ")}
-                  onChange={(event) =>
+                  helper="Override the engine-default tool scope for this checkpoint stage."
+                  options={toolIds}
+                  selected={stage.tool_allowlist_override || []}
+                  inheritSummary="Inheriting engine-default tool policy."
+                  emptySummary="No tool catalog loaded yet."
+                  onChange={(next) =>
                     updateReviewStage(stage.stage_id, {
-                      tool_allowlist_override: splitCsv(event.target.value),
+                      tool_allowlist_override: next,
                     })
                   }
                 />
-                <Input
+                <ScopeSelector
                   label="MCP Servers"
-                  value={(stage.mcp_servers_override || []).join(", ")}
-                  onChange={(event) =>
+                  helper="Override the mission-level MCP selection for this checkpoint stage."
+                  options={mcpServers.map((server) => server.name).sort()}
+                  selected={stage.mcp_servers_override || []}
+                  inheritSummary={
+                    (blueprint.team.allowed_mcp_servers || []).length
+                      ? `Inheriting ${(blueprint.team.allowed_mcp_servers || []).length} mission MCP server(s).`
+                      : "No mission-level MCP servers selected."
+                  }
+                  emptySummary="No MCP servers discovered."
+                  onChange={(next) =>
                     updateReviewStage(stage.stage_id, {
-                      mcp_servers_override: splitCsv(event.target.value),
+                      mcp_servers_override: next,
                     })
                   }
                 />
@@ -1455,6 +1920,82 @@ export function AdvancedMissionBuilder({
                       </div>
                       <div className="mt-1 text-xs text-text-muted">
                         MCP: {node.mcp_servers.length ? node.mcp_servers.join(", ") : "none"}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div className="rounded-lg border border-border bg-surface-elevated/40 p-3">
+                <div className="text-sm font-medium text-text">Graph Preview</div>
+                <div className="mt-1 text-xs text-text-muted">
+                  Grouped by phase so fan-out, fan-in, and promotion shape are visible before
+                  launch.
+                </div>
+                <div className="mt-3 grid gap-3 xl:grid-cols-3">
+                  {previewGraphColumns.map((column) => (
+                    <div
+                      key={column.phaseId}
+                      className="rounded-lg border border-border bg-surface px-3 py-3"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="text-sm font-medium text-text">{column.title}</div>
+                        <div className="text-[10px] uppercase tracking-wide text-text-subtle">
+                          {column.executionMode}
+                        </div>
+                      </div>
+                      <div className="mt-3 space-y-2">
+                        {column.lanes.map((lane) => (
+                          <div
+                            key={`${column.phaseId}-${lane.laneId}`}
+                            className="rounded-lg border border-border bg-surface-elevated/20 p-2"
+                          >
+                            <div className="mb-2 flex items-center justify-between gap-2">
+                              <div className="text-xs font-medium uppercase tracking-wide text-text-subtle">
+                                {lane.title}
+                              </div>
+                              <div className="text-[10px] uppercase tracking-wide text-text-subtle">
+                                {lane.nodes.length} node{lane.nodes.length === 1 ? "" : "s"}
+                              </div>
+                            </div>
+                            <div className="space-y-2">
+                              {lane.nodes.map((node) => (
+                                <div
+                                  key={`${column.phaseId}-${lane.laneId}-${node.node_id}`}
+                                  className="rounded-lg border border-border bg-surface px-3 py-2"
+                                >
+                                  <div className="flex items-center justify-between gap-2">
+                                    <div className="text-sm font-medium text-text">
+                                      {node.title}
+                                    </div>
+                                    <div className="text-[10px] uppercase tracking-wide text-text-subtle">
+                                      p{node.priority ?? 0}
+                                    </div>
+                                  </div>
+                                  <div className="mt-1 text-xs text-text-subtle">
+                                    {node.node_id}
+                                    {node.milestone ? ` | milestone ${node.milestone}` : ""}
+                                  </div>
+                                  <div className="mt-2 flex flex-wrap gap-2 text-[11px] text-text-muted">
+                                    <span className="rounded border border-border px-2 py-1">
+                                      fan-in {node.depends_on.length}
+                                    </span>
+                                    <span className="rounded border border-border px-2 py-1">
+                                      fan-out {node.downstreamCount}
+                                    </span>
+                                    <span className="rounded border border-border px-2 py-1">
+                                      {node.depends_on.length ? "dependent" : "root"}
+                                    </span>
+                                  </div>
+                                  {node.depends_on.length ? (
+                                    <div className="mt-2 text-xs text-text-muted">
+                                      ← {node.depends_on.join(", ")}
+                                    </div>
+                                  ) : null}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        ))}
                       </div>
                     </div>
                   ))}

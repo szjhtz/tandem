@@ -148,7 +148,9 @@ Ship an advanced power-user mission compiler that lets operators define one coor
 - [x] Add integration coverage that exercises mission-builder preview/apply through the Tauri boundary.
   - [x] cover `mission_builder_preview` posting `/mission-builder/compile-preview`
   - [x] cover `mission_builder_apply` posting `/mission-builder/apply`
-- [ ] Decide whether mission-builder compile logic should remain server-owned or move further into `tandem-workflows`.
+- [x] Decide compiler ownership for mission-builder logic.
+  - [x] keep authored mission normalization, validation, PM-semantics expansion, and `AutomationV2Spec` compilation in `tandem-workflows`
+  - [x] keep apply-time persistence, run-now behavior, and transport shaping in server / Tauri layers
 - [ ] Improve advanced editing for multiple review/test stages and per-workstream tool/MCP scope controls.
 - [ ] Improve the per-step scope editor UX beyond CSV entry:
   - searchable tool selection
