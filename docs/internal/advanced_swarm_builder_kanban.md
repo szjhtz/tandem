@@ -95,7 +95,7 @@ Ship an advanced power-user mission compiler that lets operators define one coor
 - [ ] P1: Harden advanced automation edit compatibility across older or partially-populated records.
   - [x] unsupported legacy records fall back gracefully
   - [x] older mission-blueprint metadata variants hydrate safely
-  - [~] continue hardening reconstruction from sparse compiled automation metadata
+  - [x] reconstruct usable advanced drafts from sparse compiled automation metadata when authored mission metadata is missing
 - [ ] P1: Add PM semantics to the authored mission/workflow model.
   - [x] define authored `priority`, `phase`, `lane`, and `milestone` semantics
   - keep dependencies as the legality constraint

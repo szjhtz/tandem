@@ -282,7 +282,6 @@ function extractMissionBlueprintFromAutomation(
     return normalizeMissionBlueprint(direct, activeProject);
   }
   const mission = (metadata.mission as Record<string, unknown> | undefined) || {};
-  if (!Object.keys(mission).length) return null;
   const derivedWorkstreams =
     Array.isArray(metadata.workstreams) && metadata.workstreams.length > 0
       ? (metadata.workstreams as MissionBuilderWorkstream[])
@@ -390,6 +389,46 @@ function extractMissionBlueprintFromAutomation(
               gate: (node.gate as MissionBuilderReviewStage["gate"]) || null,
             } satisfies MissionBuilderReviewStage;
           });
+  const derivedPhaseIds = Array.from(
+    new Set(
+      [...derivedWorkstreams, ...derivedReviewStages]
+        .map((row) => String(row.phase_id || "").trim())
+        .filter(Boolean)
+    )
+  );
+  const derivedMilestoneIds = Array.from(
+    new Set(
+      [...derivedWorkstreams, ...derivedReviewStages]
+        .map((row) => String(row.milestone || "").trim())
+        .filter(Boolean)
+    )
+  );
+  const fallbackPhases =
+    Array.isArray(mission.phases) && mission.phases.length > 0
+      ? (mission.phases as MissionBlueprint["phases"])
+      : derivedPhaseIds.map((phaseId, index) => ({
+          phase_id: phaseId,
+          title: phaseId.replace(/_/g, " ") || `Phase ${index + 1}`,
+          description: "",
+          execution_mode: "soft" as const,
+        }));
+  const fallbackMilestones =
+    Array.isArray(mission.milestones) && mission.milestones.length > 0
+      ? (mission.milestones as MissionBlueprint["milestones"])
+      : derivedMilestoneIds.map((milestoneId, index) => ({
+          milestone_id: milestoneId,
+          title: milestoneId.replace(/_/g, " ") || `Milestone ${index + 1}`,
+          description: "",
+          phase_id: "",
+          required_stage_ids: [],
+        }));
+  const builderKind = String(metadata.builder_kind || metadata.builderKind || "").trim();
+  const looksLikeAdvancedAutomation =
+    builderKind === "mission_blueprint" ||
+    derivedWorkstreams.length > 0 ||
+    derivedReviewStages.length > 0 ||
+    Object.keys(mission).length > 0;
+  if (!looksLikeAdvancedAutomation) return null;
   return normalizeMissionBlueprint(
     {
       mission_id: String(mission.mission_id || automation?.automation_id || "").trim(),
@@ -401,11 +440,25 @@ function extractMissionBlueprintFromAutomation(
       shared_context: String(mission.shared_context || "").trim(),
       workspace_root: String(automation?.workspace_root || activeProject?.path || "").trim(),
       orchestrator_template_id: String(mission.orchestrator_template_id || "").trim(),
-      phases: Array.isArray(mission.phases) ? (mission.phases as MissionBlueprint["phases"]) : [],
-      milestones: Array.isArray(mission.milestones)
-        ? (mission.milestones as MissionBlueprint["milestones"])
-        : [],
-      team: (mission.team as MissionBlueprint["team"]) || baseBlueprintTeam(activeProject),
+      phases: fallbackPhases,
+      milestones: fallbackMilestones,
+      team: {
+        ...baseBlueprintTeam(activeProject),
+        ...((mission.team as MissionBlueprint["team"]) || {}),
+        allowed_mcp_servers: Array.isArray(
+          ((mission.team as MissionBlueprint["team"] | undefined)?.allowed_mcp_servers ||
+            metadata.allowed_mcp_servers) as string[] | undefined
+        )
+          ? (
+              (((mission.team as MissionBlueprint["team"] | undefined)?.allowed_mcp_servers ||
+                metadata.allowed_mcp_servers) as string[]) || []
+            ).filter(Boolean)
+          : [],
+        max_parallel_agents:
+          (mission.team as MissionBlueprint["team"] | undefined)?.max_parallel_agents ||
+          automation?.execution?.max_parallel_agents ||
+          baseBlueprintTeam(activeProject).max_parallel_agents,
+      },
       workstreams: derivedWorkstreams,
       review_stages: derivedReviewStages,
     },
