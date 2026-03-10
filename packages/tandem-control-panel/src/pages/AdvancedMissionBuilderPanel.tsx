@@ -19,6 +19,7 @@ type McpServerOption = {
 type CreateModeTab = "mission" | "team" | "workstreams" | "review" | "compile";
 type ScheduleKind = "manual" | "interval" | "cron";
 type ModelDraft = { provider: string; model: string };
+type StarterPresetId = "research" | "marketing" | "incident" | "event";
 
 type MissionBlueprint = {
   mission_id: string;
@@ -212,6 +213,452 @@ function defaultBlueprint(workspaceRoot: string): MissionBlueprint {
   };
 }
 
+function starterBlueprint(preset: StarterPresetId, workspaceRoot: string): MissionBlueprint {
+  const root = defaultBlueprint(workspaceRoot);
+  switch (preset) {
+    case "research":
+      return {
+        ...root,
+        title: "Competitive research mission",
+        goal: "Produce a concise evidence-based competitive brief with clear implications and next actions.",
+        success_criteria: [
+          "At least 5 competitors analyzed",
+          "Claims are supported by evidence",
+          "Final synthesis identifies gaps and recommendations",
+        ],
+        shared_context:
+          "Audience is executive leadership. Prefer factual, source-backed claims. Avoid speculation and clearly label unknowns.",
+        phases: [
+          { phase_id: "research", title: "Research", execution_mode: "soft" },
+          { phase_id: "synthesis", title: "Synthesis", execution_mode: "barrier" },
+        ],
+        milestones: [
+          {
+            milestone_id: "evidence_collected",
+            title: "Evidence collected",
+            phase_id: "research",
+            required_stage_ids: ["competitors", "market-signals"],
+          },
+        ],
+        workstreams: [
+          {
+            workstream_id: "competitors",
+            title: "Competitor scan",
+            objective: "Identify key competitors, claims, positioning, and pricing cues.",
+            role: "researcher",
+            prompt:
+              "Act as a competitive intelligence researcher. Review available sources, extract concrete claims, and produce a structured competitor memo with evidence.",
+            priority: 1,
+            phase_id: "research",
+            lane: "research",
+            milestone: "evidence_collected",
+            depends_on: [],
+            input_refs: [],
+            tool_allowlist_override: [],
+            mcp_servers_override: [],
+            output_contract: {
+              kind: "report_markdown",
+              summary_guidance:
+                "Competitors reviewed, claims, evidence, pricing signals, and key takeaways.",
+            },
+          },
+          {
+            workstream_id: "market-signals",
+            title: "Market signals",
+            objective:
+              "Gather recent market signals, launches, and shifts relevant to the mission.",
+            role: "researcher",
+            prompt:
+              "Collect recent market movements, launches, and notable changes that affect the competitive landscape. Summarize only useful signals.",
+            priority: 2,
+            phase_id: "research",
+            lane: "signals",
+            milestone: "evidence_collected",
+            depends_on: [],
+            input_refs: [],
+            tool_allowlist_override: [],
+            mcp_servers_override: [],
+            output_contract: {
+              kind: "report_markdown",
+              summary_guidance: "Recent market signals, why they matter, and confidence level.",
+            },
+          },
+          {
+            workstream_id: "synthesis",
+            title: "Synthesis brief",
+            objective: "Merge findings into an executive-ready competitive brief.",
+            role: "analyst",
+            prompt:
+              "Synthesize upstream findings into one brief for executives. Highlight evidence, important implications, risks, and recommended actions.",
+            priority: 1,
+            phase_id: "synthesis",
+            lane: "synthesis",
+            depends_on: ["competitors", "market-signals"],
+            input_refs: [],
+            tool_allowlist_override: [],
+            mcp_servers_override: [],
+            output_contract: {
+              kind: "brief_markdown",
+              summary_guidance: "Executive summary, implications, risks, and recommended actions.",
+            },
+          },
+        ],
+        review_stages: [
+          {
+            stage_id: "research-review",
+            stage_kind: "review",
+            title: "Evidence review",
+            target_ids: ["synthesis"],
+            role: "reviewer",
+            prompt:
+              "Review the synthesis for unsupported claims, missing evidence, and vague recommendations. Approve only if evidence is clear.",
+            checklist: [
+              "Claims are evidence-backed",
+              "Unknowns are labeled",
+              "Recommendations are actionable",
+            ],
+            priority: 1,
+            phase_id: "synthesis",
+            lane: "review",
+            tool_allowlist_override: [],
+            mcp_servers_override: [],
+          },
+        ],
+      };
+    case "marketing":
+      return {
+        ...root,
+        title: "Campaign planning mission",
+        goal: "Build a coherent campaign plan with audience insight, messaging, and channel execution.",
+        success_criteria: [
+          "Audience segments are defined",
+          "Messaging is aligned to the audience",
+          "Channel plan and content ideas are ready for approval",
+        ],
+        shared_context:
+          "Tone should be clear and practical. Keep the plan realistic for a small team and limited budget.",
+        phases: [
+          { phase_id: "strategy", title: "Strategy", execution_mode: "soft" },
+          { phase_id: "planning", title: "Planning", execution_mode: "barrier" },
+        ],
+        milestones: [
+          {
+            milestone_id: "strategy_locked",
+            title: "Strategy locked",
+            phase_id: "strategy",
+            required_stage_ids: ["audience", "messaging"],
+          },
+        ],
+        workstreams: [
+          {
+            workstream_id: "audience",
+            title: "Audience analysis",
+            objective: "Define target segments, needs, and objections.",
+            role: "strategist",
+            prompt:
+              "Act as a market strategist. Define priority audience segments, what they need, and what blocks adoption.",
+            priority: 1,
+            phase_id: "strategy",
+            lane: "strategy",
+            milestone: "strategy_locked",
+            depends_on: [],
+            input_refs: [],
+            tool_allowlist_override: [],
+            mcp_servers_override: [],
+            output_contract: {
+              kind: "report_markdown",
+              summary_guidance: "Segments, needs, objections, and buying cues.",
+            },
+          },
+          {
+            workstream_id: "messaging",
+            title: "Messaging framework",
+            objective: "Develop campaign messaging pillars and proof points.",
+            role: "copywriter",
+            prompt:
+              "Create a messaging framework with pillars, proof points, and sample lines that match the audience needs.",
+            priority: 1,
+            phase_id: "strategy",
+            lane: "messaging",
+            milestone: "strategy_locked",
+            depends_on: [],
+            input_refs: [],
+            tool_allowlist_override: [],
+            mcp_servers_override: [],
+            output_contract: {
+              kind: "brief_markdown",
+              summary_guidance: "Messaging pillars, supporting proof points, and sample copy.",
+            },
+          },
+          {
+            workstream_id: "channels",
+            title: "Channel and content plan",
+            objective: "Create a practical channel mix and content plan.",
+            role: "planner",
+            prompt:
+              "Using upstream audience and messaging work, create a channel plan, recommended cadence, and example content pipeline.",
+            priority: 2,
+            phase_id: "planning",
+            lane: "planning",
+            depends_on: ["audience", "messaging"],
+            input_refs: [],
+            tool_allowlist_override: [],
+            mcp_servers_override: [],
+            output_contract: {
+              kind: "plan_markdown",
+              summary_guidance: "Channel mix, cadence, content ideas, and execution notes.",
+            },
+          },
+        ],
+        review_stages: [
+          {
+            stage_id: "campaign-approval",
+            stage_kind: "approval",
+            title: "Campaign approval",
+            target_ids: ["channels"],
+            role: "approver",
+            prompt:
+              "Review the campaign plan for clarity, realism, audience fit, and consistency before approval.",
+            checklist: [
+              "Audience fit is clear",
+              "Messaging is consistent",
+              "Execution plan is realistic",
+            ],
+            priority: 1,
+            phase_id: "planning",
+            lane: "approval",
+            tool_allowlist_override: [],
+            mcp_servers_override: [],
+            gate: {
+              required: true,
+              decisions: ["approve", "rework", "cancel"],
+              rework_targets: ["channels"],
+              instructions: "Approve only when the channel plan is executable and aligned.",
+            },
+          },
+        ],
+      };
+    case "incident":
+      return {
+        ...root,
+        title: "Incident response mission",
+        goal: "Investigate the incident, identify likely causes, and produce a coordinated response plan.",
+        success_criteria: [
+          "Incident timeline is documented",
+          "Likely causes are identified or narrowed",
+          "Response plan includes containment and follow-up",
+        ],
+        shared_context:
+          "Prioritize clarity, risk reduction, and actionability. Flag uncertainty explicitly and avoid overclaiming root cause.",
+        phases: [
+          { phase_id: "triage", title: "Triage", execution_mode: "soft" },
+          { phase_id: "response", title: "Response", execution_mode: "barrier" },
+        ],
+        milestones: [
+          {
+            milestone_id: "triage-complete",
+            title: "Triage complete",
+            phase_id: "triage",
+            required_stage_ids: ["timeline", "impact"],
+          },
+        ],
+        workstreams: [
+          {
+            workstream_id: "timeline",
+            title: "Timeline reconstruction",
+            objective: "Build a factual timeline of the incident.",
+            role: "investigator",
+            prompt:
+              "Reconstruct the incident timeline from available evidence. Note confidence and missing information.",
+            priority: 1,
+            phase_id: "triage",
+            lane: "triage",
+            milestone: "triage-complete",
+            depends_on: [],
+            input_refs: [],
+            tool_allowlist_override: [],
+            mcp_servers_override: [],
+            output_contract: {
+              kind: "report_markdown",
+              summary_guidance: "Chronological timeline with evidence and confidence notes.",
+            },
+          },
+          {
+            workstream_id: "impact",
+            title: "Impact assessment",
+            objective: "Assess scope, affected systems, and business impact.",
+            role: "analyst",
+            prompt:
+              "Assess scope, affected systems, business/user impact, and immediate risk level. Be specific and avoid guesses.",
+            priority: 1,
+            phase_id: "triage",
+            lane: "impact",
+            milestone: "triage-complete",
+            depends_on: [],
+            input_refs: [],
+            tool_allowlist_override: [],
+            mcp_servers_override: [],
+            output_contract: {
+              kind: "report_markdown",
+              summary_guidance: "Affected scope, severity, and open questions.",
+            },
+          },
+          {
+            workstream_id: "response-plan",
+            title: "Response plan",
+            objective: "Create a containment, communication, and follow-up plan.",
+            role: "coordinator",
+            prompt:
+              "Create a response plan covering containment, communications, decisions needed, and follow-up investigation steps.",
+            priority: 1,
+            phase_id: "response",
+            lane: "response",
+            depends_on: ["timeline", "impact"],
+            input_refs: [],
+            tool_allowlist_override: [],
+            mcp_servers_override: [],
+            output_contract: {
+              kind: "plan_markdown",
+              summary_guidance: "Immediate actions, owners, risks, and next decisions.",
+            },
+          },
+        ],
+        review_stages: [
+          {
+            stage_id: "incident-approval",
+            stage_kind: "approval",
+            title: "Incident checkpoint",
+            target_ids: ["response-plan"],
+            role: "approver",
+            prompt:
+              "Check whether the response plan is safe, complete enough to act on, and clear about unknowns.",
+            checklist: [
+              "Safety and containment are addressed",
+              "Unknowns are explicit",
+              "Next actions are clear",
+            ],
+            priority: 1,
+            phase_id: "response",
+            lane: "approval",
+            tool_allowlist_override: [],
+            mcp_servers_override: [],
+            gate: {
+              required: true,
+              decisions: ["approve", "rework", "cancel"],
+              rework_targets: ["response-plan"],
+              instructions:
+                "Use rework if the response plan is missing critical containment or ownership detail.",
+            },
+          },
+        ],
+      };
+    case "event":
+      return {
+        ...root,
+        title: "Event planning mission",
+        goal: "Produce a coordinated event plan covering logistics, communications, and program readiness.",
+        success_criteria: [
+          "Logistics, comms, and program plans are complete",
+          "Dependencies are clear",
+          "Approval gate confirms readiness",
+        ],
+        shared_context:
+          "Optimize for practical execution. Surface blockers, missing owners, and sequencing risks early.",
+        phases: [
+          { phase_id: "planning", title: "Planning", execution_mode: "soft" },
+          { phase_id: "readiness", title: "Readiness", execution_mode: "barrier" },
+        ],
+        milestones: [],
+        workstreams: [
+          {
+            workstream_id: "logistics",
+            title: "Logistics plan",
+            objective: "Define venue, timing, staffing, and operational needs.",
+            role: "operator",
+            prompt:
+              "Create a logistics plan with venue needs, timeline, staffing, dependencies, and open risks.",
+            priority: 1,
+            phase_id: "planning",
+            lane: "operations",
+            depends_on: [],
+            input_refs: [],
+            tool_allowlist_override: [],
+            mcp_servers_override: [],
+            output_contract: {
+              kind: "plan_markdown",
+              summary_guidance: "Venue, timing, staffing, dependencies, and risks.",
+            },
+          },
+          {
+            workstream_id: "program",
+            title: "Program plan",
+            objective: "Define agenda, speakers, and content sequencing.",
+            role: "planner",
+            prompt:
+              "Build the event program structure, content flow, and speaker/session requirements.",
+            priority: 1,
+            phase_id: "planning",
+            lane: "program",
+            depends_on: [],
+            input_refs: [],
+            tool_allowlist_override: [],
+            mcp_servers_override: [],
+            output_contract: {
+              kind: "plan_markdown",
+              summary_guidance: "Agenda, session plan, dependencies, and owner notes.",
+            },
+          },
+          {
+            workstream_id: "comms",
+            title: "Communications plan",
+            objective: "Create audience-facing communications and timeline.",
+            role: "coordinator",
+            prompt:
+              "Create the communications timeline, key messages, and reminders needed before and during the event.",
+            priority: 2,
+            phase_id: "planning",
+            lane: "communications",
+            depends_on: ["program"],
+            input_refs: [],
+            tool_allowlist_override: [],
+            mcp_servers_override: [],
+            output_contract: {
+              kind: "plan_markdown",
+              summary_guidance: "Audience communications schedule, messages, and trigger points.",
+            },
+          },
+        ],
+        review_stages: [
+          {
+            stage_id: "event-readiness",
+            stage_kind: "approval",
+            title: "Readiness gate",
+            target_ids: ["logistics", "program", "comms"],
+            role: "approver",
+            prompt:
+              "Check whether the event is operationally ready and whether sequencing risks are covered.",
+            checklist: [
+              "Operational readiness is clear",
+              "Program dependencies are covered",
+              "Comms timeline is complete",
+            ],
+            priority: 1,
+            phase_id: "readiness",
+            lane: "approval",
+            tool_allowlist_override: [],
+            mcp_servers_override: [],
+            gate: {
+              required: true,
+              decisions: ["approve", "rework", "cancel"],
+              rework_targets: ["logistics", "program", "comms"],
+              instructions: "Use rework if any lane is still missing key readiness details.",
+            },
+          },
+        ],
+      };
+  }
+}
+
 function extractMissionBlueprint(automation: any, workspaceRoot: string): MissionBlueprint | null {
   const metadata =
     automation?.metadata && typeof automation.metadata === "object" ? automation.metadata : {};
@@ -365,6 +812,7 @@ export function AdvancedMissionBuilderPanel({
   });
   const [workstreamModels, setWorkstreamModels] = useState<Record<string, ModelDraft>>({});
   const [reviewModels, setReviewModels] = useState<Record<string, ModelDraft>>({});
+  const [showGuide, setShowGuide] = useState(false);
 
   const providersCatalogQuery = useQuery({
     queryKey: ["settings", "providers", "catalog"],
@@ -613,6 +1061,18 @@ export function AdvancedMissionBuilderPanel({
     setPreview(null);
   }
 
+  function applyStarterPreset(preset: StarterPresetId) {
+    const next = starterBlueprint(preset, blueprint.workspace_root || workspaceRoot);
+    setBlueprint(next);
+    setPreview(null);
+    setError("");
+    setActiveTab("mission");
+    setTeamModel({ provider: defaultProvider, model: defaultModel });
+    setWorkstreamModels({});
+    setReviewModels({});
+    toast("info", `Loaded ${next.title}. Review the prompts and adapt them to your mission.`);
+  }
+
   async function compilePreview() {
     setBusy("preview");
     setError("");
@@ -707,6 +1167,33 @@ export function AdvancedMissionBuilderPanel({
           Build one coordinated swarm mission with shared context, per-lane roles, explicit
           handoffs, and a compiled preview before launch.
         </div>
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <button className="tcp-btn h-8 px-3 text-xs" onClick={() => setShowGuide(true)}>
+            How this works
+          </button>
+          <span className="tcp-subtle text-xs">Start from example:</span>
+          <button
+            className="tcp-btn h-8 px-3 text-xs"
+            onClick={() => applyStarterPreset("research")}
+          >
+            Research
+          </button>
+          <button
+            className="tcp-btn h-8 px-3 text-xs"
+            onClick={() => applyStarterPreset("marketing")}
+          >
+            Marketing
+          </button>
+          <button
+            className="tcp-btn h-8 px-3 text-xs"
+            onClick={() => applyStarterPreset("incident")}
+          >
+            Incident
+          </button>
+          <button className="tcp-btn h-8 px-3 text-xs" onClick={() => applyStarterPreset("event")}>
+            Event
+          </button>
+        </div>
         <div className="mt-3 flex flex-wrap gap-2">
           {(["mission", "team", "workstreams", "review", "compile"] as CreateModeTab[]).map(
             (tab) => (
@@ -733,6 +1220,149 @@ export function AdvancedMissionBuilderPanel({
           <strong>
             {String(editingAutomation?.name || editingAutomation?.automation_id || "")}
           </strong>
+        </div>
+      ) : null}
+
+      {showGuide ? (
+        <div className="fixed inset-0 z-50 flex items-start justify-center bg-slate-950/80 p-4 backdrop-blur-sm">
+          <div className="max-h-[90vh] w-full max-w-4xl overflow-y-auto rounded-2xl border border-slate-700 bg-slate-950 p-5 shadow-2xl">
+            <div className="mb-4 flex items-start justify-between gap-4">
+              <div>
+                <div className="text-lg font-semibold text-slate-100">
+                  How the Advanced Swarm Builder Works
+                </div>
+                <div className="tcp-subtle mt-1 text-sm">
+                  Think of this as a mission compiler: one shared goal, many scoped workstreams,
+                  explicit handoffs, and optional review gates.
+                </div>
+              </div>
+              <button className="tcp-btn h-9 px-3 text-sm" onClick={() => setShowGuide(false)}>
+                Close
+              </button>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <Section
+                title="What goes where"
+                subtitle="Use the right field for the right level of instruction."
+              >
+                <div className="grid gap-2 text-sm text-slate-300">
+                  <div>
+                    <strong className="text-slate-100">Mission goal:</strong> the one shared outcome
+                    for the whole operation.
+                  </div>
+                  <div>
+                    <strong className="text-slate-100">Success criteria:</strong> concrete checks
+                    for whether the mission is done well.
+                  </div>
+                  <div>
+                    <strong className="text-slate-100">Shared context:</strong> facts, constraints,
+                    tone, audience, deadlines, approved sources.
+                  </div>
+                  <div>
+                    <strong className="text-slate-100">Workstream objective:</strong> the local
+                    assignment for that lane.
+                  </div>
+                  <div>
+                    <strong className="text-slate-100">Workstream prompt:</strong> the operating
+                    instructions for how that lane should work.
+                  </div>
+                  <div>
+                    <strong className="text-slate-100">Output contract:</strong> the artifact that
+                    downstream work expects to receive.
+                  </div>
+                  <div>
+                    <strong className="text-slate-100">Review / gate prompt:</strong> what a
+                    reviewer or approver must check before promotion.
+                  </div>
+                </div>
+              </Section>
+
+              <Section
+                title="How to get good results"
+                subtitle="The builder works best when each stage is explicit."
+              >
+                <div className="grid gap-2 text-sm text-slate-300">
+                  <div>Keep the mission goal outcome-based, not a long checklist.</div>
+                  <div>Make success criteria measurable.</div>
+                  <div>Give each workstream one clear responsibility.</div>
+                  <div>Use dependencies only for real handoffs.</div>
+                  <div>Define outputs as concrete artifacts, not vague intentions.</div>
+                  <div>Use review gates for quality and promotion, not for every step.</div>
+                  <div>
+                    Prefer prompts that say what evidence, format, and audience the step should
+                    target.
+                  </div>
+                </div>
+              </Section>
+
+              <Section
+                title="Prompt pattern"
+                subtitle="A reliable starting scaffold for most workstreams."
+              >
+                <div className="rounded-lg border border-slate-800 bg-slate-900/70 p-3 text-xs text-slate-300">
+                  <div>
+                    <strong className="text-slate-100">Mission goal</strong>
+                  </div>
+                  <div className="mt-1">
+                    Produce a coordinated launch plan for Product X for the next 30 days.
+                  </div>
+                  <div className="mt-3">
+                    <strong className="text-slate-100">Shared context</strong>
+                  </div>
+                  <div className="mt-1">
+                    Audience is SMB owners. Tone is clear and practical. Use approved workspace and
+                    MCP sources only. Avoid speculative claims.
+                  </div>
+                  <div className="mt-3">
+                    <strong className="text-slate-100">Workstream objective</strong>
+                  </div>
+                  <div className="mt-1">
+                    Research competitor messaging and identify 5 positioning gaps.
+                  </div>
+                  <div className="mt-3">
+                    <strong className="text-slate-100">Workstream prompt</strong>
+                  </div>
+                  <div className="mt-1">
+                    Act as a competitive analyst. Review available sources, extract concrete claims,
+                    compare positioning, and produce a concise findings memo with evidence and
+                    recommended angles.
+                  </div>
+                  <div className="mt-3">
+                    <strong className="text-slate-100">Output contract</strong>
+                  </div>
+                  <div className="mt-1">
+                    A markdown memo with sections: competitors reviewed, evidence, messaging gaps,
+                    and recommended actions.
+                  </div>
+                </div>
+              </Section>
+
+              <Section
+                title="Starter examples"
+                subtitle="Use these when you do not want to begin from a blank blueprint."
+              >
+                <div className="grid gap-2 text-sm text-slate-300">
+                  <div>
+                    <strong className="text-slate-100">Research:</strong> parallel evidence
+                    gathering, then synthesis and review.
+                  </div>
+                  <div>
+                    <strong className="text-slate-100">Marketing:</strong> audience and messaging
+                    lanes feeding a channel plan and approval gate.
+                  </div>
+                  <div>
+                    <strong className="text-slate-100">Incident:</strong> timeline and impact in
+                    parallel, then a response plan and checkpoint.
+                  </div>
+                  <div>
+                    <strong className="text-slate-100">Event:</strong> logistics, program, and
+                    communications coordinated into readiness approval.
+                  </div>
+                </div>
+              </Section>
+            </div>
+          </div>
         </div>
       ) : null}
 
