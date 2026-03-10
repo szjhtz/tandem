@@ -1,6 +1,6 @@
 pnpm exec lint-staged
 
-if git diff --cached --name-only --diff-filter=ACMR -- | grep -q '^docs/internal/'; then
+if [ -n "$(git diff --cached --name-only --diff-filter=ACMR -- docs/internal/)" ]; then
   echo "docs/internal must never be committed."
   exit 1
 fi
