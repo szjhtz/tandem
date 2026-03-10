@@ -522,6 +522,7 @@ pub fn validate_mission_blueprint(blueprint: &MissionBlueprint) -> Vec<Validatio
     }
 
     messages.extend(validate_phase_barriers(blueprint));
+    messages.extend(validate_graph_warnings(blueprint));
 
     messages
 }
@@ -730,6 +731,141 @@ fn validate_phase_barriers(blueprint: &MissionBlueprint) -> Vec<ValidationMessag
     messages
 }
 
+fn validate_graph_warnings(blueprint: &MissionBlueprint) -> Vec<ValidationMessage> {
+    let mut messages = Vec::new();
+    let all_stage_ids = blueprint
+        .workstreams
+        .iter()
+        .map(|workstream| workstream.workstream_id.clone())
+        .chain(
+            blueprint
+                .review_stages
+                .iter()
+                .map(|stage| stage.stage_id.clone()),
+        )
+        .collect::<HashSet<_>>();
+    let milestone_targets = blueprint
+        .milestones
+        .iter()
+        .flat_map(|milestone| milestone.required_stage_ids.iter().cloned())
+        .collect::<HashSet<_>>();
+    let mut downstream_counts = HashMap::<String, usize>::new();
+    for workstream in &blueprint.workstreams {
+        if !workstream.depends_on.is_empty() && workstream.input_refs.is_empty() {
+            messages.push(warning(
+                "WORKSTREAM_DEPENDENCY_INPUT_IMPLICIT",
+                "workstream depends on upstream stages but has no explicit input_refs",
+                Some(workstream.workstream_id.clone()),
+            ));
+        }
+        let mut seen_input_refs = HashSet::new();
+        for input_ref in &workstream.input_refs {
+            if !seen_input_refs.insert(input_ref.from_step_id.clone()) {
+                messages.push(warning(
+                    "WORKSTREAM_INPUT_REF_DUPLICATE",
+                    "workstream has duplicate input_refs for the same upstream stage",
+                    Some(workstream.workstream_id.clone()),
+                ));
+            }
+        }
+        if workstream.depends_on.len() >= 4 {
+            messages.push(warning(
+                "WORKSTREAM_FAN_IN_HIGH",
+                "workstream has a high fan-in dependency count",
+                Some(workstream.workstream_id.clone()),
+            ));
+        }
+        if let Some(template_id) = workstream.template_id.as_ref() {
+            if !blueprint.team.allowed_template_ids.is_empty()
+                && !blueprint
+                    .team
+                    .allowed_template_ids
+                    .iter()
+                    .any(|row| row == template_id)
+            {
+                messages.push(warning(
+                    "WORKSTREAM_TEMPLATE_NOT_ALLOWED",
+                    "workstream template_id is outside the mission allowed_template_ids set",
+                    Some(workstream.workstream_id.clone()),
+                ));
+            }
+        }
+        if let Some(model_override) = workstream.model_override.as_ref() {
+            let default_model = model_override
+                .get("default_model")
+                .or_else(|| model_override.get("defaultModel"));
+            let provider_id = default_model
+                .and_then(|value| value.get("provider_id").or_else(|| value.get("providerId")))
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let model_id = default_model
+                .and_then(|value| value.get("model_id").or_else(|| value.get("modelId")))
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            if provider_id.is_empty() != model_id.is_empty() {
+                messages.push(warning(
+                    "WORKSTREAM_MODEL_OVERRIDE_PARTIAL",
+                    "workstream model_override must specify both provider_id and model_id",
+                    Some(workstream.workstream_id.clone()),
+                ));
+            }
+        }
+        for dep in &workstream.depends_on {
+            *downstream_counts.entry(dep.clone()).or_insert(0) += 1;
+        }
+    }
+    for stage in &blueprint.review_stages {
+        if stage.target_ids.len() >= 4 {
+            messages.push(warning(
+                "REVIEW_STAGE_FAN_IN_HIGH",
+                "review stage has a high fan-in dependency count",
+                Some(stage.stage_id.clone()),
+            ));
+        }
+        if let Some(template_id) = stage.template_id.as_ref() {
+            if !blueprint.team.allowed_template_ids.is_empty()
+                && !blueprint
+                    .team
+                    .allowed_template_ids
+                    .iter()
+                    .any(|row| row == template_id)
+            {
+                messages.push(warning(
+                    "REVIEW_STAGE_TEMPLATE_NOT_ALLOWED",
+                    "review stage template_id is outside the mission allowed_template_ids set",
+                    Some(stage.stage_id.clone()),
+                ));
+            }
+        }
+        for target in &stage.target_ids {
+            *downstream_counts.entry(target.clone()).or_insert(0) += 1;
+        }
+    }
+    for stage_id in &all_stage_ids {
+        let downstream = downstream_counts.get(stage_id).copied().unwrap_or(0);
+        if downstream >= 4 {
+            messages.push(warning(
+                "STAGE_FAN_OUT_HIGH",
+                "stage fans out to many downstream stages",
+                Some(stage_id.clone()),
+            ));
+        }
+        let terminal = downstream == 0;
+        let is_milestone_target = milestone_targets.contains(stage_id);
+        let is_approval_stage = blueprint.review_stages.iter().any(|stage| {
+            stage.stage_id == *stage_id && stage.stage_kind == ReviewStageKind::Approval
+        });
+        if terminal && !is_milestone_target && !is_approval_stage {
+            messages.push(warning(
+                "STAGE_TERMINAL_UNPROMOTED",
+                "stage has no downstream dependents and is not captured by a milestone or approval stage",
+                Some(stage_id.clone()),
+            ));
+        }
+    }
+    messages
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -891,5 +1027,29 @@ mod tests {
         assert!(messages
             .iter()
             .any(|message| message.code == "WORKSTREAM_PHASE_ORDER_INVALID"));
+    }
+
+    #[test]
+    fn duplicate_input_ref_warning_is_reported() {
+        let mut blueprint = sample_blueprint();
+        blueprint.workstreams[1].input_refs.push(InputRefBlueprint {
+            from_step_id: "research".to_string(),
+            alias: "duplicate".to_string(),
+        });
+        let messages = validate_mission_blueprint(&blueprint);
+        assert!(messages
+            .iter()
+            .any(|message| message.code == "WORKSTREAM_INPUT_REF_DUPLICATE"));
+    }
+
+    #[test]
+    fn terminal_stage_without_milestone_warning_is_reported() {
+        let mut blueprint = sample_blueprint();
+        blueprint.milestones.clear();
+        blueprint.review_stages.clear();
+        let messages = validate_mission_blueprint(&blueprint);
+        assert!(messages
+            .iter()
+            .any(|message| message.code == "STAGE_TERMINAL_UNPROMOTED"));
     }
 }
