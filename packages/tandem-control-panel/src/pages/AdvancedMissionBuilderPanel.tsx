@@ -704,6 +704,13 @@ function starterBlueprint(preset: StarterPresetId, workspaceRoot: string): Missi
   }
 }
 
+function validateWorkspaceRootInput(raw: string) {
+  const value = String(raw || "").trim();
+  if (!value) return "Workspace root is required.";
+  if (!value.startsWith("/")) return "Workspace root must be an absolute path.";
+  return "";
+}
+
 function extractMissionBlueprint(automation: any, workspaceRoot: string): MissionBlueprint | null {
   const metadata =
     automation?.metadata && typeof automation.metadata === "object" ? automation.metadata : {};
@@ -728,16 +735,21 @@ function extractMissionBlueprint(automation: any, workspaceRoot: string): Missio
 function Section({
   title,
   subtitle,
+  icon,
   children,
 }: {
   title: string;
   subtitle?: string;
+  icon?: string;
   children: any;
 }) {
   return (
     <div className="rounded-xl border border-slate-700/50 bg-slate-950/50 p-4">
       <div className="mb-3">
-        <div className="text-sm font-semibold text-slate-100">{title}</div>
+        <div className="flex items-center gap-2 text-sm font-semibold text-slate-100">
+          {icon ? <i data-lucide={icon}></i> : null}
+          <span>{title}</span>
+        </div>
         {subtitle ? <div className="tcp-subtle mt-1 text-xs">{subtitle}</div> : null}
       </div>
       <div className="grid gap-3">{children}</div>
@@ -802,10 +814,12 @@ function LabeledTextArea({
 function ToggleChip({
   active,
   label,
+  icon,
   onClick,
 }: {
   active: boolean;
   label: string;
+  icon?: string;
   onClick: () => void;
 }) {
   return (
@@ -814,13 +828,222 @@ function ToggleChip({
       onClick={onClick}
       type="button"
     >
-      {label}
+      <span className="inline-flex items-center gap-2">
+        {icon ? <i data-lucide={icon}></i> : null}
+        <span>{label}</span>
+      </span>
     </button>
   );
 }
 
 function InlineHint({ children }: { children: any }) {
   return <div className="tcp-subtle -mt-1 text-xs">{children}</div>;
+}
+
+function EmptyState({ text }: { text: string }) {
+  return (
+    <div className="tcp-subtle rounded-lg border border-slate-800 bg-slate-950/50 p-3 text-xs">
+      {text}
+    </div>
+  );
+}
+
+function WorkspaceDirectoryPicker({
+  value,
+  error,
+  open,
+  browseDir,
+  search,
+  parentDir,
+  currentDir,
+  directories,
+  onOpen,
+  onClose,
+  onClear,
+  onSearchChange,
+  onBrowseParent,
+  onBrowseDirectory,
+  onSelectDirectory,
+}: {
+  value: string;
+  error: string;
+  open: boolean;
+  browseDir: string;
+  search: string;
+  parentDir: string;
+  currentDir: string;
+  directories: any[];
+  onOpen: () => void;
+  onClose: () => void;
+  onClear: () => void;
+  onSearchChange: (value: string) => void;
+  onBrowseParent: () => void;
+  onBrowseDirectory: (path: string) => void;
+  onSelectDirectory: () => void;
+}) {
+  const searchQuery = String(search || "")
+    .trim()
+    .toLowerCase();
+  return (
+    <>
+      <label className="block text-sm">
+        <div className="mb-1 font-medium text-slate-200">Workspace root</div>
+        <div className="grid gap-2 md:grid-cols-[auto_1fr_auto]">
+          <button className="tcp-btn h-10 px-3" type="button" onClick={onOpen}>
+            <i data-lucide="folder-open"></i>
+            Browse
+          </button>
+          <input
+            className={`tcp-input text-sm ${error ? "border-red-500/70 text-red-100" : ""}`}
+            value={value}
+            readOnly
+            placeholder="No local directory selected. Use Browse."
+          />
+          <button className="tcp-btn h-10 px-3" type="button" onClick={onClear} disabled={!value}>
+            <i data-lucide="x"></i>
+            Clear
+          </button>
+        </div>
+      </label>
+      {open ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <button
+            type="button"
+            className="tcp-confirm-backdrop"
+            aria-label="Close workspace directory dialog"
+            onClick={onClose}
+          />
+          <div className="tcp-confirm-dialog max-w-2xl">
+            <h3 className="tcp-confirm-title">Select Workspace Folder</h3>
+            <p className="tcp-confirm-message">Current: {currentDir || browseDir || "n/a"}</p>
+            <div className="mb-2 flex flex-wrap gap-2">
+              <button
+                className="tcp-btn"
+                type="button"
+                onClick={onBrowseParent}
+                disabled={!parentDir}
+              >
+                <i data-lucide="arrow-left-to-line"></i>
+                Up
+              </button>
+              <button
+                className="tcp-btn-primary"
+                type="button"
+                onClick={onSelectDirectory}
+                disabled={!currentDir}
+              >
+                <i data-lucide="badge-check"></i>
+                Select This Folder
+              </button>
+              <button className="tcp-btn" type="button" onClick={onClose}>
+                <i data-lucide="x"></i>
+                Close
+              </button>
+            </div>
+            <div className="mb-2">
+              <input
+                className="tcp-input"
+                placeholder="Type to filter folders..."
+                value={search}
+                onInput={(event) => onSearchChange((event.target as HTMLInputElement).value)}
+              />
+            </div>
+            <div className="max-h-[360px] overflow-auto rounded-lg border border-slate-700/60 bg-slate-900/20 p-2">
+              {directories.length ? (
+                directories.map((entry: any) => (
+                  <button
+                    key={String(entry?.path || entry?.name)}
+                    className="tcp-list-item mb-1 w-full text-left"
+                    type="button"
+                    onClick={() => onBrowseDirectory(String(entry?.path || ""))}
+                  >
+                    <span className="inline-flex items-center gap-2">
+                      <i data-lucide="folder-open"></i>
+                      <span>{String(entry?.name || entry?.path || "")}</span>
+                    </span>
+                  </button>
+                ))
+              ) : (
+                <EmptyState
+                  text={
+                    searchQuery
+                      ? "No folders match your search."
+                      : "No subdirectories in this folder."
+                  }
+                />
+              )}
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </>
+  );
+}
+
+function ProviderModelSelector({
+  providerLabel,
+  modelLabel,
+  draft,
+  providers,
+  onChange,
+  inheritLabel = "Inherit team default",
+}: {
+  providerLabel: string;
+  modelLabel: string;
+  draft: ModelDraft;
+  providers: ProviderOption[];
+  onChange: (draft: ModelDraft) => void;
+  inheritLabel?: string;
+}) {
+  const modelOptions = providers.find((provider) => provider.id === draft.provider)?.models || [];
+  return (
+    <div className="grid gap-3 md:grid-cols-2">
+      <label className="block text-sm">
+        <div className="mb-1 flex items-center gap-2 font-medium text-slate-200">
+          <i data-lucide="cpu"></i>
+          <span>{providerLabel}</span>
+        </div>
+        <select
+          value={draft.provider}
+          onInput={(event) => {
+            const provider = (event.target as HTMLSelectElement).value;
+            const nextModels = providers.find((row) => row.id === provider)?.models || [];
+            onChange({ provider, model: nextModels[0] || "" });
+          }}
+          className="tcp-select h-10 w-full"
+        >
+          <option value="">{inheritLabel}</option>
+          {providers.map((provider) => (
+            <option key={provider.id} value={provider.id}>
+              {provider.id}
+              {provider.configured === false ? " (not configured)" : ""}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label className="block text-sm">
+        <div className="mb-1 flex items-center gap-2 font-medium text-slate-200">
+          <i data-lucide="sparkles"></i>
+          <span>{modelLabel}</span>
+        </div>
+        <select
+          value={draft.model}
+          onInput={(event) =>
+            onChange({ ...draft, model: (event.target as HTMLSelectElement).value })
+          }
+          className="tcp-select h-10 w-full"
+          disabled={!draft.provider}
+        >
+          <option value="">{draft.provider ? "Select a model" : inheritLabel}</option>
+          {modelOptions.map((model) => (
+            <option key={model} value={model}>
+              {model}
+            </option>
+          ))}
+        </select>
+      </label>
+    </div>
+  );
 }
 
 export function AdvancedMissionBuilderPanel({
@@ -862,6 +1085,9 @@ export function AdvancedMissionBuilderPanel({
   const [workstreamModels, setWorkstreamModels] = useState<Record<string, ModelDraft>>({});
   const [reviewModels, setReviewModels] = useState<Record<string, ModelDraft>>({});
   const [showGuide, setShowGuide] = useState(false);
+  const [workspaceBrowserOpen, setWorkspaceBrowserOpen] = useState(false);
+  const [workspaceBrowserDir, setWorkspaceBrowserDir] = useState("");
+  const [workspaceBrowserSearch, setWorkspaceBrowserSearch] = useState("");
 
   const providersCatalogQuery = useQuery({
     queryKey: ["settings", "providers", "catalog"],
@@ -895,6 +1121,14 @@ export function AdvancedMissionBuilderPanel({
     queryKey: ["global", "health"],
     queryFn: () => client.health().catch(() => ({})),
     refetchInterval: 30000,
+  });
+  const workspaceBrowserQuery = useQuery({
+    queryKey: ["advanced-mission-builder", "workspace-browser", workspaceBrowserDir],
+    enabled: workspaceBrowserOpen && !!workspaceBrowserDir,
+    queryFn: () =>
+      api(`/api/orchestrator/workspaces/list?dir=${encodeURIComponent(workspaceBrowserDir)}`, {
+        method: "GET",
+      }),
   });
 
   useEffect(() => {
@@ -1018,6 +1252,26 @@ export function AdvancedMissionBuilderPanel({
         .filter((row) => row.template_id),
     [templatesQuery.data]
   );
+  const workspaceDirectories = Array.isArray((workspaceBrowserQuery.data as any)?.directories)
+    ? (workspaceBrowserQuery.data as any).directories
+    : [];
+  const workspaceParentDir = String((workspaceBrowserQuery.data as any)?.parent || "").trim();
+  const workspaceCurrentBrowseDir = String(
+    (workspaceBrowserQuery.data as any)?.dir || workspaceBrowserDir || ""
+  ).trim();
+  const filteredWorkspaceDirectories = useMemo(() => {
+    const search = String(workspaceBrowserSearch || "")
+      .trim()
+      .toLowerCase();
+    if (!search) return workspaceDirectories;
+    return workspaceDirectories.filter((entry: any) =>
+      String(entry?.name || entry?.path || "")
+        .trim()
+        .toLowerCase()
+        .includes(search)
+    );
+  }, [workspaceBrowserSearch, workspaceDirectories]);
+  const workspaceRootError = validateWorkspaceRootInput(blueprint.workspace_root || workspaceRoot);
 
   const effectiveBlueprint = useMemo(() => {
     return {
@@ -1228,6 +1482,7 @@ export function AdvancedMissionBuilderPanel({
         </div>
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <button className="tcp-btn h-8 px-3 text-xs" onClick={() => setShowGuide(true)}>
+            <i data-lucide="book-open"></i>
             How this works
           </button>
           <span className="tcp-subtle text-xs">Start from example:</span>
@@ -1235,38 +1490,49 @@ export function AdvancedMissionBuilderPanel({
             className="tcp-btn h-8 px-3 text-xs"
             onClick={() => applyStarterPreset("ai-opportunity")}
           >
+            <i data-lucide="sparkles"></i>
             AI Opportunities
           </button>
           <button
             className="tcp-btn h-8 px-3 text-xs"
             onClick={() => applyStarterPreset("workflow-audit")}
           >
+            <i data-lucide="workflow"></i>
             Workflow Audit
           </button>
           <button
             className="tcp-btn h-8 px-3 text-xs"
             onClick={() => applyStarterPreset("agentic-design")}
           >
+            <i data-lucide="bot"></i>
             Agentic Design
           </button>
           <button
             className="tcp-btn h-8 px-3 text-xs"
             onClick={() => applyStarterPreset("automation-rollout")}
           >
+            <i data-lucide="arrow-up-circle"></i>
             Rollout
           </button>
         </div>
         <div className="mt-3 flex flex-wrap gap-2">
-          {(["mission", "team", "workstreams", "review", "compile"] as CreateModeTab[]).map(
-            (tab) => (
-              <ToggleChip
-                key={tab}
-                active={activeTab === tab}
-                label={tab === "workstreams" ? "workstreams" : tab}
-                onClick={() => setActiveTab(tab)}
-              />
-            )
-          )}
+          {(
+            [
+              ["mission", "clipboard-list"],
+              ["team", "users"],
+              ["workstreams", "workflow"],
+              ["review", "shield-check"],
+              ["compile", "binary"],
+            ] as Array<[CreateModeTab, string]>
+          ).map(([tab, icon]) => (
+            <ToggleChip
+              key={tab}
+              active={activeTab === tab}
+              label={tab === "workstreams" ? "workstreams" : tab}
+              icon={icon}
+              onClick={() => setActiveTab(tab)}
+            />
+          ))}
         </div>
       </div>
 
@@ -1430,7 +1696,11 @@ export function AdvancedMissionBuilderPanel({
       ) : null}
 
       {activeTab === "mission" ? (
-        <Section title="Mission" subtitle="Global brief, success criteria, and schedule.">
+        <Section
+          title="Mission"
+          subtitle="Global brief, success criteria, and schedule."
+          icon="clipboard-list"
+        >
           <div className="grid gap-3 md:grid-cols-2">
             <LabeledInput
               label="Mission title"
@@ -1446,14 +1716,46 @@ export function AdvancedMissionBuilderPanel({
           <InlineHint>
             Use a short title a human operator would recognize later in the automation list.
           </InlineHint>
-          <LabeledInput
-            label="Workspace root"
+          <WorkspaceDirectoryPicker
             value={blueprint.workspace_root}
-            onInput={(value) => updateBlueprint({ workspace_root: value })}
+            error={workspaceRootError}
+            open={workspaceBrowserOpen}
+            browseDir={workspaceBrowserDir}
+            search={workspaceBrowserSearch}
+            parentDir={workspaceParentDir}
+            currentDir={workspaceCurrentBrowseDir}
+            directories={filteredWorkspaceDirectories}
+            onOpen={() => {
+              const seed = String(blueprint.workspace_root || workspaceRoot || "/").trim();
+              setWorkspaceBrowserDir(seed || "/");
+              setWorkspaceBrowserSearch("");
+              setWorkspaceBrowserOpen(true);
+            }}
+            onClose={() => {
+              setWorkspaceBrowserOpen(false);
+              setWorkspaceBrowserSearch("");
+            }}
+            onClear={() => updateBlueprint({ workspace_root: "" })}
+            onSearchChange={setWorkspaceBrowserSearch}
+            onBrowseParent={() => {
+              if (!workspaceParentDir) return;
+              setWorkspaceBrowserDir(workspaceParentDir);
+            }}
+            onBrowseDirectory={(path) => setWorkspaceBrowserDir(path)}
+            onSelectDirectory={() => {
+              if (!workspaceCurrentBrowseDir) return;
+              updateBlueprint({ workspace_root: workspaceCurrentBrowseDir });
+              setWorkspaceBrowserOpen(false);
+              setWorkspaceBrowserSearch("");
+              toast("ok", `Workspace selected: ${workspaceCurrentBrowseDir}`);
+            }}
           />
           <InlineHint>
             This is the shared working directory the mission can use for files and artifacts.
           </InlineHint>
+          {workspaceRootError ? (
+            <div className="text-xs text-red-300">{workspaceRootError}</div>
+          ) : null}
           <LabeledTextArea
             label="Mission goal"
             value={blueprint.goal}
@@ -1517,7 +1819,11 @@ export function AdvancedMissionBuilderPanel({
       ) : null}
 
       {activeTab === "team" ? (
-        <Section title="Team" subtitle="Templates, default model, concurrency, and mission limits.">
+        <Section
+          title="Team"
+          subtitle="Templates, default model, concurrency, and mission limits."
+          icon="users"
+        >
           <div className="grid gap-3 md:grid-cols-2">
             <label className="block text-sm">
               <div className="mb-1 font-medium text-slate-200">Orchestrator template</div>
@@ -1553,53 +1859,14 @@ export function AdvancedMissionBuilderPanel({
             The orchestrator keeps the mission coherent. Allowed templates restrict which reusable
             agent profiles lanes are permitted to use.
           </InlineHint>
-          <div className="grid gap-3 md:grid-cols-2">
-            <label className="block text-sm">
-              <div className="mb-1 font-medium text-slate-200">Default model provider</div>
-              <select
-                value={teamModel.provider}
-                onInput={(event) =>
-                  setTeamModel({
-                    provider: (event.target as HTMLSelectElement).value,
-                    model:
-                      providers.find(
-                        (provider) => provider.id === (event.target as HTMLSelectElement).value
-                      )?.models?.[0] || "",
-                  })
-                }
-                className="h-10 w-full rounded-lg border border-slate-700 bg-slate-950/80 px-3 text-sm text-slate-100 outline-none focus:border-amber-400"
-              >
-                <option value="">None</option>
-                {providers.map((provider) => (
-                  <option key={provider.id} value={provider.id}>
-                    {provider.id}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="block text-sm">
-              <div className="mb-1 font-medium text-slate-200">Default model</div>
-              <select
-                value={teamModel.model}
-                onInput={(event) =>
-                  setTeamModel((current) => ({
-                    ...current,
-                    model: (event.target as HTMLSelectElement).value,
-                  }))
-                }
-                className="h-10 w-full rounded-lg border border-slate-700 bg-slate-950/80 px-3 text-sm text-slate-100 outline-none focus:border-amber-400"
-              >
-                <option value="">None</option>
-                {(
-                  providers.find((provider) => provider.id === teamModel.provider)?.models || []
-                ).map((model) => (
-                  <option key={model} value={model}>
-                    {model}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
+          <ProviderModelSelector
+            providerLabel="Default model provider"
+            modelLabel="Default model"
+            draft={teamModel}
+            providers={providers}
+            inheritLabel="No team default"
+            onChange={setTeamModel}
+          />
           <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
             <LabeledInput
               label="Max parallel agents"
@@ -1690,6 +1957,7 @@ export function AdvancedMissionBuilderPanel({
         <Section
           title="Workstreams"
           subtitle="Scoped sub-objectives, dependencies, tools, MCP, and output contracts."
+          icon="workflow"
         >
           <InlineHint>
             A workstream is one scoped lane of work. Give it one responsibility, one artifact to
@@ -1697,6 +1965,7 @@ export function AdvancedMissionBuilderPanel({
           </InlineHint>
           <div className="flex justify-end">
             <button className="tcp-btn h-8 px-3 text-xs" onClick={addWorkstream}>
+              <i data-lucide="plus"></i>
               Add workstream
             </button>
           </div>
@@ -1906,61 +2175,18 @@ export function AdvancedMissionBuilderPanel({
                   Leave tool and MCP overrides empty to inherit team defaults. Override only when
                   this lane needs a narrower or different scope.
                 </InlineHint>
-                <div className="grid gap-3 md:grid-cols-2">
-                  <label className="block text-sm">
-                    <div className="mb-1 font-medium text-slate-200">Model provider</div>
-                    <select
-                      value={modelDraft.provider}
-                      onInput={(event) =>
-                        setWorkstreamModels((current) => ({
-                          ...current,
-                          [workstream.workstream_id]: {
-                            provider: (event.target as HTMLSelectElement).value,
-                            model:
-                              providers.find(
-                                (provider) =>
-                                  provider.id === (event.target as HTMLSelectElement).value
-                              )?.models?.[0] || "",
-                          },
-                        }))
-                      }
-                      className="h-10 w-full rounded-lg border border-slate-700 bg-slate-950/80 px-3 text-sm text-slate-100 outline-none focus:border-amber-400"
-                    >
-                      <option value="">Default</option>
-                      {providers.map((provider) => (
-                        <option key={provider.id} value={provider.id}>
-                          {provider.id}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label className="block text-sm">
-                    <div className="mb-1 font-medium text-slate-200">Model</div>
-                    <select
-                      value={modelDraft.model}
-                      onInput={(event) =>
-                        setWorkstreamModels((current) => ({
-                          ...current,
-                          [workstream.workstream_id]: {
-                            ...(current[workstream.workstream_id] || { provider: "", model: "" }),
-                            model: (event.target as HTMLSelectElement).value,
-                          },
-                        }))
-                      }
-                      className="h-10 w-full rounded-lg border border-slate-700 bg-slate-950/80 px-3 text-sm text-slate-100 outline-none focus:border-amber-400"
-                    >
-                      <option value="">Default</option>
-                      {(
-                        providers.find((provider) => provider.id === modelDraft.provider)?.models ||
-                        []
-                      ).map((model) => (
-                        <option key={model} value={model}>
-                          {model}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                </div>
+                <ProviderModelSelector
+                  providerLabel="Model provider"
+                  modelLabel="Model"
+                  draft={modelDraft}
+                  providers={providers}
+                  onChange={(draft) =>
+                    setWorkstreamModels((current) => ({
+                      ...current,
+                      [workstream.workstream_id]: draft,
+                    }))
+                  }
+                />
               </div>
             );
           })}
@@ -1968,13 +2194,18 @@ export function AdvancedMissionBuilderPanel({
       ) : null}
 
       {activeTab === "review" ? (
-        <Section title="Review & Gates" subtitle="Reviewer, tester, and approval stages.">
+        <Section
+          title="Review & Gates"
+          subtitle="Reviewer, tester, and approval stages."
+          icon="shield-check"
+        >
           <InlineHint>
             Use review stages to check quality or readiness before later work is promoted. Approval
             stages are the right place for human checkpoints.
           </InlineHint>
           <div className="flex justify-between gap-2">
             <button className="tcp-btn h-8 px-3 text-xs" onClick={addReviewStage}>
+              <i data-lucide="plus"></i>
               Add review stage
             </button>
             <button
@@ -1993,6 +2224,7 @@ export function AdvancedMissionBuilderPanel({
                 })
               }
             >
+              <i data-lucide="copy-plus"></i>
               Add phase
             </button>
           </div>
@@ -2222,61 +2454,18 @@ export function AdvancedMissionBuilderPanel({
                 <InlineHint>
                   Checklist items should be concrete pass/fail checks, not broad wishes.
                 </InlineHint>
-                <div className="grid gap-3 md:grid-cols-2">
-                  <label className="block text-sm">
-                    <div className="mb-1 font-medium text-slate-200">Model provider</div>
-                    <select
-                      value={modelDraft.provider}
-                      onInput={(event) =>
-                        setReviewModels((current) => ({
-                          ...current,
-                          [stage.stage_id]: {
-                            provider: (event.target as HTMLSelectElement).value,
-                            model:
-                              providers.find(
-                                (provider) =>
-                                  provider.id === (event.target as HTMLSelectElement).value
-                              )?.models?.[0] || "",
-                          },
-                        }))
-                      }
-                      className="h-10 w-full rounded-lg border border-slate-700 bg-slate-950/80 px-3 text-sm text-slate-100 outline-none focus:border-amber-400"
-                    >
-                      <option value="">Default</option>
-                      {providers.map((provider) => (
-                        <option key={provider.id} value={provider.id}>
-                          {provider.id}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label className="block text-sm">
-                    <div className="mb-1 font-medium text-slate-200">Model</div>
-                    <select
-                      value={modelDraft.model}
-                      onInput={(event) =>
-                        setReviewModels((current) => ({
-                          ...current,
-                          [stage.stage_id]: {
-                            ...(current[stage.stage_id] || { provider: "", model: "" }),
-                            model: (event.target as HTMLSelectElement).value,
-                          },
-                        }))
-                      }
-                      className="h-10 w-full rounded-lg border border-slate-700 bg-slate-950/80 px-3 text-sm text-slate-100 outline-none focus:border-amber-400"
-                    >
-                      <option value="">Default</option>
-                      {(
-                        providers.find((provider) => provider.id === modelDraft.provider)?.models ||
-                        []
-                      ).map((model) => (
-                        <option key={model} value={model}>
-                          {model}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                </div>
+                <ProviderModelSelector
+                  providerLabel="Model provider"
+                  modelLabel="Model"
+                  draft={modelDraft}
+                  providers={providers}
+                  onChange={(draft) =>
+                    setReviewModels((current) => ({
+                      ...current,
+                      [stage.stage_id]: draft,
+                    }))
+                  }
+                />
               </div>
             );
           })}
@@ -2284,13 +2473,18 @@ export function AdvancedMissionBuilderPanel({
       ) : null}
 
       {activeTab === "compile" ? (
-        <Section title="Compile & Run" subtitle="Validate the mission graph before launch.">
+        <Section
+          title="Compile & Run"
+          subtitle="Validate the mission graph before launch."
+          icon="binary"
+        >
           <div className="flex flex-wrap items-center gap-2">
             <button
               className="tcp-btn h-8 px-3 text-xs"
               disabled={busy === "preview"}
               onClick={() => void compilePreview()}
             >
+              <i data-lucide="refresh-cw"></i>
               {busy === "preview" ? "Compiling..." : "Compile preview"}
             </button>
             <button
@@ -2298,6 +2492,7 @@ export function AdvancedMissionBuilderPanel({
               disabled={busy === "apply"}
               onClick={() => void saveMission()}
             >
+              <i data-lucide={editingAutomation ? "save" : "arrow-up-circle"}></i>
               {busy === "apply"
                 ? "Saving..."
                 : editingAutomation
