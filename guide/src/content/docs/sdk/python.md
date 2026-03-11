@@ -11,6 +11,8 @@ pip install tandem-client
 
 Requires **Python 3.10+**.
 
+`pip install tandem-client` installs the Python SDK only. It does not install `tandem-engine`.
+
 For recurring jobs and scheduled automations, see [Scheduling Workflows And Automations](./scheduling-automations/).
 
 ## Engine prerequisite
@@ -287,26 +289,6 @@ await client.routines.pause_run(run_id)
 await client.routines.resume_run(run_id)
 ```
 
-### `client.automations`
-
-```python
-await client.automations.create({
-    "name": "Weekly security scan",
-    "schedule": "0 9 * * 1",
-    "mission": {
-        "objective": "Audit the API for vulnerabilities",
-        "success_criteria": ["Report written to reports/security.md"],
-    },
-    "policy": {
-        "tool": {"external_integrations_allowed": False},
-        "approval": {"requires_approval": True},
-    },
-})
-
-run = await client.automations.get_run(run_id)
-await client.automations.approve_run(run_id, "LGTM")
-```
-
 ### `client.automations_v2`
 
 Use V2 for persistent multi-agent DAG flows with per-agent model selection.
@@ -357,6 +339,28 @@ automation = await client.automations_v2.create({
 runs = await client.automations_v2.list_runs(automation.automation_id or "", limit=20)
 await client.automations_v2.pause_run(runs.runs[0].run_id or "")
 await client.automations_v2.resume_run(runs.runs[0].run_id or "")
+```
+
+### `client.automations` (Legacy Compatibility Path)
+
+Use this for existing installs that still rely on the older mission + policy automation shape. For new automation work, prefer `client.automations_v2`.
+
+```python
+await client.automations.create({
+    "name": "Weekly security scan",
+    "schedule": "0 9 * * 1",
+    "mission": {
+        "objective": "Audit the API for vulnerabilities",
+        "success_criteria": ["Report written to reports/security.md"],
+    },
+    "policy": {
+        "tool": {"external_integrations_allowed": False},
+        "approval": {"requires_approval": True},
+    },
+})
+
+run = await client.automations.get_run(run_id)
+await client.automations.approve_run(run_id, "LGTM")
 ```
 
 ### `client.workflow_plans`

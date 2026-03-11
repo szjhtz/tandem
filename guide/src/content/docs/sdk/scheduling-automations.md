@@ -23,7 +23,7 @@ Accepted schedule shapes:
 - Interval object: `{ type: "interval", intervalMs: 3600000 }`
 - Manual: `{ type: "manual" }`
 
-Use this family for single-agent scheduled jobs or older automation definitions.
+Use this family for simple scheduled jobs or older automation definitions.
 
 ### 2. Workflow plans and V2 automations
 
@@ -47,33 +47,45 @@ Cron uses the same shape with `type: "cron"` and `cron_expression`.
 
 This is the same payload family the control panel sends for planner-created and V2 automations.
 
+## Default Recommendation
+
+For new scheduled automation work, prefer `automationsV2` / `automations_v2`.
+
+Reasons:
+
+- It matches the control panel's current automation model.
+- It supports explicit multi-agent DAG flows.
+- It uses the richer schedule object the planner and UI already produce.
+- It is the best fit when another agent will generate or revise automations from requirements.
+
+Use `workflowPlans` / `workflow_plans` when you want the engine to generate the V2 automation for you from natural-language requirements.
+
+Keep using `routines` for simple recurring single-agent jobs, and keep `automations` only for legacy compatibility or existing installs that already depend on it.
+
 ## TypeScript Examples
 
-### Routine every hour
+### Planner-generated automation with an interval schedule
 
 ```ts
-await client.routines.create({
-  name: "hourly-repo-summary",
-  schedule: { type: "interval", intervalMs: 60 * 60 * 1000 },
-  entrypoint: "Summarize changes in the repo from the last hour.",
+const draft = await client.workflowPlans.chatStart({
+  prompt: "Create an automation that reviews the repo and opens a markdown report.",
+  schedule: {
+    type: "interval",
+    interval_seconds: 6 * 60 * 60,
+    timezone: "UTC",
+    misfire_policy: "run_once",
+  },
+  planSource: "chat",
 });
-```
 
-### Legacy automation every day at 08:00 UTC
+await client.workflowPlans.chatMessage({
+  planId: draft.plan.plan_id!,
+  message: "Keep it single-agent and write output to reports/repo-review.md",
+});
 
-```ts
-await client.automations.create({
-  name: "daily-security-scan",
-  schedule: "0 8 * * *",
-  mission: {
-    objective: "Review the repo for security-sensitive changes.",
-    successCriteria: ["Write findings to reports/security-daily.md"],
-  },
-  policy: {
-    tool: { externalIntegrationsAllowed: false },
-    approval: { requiresApproval: false },
-  },
-  outputTargets: ["file://reports/security-daily.md"],
+await client.workflowPlans.apply({
+  planId: draft.plan.plan_id,
+  creatorId: "docker-agent",
 });
 ```
 
@@ -115,62 +127,58 @@ await client.automationsV2.create({
 });
 ```
 
-### Planner-generated automation with an interval schedule
+### Routine every hour
 
 ```ts
-const draft = await client.workflowPlans.chatStart({
-  prompt: "Create an automation that reviews the repo and opens a markdown report.",
-  schedule: {
-    type: "interval",
-    interval_seconds: 6 * 60 * 60,
-    timezone: "UTC",
-    misfire_policy: "run_once",
+await client.routines.create({
+  name: "hourly-repo-summary",
+  schedule: { type: "interval", intervalMs: 60 * 60 * 1000 },
+  entrypoint: "Summarize changes in the repo from the last hour.",
+});
+```
+
+### Legacy automation every day at 08:00 UTC
+
+```ts
+await client.automations.create({
+  name: "daily-security-scan",
+  schedule: "0 8 * * *",
+  mission: {
+    objective: "Review the repo for security-sensitive changes.",
+    successCriteria: ["Write findings to reports/security-daily.md"],
   },
-  planSource: "chat",
-});
-
-await client.workflowPlans.chatMessage({
-  planId: draft.plan.plan_id!,
-  message: "Keep it single-agent and write output to reports/repo-review.md",
-});
-
-await client.workflowPlans.apply({
-  planId: draft.plan.plan_id,
-  creatorId: "docker-agent",
+  policy: {
+    tool: { externalIntegrationsAllowed: false },
+    approval: { requiresApproval: false },
+  },
+  outputTargets: ["file://reports/security-daily.md"],
 });
 ```
 
 ## Python Examples
 
-### Routine every hour
+### Planner-generated automation with an interval schedule
 
 ```python
-await client.routines.create(
-    {
-        "name": "hourly-repo-summary",
-        "schedule": {"type": "interval", "intervalMs": 60 * 60 * 1000},
-        "entrypoint": "Summarize changes in the repo from the last hour.",
-    }
+draft = await client.workflow_plans.chat_start(
+    prompt="Create an automation that reviews the repo and opens a markdown report.",
+    schedule={
+        "type": "interval",
+        "interval_seconds": 6 * 60 * 60,
+        "timezone": "UTC",
+        "misfire_policy": "run_once",
+    },
+    plan_source="chat",
 )
-```
 
-### Legacy automation every day at 08:00 UTC
+await client.workflow_plans.chat_message(
+    plan_id=draft.plan.plan_id or "",
+    message="Keep it single-agent and write output to reports/repo-review.md",
+)
 
-```python
-await client.automations.create(
-    {
-        "name": "daily-security-scan",
-        "schedule": "0 8 * * *",
-        "mission": {
-            "objective": "Review the repo for security-sensitive changes.",
-            "successCriteria": ["Write findings to reports/security-daily.md"],
-        },
-        "policy": {
-            "tool": {"externalIntegrationsAllowed": False},
-            "approval": {"requiresApproval": False},
-        },
-        "outputTargets": ["file://reports/security-daily.md"],
-    }
+await client.workflow_plans.apply(
+    plan_id=draft.plan.plan_id,
+    creator_id="docker-agent",
 )
 ```
 
@@ -214,28 +222,35 @@ await client.automations_v2.create(
 )
 ```
 
-### Planner-generated automation with an interval schedule
+### Routine every hour
 
 ```python
-draft = await client.workflow_plans.chat_start(
-    prompt="Create an automation that reviews the repo and opens a markdown report.",
-    schedule={
-        "type": "interval",
-        "interval_seconds": 6 * 60 * 60,
-        "timezone": "UTC",
-        "misfire_policy": "run_once",
-    },
-    plan_source="chat",
+await client.routines.create(
+    {
+        "name": "hourly-repo-summary",
+        "schedule": {"type": "interval", "intervalMs": 60 * 60 * 1000},
+        "entrypoint": "Summarize changes in the repo from the last hour.",
+    }
 )
+```
 
-await client.workflow_plans.chat_message(
-    plan_id=draft.plan.plan_id or "",
-    message="Keep it single-agent and write output to reports/repo-review.md",
-)
+### Legacy automation every day at 08:00 UTC
 
-await client.workflow_plans.apply(
-    plan_id=draft.plan.plan_id,
-    creator_id="docker-agent",
+```python
+await client.automations.create(
+    {
+        "name": "daily-security-scan",
+        "schedule": "0 8 * * *",
+        "mission": {
+            "objective": "Review the repo for security-sensitive changes.",
+            "successCriteria": ["Write findings to reports/security-daily.md"],
+        },
+        "policy": {
+            "tool": {"externalIntegrationsAllowed": False},
+            "approval": {"requiresApproval": False},
+        },
+        "outputTargets": ["file://reports/security-daily.md"],
+    }
 )
 ```
 
@@ -254,8 +269,9 @@ If you want a recurring job, schedule one of these:
 
 For new work:
 
-- Use `automationsV2` / `automations_v2` if you already know the shape you want to create programmatically.
+- Use `automationsV2` / `automations_v2` if you already know the automation shape you want to create programmatically.
 - Use `workflowPlans` / `workflow_plans` if another agent will describe requirements in natural language and let Tandem generate the automation definition.
+- Use `routines` only when you want a much simpler recurring job and do not need the V2 automation model.
 
 ## See Also
 

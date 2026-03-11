@@ -276,28 +276,6 @@ await client.routines.pauseRun(runId);
 await client.routines.resumeRun(runId);
 ```
 
-### `client.automations`
-
-Automations differ from routines: they use a **mission + policy** model with multi-agent orchestration.
-
-```typescript
-await client.automations.create({
-  name: "Weekly security scan",
-  schedule: "0 9 * * 1",
-  mission: {
-    objective: "Audit the API surface for vulnerabilities",
-    success_criteria: ["Report written to reports/security.md"],
-  },
-  policy: {
-    tool: { external_integrations_allowed: false },
-    approval: { requires_approval: true },
-  },
-});
-
-const run = await client.automations.getRun(runId);
-await client.automations.approveRun(runId, "LGTM");
-```
-
 ### `client.automationsV2`
 
 Use V2 for persistent multi-agent DAG flows with per-agent model selection.
@@ -358,6 +336,28 @@ await client.automationsV2.create({
 const runs = await client.automationsV2.listRuns("automation-v2-id", 20);
 await client.automationsV2.pauseRun(runs.runs[0].run_id!);
 await client.automationsV2.resumeRun(runs.runs[0].run_id!);
+```
+
+### `client.automations` (Legacy Compatibility Path)
+
+Use this for existing installs that still rely on the older mission + policy automation shape. For new automation work, prefer `client.automationsV2`.
+
+```typescript
+await client.automations.create({
+  name: "Weekly security scan",
+  schedule: "0 9 * * 1",
+  mission: {
+    objective: "Audit the API surface for vulnerabilities",
+    success_criteria: ["Report written to reports/security.md"],
+  },
+  policy: {
+    tool: { external_integrations_allowed: false },
+    approval: { requires_approval: true },
+  },
+});
+
+const run = await client.automations.getRun(runId);
+await client.automations.approveRun(runId, "LGTM");
 ```
 
 ### `client.workflowPlans`
