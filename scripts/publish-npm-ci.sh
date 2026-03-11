@@ -104,10 +104,10 @@ for dir in "${PACKAGES[@]}"; do
     wait_for_npm_version "@frumu/tandem" "$version"
     wait_for_npm_version "@frumu/tandem-client" "$version"
     if command -v pnpm >/dev/null 2>&1; then
-      echo "Installing panel dependencies for $name@$version with pnpm" | tee -a "$LOG_FILE"
+      echo "Installing panel dependencies for $name@$version with pnpm (refresh lock metadata)" | tee -a "$LOG_FILE"
       (
         cd "$dir" &&
-          pnpm install --frozen-lockfile
+          pnpm install --no-frozen-lockfile
       ) 2>&1 | tee -a "$LOG_FILE"
       echo "Building static bundle for $name@$version with pnpm run build" | tee -a "$LOG_FILE"
       (

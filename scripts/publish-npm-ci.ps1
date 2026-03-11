@@ -132,8 +132,8 @@ Then retry:
         Wait-NpmPackageVersion -Name "@frumu/tandem-client" -Version $version
 
         $buildPanel = if (Get-Command pnpm -ErrorAction SilentlyContinue) {
-            "Installing panel dependencies for $name@$version with pnpm" | Tee-Object -FilePath $logFile -Append
-            $installPanel = Invoke-NpmText -WorkingDirectory $dir -Command "pnpm install --frozen-lockfile"
+            "Installing panel dependencies for $name@$version with pnpm (refresh lock metadata)" | Tee-Object -FilePath $logFile -Append
+            $installPanel = Invoke-NpmText -WorkingDirectory $dir -Command "pnpm install --no-frozen-lockfile"
             $installPanel.Output | Tee-Object -FilePath $logFile -Append | Out-Null
             if ($installPanel.ExitCode -ne 0) {
                 throw "Failed panel dependency install for $name@$version"
