@@ -71,6 +71,10 @@ TANDEM_WEB_UI=true
 TANDEM_WEB_UI_PREFIX=/admin
 ```
 
+Keep `memory.sqlite`, config, logs, and other runtime files under this same
+`TANDEM_STATE_DIR` root for standard installs. A separate `TANDEM_MEMORY_DB_PATH`
+is supported for advanced overrides only.
+
 Enable/start:
 
 ```bash

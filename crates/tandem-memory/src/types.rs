@@ -229,6 +229,55 @@ pub struct ClearFileIndexResult {
     pub did_vacuum: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MemoryImportFormat {
+    Directory,
+    Openclaw,
+}
+
+impl std::fmt::Display for MemoryImportFormat {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            MemoryImportFormat::Directory => write!(f, "directory"),
+            MemoryImportFormat::Openclaw => write!(f, "openclaw"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoryImportRequest {
+    pub root_path: String,
+    pub format: MemoryImportFormat,
+    pub tier: MemoryTier,
+    pub session_id: Option<String>,
+    pub project_id: Option<String>,
+    pub sync_deletes: bool,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct MemoryImportStats {
+    pub discovered_files: usize,
+    pub files_processed: usize,
+    pub indexed_files: usize,
+    pub skipped_files: usize,
+    pub deleted_files: usize,
+    pub chunks_created: usize,
+    pub errors: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoryImportProgress {
+    pub files_processed: usize,
+    pub total_files: usize,
+    pub indexed_files: usize,
+    pub skipped_files: usize,
+    pub deleted_files: usize,
+    pub errors: usize,
+    pub chunks_created: usize,
+    pub current_file: String,
+}
+
 /// Request to search memory
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchMemoryRequest {

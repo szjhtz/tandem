@@ -5,7 +5,45 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.4.6] - Unreleased
+## [0.4.7] - Unreleased
+
+### Added
+
+- **Lossless cross-session channel memory archival**:
+  - added automatic archival of completed Telegram/Discord/Slack user-visible exchanges into global retrieval memory while keeping full raw transcripts in ordinary session storage
+  - added provenance-based dedupe for archived `chat_exchange` rows so repeated retries of the same exchange do not duplicate global memory indefinitely
+  - added default memory-tool permissions for newly created channel sessions so channel bots can actually call `memory_search`, `memory_store`, and `memory_list`
+- **Channel workflow-planning slash commands**:
+  - added grouped `/help` output with topic help via `/help schedule`
+  - added `/schedule plan`, `/schedule show`, `/schedule edit`, `/schedule reset`, and `/schedule apply` so channel users can draft and save automations without leaving Telegram/Discord/Slack
+  - added workflow-planner workspace reuse so slash-command drafts inherit the active session workspace root when available
+- **Expanded namespaced operator commands for channels**:
+  - added `/automations`, `/runs`, `/memory`, `/workspace`, `/mcp`, `/packs`, and `/config` command families on top of existing engine APIs
+  - added topic help via `/help automations`, `/help runs`, `/help memory`, `/help workspace`, `/help mcp`, `/help packs`, and `/help config`
+  - added explicit `--yes` confirmation for destructive channel commands such as automation delete, memory delete, and pack uninstall
+- **Storage-root standardization guidance and diagnostics**:
+  - added startup diagnostics that warn operators when `TANDEM_STATE_DIR` and `TANDEM_MEMORY_DB_PATH` point at different roots
+  - added focused regression coverage for canonical memory DB path resolution and channel archival dedupe behavior
+
+### Changed
+
+- **Standard install storage layout now converges on one Tandem root**:
+  - shared path resolution now falls back to `TANDEM_STATE_DIR` before OS defaults, so standard installs keep memory, config, logs, and session storage under one canonical Tandem directory
+  - control-panel setup helpers, VPS examples, and quickstart scripts no longer generate `TANDEM_MEMORY_DB_PATH` by default
+  - standard OS defaults remain:
+    - Linux: `~/.local/share/tandem/`
+    - macOS: `~/Library/Application Support/tandem/`
+    - Windows: `%APPDATA%\\tandem\\`
+
+### Fixed
+
+- **Memory-tool reliability and retrieval correctness**:
+  - fixed public memory tool calls being able to override the backing SQLite path via arbitrary `db_path` values
+  - fixed `memory_list tier=global` decoding against `global_memory_chunks`, including the broken `token_count` / column-index path
+  - fixed channel archival writing to a different SQLite file than the one used by `memory_search` and `memory_list`
+  - fixed fresh channel sessions failing to access memory because memory tools were missing from the default permission allowlist
+
+## [0.4.6] - Released
 
 ### Added
 

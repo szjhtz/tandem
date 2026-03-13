@@ -107,6 +107,19 @@ Typical media flow:
 
 If provider/model cannot use a given media type, the run should still complete with text fallback guidance instead of hanging.
 
+## Headless and Channel Memory
+
+When channels are enabled on a headless engine, Tandem keeps memory in two layers:
+
+1. full session transcript history in normal session storage
+2. compact global retrieval memory containing exact user-visible completed user+assistant exchanges
+
+This is designed so that:
+
+- long-running channel bots can recall prior work across sessions
+- memory retrieval stays much smaller than full transcript replay
+- the raw transcript remains preserved even if retrieval memory is compacted later
+
 ## Security Notes
 
 - Use `--api-token` (or `TANDEM_API_TOKEN`) whenever binding beyond localhost.

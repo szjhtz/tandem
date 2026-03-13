@@ -122,7 +122,6 @@ Create `/etc/tandem/engine.env`:
 sudo mkdir -p /etc/tandem
 TANDEM_API_TOKEN=your-generated-tandem-token-here
 TANDEM_STATE_DIR=/srv/tandem
-TANDEM_MEMORY_DB_PATH=/srv/tandem/memory.sqlite
 ```
 
 For persistent provider keys (recommended on VPS), use the template in this folder:
@@ -146,7 +145,7 @@ sudo cp engine.config.example.json /srv/tandem/config.json
 sudo chown $(id -un):$(id -gn) /srv/tandem/config.json
 ```
 
-The `TANDEM_STATE_DIR` in `engine.env` is the state path. If you prefer CLI flags, add `--state-dir /srv/tandem` to `ExecStart` instead.
+The `TANDEM_STATE_DIR` in `engine.env` is the canonical Tandem storage root. Standard installs should keep `memory.sqlite`, config, logs, and session storage together there. If you prefer CLI flags, add `--state-dir /srv/tandem` to `ExecStart` instead.
 
 Enable and start:
 

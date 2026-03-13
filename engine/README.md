@@ -41,9 +41,17 @@ Enable cross-project global memory tools (opt-in):
 TANDEM_ENABLE_GLOBAL_MEMORY=1 cargo run -p tandem-ai -- serve
 ```
 
-The engine now auto-configures `TANDEM_MEMORY_DB_PATH` to the shared Tandem
-`memory.sqlite` path when unset, so connected apps/tools use the same local
-knowledge base.
+Standard installs should set only `TANDEM_STATE_DIR` and keep all Tandem
+runtime files under that one root. The engine will then use:
+
+- `<TANDEM_STATE_DIR>/memory.sqlite`
+- `<TANDEM_STATE_DIR>/config.json`
+- `<TANDEM_STATE_DIR>/storage/...`
+- `<TANDEM_STATE_DIR>/logs/...`
+
+`TANDEM_MEMORY_DB_PATH` remains available as an advanced override, but using a
+separate memory DB path from the main Tandem state root is no longer the
+recommended setup.
 
 On startup, the engine bootstraps default documentation knowledge from an
 embedded bundle compiled into the binary (`engine/resources/default_knowledge_*`).

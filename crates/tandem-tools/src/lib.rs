@@ -3439,8 +3439,7 @@ impl Tool for MemorySearchTool {
                     "project_id":{"type":"string"},
                     "tier":{"type":"string","enum":["session","project","global"]},
                     "limit":{"type":"integer","minimum":1,"maximum":20},
-                    "allow_global":{"type":"boolean"},
-                    "db_path":{"type":"string"}
+                    "allow_global":{"type":"boolean"}
                 },
                 "required":["query"]
             }),
@@ -3676,8 +3675,7 @@ impl Tool for MemoryStoreTool {
                     "project_id":{"type":"string"},
                     "source":{"type":"string"},
                     "metadata":{"type":"object"},
-                    "allow_global":{"type":"boolean"},
-                    "db_path":{"type":"string"}
+                    "allow_global":{"type":"boolean"}
                 },
                 "required":["content"]
             }),
@@ -3824,8 +3822,7 @@ impl Tool for MemoryListTool {
                     "session_id":{"type":"string"},
                     "project_id":{"type":"string"},
                     "limit":{"type":"integer","minimum":1,"maximum":200},
-                    "allow_global":{"type":"boolean"},
-                    "db_path":{"type":"string"}
+                    "allow_global":{"type":"boolean"}
                 }
             }),
         }
@@ -3941,7 +3938,7 @@ impl Tool for MemoryListTool {
 
 fn resolve_memory_db_path(args: &Value) -> PathBuf {
     if let Some(path) = args
-        .get("db_path")
+        .get("__memory_db_path")
         .and_then(|v| v.as_str())
         .map(str::trim)
         .filter(|s| !s.is_empty())
@@ -4693,6 +4690,27 @@ mod tests {
         });
         assert_eq!(memory_visible_scope(&args), MemoryVisibleScope::Project);
         assert!(!global_memory_enabled(&args));
+    }
+
+    #[test]
+    fn memory_db_path_ignores_public_db_path_arg() {
+        std::env::set_var("TANDEM_MEMORY_DB_PATH", "/tmp/global-memory.sqlite");
+        let resolved = resolve_memory_db_path(&json!({
+            "db_path": "/home/evan/tandem"
+        }));
+        assert_eq!(resolved, PathBuf::from("/tmp/global-memory.sqlite"));
+        std::env::remove_var("TANDEM_MEMORY_DB_PATH");
+    }
+
+    #[test]
+    fn memory_db_path_accepts_hidden_override() {
+        std::env::set_var("TANDEM_MEMORY_DB_PATH", "/tmp/global-memory.sqlite");
+        let resolved = resolve_memory_db_path(&json!({
+            "__memory_db_path": "/tmp/internal-memory.sqlite",
+            "db_path": "/home/evan/tandem"
+        }));
+        assert_eq!(resolved, PathBuf::from("/tmp/internal-memory.sqlite"));
+        std::env::remove_var("TANDEM_MEMORY_DB_PATH");
     }
 
     #[tokio::test]

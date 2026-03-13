@@ -390,11 +390,15 @@ pub struct AppConfig {
     pub default_provider: Option<String>,
 }
 
+fn default_true() -> bool {
+    true
+}
+
 /// Configuration for background memory consolidation via a cheap/free LLM.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemoryConsolidationConfig {
-    /// Set to `true` to enable automatic session memory consolidation when a session ends.
-    #[serde(default)]
+    /// Set to `true` to enable automatic channel memory archival when a session run ends.
+    #[serde(default = "default_true")]
     pub enabled: bool,
     /// Override the provider to use for consolidation.
     /// Defaults to cheapest available: ollama → groq → openrouter → mistral → openai → default.
@@ -403,6 +407,16 @@ pub struct MemoryConsolidationConfig {
     /// Override the model to use for consolidation.
     #[serde(default)]
     pub model: Option<String>,
+}
+
+impl Default for MemoryConsolidationConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            provider: None,
+            model: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]

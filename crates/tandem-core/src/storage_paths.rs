@@ -129,9 +129,25 @@ pub fn resolve_shared_paths() -> anyhow::Result<SharedPaths> {
     })
 }
 
+pub fn resolve_memory_db_path() -> anyhow::Result<PathBuf> {
+    if let Ok(path) = std::env::var("TANDEM_MEMORY_DB_PATH") {
+        let trimmed = path.trim();
+        if !trimmed.is_empty() {
+            return Ok(PathBuf::from(trimmed));
+        }
+    }
+    Ok(resolve_shared_paths()?.memory_db_path)
+}
+
 pub fn resolve_tandem_home_dir() -> anyhow::Result<PathBuf> {
     if let Ok(override_dir) = std::env::var("TANDEM_HOME") {
         let trimmed = override_dir.trim();
+        if !trimmed.is_empty() {
+            return Ok(PathBuf::from(trimmed));
+        }
+    }
+    if let Ok(state_dir) = std::env::var("TANDEM_STATE_DIR") {
+        let trimmed = state_dir.trim();
         if !trimmed.is_empty() {
             return Ok(PathBuf::from(trimmed));
         }
@@ -406,6 +422,32 @@ mod tests {
         assert!(paths.vault_key_path.exists());
         assert!(paths.memory_db_path.exists());
         assert!(paths.storage_version_path.exists());
+    }
+
+    #[test]
+    fn resolve_memory_db_path_prefers_env_override() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let override_path = temp.path().join("memory-override.sqlite");
+        std::env::set_var(
+            "TANDEM_MEMORY_DB_PATH",
+            override_path.to_string_lossy().to_string(),
+        );
+        let resolved = resolve_memory_db_path().expect("resolve memory db path");
+        assert_eq!(resolved, override_path);
+        std::env::remove_var("TANDEM_MEMORY_DB_PATH");
+    }
+
+    #[test]
+    fn resolve_tandem_home_dir_falls_back_to_state_dir() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::env::remove_var("TANDEM_HOME");
+        std::env::set_var(
+            "TANDEM_STATE_DIR",
+            temp.path().to_string_lossy().to_string(),
+        );
+        let resolved = resolve_tandem_home_dir().expect("resolve tandem home");
+        assert_eq!(resolved, temp.path());
+        std::env::remove_var("TANDEM_STATE_DIR");
     }
 
     #[test]

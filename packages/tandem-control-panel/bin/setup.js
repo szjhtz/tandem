@@ -43,6 +43,21 @@ function loadDotEnvFile(pathname) {
   return true;
 }
 
+function posixHomeForUser(username) {
+  const name = String(username || "").trim();
+  if (!name) return homedir();
+  try {
+    const passwd = readFileSync("/etc/passwd", "utf8");
+    for (const line of passwd.split(/\r?\n/)) {
+      if (!line || line.startsWith("#")) continue;
+      const parts = line.split(":");
+      if (parts[0] === name && parts[5]) return parts[5];
+    }
+  } catch {}
+  if (process.env.USER === name || process.env.SUDO_USER === name) return homedir();
+  return resolve("/home", name);
+}
+
 function parseCliArgs(argv) {
   const flags = new Set();
   const values = new Map();
@@ -704,7 +719,8 @@ async function installServices() {
   const serviceGroup = serviceUser;
   const installEngine = serviceMode === "both" || serviceMode === "engine";
   const installPanel = serviceMode === "both" || serviceMode === "panel";
-  const stateDir = String(process.env.TANDEM_STATE_DIR || "/srv/tandem").trim();
+  const defaultStateDir = resolve(posixHomeForUser(serviceUser), ".local", "share", "tandem");
+  const stateDir = String(process.env.TANDEM_HOME || process.env.TANDEM_STATE_DIR || defaultStateDir).trim();
   const engineEnvPath = "/etc/tandem/engine.env";
   const panelEnvPath = "/etc/tandem/control-panel.env";
   const engineServiceName = "tandem-engine";
@@ -728,11 +744,11 @@ async function installServices() {
   const existingEngineEnv = existsSync(engineEnvPath)
     ? parseDotEnv(readFileSync(engineEnvPath, "utf8"))
     : {};
+  const { TANDEM_MEMORY_DB_PATH: _legacyMemoryDbPath, ...engineEnvBase } = existingEngineEnv;
   const engineEnv = {
-    ...existingEngineEnv,
+    ...engineEnvBase,
     TANDEM_API_TOKEN: token,
     TANDEM_STATE_DIR: stateDir,
-    TANDEM_MEMORY_DB_PATH: existingEngineEnv.TANDEM_MEMORY_DB_PATH || `${stateDir}/memory.sqlite`,
     TANDEM_ENABLE_GLOBAL_MEMORY: existingEngineEnv.TANDEM_ENABLE_GLOBAL_MEMORY || "1",
     TANDEM_DISABLE_TOOL_GUARD_BUDGETS: existingEngineEnv.TANDEM_DISABLE_TOOL_GUARD_BUDGETS || "1",
     TANDEM_TOOL_ROUTER_ENABLED: existingEngineEnv.TANDEM_TOOL_ROUTER_ENABLED || "0",

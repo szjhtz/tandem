@@ -21,7 +21,7 @@ The `engine` directory contains the `tandem-ai` crate, which is the central exec
 
 - **Purpose**: It wraps `tandem-core`, `tandem-server`, and the rest of the workspace crates into a single deployable binary.
 - **Operation**: It runs the headless Tandem server (HTTP + SSE APIs). External clients, including channel bots, the TUI, or web dashboards, communicate with this engine.
-- **Memory Sharing**: It auto-configures `TANDEM_MEMORY_DB_PATH` to the shared Tandem `memory.sqlite` so that connected apps and the desktop use the exact same local knowledge base.
+- **Storage Root**: Standard installs should use one Tandem state root (`TANDEM_STATE_DIR`) so memory, config, logs, and session storage live together. A separate `TANDEM_MEMORY_DB_PATH` is supported only as an advanced override.
 - **Execution**: Can be run locally via `cargo run -p tandem-ai -- serve` or packaged as prebuilt NPM binaries (`packages/tandem-engine`).
 
 ## 3) Desktop Application (Tauri + React/Vite)

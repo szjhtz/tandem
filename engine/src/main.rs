@@ -10,13 +10,18 @@ use anyhow::Context;
 use clap::{Parser, Subcommand};
 use futures::stream::{self, StreamExt};
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use sha2::{Digest, Sha256};
 use tandem_core::{
     build_mode_permission_rules, load_provider_auth, resolve_shared_paths, AgentRegistry,
     CancellationRegistry, ConfigStore, EngineLoop, EventBus, PermissionAction, PermissionManager,
     PluginRegistry, Storage, DEFAULT_ENGINE_HOST, DEFAULT_ENGINE_PORT,
 };
-use tandem_memory::{types::StoreMessageRequest, MemoryManager};
+use tandem_memory::{
+    import_files,
+    types::{MemoryImportFormat, MemoryImportRequest, MemoryTier, StoreMessageRequest},
+    MemoryManager,
+};
 use tandem_observability::{
     canonical_logs_dir_from_root, emit_event, init_process_logging, ObservabilityEvent, ProcessKind,
 };
@@ -106,6 +111,12 @@ const BROWSER_EXAMPLES: &str = r#"Examples:
   tandem-engine browser doctor --json
   tandem-engine browser install
   tandem-engine browser doctor --state-dir .tandem-test
+"#;
+
+const MEMORY_EXAMPLES: &str = r#"Examples:
+  tandem-engine memory import --path ~/.openclaw --format openclaw
+  tandem-engine memory import --path ./notes --tier global
+  tandem-engine memory import --path ./docs --tier project --project-id repo-123 --sync-deletes
 "#;
 
 const DEFAULT_KNOWLEDGE_SOURCE_PREFIX: &str = "guide_docs:";
@@ -282,6 +293,12 @@ enum Command {
         #[command(subcommand)]
         action: BrowserCommand,
     },
+    #[command(about = "Memory import utilities.")]
+    #[command(after_help = MEMORY_EXAMPLES)]
+    Memory {
+        #[command(subcommand)]
+        action: MemoryCommand,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -336,6 +353,44 @@ enum BrowserCommand {
         config: Option<String>,
         #[arg(long, default_value_t = false)]
         json: bool,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum MemoryCommand {
+    #[command(
+        about = "Import OpenClaw memory files or a markdown/text directory into Tandem memory."
+    )]
+    Import {
+        #[arg(long, help = "Path to an OpenClaw root or directory to import.")]
+        path: String,
+        #[arg(
+            long,
+            default_value = "directory",
+            help = "Import format: `directory` or `openclaw`."
+        )]
+        format: String,
+        #[arg(
+            long,
+            default_value = "global",
+            help = "Memory tier target: `global`, `project`, or `session`."
+        )]
+        tier: String,
+        #[arg(long, help = "Project scope required when --tier project.")]
+        project_id: Option<String>,
+        #[arg(long, help = "Session scope required when --tier session.")]
+        session_id: Option<String>,
+        #[arg(
+            long,
+            default_value_t = false,
+            help = "Delete imported records whose source files no longer exist in this import root."
+        )]
+        sync_deletes: bool,
+        #[arg(
+            long,
+            help = "Engine state directory. If omitted, uses TANDEM_STATE_DIR or the shared Tandem path."
+        )]
+        state_dir: Option<String>,
     },
 }
 
@@ -693,6 +748,55 @@ async fn main() -> anyhow::Result<()> {
                 }
             }
         },
+        Command::Memory { action } => match action {
+            MemoryCommand::Import {
+                path,
+                format,
+                tier,
+                project_id,
+                session_id,
+                sync_deletes,
+                state_dir,
+            } => {
+                let state_dir = resolve_state_dir(state_dir);
+                configure_memory_db_path_env(&state_dir);
+                let manager = MemoryManager::new(&resolve_memory_db_path(&state_dir)).await?;
+                let format = parse_memory_import_format(&format)?;
+                let tier = parse_memory_import_tier(&tier)?;
+                let stats = import_files(
+                    &manager,
+                    &MemoryImportRequest {
+                        root_path: path.clone(),
+                        format,
+                        tier,
+                        session_id: session_id.clone(),
+                        project_id: project_id.clone(),
+                        sync_deletes,
+                    },
+                    None::<fn(&tandem_memory::types::MemoryImportProgress)>,
+                )
+                .await?;
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&json!({
+                        "ok": true,
+                        "path": path,
+                        "format": format.to_string(),
+                        "tier": tier.to_string(),
+                        "project_id": project_id,
+                        "session_id": session_id,
+                        "sync_deletes": sync_deletes,
+                        "discovered_files": stats.discovered_files,
+                        "files_processed": stats.files_processed,
+                        "indexed_files": stats.indexed_files,
+                        "skipped_files": stats.skipped_files,
+                        "deleted_files": stats.deleted_files,
+                        "chunks_created": stats.chunks_created,
+                        "errors": stats.errors,
+                    }))?
+                );
+            }
+        },
     }
 
     Ok(())
@@ -875,6 +979,23 @@ fn parse_parallel_tasks(
     items.iter().map(parse_item).collect()
 }
 
+fn parse_memory_import_format(raw: &str) -> anyhow::Result<MemoryImportFormat> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "directory" => Ok(MemoryImportFormat::Directory),
+        "openclaw" => Ok(MemoryImportFormat::Openclaw),
+        other => anyhow::bail!("unsupported memory import format `{other}`"),
+    }
+}
+
+fn parse_memory_import_tier(raw: &str) -> anyhow::Result<MemoryTier> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "session" => Ok(MemoryTier::Session),
+        "project" => Ok(MemoryTier::Project),
+        "global" => Ok(MemoryTier::Global),
+        other => anyhow::bail!("unsupported memory tier `{other}`"),
+    }
+}
+
 fn log_startup_paths(state_dir: &Path, addr: &SocketAddr, startup_attempt_id: &str) {
     let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("<unknown>"));
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("<unknown>"));
@@ -942,6 +1063,7 @@ async fn build_runtime(
     override_config_path: Option<PathBuf>,
 ) -> anyhow::Result<RuntimeState> {
     configure_memory_db_path_env(state_dir);
+    warn_on_split_storage_config(state_dir);
     let startup = Instant::now();
     if let Some(state) = startup_state {
         state.set_phase("storage_init").await;
@@ -1149,6 +1271,25 @@ fn configure_memory_db_path_env(state_dir: &Path) {
         "configured TANDEM_MEMORY_DB_PATH={}",
         candidate.to_string_lossy()
     );
+}
+
+fn warn_on_split_storage_config(state_dir: &Path) {
+    let Ok(raw) = std::env::var("TANDEM_MEMORY_DB_PATH") else {
+        return;
+    };
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return;
+    }
+    let configured = PathBuf::from(trimmed);
+    let expected = state_dir.join("memory.sqlite");
+    if configured != expected {
+        tracing::warn!(
+            "split storage config detected: TANDEM_STATE_DIR={} but TANDEM_MEMORY_DB_PATH={}. standard installs should keep memory.sqlite inside the same Tandem state root; prefer TANDEM_STATE_DIR alone unless you intentionally need a separate database path",
+            state_dir.display(),
+            configured.display()
+        );
+    }
 }
 
 async fn emit_startup_phase_event(state: &AppState, phase: &str) {
@@ -1534,5 +1675,21 @@ mod tests {
         assert_eq!(lf, crlf);
         assert_eq!(sha256_hex(lf.as_bytes()), sha256_hex(crlf.as_bytes()));
         assert_eq!(lf.as_bytes().len(), crlf.as_bytes().len());
+    }
+
+    #[test]
+    fn parse_memory_import_format_accepts_openclaw() {
+        assert_eq!(
+            parse_memory_import_format("OpenClaw").unwrap(),
+            MemoryImportFormat::Openclaw
+        );
+    }
+
+    #[test]
+    fn parse_memory_import_tier_accepts_global() {
+        assert_eq!(
+            parse_memory_import_tier("global").unwrap(),
+            MemoryTier::Global
+        );
     }
 }

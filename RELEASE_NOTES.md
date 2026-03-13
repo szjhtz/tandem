@@ -2,7 +2,37 @@
 
 Canonical release notes live in `docs/RELEASE_NOTES.md`.
 
-## v0.4.6 (Unreleased)
+## v0.4.7 (Unreleased)
+
+- Channel memory now works end-to-end across fresh Telegram/Discord/Slack sessions
+  - fresh channel sessions now get `memory_search`, `memory_store`, and `memory_list` by default instead of stalling on permission requests
+  - completed channel replies archive exact user-visible user/assistant exchanges into global retrieval memory while keeping the full transcript in session storage
+  - archived exchanges dedupe by session/message provenance so retries do not create duplicate global rows forever
+  - slash commands and `ENGINE_ERROR:` assistant replies are excluded from archival so recall stays focused on real conversation history
+  - fresh `/new` channel sessions can now recall prior archived exchanges from global memory on the standard Tandem storage layout
+
+- Channel slash commands now expose workflow planning directly in chat
+  - `/help` now shows grouped command categories and `/help schedule` explains workflow-planning commands
+  - added `/schedule plan`, `/schedule show`, `/schedule edit`, `/schedule reset`, and `/schedule apply` for in-channel workflow drafting and automation creation
+  - `/schedule` now acts as a discoverable guided entry point for automation setup instead of requiring users to know the workflow-plan API
+  - the dispatcher forwards the active session workspace root to the workflow planner when available so drafts target the correct repo/project by default
+  - added namespaced operator commands for `/automations`, `/runs`, `/memory`, `/workspace`, `/mcp`, `/packs`, and `/config`
+  - added topic help via `/help automations`, `/help runs`, `/help memory`, `/help workspace`, `/help mcp`, `/help packs`, and `/help config`
+  - destructive channel commands now require explicit `--yes`, while list/show/search/control commands execute directly
+
+- Memory safety and reliability fixes
+  - hardened memory tools so public tool calls can no longer override the memory DB path with arbitrary `db_path` values
+  - fixed `memory_list tier=global` decoding against `global_memory_chunks`, including the broken `token_count` column/index path
+  - fixed channel archival to write to the same memory DB path that `memory_search` and `memory_list` read from
+  - added regression coverage for DB-path resolution, global row decoding, and deduped `chat_exchange` archival
+
+- Storage root standardization
+  - standard installs now treat `TANDEM_STATE_DIR` as the canonical Tandem storage root for memory, config, logs, and session storage
+  - shared-path resolution now falls back to `TANDEM_STATE_DIR` before OS defaults, preventing split installs where `memory.sqlite` lands in a second directory
+  - setup helpers and example env files no longer write `TANDEM_MEMORY_DB_PATH` by default; it remains an advanced override only
+  - engine startup now warns when `TANDEM_STATE_DIR` and `TANDEM_MEMORY_DB_PATH` are split, making storage drift easier to diagnose
+
+## v0.4.6 (Released)
 
 - Advanced Swarm Builder for coordinated multi-agent missions
   - Added a new advanced mission builder on top of `AutomationV2Spec` for orchestrated swarm-style workloads instead of only the simple workflow wizard.

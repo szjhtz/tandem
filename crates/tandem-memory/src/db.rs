@@ -138,6 +138,35 @@ impl MemoryDatabase {
             )",
             [],
         )?;
+        let session_existing_cols: HashSet<String> = {
+            let mut stmt = conn.prepare("PRAGMA table_info(session_memory_chunks)")?;
+            let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
+            rows.collect::<Result<HashSet<_>, _>>()?
+        };
+        if !session_existing_cols.contains("source_path") {
+            conn.execute(
+                "ALTER TABLE session_memory_chunks ADD COLUMN source_path TEXT",
+                [],
+            )?;
+        }
+        if !session_existing_cols.contains("source_mtime") {
+            conn.execute(
+                "ALTER TABLE session_memory_chunks ADD COLUMN source_mtime INTEGER",
+                [],
+            )?;
+        }
+        if !session_existing_cols.contains("source_size") {
+            conn.execute(
+                "ALTER TABLE session_memory_chunks ADD COLUMN source_size INTEGER",
+                [],
+            )?;
+        }
+        if !session_existing_cols.contains("source_hash") {
+            conn.execute(
+                "ALTER TABLE session_memory_chunks ADD COLUMN source_hash TEXT",
+                [],
+            )?;
+        }
 
         // Session memory vectors (virtual table)
         conn.execute(
@@ -224,6 +253,18 @@ impl MemoryDatabase {
             )",
             [],
         )?;
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS session_file_index (
+                session_id TEXT NOT NULL,
+                path TEXT NOT NULL,
+                mtime INTEGER NOT NULL,
+                size INTEGER NOT NULL,
+                hash TEXT NOT NULL,
+                indexed_at TEXT NOT NULL,
+                PRIMARY KEY(session_id, path)
+            )",
+            [],
+        )?;
 
         conn.execute(
             "CREATE TABLE IF NOT EXISTS project_index_status (
@@ -250,6 +291,35 @@ impl MemoryDatabase {
             )",
             [],
         )?;
+        let global_existing_cols: HashSet<String> = {
+            let mut stmt = conn.prepare("PRAGMA table_info(global_memory_chunks)")?;
+            let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
+            rows.collect::<Result<HashSet<_>, _>>()?
+        };
+        if !global_existing_cols.contains("source_path") {
+            conn.execute(
+                "ALTER TABLE global_memory_chunks ADD COLUMN source_path TEXT",
+                [],
+            )?;
+        }
+        if !global_existing_cols.contains("source_mtime") {
+            conn.execute(
+                "ALTER TABLE global_memory_chunks ADD COLUMN source_mtime INTEGER",
+                [],
+            )?;
+        }
+        if !global_existing_cols.contains("source_size") {
+            conn.execute(
+                "ALTER TABLE global_memory_chunks ADD COLUMN source_size INTEGER",
+                [],
+            )?;
+        }
+        if !global_existing_cols.contains("source_hash") {
+            conn.execute(
+                "ALTER TABLE global_memory_chunks ADD COLUMN source_hash TEXT",
+                [],
+            )?;
+        }
 
         // Global memory vectors (virtual table)
         conn.execute(
@@ -304,6 +374,10 @@ impl MemoryDatabase {
             [],
         )?;
         conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_session_file_chunks ON session_memory_chunks(session_id, source, source_path)",
+            [],
+        )?;
+        conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_project_chunks_project ON project_memory_chunks(project_id)",
             [],
         )?;
@@ -316,7 +390,21 @@ impl MemoryDatabase {
             [],
         )?;
         conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_global_file_chunks ON global_memory_chunks(source, source_path)",
+            [],
+        )?;
+        conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_cleanup_log_created ON memory_cleanup_log(created_at)",
+            [],
+        )?;
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS global_file_index (
+                path TEXT PRIMARY KEY,
+                mtime INTEGER NOT NULL,
+                size INTEGER NOT NULL,
+                hash TEXT NOT NULL,
+                indexed_at TEXT NOT NULL
+            )",
             [],
         )?;
 
@@ -598,8 +686,10 @@ impl MemoryDatabase {
             MemoryTier::Session => {
                 conn.execute(
                     &format!(
-                        "INSERT INTO {} (id, content, session_id, project_id, source, created_at, token_count, metadata) 
-                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                        "INSERT INTO {} (
+                            id, content, session_id, project_id, source, created_at, token_count, metadata,
+                            source_path, source_mtime, source_size, source_hash
+                         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
                         chunks_table
                     ),
                     params![
@@ -610,7 +700,11 @@ impl MemoryDatabase {
                         chunk.source,
                         created_at_str,
                         chunk.token_count,
-                        metadata_str
+                        metadata_str,
+                        chunk.source_path.clone(),
+                        chunk.source_mtime,
+                        chunk.source_size,
+                        chunk.source_hash.clone()
                     ],
                 )?;
             }
@@ -642,8 +736,10 @@ impl MemoryDatabase {
             MemoryTier::Global => {
                 conn.execute(
                     &format!(
-                        "INSERT INTO {} (id, content, source, created_at, token_count, metadata) 
-                         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                        "INSERT INTO {} (
+                            id, content, source, created_at, token_count, metadata,
+                            source_path, source_mtime, source_size, source_hash
+                         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
                         chunks_table
                     ),
                     params![
@@ -652,7 +748,11 @@ impl MemoryDatabase {
                         chunk.source,
                         created_at_str,
                         chunk.token_count,
-                        metadata_str
+                        metadata_str,
+                        chunk.source_path.clone(),
+                        chunk.source_mtime,
+                        chunk.source_size,
+                        chunk.source_hash.clone()
                     ],
                 )?;
             }
@@ -710,6 +810,7 @@ impl MemoryDatabase {
                 if let Some(sid) = session_id {
                     let sql = format!(
                         "SELECT c.id, c.content, c.session_id, c.project_id, c.source, c.created_at, c.token_count, c.metadata,
+                                c.source_path, c.source_mtime, c.source_size, c.source_hash,
                                 v.distance
                          FROM {} AS v
                          JOIN {} AS c ON v.chunk_id = c.id
@@ -720,13 +821,14 @@ impl MemoryDatabase {
                     let mut stmt = conn.prepare(&sql)?;
                     let results = stmt
                         .query_map(params![sid, embedding_json, limit], |row| {
-                            Ok((row_to_chunk(row, tier)?, row.get::<_, f64>(8)?))
+                            Ok((row_to_chunk(row, tier)?, row.get::<_, f64>(12)?))
                         })?
                         .collect::<Result<Vec<_>, _>>()?;
                     results
                 } else if let Some(pid) = project_id {
                     let sql = format!(
                         "SELECT c.id, c.content, c.session_id, c.project_id, c.source, c.created_at, c.token_count, c.metadata,
+                                c.source_path, c.source_mtime, c.source_size, c.source_hash,
                                 v.distance
                          FROM {} AS v
                          JOIN {} AS c ON v.chunk_id = c.id
@@ -737,13 +839,14 @@ impl MemoryDatabase {
                     let mut stmt = conn.prepare(&sql)?;
                     let results = stmt
                         .query_map(params![pid, embedding_json, limit], |row| {
-                            Ok((row_to_chunk(row, tier)?, row.get::<_, f64>(8)?))
+                            Ok((row_to_chunk(row, tier)?, row.get::<_, f64>(12)?))
                         })?
                         .collect::<Result<Vec<_>, _>>()?;
                     results
                 } else {
                     let sql = format!(
                         "SELECT c.id, c.content, c.session_id, c.project_id, c.source, c.created_at, c.token_count, c.metadata,
+                                c.source_path, c.source_mtime, c.source_size, c.source_hash,
                                 v.distance
                          FROM {} AS v
                          JOIN {} AS c ON v.chunk_id = c.id
@@ -754,7 +857,7 @@ impl MemoryDatabase {
                     let mut stmt = conn.prepare(&sql)?;
                     let results = stmt
                         .query_map(params![embedding_json, limit], |row| {
-                            Ok((row_to_chunk(row, tier)?, row.get::<_, f64>(8)?))
+                            Ok((row_to_chunk(row, tier)?, row.get::<_, f64>(12)?))
                         })?
                         .collect::<Result<Vec<_>, _>>()?;
                     results
@@ -802,6 +905,7 @@ impl MemoryDatabase {
             MemoryTier::Global => {
                 let sql = format!(
                     "SELECT c.id, c.content, NULL as session_id, NULL as project_id, c.source, c.created_at, c.token_count, c.metadata,
+                            c.source_path, c.source_mtime, c.source_size, c.source_hash,
                             v.distance
                      FROM {} AS v
                      JOIN {} AS c ON v.chunk_id = c.id
@@ -812,7 +916,7 @@ impl MemoryDatabase {
                 let mut stmt = conn.prepare(&sql)?;
                 let results = stmt
                     .query_map(params![embedding_json, limit], |row| {
-                        Ok((row_to_chunk(row, tier)?, row.get::<_, f64>(8)?))
+                        Ok((row_to_chunk(row, tier)?, row.get::<_, f64>(12)?))
                     })?
                     .collect::<Result<Vec<_>, _>>()?;
                 results
@@ -827,7 +931,8 @@ impl MemoryDatabase {
         let conn = self.conn.lock().await;
 
         let mut stmt = conn.prepare(
-            "SELECT id, content, session_id, project_id, source, created_at, token_count, metadata
+            "SELECT id, content, session_id, project_id, source, created_at, token_count, metadata,
+                    source_path, source_mtime, source_size, source_hash
              FROM session_memory_chunks
              WHERE session_id = ?1
              ORDER BY created_at DESC",
@@ -868,54 +973,34 @@ impl MemoryDatabase {
         let conn = self.conn.lock().await;
 
         let mut stmt = conn.prepare(
-            "SELECT id, content, source, created_at, token_count, metadata
+            "SELECT id, content, source, created_at, token_count, metadata,
+                    source_path, source_mtime, source_size, source_hash
              FROM global_memory_chunks
              ORDER BY created_at DESC
              LIMIT ?1",
         )?;
 
         let chunks = stmt
-            .query_map(params![limit], |row| {
-                let id: String = row.get(0)?;
-                let content: String = row.get(1)?;
-                let source: String = row.get(2)?;
-                let created_at_str: String = row.get(3)?;
-                let token_count: i64 = row.get(4)?;
-                let metadata_str: Option<String> = row.get(5)?;
-
-                let created_at = DateTime::parse_from_rfc3339(&created_at_str)
-                    .map_err(|e| {
-                        rusqlite::Error::FromSqlConversionFailure(
-                            3,
-                            rusqlite::types::Type::Text,
-                            Box::new(e),
-                        )
-                    })?
-                    .with_timezone(&Utc);
-
-                let metadata = metadata_str
-                    .filter(|s| !s.is_empty())
-                    .and_then(|s| serde_json::from_str(&s).ok());
-
-                Ok(MemoryChunk {
-                    id,
-                    content,
-                    tier: MemoryTier::Global,
-                    session_id: None,
-                    project_id: None,
-                    source,
-                    source_path: None,
-                    source_mtime: None,
-                    source_size: None,
-                    source_hash: None,
-                    created_at,
-                    token_count,
-                    metadata,
-                })
-            })?
+            .query_map(params![limit], |row| row_to_chunk(row, MemoryTier::Global))?
             .collect::<Result<Vec<_>, _>>()?;
 
         Ok(chunks)
+    }
+
+    pub async fn global_chunk_exists_by_source_hash(
+        &self,
+        source_hash: &str,
+    ) -> MemoryResult<bool> {
+        let conn = self.conn.lock().await;
+        let exists = conn
+            .query_row(
+                "SELECT 1 FROM global_memory_chunks WHERE source_hash = ?1 LIMIT 1",
+                params![source_hash],
+                |_row| Ok(()),
+            )
+            .optional()?
+            .is_some();
+        Ok(exists)
     }
 
     /// Clear session memory
@@ -1338,6 +1423,253 @@ impl MemoryDatabase {
         )?;
 
         Ok((chunks_deleted, bytes_estimated))
+    }
+
+    pub async fn get_import_index_entry(
+        &self,
+        tier: MemoryTier,
+        session_id: Option<&str>,
+        project_id: Option<&str>,
+        path: &str,
+    ) -> MemoryResult<Option<(i64, i64, String)>> {
+        let conn = self.conn.lock().await;
+        let row = match tier {
+            MemoryTier::Session => {
+                let session_id = require_scope_id(tier, session_id)?;
+                conn.query_row(
+                    "SELECT mtime, size, hash FROM session_file_index WHERE session_id = ?1 AND path = ?2",
+                    params![session_id, path],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )
+                .optional()?
+            }
+            MemoryTier::Project => {
+                let project_id = require_scope_id(tier, project_id)?;
+                conn.query_row(
+                    "SELECT mtime, size, hash FROM project_file_index WHERE project_id = ?1 AND path = ?2",
+                    params![project_id, path],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )
+                .optional()?
+            }
+            MemoryTier::Global => conn
+                .query_row(
+                    "SELECT mtime, size, hash FROM global_file_index WHERE path = ?1",
+                    params![path],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )
+                .optional()?,
+        };
+        Ok(row)
+    }
+
+    pub async fn upsert_import_index_entry(
+        &self,
+        tier: MemoryTier,
+        session_id: Option<&str>,
+        project_id: Option<&str>,
+        path: &str,
+        mtime: i64,
+        size: i64,
+        hash: &str,
+    ) -> MemoryResult<()> {
+        let conn = self.conn.lock().await;
+        let indexed_at = Utc::now().to_rfc3339();
+        match tier {
+            MemoryTier::Session => {
+                let session_id = require_scope_id(tier, session_id)?;
+                conn.execute(
+                    "INSERT INTO session_file_index (session_id, path, mtime, size, hash, indexed_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                     ON CONFLICT(session_id, path) DO UPDATE SET
+                        mtime = excluded.mtime,
+                        size = excluded.size,
+                        hash = excluded.hash,
+                        indexed_at = excluded.indexed_at",
+                    params![session_id, path, mtime, size, hash, indexed_at],
+                )?;
+            }
+            MemoryTier::Project => {
+                let project_id = require_scope_id(tier, project_id)?;
+                conn.execute(
+                    "INSERT INTO project_file_index (project_id, path, mtime, size, hash, indexed_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                     ON CONFLICT(project_id, path) DO UPDATE SET
+                        mtime = excluded.mtime,
+                        size = excluded.size,
+                        hash = excluded.hash,
+                        indexed_at = excluded.indexed_at",
+                    params![project_id, path, mtime, size, hash, indexed_at],
+                )?;
+            }
+            MemoryTier::Global => {
+                conn.execute(
+                    "INSERT INTO global_file_index (path, mtime, size, hash, indexed_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5)
+                     ON CONFLICT(path) DO UPDATE SET
+                        mtime = excluded.mtime,
+                        size = excluded.size,
+                        hash = excluded.hash,
+                        indexed_at = excluded.indexed_at",
+                    params![path, mtime, size, hash, indexed_at],
+                )?;
+            }
+        }
+        Ok(())
+    }
+
+    pub async fn list_import_index_paths(
+        &self,
+        tier: MemoryTier,
+        session_id: Option<&str>,
+        project_id: Option<&str>,
+    ) -> MemoryResult<Vec<String>> {
+        let conn = self.conn.lock().await;
+        let rows = match tier {
+            MemoryTier::Session => {
+                let session_id = require_scope_id(tier, session_id)?;
+                let mut stmt =
+                    conn.prepare("SELECT path FROM session_file_index WHERE session_id = ?1")?;
+                let rows = stmt.query_map(params![session_id], |row| row.get::<_, String>(0))?;
+                rows.collect::<Result<Vec<_>, _>>()?
+            }
+            MemoryTier::Project => {
+                let project_id = require_scope_id(tier, project_id)?;
+                let mut stmt =
+                    conn.prepare("SELECT path FROM project_file_index WHERE project_id = ?1")?;
+                let rows = stmt.query_map(params![project_id], |row| row.get::<_, String>(0))?;
+                rows.collect::<Result<Vec<_>, _>>()?
+            }
+            MemoryTier::Global => {
+                let mut stmt = conn.prepare("SELECT path FROM global_file_index")?;
+                let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+                rows.collect::<Result<Vec<_>, _>>()?
+            }
+        };
+        Ok(rows)
+    }
+
+    pub async fn delete_import_index_entry(
+        &self,
+        tier: MemoryTier,
+        session_id: Option<&str>,
+        project_id: Option<&str>,
+        path: &str,
+    ) -> MemoryResult<()> {
+        let conn = self.conn.lock().await;
+        match tier {
+            MemoryTier::Session => {
+                let session_id = require_scope_id(tier, session_id)?;
+                conn.execute(
+                    "DELETE FROM session_file_index WHERE session_id = ?1 AND path = ?2",
+                    params![session_id, path],
+                )?;
+            }
+            MemoryTier::Project => {
+                let project_id = require_scope_id(tier, project_id)?;
+                conn.execute(
+                    "DELETE FROM project_file_index WHERE project_id = ?1 AND path = ?2",
+                    params![project_id, path],
+                )?;
+            }
+            MemoryTier::Global => {
+                conn.execute(
+                    "DELETE FROM global_file_index WHERE path = ?1",
+                    params![path],
+                )?;
+            }
+        }
+        Ok(())
+    }
+
+    pub async fn delete_file_chunks_by_path(
+        &self,
+        tier: MemoryTier,
+        session_id: Option<&str>,
+        project_id: Option<&str>,
+        source_path: &str,
+    ) -> MemoryResult<(i64, i64)> {
+        let conn = self.conn.lock().await;
+        let result = match tier {
+            MemoryTier::Session => {
+                let session_id = require_scope_id(tier, session_id)?;
+                let chunks_deleted: i64 = conn.query_row(
+                    "SELECT COUNT(*) FROM session_memory_chunks
+                     WHERE session_id = ?1 AND source = 'file' AND source_path = ?2",
+                    params![session_id, source_path],
+                    |row| row.get(0),
+                )?;
+                let bytes_estimated: i64 = conn.query_row(
+                    "SELECT COALESCE(SUM(LENGTH(content)), 0) FROM session_memory_chunks
+                     WHERE session_id = ?1 AND source = 'file' AND source_path = ?2",
+                    params![session_id, source_path],
+                    |row| row.get(0),
+                )?;
+                conn.execute(
+                    "DELETE FROM session_memory_vectors WHERE chunk_id IN
+                     (SELECT id FROM session_memory_chunks WHERE session_id = ?1 AND source = 'file' AND source_path = ?2)",
+                    params![session_id, source_path],
+                )?;
+                conn.execute(
+                    "DELETE FROM session_memory_chunks
+                     WHERE session_id = ?1 AND source = 'file' AND source_path = ?2",
+                    params![session_id, source_path],
+                )?;
+                (chunks_deleted, bytes_estimated)
+            }
+            MemoryTier::Project => {
+                let project_id = require_scope_id(tier, project_id)?;
+                let chunks_deleted: i64 = conn.query_row(
+                    "SELECT COUNT(*) FROM project_memory_chunks
+                     WHERE project_id = ?1 AND source = 'file' AND source_path = ?2",
+                    params![project_id, source_path],
+                    |row| row.get(0),
+                )?;
+                let bytes_estimated: i64 = conn.query_row(
+                    "SELECT COALESCE(SUM(LENGTH(content)), 0) FROM project_memory_chunks
+                     WHERE project_id = ?1 AND source = 'file' AND source_path = ?2",
+                    params![project_id, source_path],
+                    |row| row.get(0),
+                )?;
+                conn.execute(
+                    "DELETE FROM project_memory_vectors WHERE chunk_id IN
+                     (SELECT id FROM project_memory_chunks WHERE project_id = ?1 AND source = 'file' AND source_path = ?2)",
+                    params![project_id, source_path],
+                )?;
+                conn.execute(
+                    "DELETE FROM project_memory_chunks
+                     WHERE project_id = ?1 AND source = 'file' AND source_path = ?2",
+                    params![project_id, source_path],
+                )?;
+                (chunks_deleted, bytes_estimated)
+            }
+            MemoryTier::Global => {
+                let chunks_deleted: i64 = conn.query_row(
+                    "SELECT COUNT(*) FROM global_memory_chunks
+                     WHERE source = 'file' AND source_path = ?1",
+                    params![source_path],
+                    |row| row.get(0),
+                )?;
+                let bytes_estimated: i64 = conn.query_row(
+                    "SELECT COALESCE(SUM(LENGTH(content)), 0) FROM global_memory_chunks
+                     WHERE source = 'file' AND source_path = ?1",
+                    params![source_path],
+                    |row| row.get(0),
+                )?;
+                conn.execute(
+                    "DELETE FROM global_memory_vectors WHERE chunk_id IN
+                     (SELECT id FROM global_memory_chunks WHERE source = 'file' AND source_path = ?1)",
+                    params![source_path],
+                )?;
+                conn.execute(
+                    "DELETE FROM global_memory_chunks
+                     WHERE source = 'file' AND source_path = ?1",
+                    params![source_path],
+                )?;
+                (chunks_deleted, bytes_estimated)
+            }
+        };
+        Ok(result)
     }
 
     pub async fn upsert_project_index_status(
@@ -1894,23 +2226,31 @@ impl MemoryDatabase {
 fn row_to_chunk(row: &Row, tier: MemoryTier) -> Result<MemoryChunk, rusqlite::Error> {
     let id: String = row.get(0)?;
     let content: String = row.get(1)?;
+    let (session_id, project_id, source_idx, created_at_idx, token_count_idx, metadata_idx) =
+        match tier {
+            MemoryTier::Session => (
+                Some(row.get(2)?),
+                row.get(3)?,
+                4usize,
+                5usize,
+                6usize,
+                7usize,
+            ),
+            MemoryTier::Project => (
+                row.get(2)?,
+                Some(row.get(3)?),
+                4usize,
+                5usize,
+                6usize,
+                7usize,
+            ),
+            MemoryTier::Global => (None, None, 2usize, 3usize, 4usize, 5usize),
+        };
 
-    let session_id: Option<String> = match tier {
-        MemoryTier::Session => Some(row.get(2)?),
-        MemoryTier::Project => row.get(2)?,
-        MemoryTier::Global => None,
-    };
-
-    let project_id: Option<String> = match tier {
-        MemoryTier::Session => row.get(3)?,
-        MemoryTier::Project => Some(row.get(3)?),
-        MemoryTier::Global => None,
-    };
-
-    let source: String = row.get(4)?;
-    let created_at_str: String = row.get(5)?;
-    let token_count: i64 = row.get(6)?;
-    let metadata_str: Option<String> = row.get(7)?;
+    let source: String = row.get(source_idx)?;
+    let created_at_str: String = row.get(created_at_idx)?;
+    let token_count: i64 = row.get(token_count_idx)?;
+    let metadata_str: Option<String> = row.get(metadata_idx)?;
 
     let created_at = DateTime::parse_from_rfc3339(&created_at_str)
         .map_err(|e| {
@@ -1942,6 +2282,18 @@ fn row_to_chunk(row: &Row, tier: MemoryTier) -> Result<MemoryChunk, rusqlite::Er
         token_count,
         metadata,
     })
+}
+
+fn require_scope_id<'a>(tier: MemoryTier, scope: Option<&'a str>) -> MemoryResult<&'a str> {
+    scope
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| {
+            crate::types::MemoryError::InvalidConfig(match tier {
+                MemoryTier::Session => "tier=session requires session_id".to_string(),
+                MemoryTier::Project => "tier=project requires project_id".to_string(),
+                MemoryTier::Global => "tier=global does not require a scope id".to_string(),
+            })
+        })
 }
 
 fn row_to_global_record(row: &Row) -> Result<GlobalMemoryRecord, rusqlite::Error> {
@@ -2043,6 +2395,70 @@ mod tests {
         let chunks = db.get_session_chunks("session-1").await.unwrap();
         assert_eq!(chunks.len(), 1);
         assert_eq!(chunks[0].content, "Test content");
+    }
+
+    #[tokio::test]
+    async fn test_store_and_retrieve_global_chunk() {
+        let (db, _temp) = setup_test_db().await;
+
+        let chunk = MemoryChunk {
+            id: "global-1".to_string(),
+            content: "Global note".to_string(),
+            tier: MemoryTier::Global,
+            session_id: None,
+            project_id: None,
+            source: "agent_note".to_string(),
+            source_path: None,
+            source_mtime: None,
+            source_size: None,
+            source_hash: None,
+            created_at: Utc::now(),
+            token_count: 7,
+            metadata: Some(serde_json::json!({"kind":"test"})),
+        };
+
+        let embedding = vec![0.2f32; DEFAULT_EMBEDDING_DIMENSION];
+        db.store_chunk(&chunk, &embedding).await.unwrap();
+
+        let chunks = db.get_global_chunks(10).await.unwrap();
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0].content, "Global note");
+        assert_eq!(chunks[0].source, "agent_note");
+        assert_eq!(chunks[0].token_count, 7);
+        assert_eq!(chunks[0].tier, MemoryTier::Global);
+    }
+
+    #[tokio::test]
+    async fn test_global_chunk_exists_by_source_hash() {
+        let (db, _temp) = setup_test_db().await;
+
+        let chunk = MemoryChunk {
+            id: "global-hash".to_string(),
+            content: "Global hash note".to_string(),
+            tier: MemoryTier::Global,
+            session_id: None,
+            project_id: None,
+            source: "chat_exchange".to_string(),
+            source_path: None,
+            source_mtime: None,
+            source_size: None,
+            source_hash: Some("hash-123".to_string()),
+            created_at: Utc::now(),
+            token_count: 5,
+            metadata: None,
+        };
+
+        let embedding = vec![0.3f32; DEFAULT_EMBEDDING_DIMENSION];
+        db.store_chunk(&chunk, &embedding).await.unwrap();
+
+        assert!(db
+            .global_chunk_exists_by_source_hash("hash-123")
+            .await
+            .unwrap());
+        assert!(!db
+            .global_chunk_exists_by_source_hash("missing-hash")
+            .await
+            .unwrap());
     }
 
     #[tokio::test]

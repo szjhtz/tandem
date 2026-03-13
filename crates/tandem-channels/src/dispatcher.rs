@@ -20,7 +20,7 @@
 //! `/new [name]`, `/sessions`, `/resume <query>`, `/rename <name>`,
 //! `/status`, `/run`, `/cancel`, `/todos`, `/requests`, `/answer <id> <text>`,
 //! `/providers`, `/models [provider]`, `/model <model_id>`, `/approve <tool_call_id>`,
-//! `/deny <tool_call_id>`, `/help`
+//! `/deny <tool_call_id>`, `/schedule ...`, `/help [topic]`
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -293,9 +293,115 @@ enum SlashCommand {
     Providers,
     Models { provider: Option<String> },
     Model { model_id: String },
-    Help,
+    Help { topic: Option<String> },
     Approve { tool_call_id: String },
     Deny { tool_call_id: String },
+    Schedule { action: ScheduleCommand },
+    Automations { action: AutomationsCommand },
+    Runs { action: RunsCommand },
+    Memory { action: MemoryCommand },
+    Workspace { action: WorkspaceCommand },
+    Mcp { action: McpCommand },
+    Packs { action: PacksCommand },
+    Config { action: ConfigCommand },
+}
+
+#[derive(Debug)]
+enum ScheduleCommand {
+    Help,
+    Plan { prompt: String },
+    Show { plan_id: String },
+    Edit { plan_id: String, message: String },
+    Reset { plan_id: String },
+    Apply { plan_id: String },
+}
+
+#[derive(Debug)]
+enum AutomationsCommand {
+    Help,
+    List,
+    Show {
+        automation_id: String,
+    },
+    Runs {
+        automation_id: String,
+        limit: usize,
+    },
+    Run {
+        automation_id: String,
+    },
+    Pause {
+        automation_id: String,
+    },
+    Resume {
+        automation_id: String,
+    },
+    Delete {
+        automation_id: String,
+        confirmed: bool,
+    },
+}
+
+#[derive(Debug)]
+enum RunsCommand {
+    Help,
+    Automations { limit: usize },
+    Show { run_id: String },
+    Pause { run_id: String },
+    Resume { run_id: String },
+    Cancel { run_id: String },
+    Artifacts { run_id: String },
+}
+
+#[derive(Debug)]
+enum MemoryCommand {
+    Help,
+    Search { query: String },
+    Recent { limit: usize },
+    Save { text: String },
+    Scopes,
+    Delete { memory_id: String, confirmed: bool },
+}
+
+#[derive(Debug)]
+enum WorkspaceCommand {
+    Help,
+    Show,
+    Status,
+    Files { query: String },
+    Branch,
+}
+
+#[derive(Debug)]
+enum McpCommand {
+    Help,
+    List,
+    Tools { server: Option<String> },
+    Resources,
+    Status,
+    Connect { name: String },
+    Disconnect { name: String },
+    Refresh { name: String },
+}
+
+#[derive(Debug)]
+enum PacksCommand {
+    Help,
+    List,
+    Show { selector: String },
+    Updates { selector: String },
+    Install { target: String },
+    Uninstall { selector: String, confirmed: bool },
+}
+
+#[derive(Debug)]
+enum ConfigCommand {
+    Help,
+    Show,
+    Providers,
+    Channels,
+    Model,
+    SetModel { model_id: String },
 }
 
 fn parse_slash_command(content: &str) -> Option<SlashCommand> {
@@ -369,7 +475,16 @@ fn parse_slash_command(content: &str) -> Option<SlashCommand> {
         return None;
     }
     if trimmed == "/help" || trimmed == "/?" {
-        return Some(SlashCommand::Help);
+        return Some(SlashCommand::Help { topic: None });
+    }
+    if let Some(topic) = trimmed.strip_prefix("/help ") {
+        let topic = topic.trim();
+        if !topic.is_empty() {
+            return Some(SlashCommand::Help {
+                topic: Some(topic.to_string()),
+            });
+        }
+        return Some(SlashCommand::Help { topic: None });
     }
     if let Some(id) = trimmed.strip_prefix("/approve ") {
         return Some(SlashCommand::Approve {
@@ -380,6 +495,383 @@ fn parse_slash_command(content: &str) -> Option<SlashCommand> {
         return Some(SlashCommand::Deny {
             tool_call_id: id.trim().to_string(),
         });
+    }
+    if trimmed == "/schedule" {
+        return Some(SlashCommand::Schedule {
+            action: ScheduleCommand::Help,
+        });
+    }
+    if trimmed == "/schedule help" {
+        return Some(SlashCommand::Schedule {
+            action: ScheduleCommand::Help,
+        });
+    }
+    if let Some(prompt) = trimmed.strip_prefix("/schedule plan ") {
+        let prompt = prompt.trim();
+        if !prompt.is_empty() {
+            return Some(SlashCommand::Schedule {
+                action: ScheduleCommand::Plan {
+                    prompt: prompt.to_string(),
+                },
+            });
+        }
+        return None;
+    }
+    if let Some(plan_id) = trimmed.strip_prefix("/schedule show ") {
+        let plan_id = plan_id.trim();
+        if !plan_id.is_empty() {
+            return Some(SlashCommand::Schedule {
+                action: ScheduleCommand::Show {
+                    plan_id: plan_id.to_string(),
+                },
+            });
+        }
+        return None;
+    }
+    if let Some(rest) = trimmed.strip_prefix("/schedule edit ") {
+        let mut parts = rest.trim().splitn(2, ' ');
+        let plan_id = parts.next().unwrap_or_default().trim();
+        let message = parts.next().unwrap_or_default().trim();
+        if !plan_id.is_empty() && !message.is_empty() {
+            return Some(SlashCommand::Schedule {
+                action: ScheduleCommand::Edit {
+                    plan_id: plan_id.to_string(),
+                    message: message.to_string(),
+                },
+            });
+        }
+        return None;
+    }
+    if let Some(plan_id) = trimmed.strip_prefix("/schedule reset ") {
+        let plan_id = plan_id.trim();
+        if !plan_id.is_empty() {
+            return Some(SlashCommand::Schedule {
+                action: ScheduleCommand::Reset {
+                    plan_id: plan_id.to_string(),
+                },
+            });
+        }
+        return None;
+    }
+    if let Some(plan_id) = trimmed.strip_prefix("/schedule apply ") {
+        let plan_id = plan_id.trim();
+        if !plan_id.is_empty() {
+            return Some(SlashCommand::Schedule {
+                action: ScheduleCommand::Apply {
+                    plan_id: plan_id.to_string(),
+                },
+            });
+        }
+        return None;
+    }
+    if let Some(rest) = trimmed.strip_prefix("/automations") {
+        return parse_automations_command(rest).map(|action| SlashCommand::Automations { action });
+    }
+    if let Some(rest) = trimmed.strip_prefix("/runs") {
+        return parse_runs_command(rest).map(|action| SlashCommand::Runs { action });
+    }
+    if let Some(rest) = trimmed.strip_prefix("/memory") {
+        return parse_memory_command(rest).map(|action| SlashCommand::Memory { action });
+    }
+    if let Some(rest) = trimmed.strip_prefix("/workspace") {
+        return parse_workspace_command(rest).map(|action| SlashCommand::Workspace { action });
+    }
+    if let Some(rest) = trimmed.strip_prefix("/mcp") {
+        return parse_mcp_command(rest).map(|action| SlashCommand::Mcp { action });
+    }
+    if let Some(rest) = trimmed.strip_prefix("/packs") {
+        return parse_packs_command(rest).map(|action| SlashCommand::Packs { action });
+    }
+    if let Some(rest) = trimmed.strip_prefix("/config") {
+        return parse_config_command(rest).map(|action| SlashCommand::Config { action });
+    }
+    None
+}
+
+fn parse_limit_token(input: Option<&str>, default: usize) -> usize {
+    input
+        .and_then(|value| value.trim().parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(default)
+}
+
+fn parse_automations_command(rest: &str) -> Option<AutomationsCommand> {
+    let rest = rest.trim();
+    if rest.is_empty() || rest == "list" {
+        return Some(AutomationsCommand::List);
+    }
+    if rest == "help" {
+        return Some(AutomationsCommand::Help);
+    }
+    if let Some(automation_id) = rest.strip_prefix("show ") {
+        return Some(AutomationsCommand::Show {
+            automation_id: automation_id.trim().to_string(),
+        });
+    }
+    if let Some(args) = rest.strip_prefix("runs ") {
+        let mut parts = args.trim().split_whitespace();
+        let automation_id = parts.next()?.trim();
+        let limit = parse_limit_token(parts.next(), 10);
+        return Some(AutomationsCommand::Runs {
+            automation_id: automation_id.to_string(),
+            limit,
+        });
+    }
+    if let Some(automation_id) = rest.strip_prefix("run ") {
+        return Some(AutomationsCommand::Run {
+            automation_id: automation_id.trim().to_string(),
+        });
+    }
+    if let Some(automation_id) = rest.strip_prefix("pause ") {
+        return Some(AutomationsCommand::Pause {
+            automation_id: automation_id.trim().to_string(),
+        });
+    }
+    if let Some(automation_id) = rest.strip_prefix("resume ") {
+        return Some(AutomationsCommand::Resume {
+            automation_id: automation_id.trim().to_string(),
+        });
+    }
+    if let Some(args) = rest.strip_prefix("delete ") {
+        let confirmed = args.contains("--yes");
+        let automation_id = args.replace("--yes", "").trim().to_string();
+        if !automation_id.is_empty() {
+            return Some(AutomationsCommand::Delete {
+                automation_id,
+                confirmed,
+            });
+        }
+    }
+    None
+}
+
+fn parse_runs_command(rest: &str) -> Option<RunsCommand> {
+    let rest = rest.trim();
+    if rest.is_empty() {
+        return Some(RunsCommand::Automations { limit: 10 });
+    }
+    if rest == "help" {
+        return Some(RunsCommand::Help);
+    }
+    if rest == "automations" {
+        return Some(RunsCommand::Automations { limit: 10 });
+    }
+    if let Some(limit) = rest.strip_prefix("automations ") {
+        return Some(RunsCommand::Automations {
+            limit: parse_limit_token(Some(limit), 10),
+        });
+    }
+    if let Some(run_id) = rest.strip_prefix("show ") {
+        return Some(RunsCommand::Show {
+            run_id: run_id.trim().to_string(),
+        });
+    }
+    if let Some(run_id) = rest.strip_prefix("pause ") {
+        return Some(RunsCommand::Pause {
+            run_id: run_id.trim().to_string(),
+        });
+    }
+    if let Some(run_id) = rest.strip_prefix("resume ") {
+        return Some(RunsCommand::Resume {
+            run_id: run_id.trim().to_string(),
+        });
+    }
+    if let Some(run_id) = rest.strip_prefix("cancel ") {
+        return Some(RunsCommand::Cancel {
+            run_id: run_id.trim().to_string(),
+        });
+    }
+    if let Some(run_id) = rest.strip_prefix("artifacts ") {
+        return Some(RunsCommand::Artifacts {
+            run_id: run_id.trim().to_string(),
+        });
+    }
+    None
+}
+
+fn parse_memory_command(rest: &str) -> Option<MemoryCommand> {
+    let rest = rest.trim();
+    if rest.is_empty() || rest == "recent" {
+        return Some(MemoryCommand::Recent { limit: 10 });
+    }
+    if rest == "help" {
+        return Some(MemoryCommand::Help);
+    }
+    if let Some(limit) = rest.strip_prefix("recent ") {
+        return Some(MemoryCommand::Recent {
+            limit: parse_limit_token(Some(limit), 10),
+        });
+    }
+    if let Some(query) = rest.strip_prefix("search ") {
+        let query = query.trim();
+        if !query.is_empty() {
+            return Some(MemoryCommand::Search {
+                query: query.to_string(),
+            });
+        }
+        return None;
+    }
+    if let Some(text) = rest.strip_prefix("save ") {
+        let text = text.trim();
+        if !text.is_empty() {
+            return Some(MemoryCommand::Save {
+                text: text.to_string(),
+            });
+        }
+        return None;
+    }
+    if rest == "scopes" {
+        return Some(MemoryCommand::Scopes);
+    }
+    if let Some(args) = rest.strip_prefix("delete ") {
+        let confirmed = args.contains("--yes");
+        let memory_id = args.replace("--yes", "").trim().to_string();
+        if !memory_id.is_empty() {
+            return Some(MemoryCommand::Delete {
+                memory_id,
+                confirmed,
+            });
+        }
+    }
+    None
+}
+
+fn parse_workspace_command(rest: &str) -> Option<WorkspaceCommand> {
+    let rest = rest.trim();
+    if rest.is_empty() || rest == "show" {
+        return Some(WorkspaceCommand::Show);
+    }
+    if rest == "help" {
+        return Some(WorkspaceCommand::Help);
+    }
+    if rest == "status" {
+        return Some(WorkspaceCommand::Status);
+    }
+    if rest == "branch" {
+        return Some(WorkspaceCommand::Branch);
+    }
+    if let Some(query) = rest.strip_prefix("files ") {
+        let query = query.trim();
+        if !query.is_empty() {
+            return Some(WorkspaceCommand::Files {
+                query: query.to_string(),
+            });
+        }
+        return None;
+    }
+    None
+}
+
+fn parse_mcp_command(rest: &str) -> Option<McpCommand> {
+    let rest = rest.trim();
+    if rest.is_empty() || rest == "list" {
+        return Some(McpCommand::List);
+    }
+    if rest == "help" {
+        return Some(McpCommand::Help);
+    }
+    if rest == "tools" {
+        return Some(McpCommand::Tools { server: None });
+    }
+    if let Some(server) = rest.strip_prefix("tools ") {
+        let server = server.trim();
+        return Some(McpCommand::Tools {
+            server: if server.is_empty() {
+                None
+            } else {
+                Some(server.to_string())
+            },
+        });
+    }
+    if rest == "resources" {
+        return Some(McpCommand::Resources);
+    }
+    if rest == "status" {
+        return Some(McpCommand::Status);
+    }
+    if let Some(name) = rest.strip_prefix("connect ") {
+        return Some(McpCommand::Connect {
+            name: name.trim().to_string(),
+        });
+    }
+    if let Some(name) = rest.strip_prefix("disconnect ") {
+        return Some(McpCommand::Disconnect {
+            name: name.trim().to_string(),
+        });
+    }
+    if let Some(name) = rest.strip_prefix("refresh ") {
+        return Some(McpCommand::Refresh {
+            name: name.trim().to_string(),
+        });
+    }
+    None
+}
+
+fn parse_packs_command(rest: &str) -> Option<PacksCommand> {
+    let rest = rest.trim();
+    if rest.is_empty() || rest == "list" {
+        return Some(PacksCommand::List);
+    }
+    if rest == "help" {
+        return Some(PacksCommand::Help);
+    }
+    if let Some(selector) = rest.strip_prefix("show ") {
+        return Some(PacksCommand::Show {
+            selector: selector.trim().to_string(),
+        });
+    }
+    if let Some(selector) = rest.strip_prefix("updates ") {
+        return Some(PacksCommand::Updates {
+            selector: selector.trim().to_string(),
+        });
+    }
+    if let Some(target) = rest.strip_prefix("install ") {
+        let target = target.trim();
+        if !target.is_empty() {
+            return Some(PacksCommand::Install {
+                target: target.to_string(),
+            });
+        }
+        return None;
+    }
+    if let Some(args) = rest.strip_prefix("uninstall ") {
+        let confirmed = args.contains("--yes");
+        let selector = args.replace("--yes", "").trim().to_string();
+        if !selector.is_empty() {
+            return Some(PacksCommand::Uninstall {
+                selector,
+                confirmed,
+            });
+        }
+    }
+    None
+}
+
+fn parse_config_command(rest: &str) -> Option<ConfigCommand> {
+    let rest = rest.trim();
+    if rest.is_empty() || rest == "show" {
+        return Some(ConfigCommand::Show);
+    }
+    if rest == "help" {
+        return Some(ConfigCommand::Help);
+    }
+    if rest == "providers" {
+        return Some(ConfigCommand::Providers);
+    }
+    if rest == "channels" {
+        return Some(ConfigCommand::Channels);
+    }
+    if rest == "model" {
+        return Some(ConfigCommand::Model);
+    }
+    if let Some(model_id) = rest.strip_prefix("set-model ") {
+        let model_id = model_id.trim();
+        if !model_id.is_empty() {
+            return Some(ConfigCommand::SetModel {
+                model_id: model_id.to_string(),
+            });
+        }
+        return None;
     }
     None
 }
@@ -1709,6 +2201,9 @@ fn build_channel_session_create_body(title: &str) -> serde_json::Value {
             { "permission": "grep", "pattern": "*", "action": "allow" },
             { "permission": "codesearch", "pattern": "*", "action": "allow" },
             { "permission": "read", "pattern": "*", "action": "allow" },
+            { "permission": "memory_search", "pattern": "*", "action": "allow" },
+            { "permission": "memory_store", "pattern": "*", "action": "allow" },
+            { "permission": "memory_list", "pattern": "*", "action": "allow" },
             { "permission": "websearch", "pattern": "*", "action": "allow" },
             { "permission": "webfetch", "pattern": "*", "action": "allow" },
             { "permission": "webfetch_html", "pattern": "*", "action": "allow" },
@@ -2212,7 +2707,7 @@ async fn handle_slash_command(
     session_map: &SessionMap,
 ) -> String {
     match cmd {
-        SlashCommand::Help => help_text(),
+        SlashCommand::Help { topic } => help_text(topic.as_deref()),
         SlashCommand::ListSessions => list_sessions_text(msg, base_url, api_token).await,
         SlashCommand::New { name } => {
             new_session_text(name, msg, base_url, api_token, session_map).await
@@ -2261,6 +2756,22 @@ async fn handle_slash_command(
                 }
             }
         }
+        SlashCommand::Schedule { action } => {
+            schedule_command_text(action, msg, base_url, api_token, session_map).await
+        }
+        SlashCommand::Automations { action } => {
+            automations_command_text(action, base_url, api_token).await
+        }
+        SlashCommand::Runs { action } => runs_command_text(action, base_url, api_token).await,
+        SlashCommand::Memory { action } => {
+            memory_command_text(action, msg, base_url, api_token, session_map).await
+        }
+        SlashCommand::Workspace { action } => {
+            workspace_command_text(action, msg, base_url, api_token, session_map).await
+        }
+        SlashCommand::Mcp { action } => mcp_command_text(action, base_url, api_token).await,
+        SlashCommand::Packs { action } => packs_command_text(action, base_url, api_token).await,
+        SlashCommand::Config { action } => config_command_text(action, base_url, api_token).await,
     }
 }
 
@@ -2268,25 +2779,1681 @@ async fn handle_slash_command(
 // Individual slash command implementations
 // ---------------------------------------------------------------------------
 
-fn help_text() -> String {
-    "🤖 *Tandem Commands*\n\
-    /new [name] — start a fresh session\n\
-    /sessions — list your recent sessions\n\
-    /resume <id or name> — switch to a previous session\n\
-    /rename <name> — rename the current session\n\
-    /status — show current session info\n\
-    /run — show active run state\n\
-    /cancel — cancel the active run\n\
-    /todos — list current session todos\n\
-    /requests — list pending tool/question requests\n\
-    /answer <question_id> <text> — answer a pending question\n\
-    /providers — list available providers\n\
-    /models [provider] — list models by provider\n\
-    /model <model_id> — set model for current default provider\n\
-    /approve <tool_call_id> — approve a pending tool call\n\
-    /deny <tool_call_id> — deny a pending tool call\n\
-    /help — show this message"
+fn help_text(topic: Option<&str>) -> String {
+    match topic.map(|value| value.trim().to_ascii_lowercase()) {
+        Some(topic) if topic == "schedule" || topic == "workflow" || topic == "automation" => {
+            schedule_help_text()
+        }
+        Some(topic) if topic == "automations" => automations_help_text(),
+        Some(topic) if topic == "runs" => runs_help_text(),
+        Some(topic) if topic == "memory" => memory_help_text(),
+        Some(topic) if topic == "workspace" => workspace_help_text(),
+        Some(topic) if topic == "mcp" => mcp_help_text(),
+        Some(topic) if topic == "packs" => packs_help_text(),
+        Some(topic) if topic == "config" => config_help_text(),
+        Some(topic) => format!(
+            "⚠️ Unknown help topic `{topic}`.\nUse `/help` to list command groups or `/help automations`, `/help memory`, `/help workspace`, `/help mcp`, `/help packs`, `/help config`, or `/help schedule`."
+        ),
+        None => "🤖 *Tandem Commands*\n\
+Core session commands:\n\
+/new [name] — start a fresh session\n\
+/sessions — list your recent sessions\n\
+/resume <id or name> — switch to a previous session\n\
+/rename <name> — rename the current session\n\
+/status — show current session info\n\
+/run — show active run state\n\
+/cancel — cancel the active run\n\
+\n\
+Session ops:\n\
+/todos — list current session todos\n\
+/requests — list pending tool/question requests\n\
+/answer <question_id> <text> — answer a pending question\n\
+/approve <tool_call_id> — approve a pending tool call\n\
+/deny <tool_call_id> — deny a pending tool call\n\
+\n\
+Model controls:\n\
+/providers — list available providers\n\
+/models [provider] — list models by provider\n\
+/model <model_id> — set model for current default provider\n\
+\n\
+Workflow planning:\n\
+/schedule help — show workflow-plan commands for scheduling and automation setup\n\
+\n\
+Operator commands:\n\
+/automations — list saved automations\n\
+/runs — list recent automation runs\n\
+/memory — list recent memory entries\n\
+/workspace — show current workspace binding\n\
+/mcp — list MCP servers\n\
+/packs — list installed packs\n\
+/config — show runtime config summary\n\
+\n\
+Help:\n\
+/help — show this message\n\
+/help automations — automation command guide\n\
+/help runs — automation run command guide\n\
+/help memory — memory command guide\n\
+/help workspace — workspace command guide\n\
+/help mcp — MCP command guide\n\
+/help packs — pack command guide\n\
+/help config — config command guide\n\
+/help schedule — explain workflow-planning commands"
+            .to_string(),
+    }
+}
+
+fn schedule_help_text() -> String {
+    "🗓️ *Workflow Planning Commands*\n\
+/schedule help — show this guide\n\
+/schedule plan <prompt> — create a workflow draft from a plain-English goal\n\
+/schedule show <plan_id> — inspect the current draft\n\
+/schedule edit <plan_id> <message> — revise the draft conversationally\n\
+/schedule reset <plan_id> — reset the draft back to its initial preview\n\
+/schedule apply <plan_id> — turn the draft into a saved automation\n\
+\n\
+Examples:\n\
+/schedule plan Every weekday at 9am summarize GitHub notifications and email me the blockers\n\
+/schedule edit wfplan-123 change this to every Monday and Friday at 8am\n\
+/schedule apply wfplan-123\n\
+\n\
+Tip: `/schedule plan` uses the current session workspace when available so the planner can target the right repo."
         .to_string()
+}
+
+fn automations_help_text() -> String {
+    "⚙️ *Automation Commands*\n\
+/automations — list saved automations\n\
+/automations show <id> — inspect one automation\n\
+/automations runs <id> [limit] — list recent runs for one automation\n\
+/automations run <id> — trigger an automation now\n\
+/automations pause <id> — pause an automation\n\
+/automations resume <id> — resume a paused automation\n\
+/automations delete <id> --yes — delete an automation"
+        .to_string()
+}
+
+fn runs_help_text() -> String {
+    "🏃 *Run Commands*\n\
+/runs — list recent automation runs\n\
+/runs show <run_id> — inspect a run\n\
+/runs pause <run_id> — pause a run\n\
+/runs resume <run_id> — resume a paused run\n\
+/runs cancel <run_id> — cancel a run\n\
+/runs artifacts <run_id> — list run artifacts"
+        .to_string()
+}
+
+fn memory_help_text() -> String {
+    "🧠 *Memory Commands*\n\
+/memory — list recent memory entries\n\
+/memory search <query> — search across available memory\n\
+/memory recent [limit] — list recent entries\n\
+/memory save <text> — store a global note\n\
+/memory scopes — show the current session/project/global scope binding\n\
+/memory delete <id> --yes — delete a memory entry"
+        .to_string()
+}
+
+fn workspace_help_text() -> String {
+    "📁 *Workspace Commands*\n\
+/workspace — show the current workspace binding\n\
+/workspace status — show session/project/workspace status\n\
+/workspace files <query> — find files by name in the workspace\n\
+/workspace branch — show the current git branch"
+        .to_string()
+}
+
+fn mcp_help_text() -> String {
+    "🔌 *MCP Commands*\n\
+/mcp — list MCP servers\n\
+/mcp tools [server] — list discovered tools\n\
+/mcp resources — list discovered resources\n\
+/mcp status — summarize connected servers\n\
+/mcp connect <name> — connect a server\n\
+/mcp disconnect <name> — disconnect a server\n\
+/mcp refresh <name> — refresh a server"
+        .to_string()
+}
+
+fn packs_help_text() -> String {
+    "📦 *Pack Commands*\n\
+/packs — list installed packs\n\
+/packs show <selector> — inspect a pack\n\
+/packs updates <selector> — check for updates\n\
+/packs install <path-or-url> — install a pack\n\
+/packs uninstall <selector> --yes — uninstall a pack"
+        .to_string()
+}
+
+fn config_help_text() -> String {
+    "🛠️ *Config Commands*\n\
+/config — show a runtime config summary\n\
+/config providers — show provider summary\n\
+/config channels — show channel status/config summary\n\
+/config model — show the active default model\n\
+/config set-model <model_id> — update the default model"
+        .to_string()
+}
+
+async fn schedule_command_text(
+    action: ScheduleCommand,
+    msg: &ChannelMessage,
+    base_url: &str,
+    api_token: &str,
+    session_map: &SessionMap,
+) -> String {
+    match action {
+        ScheduleCommand::Help => schedule_help_text(),
+        ScheduleCommand::Plan { prompt } => {
+            schedule_plan_text(prompt, msg, base_url, api_token, session_map).await
+        }
+        ScheduleCommand::Show { plan_id } => schedule_show_text(plan_id, base_url, api_token).await,
+        ScheduleCommand::Edit { plan_id, message } => {
+            schedule_edit_text(plan_id, message, base_url, api_token).await
+        }
+        ScheduleCommand::Reset { plan_id } => {
+            schedule_reset_text(plan_id, base_url, api_token).await
+        }
+        ScheduleCommand::Apply { plan_id } => {
+            schedule_apply_text(plan_id, base_url, api_token).await
+        }
+    }
+}
+
+async fn workflow_planner_workspace_root(
+    msg: &ChannelMessage,
+    base_url: &str,
+    api_token: &str,
+    session_map: &SessionMap,
+) -> Option<String> {
+    let sid = active_session_id(msg, session_map).await?;
+    let client = reqwest::Client::new();
+    let resp = add_auth(client.get(format!("{base_url}/session/{sid}")), api_token)
+        .send()
+        .await
+        .ok()?;
+    let json = resp.json::<serde_json::Value>().await.ok()?;
+    json.get("workspace_root")
+        .and_then(|value| value.as_str())
+        .filter(|value| !value.trim().is_empty())
+        .map(ToOwned::to_owned)
+        .or_else(|| {
+            json.get("directory")
+                .and_then(|value| value.as_str())
+                .filter(|value| value.starts_with('/'))
+                .map(ToOwned::to_owned)
+        })
+}
+
+fn workflow_plan_summary(plan: &serde_json::Value) -> String {
+    let plan_id = plan
+        .get("plan_id")
+        .and_then(|value| value.as_str())
+        .unwrap_or("unknown");
+    let title = plan
+        .get("title")
+        .and_then(|value| value.as_str())
+        .unwrap_or("Untitled workflow");
+    let workspace_root = plan
+        .get("workspace_root")
+        .and_then(|value| value.as_str())
+        .unwrap_or("-");
+    let confidence = plan
+        .get("confidence")
+        .and_then(|value| value.as_str())
+        .unwrap_or("-");
+    let step_count = plan
+        .get("steps")
+        .and_then(|value| value.as_array())
+        .map(|items| items.len())
+        .unwrap_or(0);
+    let schedule = plan
+        .get("schedule")
+        .map(compact_json)
+        .unwrap_or_else(|| "null".to_string());
+    format!(
+        "Plan `{}`\nTitle: {}\nSteps: {}\nConfidence: {}\nWorkspace: {}\nSchedule: {}",
+        plan_id, title, step_count, confidence, workspace_root, schedule
+    )
+}
+
+fn workflow_plan_change_summary(value: &serde_json::Value) -> Option<String> {
+    let items = value
+        .get("change_summary")
+        .and_then(|entry| entry.as_array())
+        .filter(|entries| !entries.is_empty())?;
+    let lines = items
+        .iter()
+        .take(6)
+        .filter_map(|item| item.as_str())
+        .map(|item| format!("• {item}"))
+        .collect::<Vec<_>>();
+    if lines.is_empty() {
+        None
+    } else {
+        Some(format!("Changes:\n{}", lines.join("\n")))
+    }
+}
+
+fn assistant_message_text(value: &serde_json::Value) -> Option<String> {
+    value
+        .get("assistant_message")
+        .and_then(|entry| entry.get("text"))
+        .and_then(|entry| entry.as_str())
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn compact_json(value: &serde_json::Value) -> String {
+    serde_json::to_string(value).unwrap_or_else(|_| "null".to_string())
+}
+
+fn short_id(value: &str) -> String {
+    value.chars().take(8).collect()
+}
+
+fn value_string<'a>(value: &'a serde_json::Value, keys: &[&str]) -> Option<&'a str> {
+    keys.iter()
+        .find_map(|key| value.get(*key).and_then(|entry| entry.as_str()))
+}
+
+fn value_u64(value: &serde_json::Value, keys: &[&str]) -> Option<u64> {
+    keys.iter()
+        .find_map(|key| value.get(*key).and_then(|entry| entry.as_u64()))
+}
+
+fn yes_required_text(noun: &str, id: &str, example: &str) -> String {
+    format!("⚠️ Refusing to {noun} `{id}` without confirmation.\nRun `{example} --yes` if you really want to continue.")
+}
+
+fn extract_tool_output(json: &serde_json::Value) -> String {
+    json.get("output")
+        .and_then(|value| value.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string()
+}
+
+async fn json_request(
+    method: reqwest::Method,
+    path: &str,
+    body: Option<serde_json::Value>,
+    base_url: &str,
+    api_token: &str,
+) -> Result<serde_json::Value, String> {
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(20))
+        .build()
+        .map_err(|error| format!("could not build HTTP client: {error}"))?;
+    let mut request = add_auth(
+        client.request(method, format!("{base_url}{path}")),
+        api_token,
+    );
+    if let Some(body) = body {
+        request = request.json(&body);
+    }
+    let resp = request
+        .send()
+        .await
+        .map_err(|error| format!("request failed: {error}"))?;
+    let status = resp.status();
+    let json = resp
+        .json::<serde_json::Value>()
+        .await
+        .unwrap_or_else(|_| serde_json::json!({}));
+    if status.is_success() {
+        Ok(json)
+    } else {
+        let detail = json
+            .get("error")
+            .and_then(|value| value.as_str())
+            .unwrap_or("request failed");
+        Err(format!("{detail} (HTTP {status})"))
+    }
+}
+
+async fn tool_execute(
+    tool: &str,
+    args: serde_json::Value,
+    base_url: &str,
+    api_token: &str,
+) -> Result<serde_json::Value, String> {
+    json_request(
+        reqwest::Method::POST,
+        "/tool/execute",
+        Some(serde_json::json!({ "tool": tool, "args": args })),
+        base_url,
+        api_token,
+    )
+    .await
+}
+
+async fn active_session_details(
+    msg: &ChannelMessage,
+    base_url: &str,
+    api_token: &str,
+    session_map: &SessionMap,
+) -> Option<serde_json::Value> {
+    let sid = active_session_id(msg, session_map).await?;
+    json_request(
+        reqwest::Method::GET,
+        &format!("/session/{sid}"),
+        None,
+        base_url,
+        api_token,
+    )
+    .await
+    .ok()
+}
+
+async fn workflow_plan_post(
+    path: &str,
+    body: serde_json::Value,
+    base_url: &str,
+    api_token: &str,
+) -> Result<serde_json::Value, String> {
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(20))
+        .build()
+        .map_err(|error| format!("could not build HTTP client: {error}"))?;
+    let resp = add_auth(client.post(format!("{base_url}{path}")), api_token)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|error| format!("request failed: {error}"))?;
+    let status = resp.status();
+    let json = resp
+        .json::<serde_json::Value>()
+        .await
+        .map_err(|error| format!("could not parse server response: {error}"))?;
+    if status.is_success() {
+        Ok(json)
+    } else {
+        let detail = json
+            .get("error")
+            .and_then(|value| value.as_str())
+            .unwrap_or("workflow planner request failed");
+        Err(format!("{detail} (HTTP {status})"))
+    }
+}
+
+async fn automations_command_text(
+    action: AutomationsCommand,
+    base_url: &str,
+    api_token: &str,
+) -> String {
+    match action {
+        AutomationsCommand::Help => automations_help_text(),
+        AutomationsCommand::List => automations_list_text(base_url, api_token).await,
+        AutomationsCommand::Show { automation_id } => {
+            automation_show_text(automation_id, base_url, api_token).await
+        }
+        AutomationsCommand::Runs {
+            automation_id,
+            limit,
+        } => automation_runs_text(automation_id, limit, base_url, api_token).await,
+        AutomationsCommand::Run { automation_id } => {
+            automation_run_now_text(automation_id, base_url, api_token).await
+        }
+        AutomationsCommand::Pause { automation_id } => {
+            automation_pause_text(automation_id, base_url, api_token).await
+        }
+        AutomationsCommand::Resume { automation_id } => {
+            automation_resume_text(automation_id, base_url, api_token).await
+        }
+        AutomationsCommand::Delete {
+            automation_id,
+            confirmed,
+        } => automation_delete_text(automation_id, confirmed, base_url, api_token).await,
+    }
+}
+
+async fn runs_command_text(action: RunsCommand, base_url: &str, api_token: &str) -> String {
+    match action {
+        RunsCommand::Help => runs_help_text(),
+        RunsCommand::Automations { limit } => runs_list_text(limit, base_url, api_token).await,
+        RunsCommand::Show { run_id } => run_show_text(run_id, base_url, api_token).await,
+        RunsCommand::Pause { run_id } => run_pause_text(run_id, base_url, api_token).await,
+        RunsCommand::Resume { run_id } => run_resume_text(run_id, base_url, api_token).await,
+        RunsCommand::Cancel { run_id } => run_cancel_text(run_id, base_url, api_token).await,
+        RunsCommand::Artifacts { run_id } => run_artifacts_text(run_id, base_url, api_token).await,
+    }
+}
+
+async fn memory_command_text(
+    action: MemoryCommand,
+    msg: &ChannelMessage,
+    base_url: &str,
+    api_token: &str,
+    session_map: &SessionMap,
+) -> String {
+    match action {
+        MemoryCommand::Help => memory_help_text(),
+        MemoryCommand::Search { query } => memory_search_text(query, base_url, api_token).await,
+        MemoryCommand::Recent { limit } => memory_recent_text(limit, base_url, api_token).await,
+        MemoryCommand::Save { text } => memory_save_text(text, base_url, api_token).await,
+        MemoryCommand::Scopes => memory_scopes_text(msg, base_url, api_token, session_map).await,
+        MemoryCommand::Delete {
+            memory_id,
+            confirmed,
+        } => memory_delete_text(memory_id, confirmed, base_url, api_token).await,
+    }
+}
+
+async fn workspace_command_text(
+    action: WorkspaceCommand,
+    msg: &ChannelMessage,
+    base_url: &str,
+    api_token: &str,
+    session_map: &SessionMap,
+) -> String {
+    match action {
+        WorkspaceCommand::Help => workspace_help_text(),
+        WorkspaceCommand::Show => workspace_show_text(msg, base_url, api_token, session_map).await,
+        WorkspaceCommand::Status => {
+            workspace_status_text(msg, base_url, api_token, session_map).await
+        }
+        WorkspaceCommand::Files { query } => {
+            workspace_files_text(query, msg, base_url, api_token, session_map).await
+        }
+        WorkspaceCommand::Branch => {
+            workspace_branch_text(msg, base_url, api_token, session_map).await
+        }
+    }
+}
+
+async fn mcp_command_text(action: McpCommand, base_url: &str, api_token: &str) -> String {
+    match action {
+        McpCommand::Help => mcp_help_text(),
+        McpCommand::List => mcp_list_text(base_url, api_token).await,
+        McpCommand::Tools { server } => mcp_tools_text(server, base_url, api_token).await,
+        McpCommand::Resources => mcp_resources_text(base_url, api_token).await,
+        McpCommand::Status => mcp_status_text(base_url, api_token).await,
+        McpCommand::Connect { name } => mcp_connect_text(name, base_url, api_token).await,
+        McpCommand::Disconnect { name } => mcp_disconnect_text(name, base_url, api_token).await,
+        McpCommand::Refresh { name } => mcp_refresh_text(name, base_url, api_token).await,
+    }
+}
+
+async fn packs_command_text(action: PacksCommand, base_url: &str, api_token: &str) -> String {
+    match action {
+        PacksCommand::Help => packs_help_text(),
+        PacksCommand::List => packs_list_text(base_url, api_token).await,
+        PacksCommand::Show { selector } => packs_show_text(selector, base_url, api_token).await,
+        PacksCommand::Updates { selector } => {
+            packs_updates_text(selector, base_url, api_token).await
+        }
+        PacksCommand::Install { target } => packs_install_text(target, base_url, api_token).await,
+        PacksCommand::Uninstall {
+            selector,
+            confirmed,
+        } => packs_uninstall_text(selector, confirmed, base_url, api_token).await,
+    }
+}
+
+async fn config_command_text(action: ConfigCommand, base_url: &str, api_token: &str) -> String {
+    match action {
+        ConfigCommand::Help => config_help_text(),
+        ConfigCommand::Show => config_show_text(base_url, api_token).await,
+        ConfigCommand::Providers => providers_text(base_url, api_token).await,
+        ConfigCommand::Channels => config_channels_text(base_url, api_token).await,
+        ConfigCommand::Model => config_model_text(base_url, api_token).await,
+        ConfigCommand::SetModel { model_id } => set_model_text(model_id, base_url, api_token).await,
+    }
+}
+
+async fn automations_list_text(base_url: &str, api_token: &str) -> String {
+    match json_request(
+        reqwest::Method::GET,
+        "/automations/v2",
+        None,
+        base_url,
+        api_token,
+    )
+    .await
+    {
+        Ok(json) => {
+            let items = json
+                .get("automations")
+                .and_then(|value| value.as_array())
+                .cloned()
+                .unwrap_or_default();
+            if items.is_empty() {
+                return "ℹ️ No automations found.".to_string();
+            }
+            let lines = items
+                .iter()
+                .take(12)
+                .map(|item| {
+                    let id = value_string(item, &["id", "automationId", "automation_id"])
+                        .unwrap_or("unknown");
+                    let name = value_string(item, &["name"]).unwrap_or("Untitled");
+                    let status = value_string(item, &["status"]).unwrap_or("unknown");
+                    format!("• `{}` {} ({})", short_id(id), name, status)
+                })
+                .collect::<Vec<_>>();
+            format!(
+                "⚙️ Automations ({} total):\n{}\nUse `/automations show <id>` for details.",
+                items.len(),
+                lines.join("\n")
+            )
+        }
+        Err(error) => format!("⚠️ Could not list automations: {error}"),
+    }
+}
+
+async fn automation_show_text(automation_id: String, base_url: &str, api_token: &str) -> String {
+    match json_request(
+        reqwest::Method::GET,
+        &format!(
+            "/automations/v2/{}",
+            sanitize_resource_segment(&automation_id)
+        ),
+        None,
+        base_url,
+        api_token,
+    )
+    .await
+    {
+        Ok(json) => {
+            let automation = json.get("automation").unwrap_or(&json);
+            let name = value_string(automation, &["name"]).unwrap_or("Untitled");
+            let status = value_string(automation, &["status"]).unwrap_or("unknown");
+            let workspace =
+                value_string(automation, &["workspace_root", "workspaceRoot"]).unwrap_or("-");
+            let schedule = automation
+                .get("schedule")
+                .map(compact_json)
+                .unwrap_or_else(|| "null".to_string());
+            format!(
+                "⚙️ Automation `{}`\nName: {}\nStatus: {}\nWorkspace: {}\nSchedule: {}",
+                automation_id, name, status, workspace, schedule
+            )
+        }
+        Err(error) => format!("⚠️ Could not load automation `{automation_id}`: {error}"),
+    }
+}
+
+async fn automation_runs_text(
+    automation_id: String,
+    limit: usize,
+    base_url: &str,
+    api_token: &str,
+) -> String {
+    match json_request(
+        reqwest::Method::GET,
+        &format!(
+            "/automations/v2/{}/runs?limit={}",
+            sanitize_resource_segment(&automation_id),
+            limit
+        ),
+        None,
+        base_url,
+        api_token,
+    )
+    .await
+    {
+        Ok(json) => format_runs_list(&json, &format!("Runs for `{automation_id}`")),
+        Err(error) => format!("⚠️ Could not list runs for `{automation_id}`: {error}"),
+    }
+}
+
+async fn automation_run_now_text(automation_id: String, base_url: &str, api_token: &str) -> String {
+    match json_request(
+        reqwest::Method::POST,
+        &format!(
+            "/automations/v2/{}/run_now",
+            sanitize_resource_segment(&automation_id)
+        ),
+        Some(serde_json::json!({})),
+        base_url,
+        api_token,
+    )
+    .await
+    {
+        Ok(json) => {
+            let run_id = json
+                .get("run")
+                .and_then(|value| value.get("runId").or_else(|| value.get("run_id")))
+                .and_then(|value| value.as_str())
+                .unwrap_or("unknown");
+            format!(
+                "▶️ Started automation `{automation_id}`.\nRun: `{}`",
+                short_id(run_id)
+            )
+        }
+        Err(error) => format!("⚠️ Could not run automation `{automation_id}`: {error}"),
+    }
+}
+
+async fn automation_pause_text(automation_id: String, base_url: &str, api_token: &str) -> String {
+    match json_request(
+        reqwest::Method::POST,
+        &format!(
+            "/automations/v2/{}/pause",
+            sanitize_resource_segment(&automation_id)
+        ),
+        Some(serde_json::json!({})),
+        base_url,
+        api_token,
+    )
+    .await
+    {
+        Ok(_) => format!("⏸️ Paused automation `{automation_id}`."),
+        Err(error) => format!("⚠️ Could not pause automation `{automation_id}`: {error}"),
+    }
+}
+
+async fn automation_resume_text(automation_id: String, base_url: &str, api_token: &str) -> String {
+    match json_request(
+        reqwest::Method::POST,
+        &format!(
+            "/automations/v2/{}/resume",
+            sanitize_resource_segment(&automation_id)
+        ),
+        Some(serde_json::json!({})),
+        base_url,
+        api_token,
+    )
+    .await
+    {
+        Ok(_) => format!("▶️ Resumed automation `{automation_id}`."),
+        Err(error) => format!("⚠️ Could not resume automation `{automation_id}`: {error}"),
+    }
+}
+
+async fn automation_delete_text(
+    automation_id: String,
+    confirmed: bool,
+    base_url: &str,
+    api_token: &str,
+) -> String {
+    if !confirmed {
+        return yes_required_text(
+            "delete automation",
+            &automation_id,
+            &format!("/automations delete {automation_id}"),
+        );
+    }
+    match json_request(
+        reqwest::Method::DELETE,
+        &format!(
+            "/automations/v2/{}",
+            sanitize_resource_segment(&automation_id)
+        ),
+        None,
+        base_url,
+        api_token,
+    )
+    .await
+    {
+        Ok(_) => format!("🗑️ Deleted automation `{automation_id}`."),
+        Err(error) => format!("⚠️ Could not delete automation `{automation_id}`: {error}"),
+    }
+}
+
+fn format_runs_list(json: &serde_json::Value, title: &str) -> String {
+    let runs = json
+        .get("runs")
+        .and_then(|value| value.as_array())
+        .cloned()
+        .unwrap_or_default();
+    if runs.is_empty() {
+        return format!("ℹ️ {title}: no runs found.");
+    }
+    let lines = runs
+        .iter()
+        .take(12)
+        .map(|run| {
+            let run_id = value_string(run, &["runId", "run_id", "id"]).unwrap_or("unknown");
+            let status = value_string(run, &["status"]).unwrap_or("unknown");
+            format!("• `{}` {}", short_id(run_id), status)
+        })
+        .collect::<Vec<_>>();
+    format!("{title}\n{}", lines.join("\n"))
+}
+
+async fn runs_list_text(limit: usize, base_url: &str, api_token: &str) -> String {
+    match json_request(
+        reqwest::Method::GET,
+        &format!("/automations/v2/runs?limit={limit}"),
+        None,
+        base_url,
+        api_token,
+    )
+    .await
+    {
+        Ok(json) => format_runs_list(&json, "🏃 Recent automation runs"),
+        Err(error) => format!("⚠️ Could not list runs: {error}"),
+    }
+}
+
+async fn run_show_text(run_id: String, base_url: &str, api_token: &str) -> String {
+    match json_request(
+        reqwest::Method::GET,
+        &format!(
+            "/automations/v2/runs/{}",
+            sanitize_resource_segment(&run_id)
+        ),
+        None,
+        base_url,
+        api_token,
+    )
+    .await
+    {
+        Ok(json) => {
+            let run = json.get("run").unwrap_or(&json);
+            let status = value_string(run, &["status"]).unwrap_or("unknown");
+            let automation_id =
+                value_string(run, &["automationId", "automation_id"]).unwrap_or("-");
+            let active_sessions = run
+                .get("activeSessionIds")
+                .or_else(|| run.get("active_session_ids"))
+                .and_then(|value| value.as_array())
+                .map(|items| items.len())
+                .unwrap_or(0);
+            format!(
+                "🏃 Run `{}`\nStatus: {}\nAutomation: {}\nActive sessions: {}",
+                run_id, status, automation_id, active_sessions
+            )
+        }
+        Err(error) => format!("⚠️ Could not load run `{run_id}`: {error}"),
+    }
+}
+
+async fn run_pause_text(run_id: String, base_url: &str, api_token: &str) -> String {
+    match json_request(
+        reqwest::Method::POST,
+        &format!(
+            "/automations/v2/runs/{}/pause",
+            sanitize_resource_segment(&run_id)
+        ),
+        Some(serde_json::json!({})),
+        base_url,
+        api_token,
+    )
+    .await
+    {
+        Ok(_) => format!("⏸️ Paused run `{run_id}`."),
+        Err(error) => format!("⚠️ Could not pause run `{run_id}`: {error}"),
+    }
+}
+
+async fn run_resume_text(run_id: String, base_url: &str, api_token: &str) -> String {
+    match json_request(
+        reqwest::Method::POST,
+        &format!(
+            "/automations/v2/runs/{}/resume",
+            sanitize_resource_segment(&run_id)
+        ),
+        Some(serde_json::json!({})),
+        base_url,
+        api_token,
+    )
+    .await
+    {
+        Ok(_) => format!("▶️ Resumed run `{run_id}`."),
+        Err(error) => format!("⚠️ Could not resume run `{run_id}`: {error}"),
+    }
+}
+
+async fn run_cancel_text(run_id: String, base_url: &str, api_token: &str) -> String {
+    match json_request(
+        reqwest::Method::POST,
+        &format!(
+            "/automations/v2/runs/{}/cancel",
+            sanitize_resource_segment(&run_id)
+        ),
+        Some(serde_json::json!({})),
+        base_url,
+        api_token,
+    )
+    .await
+    {
+        Ok(_) => format!("🛑 Cancelled run `{run_id}`."),
+        Err(error) => format!("⚠️ Could not cancel run `{run_id}`: {error}"),
+    }
+}
+
+async fn run_artifacts_text(run_id: String, base_url: &str, api_token: &str) -> String {
+    match json_request(
+        reqwest::Method::GET,
+        &format!(
+            "/automations/runs/{}/artifacts",
+            sanitize_resource_segment(&run_id)
+        ),
+        None,
+        base_url,
+        api_token,
+    )
+    .await
+    {
+        Ok(json) => {
+            let artifacts = json
+                .get("artifacts")
+                .and_then(|value| value.as_array())
+                .cloned()
+                .unwrap_or_default();
+            if artifacts.is_empty() {
+                return format!("ℹ️ Run `{run_id}` has no artifacts.");
+            }
+            let lines = artifacts
+                .iter()
+                .take(12)
+                .map(|artifact| {
+                    let kind = value_string(artifact, &["kind"]).unwrap_or("artifact");
+                    let uri = value_string(artifact, &["uri"]).unwrap_or("-");
+                    format!("• {} — {}", kind, truncate_for_channel(uri, 90))
+                })
+                .collect::<Vec<_>>();
+            format!("📎 Artifacts for `{run_id}`:\n{}", lines.join("\n"))
+        }
+        Err(error) => format!("⚠️ Could not list artifacts for `{run_id}`: {error}"),
+    }
+}
+
+async fn memory_search_text(query: String, base_url: &str, api_token: &str) -> String {
+    match json_request(
+        reqwest::Method::POST,
+        "/memory/search",
+        Some(serde_json::json!({ "query": query, "limit": 5 })),
+        base_url,
+        api_token,
+    )
+    .await
+    {
+        Ok(json) => {
+            let results = json
+                .get("results")
+                .and_then(|value| value.as_array())
+                .cloned()
+                .unwrap_or_default();
+            if results.is_empty() {
+                return "ℹ️ No matching memory entries found.".to_string();
+            }
+            let lines = results
+                .iter()
+                .take(5)
+                .map(|item| {
+                    let id = value_string(item, &["id", "chunk_id"]).unwrap_or("unknown");
+                    let content = value_string(item, &["content", "text"]).unwrap_or("");
+                    format!(
+                        "• `{}` {}",
+                        short_id(id),
+                        truncate_for_channel(content, 120)
+                    )
+                })
+                .collect::<Vec<_>>();
+            format!("🧠 Memory search results:\n{}", lines.join("\n"))
+        }
+        Err(error) => format!("⚠️ Could not search memory: {error}"),
+    }
+}
+
+async fn memory_recent_text(limit: usize, base_url: &str, api_token: &str) -> String {
+    match json_request(
+        reqwest::Method::GET,
+        &format!("/memory?limit={limit}"),
+        None,
+        base_url,
+        api_token,
+    )
+    .await
+    {
+        Ok(json) => {
+            let items = json
+                .get("items")
+                .and_then(|value| value.as_array())
+                .cloned()
+                .unwrap_or_default();
+            if items.is_empty() {
+                return "ℹ️ No memory entries found.".to_string();
+            }
+            let lines = items
+                .iter()
+                .take(limit)
+                .map(|item| {
+                    let id = value_string(item, &["id", "chunk_id"]).unwrap_or("unknown");
+                    let text = value_string(item, &["content", "text"]).unwrap_or("");
+                    format!("• `{}` {}", short_id(id), truncate_for_channel(text, 120))
+                })
+                .collect::<Vec<_>>();
+            format!("🧠 Recent memory:\n{}", lines.join("\n"))
+        }
+        Err(error) => format!("⚠️ Could not list memory: {error}"),
+    }
+}
+
+async fn memory_save_text(text: String, base_url: &str, api_token: &str) -> String {
+    match json_request(
+        reqwest::Method::POST,
+        "/memory/put",
+        Some(serde_json::json!({ "text": text })),
+        base_url,
+        api_token,
+    )
+    .await
+    {
+        Ok(json) => {
+            let id = value_string(&json, &["id", "chunk_id"]).unwrap_or("unknown");
+            format!("💾 Saved memory entry `{}`.", short_id(id))
+        }
+        Err(error) => format!("⚠️ Could not save memory: {error}"),
+    }
+}
+
+async fn memory_scopes_text(
+    msg: &ChannelMessage,
+    base_url: &str,
+    api_token: &str,
+    session_map: &SessionMap,
+) -> String {
+    let sid = active_session_id(msg, session_map).await;
+    let details = active_session_details(msg, base_url, api_token, session_map).await;
+    let project_id = details
+        .as_ref()
+        .and_then(|value| value.get("project_id"))
+        .and_then(|value| value.as_str())
+        .unwrap_or("-");
+    let workspace_root = details
+        .as_ref()
+        .and_then(|value| value.get("workspace_root"))
+        .and_then(|value| value.as_str())
+        .unwrap_or("-");
+    format!(
+        "🧠 Memory scopes\nSession: {}\nProject: {}\nWorkspace: {}\nGlobal: enabled via default memory search behavior",
+        sid.as_deref().unwrap_or("-"),
+        project_id,
+        workspace_root
+    )
+}
+
+async fn memory_delete_text(
+    memory_id: String,
+    confirmed: bool,
+    base_url: &str,
+    api_token: &str,
+) -> String {
+    if !confirmed {
+        return yes_required_text(
+            "delete memory",
+            &memory_id,
+            &format!("/memory delete {memory_id}"),
+        );
+    }
+    match json_request(
+        reqwest::Method::DELETE,
+        &format!("/memory/{}", sanitize_resource_segment(&memory_id)),
+        None,
+        base_url,
+        api_token,
+    )
+    .await
+    {
+        Ok(_) => format!("🗑️ Deleted memory `{memory_id}`."),
+        Err(error) => format!("⚠️ Could not delete memory `{memory_id}`: {error}"),
+    }
+}
+
+async fn workspace_show_text(
+    msg: &ChannelMessage,
+    base_url: &str,
+    api_token: &str,
+    session_map: &SessionMap,
+) -> String {
+    let Some(details) = active_session_details(msg, base_url, api_token, session_map).await else {
+        return "ℹ️ No active session or workspace binding yet.".to_string();
+    };
+    let session_id = value_string(&details, &["id"]).unwrap_or("-");
+    let title = value_string(&details, &["title"]).unwrap_or("Untitled");
+    let project_id = value_string(&details, &["project_id"]).unwrap_or("-");
+    let workspace_root = value_string(&details, &["workspace_root", "directory"]).unwrap_or("-");
+    format!(
+        "📁 Workspace binding\nSession: `{}`\nTitle: {}\nProject: {}\nWorkspace: {}",
+        short_id(session_id),
+        title,
+        project_id,
+        workspace_root
+    )
+}
+
+async fn workspace_status_text(
+    msg: &ChannelMessage,
+    base_url: &str,
+    api_token: &str,
+    session_map: &SessionMap,
+) -> String {
+    let Some(details) = active_session_details(msg, base_url, api_token, session_map).await else {
+        return "ℹ️ No active session or workspace binding yet.".to_string();
+    };
+    let message_count = details
+        .get("messages")
+        .and_then(|value| value.as_array())
+        .map(|items| items.len())
+        .unwrap_or(0);
+    let project_id = value_string(&details, &["project_id"]).unwrap_or("-");
+    let workspace_root = value_string(&details, &["workspace_root", "directory"]).unwrap_or("-");
+    format!(
+        "📁 Workspace status\nMessages: {}\nProject: {}\nWorkspace: {}",
+        message_count, project_id, workspace_root
+    )
+}
+
+async fn workspace_files_text(
+    query: String,
+    msg: &ChannelMessage,
+    base_url: &str,
+    api_token: &str,
+    session_map: &SessionMap,
+) -> String {
+    let Some(details) = active_session_details(msg, base_url, api_token, session_map).await else {
+        return "ℹ️ No active session or workspace binding yet.".to_string();
+    };
+    let Some(workspace_root) = value_string(&details, &["workspace_root", "directory"]) else {
+        return "ℹ️ No workspace root is bound to this session.".to_string();
+    };
+    let pattern = format!("**/*{query}*");
+    match tool_execute(
+        "glob",
+        serde_json::json!({
+            "pattern": pattern,
+            "__workspace_root": workspace_root,
+            "__effective_cwd": workspace_root,
+        }),
+        base_url,
+        api_token,
+    )
+    .await
+    {
+        Ok(json) => {
+            let output = extract_tool_output(&json);
+            if output.is_empty() {
+                return format!("ℹ️ No files matching `{query}`.");
+            }
+            let lines = output.lines().take(12).collect::<Vec<_>>();
+            format!("📁 Files matching `{query}`:\n{}", lines.join("\n"))
+        }
+        Err(error) => format!("⚠️ Could not search workspace files: {error}"),
+    }
+}
+
+async fn workspace_branch_text(
+    msg: &ChannelMessage,
+    base_url: &str,
+    api_token: &str,
+    session_map: &SessionMap,
+) -> String {
+    let Some(details) = active_session_details(msg, base_url, api_token, session_map).await else {
+        return "ℹ️ No active session or workspace binding yet.".to_string();
+    };
+    let Some(workspace_root) = value_string(&details, &["workspace_root", "directory"]) else {
+        return "ℹ️ No workspace root is bound to this session.".to_string();
+    };
+    match tool_execute(
+        "bash",
+        serde_json::json!({
+            "command": "git rev-parse --abbrev-ref HEAD",
+            "__workspace_root": workspace_root,
+            "__effective_cwd": workspace_root,
+            "timeout_ms": 5000,
+        }),
+        base_url,
+        api_token,
+    )
+    .await
+    {
+        Ok(json) => {
+            let branch = extract_tool_output(&json);
+            if branch.is_empty() {
+                "ℹ️ No git branch information found.".to_string()
+            } else {
+                format!("🌿 Current branch: `{}`", branch.trim())
+            }
+        }
+        Err(error) => format!("⚠️ Could not read workspace branch: {error}"),
+    }
+}
+
+async fn mcp_list_text(base_url: &str, api_token: &str) -> String {
+    match json_request(reqwest::Method::GET, "/mcp", None, base_url, api_token).await {
+        Ok(json) => {
+            let Some(obj) = json.as_object() else {
+                return "ℹ️ No MCP servers configured.".to_string();
+            };
+            if obj.is_empty() {
+                return "ℹ️ No MCP servers configured.".to_string();
+            }
+            let mut lines = obj
+                .iter()
+                .take(20)
+                .map(|(name, value)| {
+                    let enabled = value
+                        .get("enabled")
+                        .and_then(|entry| entry.as_bool())
+                        .unwrap_or(true);
+                    format!(
+                        "• {} ({})",
+                        name,
+                        if enabled { "enabled" } else { "disabled" }
+                    )
+                })
+                .collect::<Vec<_>>();
+            lines.sort();
+            format!("🔌 MCP servers:\n{}", lines.join("\n"))
+        }
+        Err(error) => format!("⚠️ Could not list MCP servers: {error}"),
+    }
+}
+
+async fn mcp_tools_text(server: Option<String>, base_url: &str, api_token: &str) -> String {
+    match json_request(
+        reqwest::Method::GET,
+        "/mcp/tools",
+        None,
+        base_url,
+        api_token,
+    )
+    .await
+    {
+        Ok(json) => {
+            let tools = json.as_array().cloned().unwrap_or_default();
+            if tools.is_empty() {
+                return "ℹ️ No MCP tools discovered.".to_string();
+            }
+            let filtered = tools
+                .iter()
+                .filter(|tool| {
+                    if let Some(server_name) = server.as_ref() {
+                        value_string(tool, &["server", "server_name", "mcp_server"])
+                            .map(|name| name == server_name)
+                            .unwrap_or(false)
+                    } else {
+                        true
+                    }
+                })
+                .take(20)
+                .map(|tool| {
+                    let name = value_string(tool, &["name", "tool", "tool_name"]).unwrap_or("tool");
+                    let srv =
+                        value_string(tool, &["server", "server_name", "mcp_server"]).unwrap_or("?");
+                    format!("• {} ({})", name, srv)
+                })
+                .collect::<Vec<_>>();
+            if filtered.is_empty() {
+                return format!(
+                    "ℹ️ No MCP tools found{}.",
+                    server
+                        .as_ref()
+                        .map(|name| format!(" for `{name}`"))
+                        .unwrap_or_default()
+                );
+            }
+            format!("🔧 MCP tools:\n{}", filtered.join("\n"))
+        }
+        Err(error) => format!("⚠️ Could not list MCP tools: {error}"),
+    }
+}
+
+async fn mcp_resources_text(base_url: &str, api_token: &str) -> String {
+    match json_request(
+        reqwest::Method::GET,
+        "/mcp/resources",
+        None,
+        base_url,
+        api_token,
+    )
+    .await
+    {
+        Ok(json) => {
+            let resources = json.as_array().cloned().unwrap_or_default();
+            if resources.is_empty() {
+                return "ℹ️ No MCP resources discovered.".to_string();
+            }
+            let lines = resources
+                .iter()
+                .take(12)
+                .map(|value| truncate_for_channel(&compact_json(value), 120))
+                .collect::<Vec<_>>();
+            format!("📚 MCP resources:\n{}", lines.join("\n"))
+        }
+        Err(error) => format!("⚠️ Could not list MCP resources: {error}"),
+    }
+}
+
+async fn mcp_status_text(base_url: &str, api_token: &str) -> String {
+    mcp_list_text(base_url, api_token).await
+}
+
+async fn mcp_connect_text(name: String, base_url: &str, api_token: &str) -> String {
+    match json_request(
+        reqwest::Method::POST,
+        &format!("/mcp/{}/connect", sanitize_resource_segment(&name)),
+        None,
+        base_url,
+        api_token,
+    )
+    .await
+    {
+        Ok(_) => format!("🔌 Connected MCP server `{name}`."),
+        Err(error) => format!("⚠️ Could not connect `{name}`: {error}"),
+    }
+}
+
+async fn mcp_disconnect_text(name: String, base_url: &str, api_token: &str) -> String {
+    match json_request(
+        reqwest::Method::POST,
+        &format!("/mcp/{}/disconnect", sanitize_resource_segment(&name)),
+        None,
+        base_url,
+        api_token,
+    )
+    .await
+    {
+        Ok(_) => format!("🔌 Disconnected MCP server `{name}`."),
+        Err(error) => format!("⚠️ Could not disconnect `{name}`: {error}"),
+    }
+}
+
+async fn mcp_refresh_text(name: String, base_url: &str, api_token: &str) -> String {
+    match json_request(
+        reqwest::Method::POST,
+        &format!("/mcp/{}/refresh", sanitize_resource_segment(&name)),
+        None,
+        base_url,
+        api_token,
+    )
+    .await
+    {
+        Ok(json) => {
+            let count = value_u64(&json, &["count"]).unwrap_or(0);
+            format!("🔄 Refreshed MCP server `{name}` ({} tool(s)).", count)
+        }
+        Err(error) => format!("⚠️ Could not refresh `{name}`: {error}"),
+    }
+}
+
+async fn packs_list_text(base_url: &str, api_token: &str) -> String {
+    match json_request(reqwest::Method::GET, "/packs", None, base_url, api_token).await {
+        Ok(json) => {
+            let packs = json
+                .get("packs")
+                .and_then(|value| value.as_array())
+                .cloned()
+                .unwrap_or_default();
+            if packs.is_empty() {
+                return "ℹ️ No packs installed.".to_string();
+            }
+            let lines = packs
+                .iter()
+                .take(12)
+                .map(|pack| {
+                    let name = value_string(pack, &["name"]).unwrap_or("pack");
+                    let version = value_string(pack, &["version"]).unwrap_or("?");
+                    format!("• {} ({})", name, version)
+                })
+                .collect::<Vec<_>>();
+            format!("📦 Installed packs:\n{}", lines.join("\n"))
+        }
+        Err(error) => format!("⚠️ Could not list packs: {error}"),
+    }
+}
+
+async fn packs_show_text(selector: String, base_url: &str, api_token: &str) -> String {
+    match json_request(
+        reqwest::Method::GET,
+        &format!("/packs/{}", sanitize_resource_segment(&selector)),
+        None,
+        base_url,
+        api_token,
+    )
+    .await
+    {
+        Ok(json) => {
+            let installed = json
+                .get("pack")
+                .and_then(|value| value.get("installed"))
+                .unwrap_or(&json);
+            let name = value_string(installed, &["name"]).unwrap_or("pack");
+            let version = value_string(installed, &["version"]).unwrap_or("?");
+            let pack_id = value_string(installed, &["pack_id", "packId"]).unwrap_or("-");
+            format!(
+                "📦 Pack `{}`\nName: {}\nVersion: {}\nPack ID: {}",
+                selector, name, version, pack_id
+            )
+        }
+        Err(error) => format!("⚠️ Could not inspect pack `{selector}`: {error}"),
+    }
+}
+
+async fn packs_updates_text(selector: String, base_url: &str, api_token: &str) -> String {
+    match json_request(
+        reqwest::Method::GET,
+        &format!("/packs/{}/updates", sanitize_resource_segment(&selector)),
+        None,
+        base_url,
+        api_token,
+    )
+    .await
+    {
+        Ok(json) => {
+            let updates = json
+                .get("updates")
+                .and_then(|value| value.as_array())
+                .cloned()
+                .unwrap_or_default();
+            if updates.is_empty() {
+                return format!("ℹ️ No updates available for `{selector}`.");
+            }
+            let lines = updates
+                .iter()
+                .take(10)
+                .map(|item| truncate_for_channel(&compact_json(item), 120))
+                .collect::<Vec<_>>();
+            format!("📦 Updates for `{selector}`:\n{}", lines.join("\n"))
+        }
+        Err(error) => format!("⚠️ Could not check updates for `{selector}`: {error}"),
+    }
+}
+
+async fn packs_install_text(target: String, base_url: &str, api_token: &str) -> String {
+    let body = if target.starts_with("http://") || target.starts_with("https://") {
+        serde_json::json!({ "url": target })
+    } else {
+        serde_json::json!({ "path": target })
+    };
+    match json_request(
+        reqwest::Method::POST,
+        "/packs/install",
+        Some(body),
+        base_url,
+        api_token,
+    )
+    .await
+    {
+        Ok(json) => {
+            let installed = json.get("installed").unwrap_or(&json);
+            let name = value_string(installed, &["name"]).unwrap_or("pack");
+            let version = value_string(installed, &["version"]).unwrap_or("?");
+            format!("📦 Installed pack {} ({}).", name, version)
+        }
+        Err(error) => format!("⚠️ Could not install pack: {error}"),
+    }
+}
+
+async fn packs_uninstall_text(
+    selector: String,
+    confirmed: bool,
+    base_url: &str,
+    api_token: &str,
+) -> String {
+    if !confirmed {
+        return yes_required_text(
+            "uninstall pack",
+            &selector,
+            &format!("/packs uninstall {selector}"),
+        );
+    }
+    match json_request(
+        reqwest::Method::POST,
+        "/packs/uninstall",
+        Some(serde_json::json!({ "name": selector })),
+        base_url,
+        api_token,
+    )
+    .await
+    {
+        Ok(json) => {
+            let removed = json.get("removed").unwrap_or(&json);
+            let name = value_string(removed, &["name"]).unwrap_or("pack");
+            format!("🗑️ Uninstalled pack {}.", name)
+        }
+        Err(error) => format!("⚠️ Could not uninstall pack: {error}"),
+    }
+}
+
+async fn config_show_text(base_url: &str, api_token: &str) -> String {
+    match json_request(reqwest::Method::GET, "/config", None, base_url, api_token).await {
+        Ok(json) => {
+            let default_provider = json
+                .get("providers")
+                .and_then(|value| value.get("default"))
+                .and_then(|value| value.as_str())
+                .or_else(|| json.get("default").and_then(|value| value.as_str()))
+                .unwrap_or("-");
+            let provider_count =
+                json.get("providers")
+                    .and_then(|value| value.get("providers").or_else(|| value.get("all")))
+                    .map(|value| {
+                        value.as_object().map(|obj| obj.len()).unwrap_or_else(|| {
+                            value.as_array().map(|items| items.len()).unwrap_or(0)
+                        })
+                    })
+                    .unwrap_or(0);
+            format!(
+                "🛠️ Config summary\nDefault provider: {}\nConfigured providers: {}\nUse `/config providers`, `/config channels`, or `/config model` for details.",
+                default_provider, provider_count
+            )
+        }
+        Err(error) => format!("⚠️ Could not load config: {error}"),
+    }
+}
+
+async fn config_channels_text(base_url: &str, api_token: &str) -> String {
+    match json_request(
+        reqwest::Method::GET,
+        "/channels/status",
+        None,
+        base_url,
+        api_token,
+    )
+    .await
+    {
+        Ok(json) => format!(
+            "📡 Channel status\n{}",
+            truncate_for_channel(&compact_json(&json), 500)
+        ),
+        Err(error) => format!("⚠️ Could not load channel status: {error}"),
+    }
+}
+
+async fn config_model_text(base_url: &str, api_token: &str) -> String {
+    let client = reqwest::Client::new();
+    match fetch_default_model_spec(&client, base_url, api_token).await {
+        Ok(Some(spec)) => {
+            let provider = value_string(&spec, &["provider_id"]).unwrap_or("-");
+            let model = value_string(&spec, &["model_id"]).unwrap_or("-");
+            format!("🧠 Default model\nProvider: {}\nModel: {}", provider, model)
+        }
+        Ok(None) => "ℹ️ No default model is configured.".to_string(),
+        Err(error) => format!("⚠️ Could not load default model: {error}"),
+    }
+}
+
+async fn workflow_plan_get_request(
+    plan_id: &str,
+    base_url: &str,
+    api_token: &str,
+) -> Result<serde_json::Value, String> {
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(20))
+        .build()
+        .map_err(|error| format!("could not build HTTP client: {error}"))?;
+    let resp = add_auth(
+        client.get(format!(
+            "{base_url}/workflow-plans/{}",
+            sanitize_resource_segment(plan_id)
+        )),
+        api_token,
+    )
+    .send()
+    .await
+    .map_err(|error| format!("request failed: {error}"))?;
+    let status = resp.status();
+    let json = resp
+        .json::<serde_json::Value>()
+        .await
+        .map_err(|error| format!("could not parse server response: {error}"))?;
+    if status.is_success() {
+        Ok(json)
+    } else {
+        let detail = json
+            .get("error")
+            .and_then(|value| value.as_str())
+            .unwrap_or("workflow planner request failed");
+        Err(format!("{detail} (HTTP {status})"))
+    }
+}
+
+async fn schedule_plan_text(
+    prompt: String,
+    msg: &ChannelMessage,
+    base_url: &str,
+    api_token: &str,
+    session_map: &SessionMap,
+) -> String {
+    let mut body = serde_json::json!({
+        "prompt": prompt,
+        "plan_source": "channel_slash_command",
+    });
+    if let Some(workspace_root) =
+        workflow_planner_workspace_root(msg, base_url, api_token, session_map).await
+    {
+        body["workspace_root"] = serde_json::json!(workspace_root);
+    }
+    match workflow_plan_post("/workflow-plans/chat/start", body, base_url, api_token).await {
+        Ok(json) => {
+            let Some(plan) = json.get("plan") else {
+                return "⚠️ Planner returned no plan.".to_string();
+            };
+            let mut sections = vec![format!(
+                "🗓️ Workflow draft created.\n{}",
+                workflow_plan_summary(plan)
+            )];
+            if let Some(text) = assistant_message_text(&json) {
+                sections.push(format!("Planner notes:\n{text}"));
+            }
+            sections.push(
+                "Next steps:\nUse `/schedule edit <plan_id> <message>` to refine it or `/schedule apply <plan_id>` to save it."
+                    .to_string(),
+            );
+            sections.join("\n\n")
+        }
+        Err(error) => format!("⚠️ Could not create workflow draft: {error}"),
+    }
+}
+
+async fn schedule_show_text(plan_id: String, base_url: &str, api_token: &str) -> String {
+    match workflow_plan_get_request(&plan_id, base_url, api_token).await {
+        Ok(json) => {
+            let Some(plan) = json.get("plan") else {
+                return "⚠️ Planner returned no plan.".to_string();
+            };
+            let conversation_count = json
+                .get("conversation")
+                .and_then(|value| value.get("messages"))
+                .and_then(|value| value.as_array())
+                .map(|items| items.len())
+                .unwrap_or(0);
+            format!(
+                "🗓️ Current workflow draft\n{}\nConversation messages: {}",
+                workflow_plan_summary(plan),
+                conversation_count
+            )
+        }
+        Err(error) => format!("⚠️ Could not load workflow draft `{plan_id}`: {error}"),
+    }
+}
+
+async fn schedule_edit_text(
+    plan_id: String,
+    message: String,
+    base_url: &str,
+    api_token: &str,
+) -> String {
+    match workflow_plan_post(
+        "/workflow-plans/chat/message",
+        serde_json::json!({
+            "plan_id": plan_id,
+            "message": message,
+        }),
+        base_url,
+        api_token,
+    )
+    .await
+    {
+        Ok(json) => {
+            let Some(plan) = json.get("plan") else {
+                return "⚠️ Planner returned no revised plan.".to_string();
+            };
+            let mut sections = vec![format!(
+                "📝 Workflow draft updated.\n{}",
+                workflow_plan_summary(plan)
+            )];
+            if let Some(change_summary) = workflow_plan_change_summary(&json) {
+                sections.push(change_summary);
+            }
+            if let Some(text) = assistant_message_text(&json) {
+                sections.push(format!("Planner notes:\n{text}"));
+            }
+            sections.join("\n\n")
+        }
+        Err(error) => format!("⚠️ Could not revise workflow draft: {error}"),
+    }
+}
+
+async fn schedule_reset_text(plan_id: String, base_url: &str, api_token: &str) -> String {
+    match workflow_plan_post(
+        "/workflow-plans/chat/reset",
+        serde_json::json!({ "plan_id": plan_id }),
+        base_url,
+        api_token,
+    )
+    .await
+    {
+        Ok(json) => {
+            let Some(plan) = json.get("plan") else {
+                return "⚠️ Planner returned no reset plan.".to_string();
+            };
+            format!(
+                "↩️ Workflow draft reset to its initial version.\n{}",
+                workflow_plan_summary(plan)
+            )
+        }
+        Err(error) => format!("⚠️ Could not reset workflow draft: {error}"),
+    }
+}
+
+async fn schedule_apply_text(plan_id: String, base_url: &str, api_token: &str) -> String {
+    match workflow_plan_post(
+        "/workflow-plans/apply",
+        serde_json::json!({
+            "plan_id": plan_id,
+            "creator_id": "channel_slash_command",
+        }),
+        base_url,
+        api_token,
+    )
+    .await
+    {
+        Ok(json) => {
+            let automation_id = json
+                .get("automation")
+                .and_then(|value| value.get("id"))
+                .and_then(|value| value.as_str())
+                .unwrap_or("unknown");
+            let automation_name = json
+                .get("automation")
+                .and_then(|value| value.get("name"))
+                .and_then(|value| value.as_str())
+                .unwrap_or("saved automation");
+            format!(
+                "✅ Workflow draft `{}` applied.\nCreated automation `{}` ({automation_name}).",
+                plan_id, automation_id
+            )
+        }
+        Err(error) => format!("⚠️ Could not apply workflow draft: {error}"),
+    }
 }
 
 async fn active_session_id(msg: &ChannelMessage, session_map: &SessionMap) -> Option<String> {
@@ -3162,11 +5329,15 @@ mod tests {
     fn parse_help() {
         assert!(matches!(
             parse_slash_command("/help"),
-            Some(SlashCommand::Help)
+            Some(SlashCommand::Help { topic: None })
         ));
         assert!(matches!(
             parse_slash_command("/?"),
-            Some(SlashCommand::Help)
+            Some(SlashCommand::Help { topic: None })
+        ));
+        assert!(matches!(
+            parse_slash_command("/help schedule"),
+            Some(SlashCommand::Help { topic: Some(ref topic) }) if topic == "schedule"
         ));
     }
 
@@ -3181,8 +5352,168 @@ mod tests {
     fn parse_trims_whitespace() {
         assert!(matches!(
             parse_slash_command("  /help  "),
-            Some(SlashCommand::Help)
+            Some(SlashCommand::Help { topic: None })
         ));
+    }
+
+    #[test]
+    fn parse_schedule_help_and_default() {
+        assert!(matches!(
+            parse_slash_command("/schedule"),
+            Some(SlashCommand::Schedule {
+                action: ScheduleCommand::Help
+            })
+        ));
+        assert!(matches!(
+            parse_slash_command("/schedule help"),
+            Some(SlashCommand::Schedule {
+                action: ScheduleCommand::Help
+            })
+        ));
+    }
+
+    #[test]
+    fn parse_schedule_plan() {
+        let cmd = parse_slash_command("/schedule plan daily repo summary at 9am");
+        assert!(matches!(
+            cmd,
+            Some(SlashCommand::Schedule {
+                action: ScheduleCommand::Plan { ref prompt }
+            }) if prompt == "daily repo summary at 9am"
+        ));
+    }
+
+    #[test]
+    fn parse_schedule_show() {
+        let cmd = parse_slash_command("/schedule show wfplan-123");
+        assert!(matches!(
+            cmd,
+            Some(SlashCommand::Schedule {
+                action: ScheduleCommand::Show { ref plan_id }
+            }) if plan_id == "wfplan-123"
+        ));
+    }
+
+    #[test]
+    fn parse_schedule_edit() {
+        let cmd = parse_slash_command("/schedule edit wfplan-123 change this to every monday");
+        assert!(matches!(
+            cmd,
+            Some(SlashCommand::Schedule {
+                action: ScheduleCommand::Edit {
+                    ref plan_id,
+                    ref message
+                }
+            }) if plan_id == "wfplan-123" && message == "change this to every monday"
+        ));
+    }
+
+    #[test]
+    fn parse_schedule_reset_and_apply() {
+        assert!(matches!(
+            parse_slash_command("/schedule reset wfplan-123"),
+            Some(SlashCommand::Schedule {
+                action: ScheduleCommand::Reset { ref plan_id }
+            }) if plan_id == "wfplan-123"
+        ));
+        assert!(matches!(
+            parse_slash_command("/schedule apply wfplan-123"),
+            Some(SlashCommand::Schedule {
+                action: ScheduleCommand::Apply { ref plan_id }
+            }) if plan_id == "wfplan-123"
+        ));
+    }
+
+    #[test]
+    fn parse_automations_commands() {
+        assert!(matches!(
+            parse_slash_command("/automations"),
+            Some(SlashCommand::Automations {
+                action: AutomationsCommand::List
+            })
+        ));
+        assert!(matches!(
+            parse_slash_command("/automations delete auto-1 --yes"),
+            Some(SlashCommand::Automations {
+                action: AutomationsCommand::Delete {
+                    ref automation_id,
+                    confirmed: true
+                }
+            }) if automation_id == "auto-1"
+        ));
+    }
+
+    #[test]
+    fn parse_runs_memory_workspace_commands() {
+        assert!(matches!(
+            parse_slash_command("/runs artifacts run-1"),
+            Some(SlashCommand::Runs {
+                action: RunsCommand::Artifacts { ref run_id }
+            }) if run_id == "run-1"
+        ));
+        assert!(matches!(
+            parse_slash_command("/memory search deployment notes"),
+            Some(SlashCommand::Memory {
+                action: MemoryCommand::Search { ref query }
+            }) if query == "deployment notes"
+        ));
+        assert!(matches!(
+            parse_slash_command("/workspace files dispatcher"),
+            Some(SlashCommand::Workspace {
+                action: WorkspaceCommand::Files { ref query }
+            }) if query == "dispatcher"
+        ));
+    }
+
+    #[test]
+    fn parse_mcp_packs_and_config_commands() {
+        assert!(matches!(
+            parse_slash_command("/mcp refresh github-only"),
+            Some(SlashCommand::Mcp {
+                action: McpCommand::Refresh { ref name }
+            }) if name == "github-only"
+        ));
+        assert!(matches!(
+            parse_slash_command("/packs uninstall starter-pack --yes"),
+            Some(SlashCommand::Packs {
+                action: PacksCommand::Uninstall {
+                    ref selector,
+                    confirmed: true
+                }
+            }) if selector == "starter-pack"
+        ));
+        assert!(matches!(
+            parse_slash_command("/config set-model gpt-5-mini"),
+            Some(SlashCommand::Config {
+                action: ConfigCommand::SetModel { ref model_id }
+            }) if model_id == "gpt-5-mini"
+        ));
+    }
+
+    #[test]
+    fn help_text_lists_schedule_topic() {
+        let help = help_text(None);
+        assert!(help.contains("/schedule help"));
+        assert!(help.contains("/help schedule"));
+        assert!(help.contains("/automations"));
+        assert!(help.contains("/memory"));
+    }
+
+    #[test]
+    fn schedule_help_text_lists_subcommands() {
+        let help = help_text(Some("schedule"));
+        assert!(help.contains("/schedule plan <prompt>"));
+        assert!(help.contains("/schedule apply <plan_id>"));
+    }
+
+    #[test]
+    fn topic_help_for_new_namespaces() {
+        assert!(help_text(Some("automations")).contains("/automations run <id>"));
+        assert!(help_text(Some("memory")).contains("/memory save <text>"));
+        assert!(help_text(Some("workspace")).contains("/workspace branch"));
+        assert!(help_text(Some("mcp")).contains("/mcp tools [server]"));
+        assert!(help_text(Some("packs")).contains("/packs install <path-or-url>"));
+        assert!(help_text(Some("config")).contains("/config set-model <model_id>"));
     }
 
     #[test]
@@ -3277,6 +5608,22 @@ mod tests {
         let room_a = test_channel_message("channel:room-a");
         let room_b = test_channel_message("channel:room-b");
         assert_ne!(session_map_key(&room_a), session_map_key(&room_b));
+    }
+
+    #[test]
+    fn channel_session_create_body_allows_memory_tools() {
+        let body = build_channel_session_create_body("Channel Session");
+        let permissions = body
+            .get("permission")
+            .and_then(|value| value.as_array())
+            .expect("permission array");
+
+        for permission_name in ["memory_search", "memory_store", "memory_list"] {
+            assert!(permissions.iter().any(|value| {
+                value.get("permission").and_then(|row| row.as_str()) == Some(permission_name)
+                    && value.get("action").and_then(|row| row.as_str()) == Some("allow")
+            }));
+        }
     }
 
     #[tokio::test]
