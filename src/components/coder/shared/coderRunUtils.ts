@@ -66,6 +66,19 @@ export function runCheckpoint(run: AutomationV2RunRecord | null) {
   >;
 }
 
+function checkpointStringArray(
+  checkpoint: Record<string, unknown>,
+  snakeKey: string,
+  camelKey: string
+) {
+  const raw = Array.isArray(checkpoint[snakeKey])
+    ? checkpoint[snakeKey]
+    : Array.isArray(checkpoint[camelKey])
+      ? checkpoint[camelKey]
+      : [];
+  return raw.map((value) => String(value || "").trim()).filter(Boolean);
+}
+
 export function extractSessionIdsFromRun(run: AutomationV2RunRecord | null) {
   const direct = Array.isArray(run?.active_session_ids) ? run.active_session_ids : [];
   const checkpoint = runCheckpoint(run);
@@ -128,6 +141,40 @@ export function extractRunLifecycleHistory(run: AutomationV2RunRecord | null) {
     ? checkpoint.lifecycle_history
     : Array.isArray(checkpoint.lifecycleHistory)
       ? checkpoint.lifecycleHistory
+      : [];
+  return history.map(
+    (entry) => ((entry as Record<string, unknown>) || {}) as Record<string, unknown>
+  );
+}
+
+export function completedNodeIds(run: AutomationV2RunRecord | null) {
+  return checkpointStringArray(runCheckpoint(run), "completed_nodes", "completedNodes");
+}
+
+export function pendingNodeIds(run: AutomationV2RunRecord | null) {
+  return checkpointStringArray(runCheckpoint(run), "pending_nodes", "pendingNodes");
+}
+
+export function blockedNodeIds(run: AutomationV2RunRecord | null) {
+  return checkpointStringArray(runCheckpoint(run), "blocked_nodes", "blockedNodes");
+}
+
+export function runAwaitingGate(run: AutomationV2RunRecord | null) {
+  const checkpoint = runCheckpoint(run);
+  return (checkpoint.awaiting_gate as Record<string, unknown> | undefined) || null;
+}
+
+export function runLastFailure(run: AutomationV2RunRecord | null) {
+  const checkpoint = runCheckpoint(run);
+  return (checkpoint.last_failure as Record<string, unknown> | undefined) || null;
+}
+
+export function runGateHistory(run: AutomationV2RunRecord | null) {
+  const checkpoint = runCheckpoint(run);
+  const history = Array.isArray(checkpoint.gate_history)
+    ? checkpoint.gate_history
+    : Array.isArray(checkpoint.gateHistory)
+      ? checkpoint.gateHistory
       : [];
   return history.map(
     (entry) => ((entry as Record<string, unknown>) || {}) as Record<string, unknown>

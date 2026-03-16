@@ -23,6 +23,7 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
   - more control-panel workflow views now use the shared workflow-stability selector layer for session IDs, latest stability snapshots, node-output text, and telemetry extraction
   - desktop agent-automation views now reuse the shared coder workflow-run parsers for session IDs and node outputs instead of duplicating local extraction logic
   - shared desktop coder workflow-run helpers now also normalize checkpoint and lifecycle-history access so agent-automation views stop hand-rolling those workflow records
+  - shared desktop coder workflow-run helpers now also provide completed/pending/blocked node IDs plus gate and failure access so agent-automation diagnostics use one checkpoint contract
 
 - Repo coding backlog workflows now have real task operations
   - projected backlog items can now be claimed and manually requeued through `automation_v2` run APIs

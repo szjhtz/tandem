@@ -2,12 +2,18 @@ import { useEffect, useMemo, useState } from "react";
 import { Button, Input } from "@/components/ui";
 import { ProjectSwitcher } from "@/components/sidebar";
 import {
+  blockedNodeIds,
+  completedNodeIds,
   extractRunLifecycleHistory,
   extractRunNodeOutputs,
   extractSessionIdsFromRun,
   nodeOutputText,
+  pendingNodeIds,
   runCheckpoint,
+  runGateHistory,
+  runLastFailure,
   runNodeOutputMap,
+  runAwaitingGate,
 } from "@/components/coder/shared/coderRunUtils";
 import { AdvancedMissionBuilder } from "@/components/agent-automation/AdvancedMissionBuilder";
 import {
@@ -518,13 +524,8 @@ function buildBlockedNodeDiagnostics(
   automation: AutomationV2Spec | null
 ) {
   if (!run || !automation) return [];
-  const checkpoint = selectedRunCheckpoint(run);
-  const completedNodes = Array.isArray(checkpoint.completed_nodes)
-    ? checkpoint.completed_nodes.map((value) => String(value || "").trim()).filter(Boolean)
-    : [];
-  const blockedNodes = Array.isArray(checkpoint.blocked_nodes)
-    ? checkpoint.blocked_nodes.map((value) => String(value || "").trim()).filter(Boolean)
-    : [];
+  const completedNodes = completedNodeIds(run);
+  const blockedNodes = blockedNodeIds(run);
   return blockedNodes.map((nodeId) => {
     const node = automation.flow?.nodes?.find((entry) => entry.node_id === nodeId);
     const missingDeps = (node?.depends_on || []).filter((dep) => !completedNodes.includes(dep));
@@ -545,15 +546,9 @@ function buildStepStatusDiagnostics(
 ) {
   if (!run || !automation) return [];
   const checkpoint = selectedRunCheckpoint(run);
-  const completedNodes = Array.isArray(checkpoint.completed_nodes)
-    ? checkpoint.completed_nodes.map((value) => String(value || "").trim()).filter(Boolean)
-    : [];
-  const pendingNodes = Array.isArray(checkpoint.pending_nodes)
-    ? checkpoint.pending_nodes.map((value) => String(value || "").trim()).filter(Boolean)
-    : [];
-  const blockedNodes = Array.isArray(checkpoint.blocked_nodes)
-    ? checkpoint.blocked_nodes.map((value) => String(value || "").trim()).filter(Boolean)
-    : [];
+  const completedNodes = completedNodeIds(run);
+  const pendingNodes = pendingNodeIds(run);
+  const blockedNodes = blockedNodeIds(run);
   const attempts = (checkpoint.node_attempts as Record<string, number> | undefined) || {};
   const outputs = runNodeOutputMap(run);
 
@@ -675,22 +670,9 @@ function buildPhaseDiagnostics(
   automation: AutomationV2Spec | null
 ) {
   if (!run || !automation) return [];
-  const checkpoint = selectedRunCheckpoint(run);
-  const completed = new Set(
-    Array.isArray(checkpoint.completed_nodes)
-      ? checkpoint.completed_nodes.map((value) => String(value || "").trim()).filter(Boolean)
-      : []
-  );
-  const blocked = new Set(
-    Array.isArray(checkpoint.blocked_nodes)
-      ? checkpoint.blocked_nodes.map((value) => String(value || "").trim()).filter(Boolean)
-      : []
-  );
-  const pending = new Set(
-    Array.isArray(checkpoint.pending_nodes)
-      ? checkpoint.pending_nodes.map((value) => String(value || "").trim()).filter(Boolean)
-      : []
-  );
+  const completed = new Set(completedNodeIds(run));
+  const blocked = new Set(blockedNodeIds(run));
+  const pending = new Set(pendingNodeIds(run));
   const { phases } = automationMissionMetadata(automation);
   const phaseRows = phases.map((phase, index) => {
     const phaseId = String(phase.phase_id || "").trim();
@@ -754,17 +736,8 @@ function buildMilestoneDiagnostics(
   automation: AutomationV2Spec | null
 ) {
   if (!run || !automation) return [];
-  const checkpoint = selectedRunCheckpoint(run);
-  const completed = new Set(
-    Array.isArray(checkpoint.completed_nodes)
-      ? checkpoint.completed_nodes.map((value) => String(value || "").trim()).filter(Boolean)
-      : []
-  );
-  const blocked = new Set(
-    Array.isArray(checkpoint.blocked_nodes)
-      ? checkpoint.blocked_nodes.map((value) => String(value || "").trim()).filter(Boolean)
-      : []
-  );
+  const completed = new Set(completedNodeIds(run));
+  const blocked = new Set(blockedNodeIds(run));
   const { milestones } = automationMissionMetadata(automation);
   return milestones.map((milestone) => {
     const milestoneId = String(milestone.milestone_id || "").trim();
@@ -1560,18 +1533,13 @@ export function AgentAutomationPage({
     [workflowAutomations, selectedRunDetail?.automation_id, selectedRunDetail?.automation_snapshot]
   );
   const selectedAwaitingGate = useMemo(() => {
-    const checkpoint = selectedRunCheckpoint(selectedRunDetail);
-    return (checkpoint.awaiting_gate as Record<string, unknown> | undefined) || null;
+    return runAwaitingGate(selectedRunDetail);
   }, [selectedRunDetail]);
   const selectedLastFailure = useMemo(() => {
-    const checkpoint = selectedRunCheckpoint(selectedRunDetail);
-    return (checkpoint.last_failure as Record<string, unknown> | undefined) || null;
+    return runLastFailure(selectedRunDetail);
   }, [selectedRunDetail]);
   const selectedBlockedNodes = useMemo(() => {
-    const checkpoint = selectedRunCheckpoint(selectedRunDetail);
-    return Array.isArray(checkpoint.blocked_nodes)
-      ? checkpoint.blocked_nodes.map((value) => String(value || "").trim()).filter(Boolean)
-      : [];
+    return blockedNodeIds(selectedRunDetail);
   }, [selectedRunDetail]);
   const selectedRunUsage = useMemo(() => {
     const checkpoint = selectedRunCheckpoint(selectedRunDetail);
@@ -1607,12 +1575,9 @@ export function AgentAutomationPage({
       .sort((a, b) => Number(b.recorded_at_ms || 0) - Number(a.recorded_at_ms || 0));
   }, [selectedRunDetail]);
   const selectedGateHistory = useMemo(() => {
-    const checkpoint = selectedRunCheckpoint(selectedRunDetail);
-    return Array.isArray(checkpoint.gate_history)
-      ? checkpoint.gate_history
-          .map((entry) => ((entry as Record<string, unknown>) || {}) as Record<string, unknown>)
-          .sort((a, b) => Number(b.decided_at_ms || 0) - Number(a.decided_at_ms || 0))
-      : [];
+    return runGateHistory(selectedRunDetail).sort(
+      (a, b) => Number(b.decided_at_ms || 0) - Number(a.decided_at_ms || 0)
+    );
   }, [selectedRunDetail]);
   const selectedRecoveryHistory = useMemo(
     () =>
