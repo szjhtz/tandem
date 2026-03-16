@@ -7,6 +7,13 @@ export function workflowNodeOutputs(run: any): Record<string, any> {
   return (checkpoint?.node_outputs || checkpoint?.nodeOutputs || {}) as Record<string, any>;
 }
 
+export function workflowNodeOutputEntries(run: any) {
+  return Object.entries(workflowNodeOutputs(run)).map(([nodeId, value]) => ({
+    nodeId,
+    value,
+  }));
+}
+
 export function workflowNodeOutput(run: any, nodeId: string) {
   const normalized = String(nodeId || "").trim();
   if (!normalized) return null;
@@ -55,6 +62,22 @@ export function workflowLatestNodeOutput(run: any) {
   return outputs[outputs.length - 1] || null;
 }
 
+export function workflowNodeOutputText(output: any) {
+  const summary = String(output?.summary || "").trim();
+  const status = String(output?.status || output?.content?.status || "").trim();
+  const blockedReason = String(output?.blocked_reason || output?.blockedReason || "").trim();
+  const content = output?.content || {};
+  const text = String(content?.text || content?.raw_text || "").trim();
+  return [summary, status ? `status: ${status}` : "", blockedReason, text]
+    .filter(Boolean)
+    .join("\n")
+    .trim();
+}
+
+export function workflowNodeToolTelemetry(output: any) {
+  return output?.tool_telemetry || output?.toolTelemetry || null;
+}
+
 export function workflowArtifactValidation(output: any) {
   return output?.artifact_validation || output?.artifactValidation || null;
 }
@@ -76,4 +99,45 @@ export function workflowNodeStability(output: any) {
     phase: String(output?.phase || output?.node_phase || "").trim(),
     failureKind: String(output?.failure_kind || output?.failureKind || "").trim(),
   };
+}
+
+export function workflowLatestStabilitySnapshot(run: any) {
+  const latestOutput = workflowLatestNodeOutput(run);
+  const latestEvent = workflowLatestLifecycleEvent(run);
+  const stability = workflowNodeStability(latestOutput);
+  return {
+    latestOutput,
+    latestEvent,
+    phase: stability.phase || String(latestEvent?.metadata?.phase || "").trim(),
+    failureKind: stability.failureKind || String(latestEvent?.metadata?.failure_kind || "").trim(),
+    reason: String(latestEvent?.reason || latestOutput?.blocked_reason || "").trim(),
+    status: String(run?.status || latestOutput?.status || "never_run").trim(),
+  };
+}
+
+export function workflowSessionIds(run: any) {
+  const direct = Array.isArray(run?.active_session_ids)
+    ? run.active_session_ids
+    : Array.isArray(run?.activeSessionIds)
+      ? run.activeSessionIds
+      : [];
+  const latest = [
+    String(run?.latest_session_id || "").trim(),
+    String(run?.latestSessionId || "").trim(),
+  ].filter(Boolean);
+  const nodeOutputSessionIds = Object.values(workflowNodeOutputs(run))
+    .map((entry: any) => {
+      const content = entry?.content || {};
+      return String(content?.session_id || content?.sessionId || "").trim();
+    })
+    .filter(Boolean);
+  return Array.from(
+    new Set(
+      [
+        ...latest,
+        ...direct.map((row: any) => String(row || "").trim()).filter(Boolean),
+        ...nodeOutputSessionIds,
+      ].filter(Boolean)
+    )
+  );
 }

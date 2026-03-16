@@ -38,6 +38,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Studio saved-workflow cards now surface the latest run’s typed stability snapshot so authoring views can see recent status, phase, and failure-kind state without leaving Studio
   - artifact finalization now scores verified output, session writes, and preexisting output so the strongest candidate wins deterministically instead of depending on late placeholder-phrase rejection
   - control-panel Studio and Run Debugger now consume shared workflow-stability selectors instead of duplicating node-output and lifecycle parsing per page
+  - more control-panel workflow surfaces now use the shared workflow-stability selector layer for session IDs, latest stability snapshots, node-output text, and telemetry extraction
 - **Workflow Studio model configuration**:
   - replaced free-text workflow model inputs with provider-backed selectors
   - added an optional shared-model mode so one provider/model choice can be applied across every workflow agent for cheaper runs

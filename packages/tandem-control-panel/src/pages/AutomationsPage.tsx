@@ -7,9 +7,13 @@ import { TaskBoard } from "../features/orchestration/TaskBoard";
 import {
   workflowArtifactCandidates,
   workflowArtifactValidation,
+  workflowNodeOutputEntries,
+  workflowNodeOutputText,
+  workflowNodeToolTelemetry,
   workflowNodeOutput,
   workflowNodeStability,
   workflowRecentNodeEvents,
+  workflowSessionIds,
 } from "../features/orchestration/workflowStability";
 import { useEngineStream } from "../features/stream/useEngineStream";
 import { renderMarkdownSafe } from "../lib/markdown";
@@ -813,66 +817,6 @@ function formatRunDateTime(raw: any) {
   return new Date(normalizeTimestamp(value)).toLocaleString();
 }
 
-function extractSessionIdsFromRun(run: any) {
-  const direct = Array.isArray(run?.active_session_ids)
-    ? run.active_session_ids
-    : Array.isArray(run?.activeSessionIds)
-      ? run.activeSessionIds
-      : [];
-  const latest = [
-    String(run?.latest_session_id || "").trim(),
-    String(run?.latestSessionId || "").trim(),
-  ].filter(Boolean);
-  const nodeOutputSessionIds = Object.values(
-    run?.checkpoint?.node_outputs || run?.checkpoint?.nodeOutputs || {}
-  )
-    .map((entry: any) => {
-      const content = entry?.content || {};
-      return String(content?.session_id || content?.sessionId || "").trim();
-    })
-    .filter(Boolean);
-  return Array.from(
-    new Set(
-      [
-        ...latest,
-        ...direct.map((row: any) => String(row || "").trim()).filter(Boolean),
-        ...nodeOutputSessionIds,
-      ].filter(Boolean)
-    )
-  );
-}
-
-function extractRunNodeOutputs(run: any) {
-  const outputs = (run?.checkpoint?.node_outputs || run?.checkpoint?.nodeOutputs || {}) as Record<
-    string,
-    any
-  >;
-  return Object.entries(outputs).map(([nodeId, value]) => ({
-    nodeId,
-    value: value as any,
-  }));
-}
-
-function nodeOutputText(value: any) {
-  const summary = String(value?.summary || "").trim();
-  const status = String(value?.status || value?.content?.status || "").trim();
-  const blockedReason = String(value?.blocked_reason || value?.blockedReason || "").trim();
-  const content = value?.content || {};
-  const text = String(content?.text || content?.raw_text || "").trim();
-  return [summary, status ? `status: ${status}` : "", blockedReason, text]
-    .filter(Boolean)
-    .join("\n")
-    .trim();
-}
-
-function nodeOutputToolTelemetry(value: any) {
-  return value?.tool_telemetry || value?.toolTelemetry || null;
-}
-
-function nodeOutputArtifactValidation(value: any) {
-  return value?.artifact_validation || value?.artifactValidation || null;
-}
-
 function uniqueStrings(values: Array<any>) {
   const seen = new Set<string>();
   const rows: string[] = [];
@@ -1209,7 +1153,7 @@ function buildRunBlockers(run: any, sessionEvents: any[], runEvents: any[]) {
       push("detail", "Failure reason", explainRunFailure(run), "run");
     }
   }
-  if (!extractSessionIdsFromRun(run).length) {
+  if (!workflowSessionIds(run).length) {
     push(
       "missing-session",
       "No linked session transcript",
@@ -1217,10 +1161,10 @@ function buildRunBlockers(run: any, sessionEvents: any[], runEvents: any[]) {
       "run"
     );
   }
-  for (const output of extractRunNodeOutputs(run)) {
-    const body = nodeOutputText(output.value);
-    const telemetry = nodeOutputToolTelemetry(output.value);
-    const artifactValidation = nodeOutputArtifactValidation(output.value);
+  for (const output of workflowNodeOutputEntries(run)) {
+    const body = workflowNodeOutputText(output.value);
+    const telemetry = workflowNodeToolTelemetry(output.value);
+    const artifactValidation = workflowArtifactValidation(output.value);
     if (
       String(output?.value?.status || "")
         .trim()
@@ -3479,7 +3423,7 @@ function MyAutomations({
     refetchInterval: false,
   });
   const availableSessionIds = useMemo(
-    () => extractSessionIdsFromRun((runDetailQuery.data as any)?.run),
+    () => workflowSessionIds((runDetailQuery.data as any)?.run),
     [runDetailQuery.data]
   );
   const sessionMessageQueries = useQueries({
@@ -4112,13 +4056,11 @@ function MyAutomations({
     return workflowNodeOutput(selectedRun, nodeId);
   }, [selectedBoardTask, selectedRun]);
   const selectedBoardTaskTelemetry = useMemo(
-    () => nodeOutputToolTelemetry(selectedBoardTaskOutput),
+    () => workflowNodeToolTelemetry(selectedBoardTaskOutput),
     [selectedBoardTaskOutput]
   );
   const selectedBoardTaskArtifactValidation = useMemo(
-    () =>
-      workflowArtifactValidation(selectedBoardTaskOutput) ||
-      nodeOutputArtifactValidation(selectedBoardTaskOutput),
+    () => workflowArtifactValidation(selectedBoardTaskOutput),
     [selectedBoardTaskOutput]
   );
   const selectedBoardTaskTouchedFiles = useMemo(

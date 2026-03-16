@@ -1,10 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 import { renderIcons } from "../app/icons.js";
-import {
-  workflowLatestLifecycleEvent,
-  workflowLatestNodeOutput,
-} from "../features/orchestration/workflowStability";
+import { workflowLatestStabilitySnapshot } from "../features/orchestration/workflowStability";
 import { useSystemHealth } from "../features/system/queries";
 import {
   STUDIO_TEMPLATE_CATALOG,
@@ -1770,17 +1767,10 @@ export function WorkflowStudioPage({ client, api, toast, navigate }: AppPageProp
                         automation?.automation_id || automation?.automationId || automation?.id
                       );
                       const latestRun = studioWorkflowLatestRuns.get(automationId) || null;
-                      const latestOutput = latestNodeOutputForRun(latestRun);
-                      const latestEvent = latestLifecycleEventForRun(latestRun);
-                      const latestRunStatus = safeString(
-                        latestRun?.status || latestOutput?.status || "never_run"
-                      );
-                      const latestFailureKind = safeString(
-                        latestOutput?.failure_kind || latestEvent?.metadata?.failure_kind
-                      );
-                      const latestPhase = safeString(
-                        latestOutput?.phase || latestEvent?.metadata?.phase
-                      );
+                      const latestStability = workflowLatestStabilitySnapshot(latestRun);
+                      const latestRunStatus = safeString(latestStability.status);
+                      const latestFailureKind = safeString(latestStability.failureKind);
+                      const latestPhase = safeString(latestStability.phase);
                       const latestRunLabel = timestampLabel(
                         latestRun?.updated_at_ms ||
                           latestRun?.updatedAtMs ||
@@ -1848,9 +1838,9 @@ export function WorkflowStudioPage({ client, api, toast, navigate }: AppPageProp
                                   <span className="tcp-badge-muted">run: {latestRunLabel}</span>
                                 ) : null}
                               </div>
-                              {safeString(latestEvent?.reason || latestOutput?.blocked_reason) ? (
+                              {safeString(latestStability.reason) ? (
                                 <div className="mt-2 text-xs text-slate-300">
-                                  {safeString(latestEvent?.reason || latestOutput?.blocked_reason)}
+                                  {safeString(latestStability.reason)}
                                 </div>
                               ) : null}
                             </div>
