@@ -13,7 +13,9 @@ import {
   runGateHistory,
   runLastFailure,
   runNodeOutputMap,
+  runSummary,
   runAwaitingGate,
+  runUsageMetrics,
 } from "@/components/coder/shared/coderRunUtils";
 import { AdvancedMissionBuilder } from "@/components/agent-automation/AdvancedMissionBuilder";
 import {
@@ -397,17 +399,6 @@ function modelLabel(provider: string, model: string) {
   return `${providerValue}/${modelValue}`;
 }
 
-function runSummary(run: AutomationV2RunRecord) {
-  return String(
-    run?.stop_reason ||
-      run?.checkpoint?.summary ||
-      run?.checkpoint?.error ||
-      run?.checkpoint?.status_detail ||
-      run?.checkpoint?.statusDetail ||
-      ""
-  ).trim();
-}
-
 function runStatusLabel(run: AutomationV2RunRecord | null) {
   const status = String(run?.status || "")
     .trim()
@@ -483,14 +474,7 @@ function buildRunBlockers(run: AutomationV2RunRecord | null) {
     if (blockers.some((item) => item.key === key)) return;
     blockers.push({ key, title, reason });
   };
-  const checkpoint = (run?.checkpoint as Record<string, unknown> | undefined) || {};
-  const detail = String(
-    checkpoint.error ||
-      checkpoint.status_detail ||
-      checkpoint.statusDetail ||
-      checkpoint.summary ||
-      ""
-  ).trim();
+  const detail = runSummary(run);
   if (String(run?.status || "").trim() === "failed") {
     push("run-failed", "Run failed", detail || "Run finished with failed status.");
   }
@@ -545,7 +529,7 @@ function buildStepStatusDiagnostics(
   sessionMessagesBySession: Record<string, SessionMessage[]>
 ) {
   if (!run || !automation) return [];
-  const checkpoint = selectedRunCheckpoint(run);
+  const checkpoint = runCheckpoint(run);
   const completedNodes = completedNodeIds(run);
   const pendingNodes = pendingNodeIds(run);
   const blockedNodes = blockedNodeIds(run);
@@ -873,14 +857,6 @@ function canRecoverRun(run: AutomationV2RunRecord) {
     .toLowerCase();
   const checkpoint = (run?.checkpoint as Record<string, unknown> | undefined) || {};
   return (status === "failed" && !!checkpoint.last_failure) || status === "paused";
-}
-
-function selectedRunCheckpoint(run: AutomationV2RunRecord | null) {
-  return runCheckpoint(run);
-}
-
-function readNumber(raw: unknown) {
-  return typeof raw === "number" && Number.isFinite(raw) ? raw : null;
 }
 
 function SectionCard({
@@ -1542,23 +1518,7 @@ export function AgentAutomationPage({
     return blockedNodeIds(selectedRunDetail);
   }, [selectedRunDetail]);
   const selectedRunUsage = useMemo(() => {
-    const checkpoint = selectedRunCheckpoint(selectedRunDetail);
-    return {
-      totalTokens:
-        readNumber((selectedRunDetail as Record<string, unknown> | null)?.total_tokens) ??
-        readNumber(checkpoint.total_tokens) ??
-        readNumber(checkpoint.totalTokens),
-      estimatedCostUsd:
-        readNumber((selectedRunDetail as Record<string, unknown> | null)?.estimated_cost_usd) ??
-        readNumber((selectedRunDetail as Record<string, unknown> | null)?.estimatedCostUsd) ??
-        readNumber(checkpoint.estimated_cost_usd) ??
-        readNumber(checkpoint.estimatedCostUsd),
-      totalToolCalls:
-        readNumber((selectedRunDetail as Record<string, unknown> | null)?.total_tool_calls) ??
-        readNumber((selectedRunDetail as Record<string, unknown> | null)?.totalToolCalls) ??
-        readNumber(checkpoint.total_tool_calls) ??
-        readNumber(checkpoint.totalToolCalls),
-    };
+    return runUsageMetrics(selectedRunDetail);
   }, [selectedRunDetail]);
   const selectedLifecycleHistory = useMemo<StepLifecycleEntry[]>(() => {
     return extractRunLifecycleHistory(selectedRunDetail)

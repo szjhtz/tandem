@@ -25,6 +25,7 @@
 - Shared desktop coder workflow-run helpers now also normalize checkpoint and lifecycle-history access so agent-automation views stop hand-rolling those workflow records.
 - Shared desktop coder workflow-run helpers now also provide completed/pending/blocked node IDs plus gate and failure access so agent-automation diagnostics use one checkpoint contract.
 - Shared desktop coder detail views now also read gate state through the same workflow-run helper contract instead of reaching into checkpoint payloads directly.
+- Shared desktop coder workflow-run helpers now also provide usage metrics and summary text so agent-automation views can drop more local checkpoint/detail parsing.
 - Added projected backlog-task operations in the debugger:
   - projected coding backlog items can now be claimed and manually requeued through `automation_v2`
   - backlog task details now show lease expiry / stale-state visibility and direct `Claim Task` / `Requeue Backlog Task` actions

@@ -25,6 +25,7 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
   - shared desktop coder workflow-run helpers now also normalize checkpoint and lifecycle-history access so agent-automation views stop hand-rolling those workflow records
   - shared desktop coder workflow-run helpers now also provide completed/pending/blocked node IDs plus gate and failure access so agent-automation diagnostics use one checkpoint contract
   - shared desktop coder detail views now also read gate state through the same workflow-run helper contract instead of reaching into checkpoint payloads directly
+  - shared desktop coder workflow-run helpers now also provide usage metrics and summary text so agent-automation views can drop more local checkpoint/detail parsing
 
 - Repo coding backlog workflows now have real task operations
   - projected backlog items can now be claimed and manually requeued through `automation_v2` run APIs

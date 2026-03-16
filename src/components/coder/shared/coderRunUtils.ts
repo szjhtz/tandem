@@ -59,6 +59,10 @@ export function runSummary(run: AutomationV2RunRecord | null) {
   ).trim();
 }
 
+function finiteNumber(raw: unknown) {
+  return typeof raw === "number" && Number.isFinite(raw) ? raw : null;
+}
+
 export function runCheckpoint(run: AutomationV2RunRecord | null) {
   return ((run?.checkpoint as Record<string, unknown> | undefined) || {}) as Record<
     string,
@@ -179,6 +183,27 @@ export function runGateHistory(run: AutomationV2RunRecord | null) {
   return history.map(
     (entry) => ((entry as Record<string, unknown>) || {}) as Record<string, unknown>
   );
+}
+
+export function runUsageMetrics(run: AutomationV2RunRecord | null) {
+  const checkpoint = runCheckpoint(run);
+  const runRecord = (run as Record<string, unknown> | null) || null;
+  return {
+    totalTokens:
+      finiteNumber(runRecord?.total_tokens) ??
+      finiteNumber(checkpoint.total_tokens) ??
+      finiteNumber(checkpoint.totalTokens),
+    estimatedCostUsd:
+      finiteNumber(runRecord?.estimated_cost_usd) ??
+      finiteNumber(runRecord?.estimatedCostUsd) ??
+      finiteNumber(checkpoint.estimated_cost_usd) ??
+      finiteNumber(checkpoint.estimatedCostUsd),
+    totalToolCalls:
+      finiteNumber(runRecord?.total_tool_calls) ??
+      finiteNumber(runRecord?.totalToolCalls) ??
+      finiteNumber(checkpoint.total_tool_calls) ??
+      finiteNumber(checkpoint.totalToolCalls),
+  };
 }
 
 export function formatTimestamp(value: unknown) {
