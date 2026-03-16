@@ -61,10 +61,14 @@ function buildRuntimeMeta(events: any[]): Record<string, TaskRuntimeMeta> {
 
 function projectBlackboardTask(task: any, runtime: TaskRuntimeMeta | undefined): OrchestrationTask {
   const state = normalizeTaskState(task?.status);
+  const payload = task?.payload && typeof task.payload === "object" ? task.payload : {};
+  const leaseExpiresAtMs = Number(task?.lease_expires_at_ms || 0) || 0;
+  const nextRetryAtMs = Number(task?.next_retry_at_ms || 0) || 0;
+  const now = Date.now();
   return {
     id: String(task?.id || ""),
-    title: String(task?.payload?.title || task?.task_type || task?.id || "Untitled task"),
-    description: String(task?.payload?.description || ""),
+    title: String(payload?.title || task?.task_type || task?.id || "Untitled task"),
+    description: String(payload?.description || payload?.objective || ""),
     dependencies: Array.isArray(task?.depends_on_task_ids)
       ? task.depends_on_task_ids.map((dep: unknown) => String(dep || "")).filter(Boolean)
       : [],
@@ -79,6 +83,26 @@ function projectBlackboardTask(task: any, runtime: TaskRuntimeMeta | undefined):
     assigned_role: String(task?.assigned_agent || task?.lease_owner || runtime?.assignedRole || ""),
     workflow_id: String(task?.workflow_id || ""),
     session_id: String(runtime?.sessionId || ""),
+    task_kind: String(payload?.task_kind || ""),
+    backlog_task_id: String(payload?.backlog_task_id || payload?.task_id || ""),
+    repo_root: String(payload?.repo_root || ""),
+    write_scope: String(payload?.write_scope || ""),
+    acceptance_criteria: String(payload?.acceptance_criteria || ""),
+    task_dependencies: Array.isArray(payload?.task_dependencies)
+      ? payload.task_dependencies.join(", ")
+      : String(payload?.task_dependencies || ""),
+    verification_state: String(payload?.verification_state || ""),
+    task_owner: String(payload?.task_owner || payload?.owner || ""),
+    verification_command: String(payload?.verification_command || ""),
+    output_path: String(payload?.output_path || ""),
+    parent_task_id: String(task?.parent_task_id || ""),
+    task_type: String(task?.task_type || ""),
+    projects_backlog_tasks: Boolean(payload?.projects_backlog_tasks),
+    lease_owner: String(task?.lease_owner || ""),
+    lease_expires_at_ms: leaseExpiresAtMs || undefined,
+    next_retry_at_ms: nextRetryAtMs || undefined,
+    max_attempts: Number(task?.max_attempts || 0) || undefined,
+    is_stale: state === "in_progress" && leaseExpiresAtMs > 0 && leaseExpiresAtMs <= now,
   };
 }
 

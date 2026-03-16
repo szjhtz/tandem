@@ -527,6 +527,7 @@ async fn execute_action(
                 tool_allowlist: None,
                 context_mode: None,
                 write_required: None,
+                prewrite_requirements: None,
             };
             state
                 .engine_loop

@@ -16,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Workflow run recovery controls and richer node metadata**:
   - added `Continue` / `Continue From Here` for blocked `automation_v2` runs and `Retry` / `Retry Workflow` actions in the Run Debugger
   - added semantic node output metadata for `status`, `blocked_reason`, `approved`, tool telemetry, and artifact-validation results
+- **Repo coding backlog task operations**:
+  - projected coding backlog items can now be claimed and manually requeued through `automation_v2` run APIs instead of remaining read-only debugger projections
+  - added stale-lease handling in the shared context-task runtime so expired `in_progress` backlog tasks automatically return to the runnable queue before the next claim
+  - surfaced backlog claim/requeue controls plus lease-expiry and stale-state visibility in the control-panel Run Debugger
 - **Agent context component manifests**:
   - added first-party component manifests for Tandem engine, desktop, TUI, control panel, and SDK clients under `manifests/components/`
   - bundled matching agent-context manifest copies into the desktop resources so runtime agents can use the same conservative component map

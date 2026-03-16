@@ -12,6 +12,9 @@
 - Made the desktop workflow board horizontally scrollable with jump-to-active controls so off-screen task lanes are reachable in long workflows.
 - Added richer task details including semantic node status, blocked reason, approval state, tool telemetry, and artifact-validation details.
 - Added `Continue`, `Continue From Here`, `Retry`, and `Retry Workflow` actions for blocked/failed workflow runs.
+- Added projected backlog-task operations in the debugger:
+  - projected coding backlog items can now be claimed and manually requeued through `automation_v2`
+  - backlog task details now show lease expiry / stale-state visibility and direct `Claim Task` / `Requeue Backlog Task` actions
 
 ### Workflow Runtime Hardening
 
@@ -20,6 +23,7 @@
 - Normalized workflow tool exposure so `read` implies `glob`, improving workspace discovery for saved workflows that only requested `read`.
 - Fixed `/workspace/...` path alias handling so workflow tool calls resolve against the actual workspace root.
 - Added explicit blocked-run semantics so blocked node outcomes stop descendants instead of letting downstream stages fabricate blocked handoff artifacts.
+- Added stale-lease recovery for long-running coding backlog work so expired `in_progress` context tasks automatically return to the runnable queue before the next claim.
 
 ### Artifact Integrity and File Safety
 

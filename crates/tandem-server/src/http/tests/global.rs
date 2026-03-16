@@ -729,6 +729,362 @@ async fn automation_v2_run_get_projects_nodes_into_context_blackboard_tasks() {
 }
 
 #[tokio::test]
+async fn automation_v2_run_projects_backlog_tasks_into_context_blackboard() {
+    let state = test_state().await;
+    let app = app_router(state.clone());
+
+    let automation = crate::AutomationV2Spec {
+        automation_id: "auto-v2-backlog-project-1".to_string(),
+        name: "Repo Backlog Projection".to_string(),
+        description: Some("Project backlog items from planner output".to_string()),
+        status: crate::AutomationV2Status::Active,
+        schedule: crate::AutomationV2Schedule {
+            schedule_type: crate::AutomationV2ScheduleType::Manual,
+            cron_expression: None,
+            interval_seconds: None,
+            timezone: "UTC".to_string(),
+            misfire_policy: crate::RoutineMisfirePolicy::RunOnce,
+        },
+        agents: vec![crate::AutomationAgentProfile {
+            agent_id: "repo-planner".to_string(),
+            template_id: None,
+            display_name: "Repo Planner".to_string(),
+            avatar_url: None,
+            model_policy: None,
+            skills: Vec::new(),
+            tool_policy: crate::AutomationAgentToolPolicy {
+                allowlist: vec!["glob".to_string(), "read".to_string(), "write".to_string()],
+                denylist: Vec::new(),
+            },
+            mcp_policy: crate::AutomationAgentMcpPolicy {
+                allowed_servers: Vec::new(),
+                allowed_tools: None,
+            },
+            approval_policy: None,
+        }],
+        flow: crate::AutomationFlowSpec {
+            nodes: vec![crate::AutomationFlowNode {
+                node_id: "plan-backlog-task".to_string(),
+                agent_id: "repo-planner".to_string(),
+                objective: "Inspect the repository and write the coding backlog plan.".to_string(),
+                depends_on: Vec::new(),
+                input_refs: Vec::new(),
+                output_contract: None,
+                retry_policy: None,
+                timeout_ms: None,
+                stage_kind: Some(crate::AutomationNodeStageKind::Workstream),
+                gate: None,
+                metadata: Some(json!({
+                    "builder": {
+                        "title": "Plan Backlog Task",
+                        "role": "delegator",
+                        "output_path": "coding-backlog-plan.md",
+                        "task_kind": "repo_plan",
+                        "project_backlog_tasks": true,
+                        "repo_root": ".",
+                        "write_scope": "src, tests",
+                        "acceptance_criteria": "Produce the scoped task backlog and verification plan.",
+                        "verification_state": "planned",
+                        "task_owner": "repo-planner",
+                        "verification_command": "cargo test"
+                    }
+                })),
+            }],
+        },
+        execution: crate::AutomationExecutionPolicy {
+            max_parallel_agents: Some(1),
+            max_total_runtime_ms: None,
+            max_total_tool_calls: None,
+            max_total_tokens: None,
+            max_total_cost_usd: None,
+        },
+        output_targets: vec!["coding-backlog-plan.md".to_string()],
+        created_at_ms: 0,
+        updated_at_ms: 0,
+        creator_id: "test".to_string(),
+        metadata: None,
+        workspace_root: Some("/tmp".to_string()),
+        next_fire_at_ms: None,
+        last_fired_at_ms: None,
+    };
+    state
+        .put_automation_v2(automation.clone())
+        .await
+        .expect("store automation");
+    let run = state
+        .create_automation_v2_run(&automation, "manual")
+        .await
+        .expect("create run");
+    state
+        .update_automation_v2_run(&run.run_id, |row| {
+            row.status = crate::AutomationRunStatus::Completed;
+            row.checkpoint.completed_nodes = vec!["plan-backlog-task".to_string()];
+            row.checkpoint.node_outputs.insert(
+                "plan-backlog-task".to_string(),
+                json!({
+                    "node_id": "plan-backlog-task",
+                    "contract_kind": "plan",
+                    "summary": "Projected backlog plan",
+                    "status": "completed",
+                    "content": {
+                        "text": "# Coding Backlog Plan\n\n```json\n{\"backlog_tasks\":[{\"task_id\":\"BACKLOG-101\",\"title\":\"Fix automation artifact restore path\",\"description\":\"Harden restoration so substantive outputs always win.\",\"task_kind\":\"code_change\",\"repo_root\":\".\",\"write_scope\":\"crates/tandem-server/src/lib.rs\",\"acceptance_criteria\":\"Placeholder overwrites are rejected and prior substantive artifact text is restored.\",\"task_dependencies\":[],\"verification_state\":\"pending\",\"task_owner\":\"implementer\",\"verification_command\":\"cargo test -p tandem-server\",\"status\":\"runnable\",\"priority\":2},{\"task_id\":\"BACKLOG-102\",\"title\":\"Add regression coverage for backlog projection\",\"description\":\"Cover planner JSON projection into the context blackboard.\",\"task_kind\":\"verification\",\"repo_root\":\".\",\"write_scope\":\"crates/tandem-server/src/http/tests/global.rs\",\"acceptance_criteria\":\"Blackboard exposes projected backlog items after planner output sync.\",\"task_dependencies\":[\"BACKLOG-101\"],\"verification_state\":\"pending\",\"task_owner\":\"verifier\",\"verification_command\":\"cargo test -p tandem-server automation_v2_run_projects_backlog_tasks_into_context_blackboard -- --nocapture\",\"status\":\"queued\",\"priority\":1}]}\n```",
+                        "path": "coding-backlog-plan.md",
+                        "raw_assistant_text": "done",
+                        "session_id": "sess-plan"
+                    }
+                }),
+            );
+        })
+        .await
+        .expect("update run");
+    let updated = state
+        .get_automation_v2_run(&run.run_id)
+        .await
+        .expect("updated run");
+    crate::http::context_runs::sync_automation_v2_run_blackboard(&state, &automation, &updated)
+        .await
+        .expect("sync blackboard");
+
+    let context_run_id = crate::http::context_runs::automation_v2_context_run_id(&run.run_id);
+    let blackboard_req = Request::builder()
+        .method("GET")
+        .uri(format!("/context/runs/{context_run_id}/blackboard"))
+        .body(Body::empty())
+        .expect("blackboard request");
+    let blackboard_resp = app
+        .clone()
+        .oneshot(blackboard_req)
+        .await
+        .expect("blackboard response");
+    assert_eq!(blackboard_resp.status(), StatusCode::OK);
+    let blackboard_body = to_bytes(blackboard_resp.into_body(), usize::MAX)
+        .await
+        .expect("blackboard body");
+    let blackboard_payload: Value =
+        serde_json::from_slice(&blackboard_body).expect("blackboard json");
+    let tasks = blackboard_payload
+        .get("blackboard")
+        .and_then(|value| value.get("tasks"))
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    assert!(tasks
+        .iter()
+        .any(|task| { task.get("id").and_then(Value::as_str) == Some("node-plan-backlog-task") }));
+    let projected = tasks
+        .iter()
+        .filter(|task| {
+            task.get("task_type").and_then(Value::as_str) == Some("automation_backlog_item")
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    assert_eq!(projected.len(), 2);
+    assert!(projected.iter().any(|task| {
+        task.get("id").and_then(Value::as_str) == Some("backlog-plan-backlog-task-BACKLOG-101")
+            && task
+                .get("payload")
+                .and_then(|payload| payload.get("write_scope"))
+                .and_then(Value::as_str)
+                == Some("crates/tandem-server/src/lib.rs")
+    }));
+    assert!(projected.iter().any(|task| {
+        task.get("id").and_then(Value::as_str) == Some("backlog-plan-backlog-task-BACKLOG-102")
+            && task
+                .get("depends_on_task_ids")
+                .and_then(Value::as_array)
+                .is_some_and(|deps| {
+                    deps.iter()
+                        .any(|dep| dep.as_str() == Some("backlog-plan-backlog-task-BACKLOG-101"))
+                })
+    }));
+}
+
+#[tokio::test]
+async fn automation_v2_backlog_task_claim_and_requeue_routes_work() {
+    let state = test_state().await;
+    let app = app_router(state.clone());
+
+    let automation = crate::AutomationV2Spec {
+        automation_id: "auto-v2-backlog-actions-1".to_string(),
+        name: "Repo Backlog Actions".to_string(),
+        description: Some("Claim and requeue projected backlog tasks".to_string()),
+        status: crate::AutomationV2Status::Active,
+        schedule: crate::AutomationV2Schedule {
+            schedule_type: crate::AutomationV2ScheduleType::Manual,
+            cron_expression: None,
+            interval_seconds: None,
+            timezone: "UTC".to_string(),
+            misfire_policy: crate::RoutineMisfirePolicy::RunOnce,
+        },
+        agents: vec![crate::AutomationAgentProfile {
+            agent_id: "repo-planner".to_string(),
+            template_id: None,
+            display_name: "Repo Planner".to_string(),
+            avatar_url: None,
+            model_policy: None,
+            skills: Vec::new(),
+            tool_policy: crate::AutomationAgentToolPolicy {
+                allowlist: vec!["glob".to_string(), "read".to_string(), "write".to_string()],
+                denylist: Vec::new(),
+            },
+            mcp_policy: crate::AutomationAgentMcpPolicy {
+                allowed_servers: Vec::new(),
+                allowed_tools: None,
+            },
+            approval_policy: None,
+        }],
+        flow: crate::AutomationFlowSpec {
+            nodes: vec![crate::AutomationFlowNode {
+                node_id: "plan-backlog-task".to_string(),
+                agent_id: "repo-planner".to_string(),
+                objective: "Inspect the repository and write the coding backlog plan.".to_string(),
+                depends_on: Vec::new(),
+                input_refs: Vec::new(),
+                output_contract: None,
+                retry_policy: None,
+                timeout_ms: None,
+                stage_kind: Some(crate::AutomationNodeStageKind::Workstream),
+                gate: None,
+                metadata: Some(json!({
+                    "builder": {
+                        "title": "Plan Backlog Task",
+                        "role": "delegator",
+                        "output_path": "coding-backlog-plan.md",
+                        "task_kind": "repo_plan",
+                        "project_backlog_tasks": true,
+                        "repo_root": ".",
+                        "write_scope": "src, tests",
+                        "acceptance_criteria": "Produce the scoped task backlog and verification plan.",
+                        "verification_state": "planned",
+                        "task_owner": "repo-planner",
+                        "verification_command": "cargo test"
+                    }
+                })),
+            }],
+        },
+        execution: crate::AutomationExecutionPolicy {
+            max_parallel_agents: Some(1),
+            max_total_runtime_ms: None,
+            max_total_tool_calls: None,
+            max_total_tokens: None,
+            max_total_cost_usd: None,
+        },
+        output_targets: vec!["coding-backlog-plan.md".to_string()],
+        created_at_ms: 0,
+        updated_at_ms: 0,
+        creator_id: "test".to_string(),
+        metadata: None,
+        workspace_root: Some("/tmp".to_string()),
+        next_fire_at_ms: None,
+        last_fired_at_ms: None,
+    };
+    state
+        .put_automation_v2(automation.clone())
+        .await
+        .expect("store automation");
+    let run = state
+        .create_automation_v2_run(&automation, "manual")
+        .await
+        .expect("create run");
+    state
+        .update_automation_v2_run(&run.run_id, |row| {
+            row.status = crate::AutomationRunStatus::Completed;
+            row.checkpoint.completed_nodes = vec!["plan-backlog-task".to_string()];
+            row.checkpoint.node_outputs.insert(
+                "plan-backlog-task".to_string(),
+                json!({
+                    "node_id": "plan-backlog-task",
+                    "contract_kind": "plan",
+                    "summary": "Projected backlog plan",
+                    "status": "completed",
+                    "content": {
+                        "text": "# Coding Backlog Plan\n\n```json\n{\"backlog_tasks\":[{\"task_id\":\"BACKLOG-201\",\"title\":\"Claim me\",\"description\":\"Projected task.\",\"task_kind\":\"code_change\",\"repo_root\":\".\",\"write_scope\":\"src/lib.rs\",\"acceptance_criteria\":\"Claim and requeue works.\",\"task_dependencies\":[],\"verification_state\":\"pending\",\"task_owner\":\"repo-implementer\",\"verification_command\":\"cargo test\",\"status\":\"runnable\",\"priority\":3}]}\n```",
+                        "path": "coding-backlog-plan.md",
+                        "raw_assistant_text": "done",
+                        "session_id": "sess-plan"
+                    }
+                }),
+            );
+        })
+        .await
+        .expect("update run");
+    let updated = state
+        .get_automation_v2_run(&run.run_id)
+        .await
+        .expect("updated run");
+    crate::http::context_runs::sync_automation_v2_run_blackboard(&state, &automation, &updated)
+        .await
+        .expect("sync blackboard");
+
+    let claim_req = Request::builder()
+        .method("POST")
+        .uri(format!(
+            "/automations/v2/runs/{}/backlog/tasks/backlog-plan-backlog-task-BACKLOG-201/claim",
+            run.run_id
+        ))
+        .header("content-type", "application/json")
+        .body(Body::from(json!({}).to_string()))
+        .expect("claim request");
+    let claim_resp = app
+        .clone()
+        .oneshot(claim_req)
+        .await
+        .expect("claim response");
+    assert_eq!(claim_resp.status(), StatusCode::OK);
+    let claim_body = to_bytes(claim_resp.into_body(), usize::MAX)
+        .await
+        .expect("claim body");
+    let claim_payload: Value = serde_json::from_slice(&claim_body).expect("claim json");
+    assert_eq!(
+        claim_payload.get("agent_id").and_then(Value::as_str),
+        Some("repo-implementer")
+    );
+    assert_eq!(
+        claim_payload
+            .get("task")
+            .and_then(|task| task.get("status"))
+            .and_then(Value::as_str),
+        Some("in_progress")
+    );
+
+    let requeue_req = Request::builder()
+        .method("POST")
+        .uri(format!(
+            "/automations/v2/runs/{}/backlog/tasks/backlog-plan-backlog-task-BACKLOG-201/requeue",
+            run.run_id
+        ))
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({ "reason": "manual backlog requeue from test" }).to_string(),
+        ))
+        .expect("requeue request");
+    let requeue_resp = app
+        .clone()
+        .oneshot(requeue_req)
+        .await
+        .expect("requeue response");
+    assert_eq!(requeue_resp.status(), StatusCode::OK);
+    let requeue_body = to_bytes(requeue_resp.into_body(), usize::MAX)
+        .await
+        .expect("requeue body");
+    let requeue_payload: Value = serde_json::from_slice(&requeue_body).expect("requeue json");
+    assert_eq!(
+        requeue_payload
+            .get("task")
+            .and_then(|task| task.get("status"))
+            .and_then(Value::as_str),
+        Some("runnable")
+    );
+    assert_eq!(
+        requeue_payload
+            .get("task")
+            .and_then(|task| task.get("last_error"))
+            .and_then(Value::as_str),
+        Some("manual backlog requeue from test")
+    );
+}
+
+#[tokio::test]
 async fn automations_v2_create_rejects_relative_workspace_root() {
     let state = test_state().await;
     let app = app_router(state);
@@ -1972,4 +2328,325 @@ async fn automations_v2_run_repair_resets_descendants_and_records_diff_metadata(
         Some("Write draft v2 with corrections")
     );
     assert_eq!(stored.agents[0].template_id.as_deref(), Some("template-b"));
+}
+
+#[tokio::test]
+async fn automations_v2_run_task_retry_resets_selected_subtree() {
+    let state = test_state().await;
+    let app = app_router(state.clone());
+    let automation = create_test_automation_v2(&state, "auto-v2-task-retry").await;
+    let run = state
+        .create_automation_v2_run(&automation, "manual")
+        .await
+        .expect("run");
+    state
+        .update_automation_v2_run(&run.run_id, |row| {
+            row.status = crate::AutomationRunStatus::Blocked;
+            row.checkpoint.completed_nodes = vec!["draft".to_string(), "review".to_string()];
+            row.checkpoint.pending_nodes = vec!["approval".to_string()];
+            row.checkpoint
+                .node_outputs
+                .insert("draft".to_string(), json!({"summary":"draft"}));
+            row.checkpoint
+                .node_outputs
+                .insert("review".to_string(), json!({"summary":"review"}));
+            row.checkpoint.blocked_nodes = vec!["approval".to_string()];
+        })
+        .await
+        .expect("updated run");
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!(
+                    "/automations/v2/runs/{}/tasks/{}/retry",
+                    run.run_id, "review"
+                ))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "reason": "retry review from debugger"
+                    })
+                    .to_string(),
+                ))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let retried = state
+        .get_automation_v2_run(&run.run_id)
+        .await
+        .expect("run after retry");
+    assert_eq!(retried.status, crate::AutomationRunStatus::Queued);
+    assert!(retried
+        .checkpoint
+        .completed_nodes
+        .iter()
+        .any(|node_id| node_id == "draft"));
+    assert!(!retried
+        .checkpoint
+        .completed_nodes
+        .iter()
+        .any(|node_id| node_id == "review"));
+    assert!(!retried
+        .checkpoint
+        .completed_nodes
+        .iter()
+        .any(|node_id| node_id == "approval"));
+    assert!(retried.checkpoint.node_outputs.contains_key("draft"));
+    assert!(!retried.checkpoint.node_outputs.contains_key("review"));
+    assert!(retried
+        .checkpoint
+        .pending_nodes
+        .iter()
+        .any(|node_id| node_id == "review"));
+    assert!(retried
+        .checkpoint
+        .pending_nodes
+        .iter()
+        .any(|node_id| node_id == "approval"));
+    let retry_event = retried
+        .checkpoint
+        .lifecycle_history
+        .iter()
+        .find(|entry| entry.event == "run_task_retried")
+        .expect("retry event");
+    let metadata = retry_event.metadata.as_ref().expect("retry metadata");
+    assert_eq!(
+        metadata.get("node_id").and_then(Value::as_str),
+        Some("review")
+    );
+}
+
+#[tokio::test]
+async fn automations_v2_run_task_requeue_resets_selected_subtree() {
+    let state = test_state().await;
+    let app = app_router(state.clone());
+    let automation = create_test_automation_v2(&state, "auto-v2-task-requeue").await;
+    let run = state
+        .create_automation_v2_run(&automation, "manual")
+        .await
+        .expect("run");
+    state
+        .update_automation_v2_run(&run.run_id, |row| {
+            row.status = crate::AutomationRunStatus::Paused;
+            row.checkpoint.completed_nodes = vec!["draft".to_string(), "review".to_string()];
+            row.checkpoint.pending_nodes = vec!["approval".to_string()];
+            row.checkpoint
+                .node_outputs
+                .insert("draft".to_string(), json!({"summary":"draft"}));
+            row.checkpoint
+                .node_outputs
+                .insert("review".to_string(), json!({"summary":"review"}));
+        })
+        .await
+        .expect("updated run");
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!(
+                    "/automations/v2/runs/{}/tasks/{}/requeue",
+                    run.run_id, "draft"
+                ))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "reason": "requeue draft from debugger"
+                    })
+                    .to_string(),
+                ))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let requeued = state
+        .get_automation_v2_run(&run.run_id)
+        .await
+        .expect("run after requeue");
+    assert_eq!(requeued.status, crate::AutomationRunStatus::Queued);
+    assert!(!requeued
+        .checkpoint
+        .completed_nodes
+        .iter()
+        .any(|node_id| node_id == "draft"));
+    assert!(!requeued
+        .checkpoint
+        .completed_nodes
+        .iter()
+        .any(|node_id| node_id == "review"));
+    assert!(!requeued.checkpoint.node_outputs.contains_key("draft"));
+    assert!(!requeued.checkpoint.node_outputs.contains_key("review"));
+    assert!(requeued
+        .checkpoint
+        .pending_nodes
+        .iter()
+        .any(|node_id| node_id == "draft"));
+    assert!(requeued
+        .checkpoint
+        .pending_nodes
+        .iter()
+        .any(|node_id| node_id == "review"));
+    assert!(requeued
+        .checkpoint
+        .pending_nodes
+        .iter()
+        .any(|node_id| node_id == "approval"));
+    let requeue_event = requeued
+        .checkpoint
+        .lifecycle_history
+        .iter()
+        .find(|entry| entry.event == "run_task_requeued")
+        .expect("requeue event");
+    let metadata = requeue_event.metadata.as_ref().expect("requeue metadata");
+    assert_eq!(
+        metadata.get("node_id").and_then(Value::as_str),
+        Some("draft")
+    );
+}
+
+#[tokio::test]
+async fn automations_v2_run_task_reset_preview_reports_exact_subtree() {
+    let state = test_state().await;
+    let app = app_router(state.clone());
+    let automation = create_test_automation_v2(&state, "auto-v2-task-preview").await;
+    let run = state
+        .create_automation_v2_run(&automation, "manual")
+        .await
+        .expect("run");
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(format!(
+                    "/automations/v2/runs/{}/tasks/{}/reset_preview",
+                    run.run_id, "draft"
+                ))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .expect("body");
+    let payload: Value = serde_json::from_slice(&body).expect("json");
+    let preview = payload.get("preview").expect("preview");
+    assert_eq!(
+        preview.get("node_id").and_then(Value::as_str),
+        Some("draft")
+    );
+    assert_eq!(
+        preview
+            .get("reset_nodes")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|value| value.as_str().map(str::to_string))
+            .collect::<Vec<_>>(),
+        vec![
+            "approval".to_string(),
+            "draft".to_string(),
+            "review".to_string()
+        ]
+    );
+    assert_eq!(
+        preview
+            .get("cleared_outputs")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|value| value.as_str().map(str::to_string))
+            .collect::<Vec<_>>(),
+        Vec::<String>::new()
+    );
+    assert_eq!(
+        preview
+            .get("preserves_upstream_outputs")
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+}
+
+#[tokio::test]
+async fn automations_v2_run_task_continue_minimally_resets_blocked_node() {
+    let state = test_state().await;
+    let app = app_router(state.clone());
+    let automation = create_test_automation_v2(&state, "auto-v2-task-continue").await;
+    let run = state
+        .create_automation_v2_run(&automation, "manual")
+        .await
+        .expect("run");
+    state
+        .update_automation_v2_run(&run.run_id, |row| {
+            row.status = crate::AutomationRunStatus::Blocked;
+            row.checkpoint.completed_nodes = vec!["draft".to_string()];
+            row.checkpoint.pending_nodes = vec!["review".to_string(), "approval".to_string()];
+            row.checkpoint.node_outputs.insert(
+                "review".to_string(),
+                json!({"status":"blocked","summary":"review blocked"}),
+            );
+            row.checkpoint.blocked_nodes = vec!["review".to_string(), "approval".to_string()];
+        })
+        .await
+        .expect("updated run");
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!(
+                    "/automations/v2/runs/{}/tasks/{}/continue",
+                    run.run_id, "review"
+                ))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "reason": "continue blocked review minimally"
+                    })
+                    .to_string(),
+                ))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let continued = state
+        .get_automation_v2_run(&run.run_id)
+        .await
+        .expect("run after continue");
+    assert_eq!(continued.status, crate::AutomationRunStatus::Queued);
+    assert!(continued
+        .checkpoint
+        .completed_nodes
+        .iter()
+        .any(|node_id| node_id == "draft"));
+    assert!(!continued.checkpoint.node_outputs.contains_key("review"));
+    assert!(continued
+        .checkpoint
+        .pending_nodes
+        .iter()
+        .any(|node_id| node_id == "review"));
+    let continue_event = continued
+        .checkpoint
+        .lifecycle_history
+        .iter()
+        .find(|entry| entry.event == "run_task_continued")
+        .expect("continue event");
+    let metadata = continue_event.metadata.as_ref().expect("continue metadata");
+    assert_eq!(
+        metadata.get("node_id").and_then(Value::as_str),
+        Some("review")
+    );
 }

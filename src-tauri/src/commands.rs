@@ -61,6 +61,32 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_store::StoreExt;
 use uuid::Uuid;
 
+#[derive(Debug, Clone, Serialize)]
+struct CoderTaskTelemetry {
+    task_id: String,
+    label: String,
+    status: String,
+    owner: Option<String>,
+    changed_files: Vec<String>,
+    diff_files: Vec<String>,
+    verification_commands: Vec<String>,
+    verification_outcome: Option<String>,
+    verification_passed: Option<bool>,
+    validations_attempted: Option<usize>,
+    latest_failing_command: Option<String>,
+    failure_detail: Option<String>,
+    artifact_paths: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct CoderRunTelemetrySummary {
+    changed_files: Vec<String>,
+    verification_commands: Vec<String>,
+    patch_summaries: Vec<String>,
+    validation_failures: Vec<String>,
+    task_summaries: Vec<CoderTaskTelemetry>,
+}
+
 fn shared_app_data_dir(_app: &AppHandle) -> Result<PathBuf> {
     match resolve_shared_paths() {
         Ok(paths) => Ok(paths.canonical_root),
@@ -71,6 +97,555 @@ fn shared_app_data_dir(_app: &AppHandle) -> Result<PathBuf> {
             ))
         }),
     }
+}
+
+fn json_record(value: &serde_json::Value) -> Option<&serde_json::Map<String, serde_json::Value>> {
+    value.as_object()
+}
+
+fn json_text(value: Option<&serde_json::Value>) -> Option<String> {
+    match value {
+        Some(serde_json::Value::String(text)) if !text.trim().is_empty() => {
+            Some(text.trim().to_string())
+        }
+        Some(serde_json::Value::Number(number)) => Some(number.to_string()),
+        Some(serde_json::Value::Bool(flag)) => Some(flag.to_string()),
+        _ => None,
+    }
+}
+
+fn collect_json_strings(value: &serde_json::Value, depth: usize, out: &mut Vec<String>) {
+    if depth > 4 {
+        return;
+    }
+    match value {
+        serde_json::Value::String(text) => out.push(text.clone()),
+        serde_json::Value::Number(number) => out.push(number.to_string()),
+        serde_json::Value::Bool(flag) => out.push(flag.to_string()),
+        serde_json::Value::Array(items) => {
+            for item in items {
+                collect_json_strings(item, depth + 1, out);
+            }
+        }
+        serde_json::Value::Object(record) => {
+            for child in record.values() {
+                collect_json_strings(child, depth + 1, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn collect_keyed_json_strings<F>(
+    value: &serde_json::Value,
+    key_matcher: &F,
+    depth: usize,
+    out: &mut Vec<String>,
+) where
+    F: Fn(&str) -> bool,
+{
+    if depth > 5 {
+        return;
+    }
+    match value {
+        serde_json::Value::Array(items) => {
+            for item in items {
+                collect_keyed_json_strings(item, key_matcher, depth + 1, out);
+            }
+        }
+        serde_json::Value::Object(record) => {
+            for (key, child) in record {
+                if key_matcher(&key.to_lowercase()) {
+                    collect_json_strings(child, depth + 1, out);
+                }
+                collect_keyed_json_strings(child, key_matcher, depth + 1, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn unique_strings<I>(values: I, limit: usize) -> Vec<String>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut seen = std::collections::BTreeSet::new();
+    let mut result = Vec::new();
+    for value in values {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let lowered = trimmed.to_lowercase();
+        if seen.insert(lowered) {
+            result.push(trimmed.to_string());
+            if result.len() >= limit {
+                break;
+            }
+        }
+    }
+    result
+}
+
+fn looks_like_file_path(value: &str) -> bool {
+    let text = value.trim();
+    if text.is_empty()
+        || text.starts_with("http://")
+        || text.starts_with("https://")
+        || text.contains('\n')
+        || text.len() > 260
+    {
+        return false;
+    }
+    text.contains('/')
+        || text.contains('\\')
+        || regex::Regex::new(r"\.[a-zA-Z0-9]{1,8}$")
+            .map(|re| re.is_match(text))
+            .unwrap_or(false)
+}
+
+fn looks_like_command(value: &str) -> bool {
+    let text = value.trim();
+    if text.is_empty() || text.len() > 240 || text.contains('\n') {
+        return false;
+    }
+    regex::Regex::new(
+        r"(?i)(^|[\s])(cargo|pnpm|npm|yarn|bun|node|python|pytest|ruff|uv|make|cmake|go|rustc|git|bash|sh|zsh|deno|turbo|nx|jest|vitest|playwright|mvn|gradle)([\s]|$)",
+    )
+    .map(|re| re.is_match(text))
+    .unwrap_or(false)
+}
+
+fn extract_changed_files(value: &serde_json::Value, limit: usize) -> Vec<String> {
+    let mut strings = Vec::new();
+    collect_keyed_json_strings(
+        value,
+        &|key| {
+            key.contains("changed_file")
+                || key.contains("files_changed")
+                || key.contains("touched_file")
+                || key.contains("modified_file")
+                || key.contains("updated_file")
+                || key.contains("created_file")
+                || key == "path"
+                || key == "file"
+                || key == "file_path"
+                || key == "target_file"
+                || key == "relative_path"
+        },
+        0,
+        &mut strings,
+    );
+    unique_strings(
+        strings
+            .into_iter()
+            .filter(|value| looks_like_file_path(value))
+            .collect::<Vec<_>>(),
+        limit,
+    )
+}
+
+fn extract_verification_commands(value: &serde_json::Value, limit: usize) -> Vec<String> {
+    let mut strings = Vec::new();
+    collect_keyed_json_strings(
+        value,
+        &|key| {
+            key == "command"
+                || key == "cmd"
+                || key == "commands"
+                || key.contains("command_run")
+                || key.contains("commands_run")
+                || key.contains("verification_command")
+                || key.contains("validation_command")
+                || key.contains("test_command")
+                || key.contains("lint_command")
+                || key.contains("build_command")
+        },
+        0,
+        &mut strings,
+    );
+    unique_strings(
+        strings
+            .into_iter()
+            .filter(|value| looks_like_command(value))
+            .collect::<Vec<_>>(),
+        limit,
+    )
+}
+
+fn extract_patch_summaries(value: &serde_json::Value, limit: usize) -> Vec<String> {
+    let mut strings = Vec::new();
+    collect_keyed_json_strings(
+        value,
+        &|key| {
+            key == "summary"
+                || key.contains("patch_summary")
+                || key.contains("diff_summary")
+                || key.contains("change_summary")
+                || key.contains("result_summary")
+        },
+        0,
+        &mut strings,
+    );
+    unique_strings(
+        strings
+            .into_iter()
+            .filter(|value| value.trim().len() >= 12 && !looks_like_file_path(value))
+            .collect::<Vec<_>>(),
+        limit,
+    )
+}
+
+fn extract_failure_details(value: &serde_json::Value, limit: usize) -> Vec<String> {
+    let mut strings = Vec::new();
+    collect_keyed_json_strings(
+        value,
+        &|key| {
+            key == "error"
+                || key == "error_message"
+                || key == "last_error"
+                || key == "failure_reason"
+                || key == "reason"
+                || key == "stderr"
+                || key == "validation_error"
+                || key == "failure_detail"
+        },
+        0,
+        &mut strings,
+    );
+    unique_strings(
+        strings
+            .into_iter()
+            .filter(|value| !value.trim().is_empty() && value.trim().len() >= 8)
+            .collect::<Vec<_>>(),
+        limit,
+    )
+}
+
+fn extract_validation_outcome(value: &serde_json::Value) -> Option<String> {
+    let record = json_record(value)?;
+    json_text(record.get("outcome"))
+        .or_else(|| json_text(record.get("result")))
+        .or_else(|| {
+            record
+                .get("validation")
+                .and_then(json_record)
+                .and_then(|validation| {
+                    json_text(validation.get("outcome"))
+                        .or_else(|| json_text(validation.get("result")))
+                })
+        })
+}
+
+fn extract_validation_passed(value: &serde_json::Value) -> Option<bool> {
+    let record = json_record(value)?;
+    record
+        .get("passed")
+        .and_then(|value| value.as_bool())
+        .or_else(|| {
+            record
+                .get("validation")
+                .and_then(json_record)
+                .and_then(|validation| validation.get("passed"))
+                .and_then(|value| value.as_bool())
+        })
+}
+
+fn extract_validations_attempted(value: &serde_json::Value) -> Option<usize> {
+    let record = json_record(value)?;
+    record
+        .get("validations_attempted")
+        .and_then(|value| value.as_array())
+        .map(|items| items.len())
+}
+
+fn first_failing_command(value: &serde_json::Value) -> Option<String> {
+    let commands = extract_verification_commands(value, 4);
+    commands.into_iter().next()
+}
+
+fn read_json_file(path: &str) -> Option<serde_json::Value> {
+    let text = fs::read_to_string(path).ok()?;
+    serde_json::from_str(&text).ok()
+}
+
+fn summarize_coder_run_telemetry(
+    payload: &serde_json::Value,
+    artifacts_payload: Option<&serde_json::Value>,
+) -> Option<CoderRunTelemetrySummary> {
+    let run = json_record(payload)?.get("run")?;
+    let run_record = json_record(run)?;
+    let tasks = run_record
+        .get("tasks")
+        .and_then(|value| value.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let events = run_record
+        .get("events")
+        .and_then(|value| value.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let artifacts = artifacts_payload
+        .and_then(json_record)
+        .and_then(|record| record.get("artifacts"))
+        .and_then(|value| value.as_array())
+        .cloned()
+        .unwrap_or_default();
+
+    let mut artifacts_by_step: std::collections::BTreeMap<String, Vec<serde_json::Value>> =
+        std::collections::BTreeMap::new();
+    let mut artifact_json_by_path: std::collections::BTreeMap<String, serde_json::Value> =
+        std::collections::BTreeMap::new();
+    for artifact in &artifacts {
+        let Some(record) = json_record(artifact) else {
+            continue;
+        };
+        let path = json_text(record.get("path")).unwrap_or_default();
+        if let Some(step_id) = json_text(record.get("step_id")) {
+            artifacts_by_step
+                .entry(step_id)
+                .or_default()
+                .push(artifact.clone());
+        }
+        if !path.is_empty() {
+            if let Some(parsed) = read_json_file(&path) {
+                artifact_json_by_path.insert(path, parsed);
+            }
+        }
+    }
+
+    let changed_files = unique_strings(
+        tasks
+            .iter()
+            .flat_map(|task| extract_changed_files(task, 8))
+            .chain(
+                artifact_json_by_path
+                    .values()
+                    .flat_map(|artifact| extract_changed_files(artifact, 8)),
+            )
+            .chain(events.iter().flat_map(|event| {
+                json_record(event)
+                    .and_then(|record| record.get("payload"))
+                    .map(|payload| extract_changed_files(payload, 8))
+                    .unwrap_or_default()
+            }))
+            .collect::<Vec<_>>(),
+        24,
+    );
+
+    let verification_commands = unique_strings(
+        tasks
+            .iter()
+            .flat_map(|task| extract_verification_commands(task, 4))
+            .chain(
+                artifact_json_by_path
+                    .values()
+                    .flat_map(|artifact| extract_verification_commands(artifact, 4)),
+            )
+            .chain(events.iter().flat_map(|event| {
+                json_record(event)
+                    .and_then(|record| record.get("payload"))
+                    .map(|payload| extract_verification_commands(payload, 4))
+                    .unwrap_or_default()
+            }))
+            .collect::<Vec<_>>(),
+        16,
+    );
+
+    let patch_summaries = unique_strings(
+        tasks
+            .iter()
+            .flat_map(|task| extract_patch_summaries(task, 2))
+            .chain(
+                artifact_json_by_path
+                    .values()
+                    .flat_map(|artifact| extract_patch_summaries(artifact, 2)),
+            )
+            .chain(events.iter().flat_map(|event| {
+                json_record(event)
+                    .and_then(|record| record.get("payload"))
+                    .map(|payload| extract_patch_summaries(payload, 2))
+                    .unwrap_or_default()
+            }))
+            .collect::<Vec<_>>(),
+        8,
+    );
+
+    let validation_failures = unique_strings(
+        artifact_json_by_path
+            .values()
+            .flat_map(|artifact| extract_failure_details(artifact, 2))
+            .chain(
+                tasks
+                    .iter()
+                    .flat_map(|task| extract_failure_details(task, 2)),
+            )
+            .collect::<Vec<_>>(),
+        8,
+    );
+
+    let task_summaries = tasks
+        .iter()
+        .filter_map(|task| {
+            let record = json_record(task)?;
+            let payload = record.get("payload");
+            let task_id = json_text(record.get("id"))
+                .or_else(|| json_text(record.get("workflow_node_id")))
+                .or_else(|| json_text(record.get("task_type")))
+                .unwrap_or_else(|| "task".to_string());
+            let related_artifacts = artifacts_by_step.get(&task_id).cloned().unwrap_or_default();
+            let artifact_paths = unique_strings(
+                related_artifacts
+                    .iter()
+                    .filter_map(|artifact| json_record(artifact))
+                    .filter_map(|artifact| json_text(artifact.get("path")))
+                    .collect::<Vec<_>>(),
+                6,
+            );
+            let related_artifact_json = artifact_paths
+                .iter()
+                .filter_map(|path| artifact_json_by_path.get(path))
+                .cloned()
+                .collect::<Vec<_>>();
+            let owner = json_text(record.get("owner"))
+                .or_else(|| json_text(record.get("claimed_by")))
+                .or_else(|| json_text(record.get("assignee")))
+                .or_else(|| {
+                    payload
+                        .and_then(|p| json_record(p))
+                        .and_then(|p| json_text(p.get("owner")))
+                })
+                .or_else(|| {
+                    payload
+                        .and_then(|p| json_record(p))
+                        .and_then(|p| json_text(p.get("claimed_by")))
+                })
+                .or_else(|| {
+                    payload
+                        .and_then(|p| json_record(p))
+                        .and_then(|p| json_text(p.get("assignee")))
+                });
+            let failure_detail = json_text(record.get("error_message"))
+                .or_else(|| json_text(record.get("error")))
+                .or_else(|| json_text(record.get("last_error")))
+                .or_else(|| {
+                    payload
+                        .and_then(|p| json_record(p))
+                        .and_then(|p| json_text(p.get("error_message")))
+                })
+                .or_else(|| {
+                    payload
+                        .and_then(|p| json_record(p))
+                        .and_then(|p| json_text(p.get("error")))
+                })
+                .or_else(|| {
+                    payload
+                        .and_then(|p| json_record(p))
+                        .and_then(|p| json_text(p.get("last_error")))
+                })
+                .or_else(|| {
+                    payload
+                        .and_then(|p| json_record(p))
+                        .and_then(|p| json_text(p.get("failure_reason")))
+                })
+                .or_else(|| {
+                    payload
+                        .and_then(|p| json_record(p))
+                        .and_then(|p| json_text(p.get("reason")))
+                })
+                .or_else(|| {
+                    payload
+                        .and_then(|p| json_record(p))
+                        .and_then(|p| json_text(p.get("stderr")))
+                })
+                .or_else(|| {
+                    related_artifact_json
+                        .iter()
+                        .flat_map(|artifact| extract_failure_details(artifact, 1))
+                        .next()
+                });
+            let verification_outcome = extract_validation_outcome(task).or_else(|| {
+                related_artifact_json
+                    .iter()
+                    .find_map(extract_validation_outcome)
+            });
+            let verification_passed = extract_validation_passed(task).or_else(|| {
+                related_artifact_json
+                    .iter()
+                    .find_map(extract_validation_passed)
+            });
+            let validations_attempted = extract_validations_attempted(task).or_else(|| {
+                related_artifact_json
+                    .iter()
+                    .find_map(extract_validations_attempted)
+            });
+            let latest_failing_command = if failure_detail.is_some()
+                || verification_passed == Some(false)
+                || verification_outcome
+                    .as_ref()
+                    .map(|value| value.to_lowercase().contains("fail"))
+                    .unwrap_or(false)
+            {
+                first_failing_command(task)
+                    .or_else(|| related_artifact_json.iter().find_map(first_failing_command))
+            } else {
+                None
+            };
+            Some(CoderTaskTelemetry {
+                task_id: task_id.clone(),
+                label: json_text(record.get("title"))
+                    .or_else(|| json_text(record.get("workflow_node_id")))
+                    .or_else(|| json_text(record.get("task_type")))
+                    .or_else(|| json_text(record.get("id")))
+                    .unwrap_or_else(|| "task".to_string()),
+                status: json_text(record.get("status")).unwrap_or_else(|| "unknown".to_string()),
+                owner,
+                changed_files: unique_strings(
+                    extract_changed_files(task, 8)
+                        .into_iter()
+                        .chain(
+                            related_artifact_json
+                                .iter()
+                                .flat_map(|artifact| extract_changed_files(artifact, 8)),
+                        )
+                        .collect::<Vec<_>>(),
+                    8,
+                ),
+                diff_files: unique_strings(
+                    related_artifact_json
+                        .iter()
+                        .flat_map(|artifact| extract_changed_files(artifact, 8))
+                        .collect::<Vec<_>>(),
+                    8,
+                ),
+                verification_commands: unique_strings(
+                    extract_verification_commands(task, 4)
+                        .into_iter()
+                        .chain(
+                            related_artifact_json
+                                .iter()
+                                .flat_map(|artifact| extract_verification_commands(artifact, 4)),
+                        )
+                        .collect::<Vec<_>>(),
+                    4,
+                ),
+                verification_outcome,
+                verification_passed,
+                validations_attempted,
+                latest_failing_command,
+                failure_detail,
+                artifact_paths,
+            })
+        })
+        .collect::<Vec<_>>();
+
+    Some(CoderRunTelemetrySummary {
+        changed_files,
+        verification_commands,
+        patch_summaries,
+        validation_failures,
+        task_summaries,
+    })
 }
 
 // ============================================================================
@@ -793,6 +1368,17 @@ fn set_session_mode(state: &AppState, session_id: &str, mode: ResolvedMode) {
 fn get_session_mode(state: &AppState, session_id: &str) -> Option<ResolvedMode> {
     let guard = state.session_modes.read().unwrap();
     guard.get(session_id).cloned()
+}
+
+fn sidecar_permissions_for_mode(
+    mode: &ResolvedMode,
+) -> Option<Vec<crate::sidecar::PermissionRule>> {
+    let permissions = crate::modes::build_permission_rules(mode);
+    if permissions.is_empty() {
+        None
+    } else {
+        Some(permissions)
+    }
 }
 
 fn env_var_for_key(key_type: &ApiKeyType) -> Option<&'static str> {
@@ -3185,12 +3771,7 @@ pub async fn create_session(
     if let Some(reason) = mode_resolution.fallback_reason.as_ref() {
         tracing::warn!("[create_session] {}", reason);
     }
-    let permissions = crate::modes::build_permission_rules(&mode_resolution.mode);
-    let permission = if permissions.is_empty() {
-        None
-    } else {
-        Some(permissions)
-    };
+    let permission = sidecar_permissions_for_mode(&mode_resolution.mode);
 
     validate_model_provider_auth_if_required(
         &app,
@@ -4977,38 +5558,7 @@ pub async fn rewind_to_message(
                 Some(model_spec.provider_id.clone()),
             ),
             provider: Some(model_spec.provider_id.clone()),
-            permission: Some(vec![
-                crate::sidecar::PermissionRule {
-                    permission: "ls".to_string(),
-                    pattern: "*".to_string(),
-                    action: "allow".to_string(),
-                },
-                crate::sidecar::PermissionRule {
-                    permission: "read".to_string(),
-                    pattern: "*".to_string(),
-                    action: "allow".to_string(),
-                },
-                crate::sidecar::PermissionRule {
-                    permission: "todowrite".to_string(),
-                    pattern: "*".to_string(),
-                    action: "allow".to_string(),
-                },
-                crate::sidecar::PermissionRule {
-                    permission: "websearch".to_string(),
-                    pattern: "*".to_string(),
-                    action: "allow".to_string(),
-                },
-                crate::sidecar::PermissionRule {
-                    permission: "webfetch".to_string(),
-                    pattern: "*".to_string(),
-                    action: "allow".to_string(),
-                },
-                crate::sidecar::PermissionRule {
-                    permission: "webfetch_html".to_string(),
-                    pattern: "*".to_string(),
-                    action: "allow".to_string(),
-                },
-            ]),
+            permission: sidecar_permissions_for_mode(&effective_session_mode(&state, &session_id)),
             directory: state
                 .get_workspace_path()
                 .map(|p| p.to_string_lossy().to_string()),
@@ -5017,6 +5567,11 @@ pub async fn rewind_to_message(
                 .map(|p| p.to_string_lossy().to_string()),
         })
         .await?;
+    set_session_mode(
+        &state,
+        &new_session.id,
+        effective_session_mode(&state, &session_id),
+    );
 
     tracing::info!("Created new branched session: {}", new_session.id);
 
@@ -5977,7 +6532,14 @@ pub async fn coder_get_run(
     state: State<'_, AppState>,
     run_id: String,
 ) -> Result<serde_json::Value> {
-    state.sidecar.coder_get_run(&run_id).await
+    let mut payload = state.sidecar.coder_get_run(&run_id).await?;
+    let artifacts_payload = state.sidecar.coder_list_artifacts(&run_id).await.ok();
+    if let Some(summary) = summarize_coder_run_telemetry(&payload, artifacts_payload.as_ref()) {
+        if let Some(record) = payload.as_object_mut() {
+            record.insert("coding_summary".to_string(), json!(summary));
+        }
+    }
+    Ok(payload)
 }
 
 #[tauri::command]
@@ -8904,6 +9466,10 @@ pub async fn start_plan_session(
     let config_snapshot = { state.providers_config.read().unwrap().clone() };
     let model_spec =
         resolve_required_model_spec(&config_snapshot, None, None, "Plan session creation")?;
+    let mode_resolution = resolve_effective_mode(&app, &state, Some("plan"), None)?;
+    if let Some(reason) = mode_resolution.fallback_reason.as_ref() {
+        tracing::warn!("[start_plan_session] {}", reason);
+    }
     validate_model_provider_auth_if_required(
         &app,
         &config_snapshot,
@@ -8922,11 +9488,12 @@ pub async fn start_plan_session(
                 Some(model_spec.provider_id.clone()),
             ),
             provider: Some(model_spec.provider_id.clone()),
-            permission: None,
+            permission: sidecar_permissions_for_mode(&mode_resolution.mode),
             directory: Some(workspace_path.to_string_lossy().to_string()),
             workspace_root: Some(workspace_path.to_string_lossy().to_string()),
         })
         .await?;
+    set_session_mode(&state, &session.id, mode_resolution.mode);
 
     // 5. Inject System Directive (as a user message, since we can't set system role easily)
     // This ensures the AI context is primed with the file path immediately.

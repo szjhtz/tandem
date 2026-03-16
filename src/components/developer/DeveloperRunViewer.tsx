@@ -24,6 +24,8 @@ import {
   type CoderArtifactRecord,
   type CoderMemoryCandidateRecord,
   type CoderRunRecord,
+  type CoderTaskTelemetry,
+  type CoderRunTelemetrySummary,
 } from "@/lib/tauri";
 import { DiffViewer } from "@/components/plan/DiffViewer";
 import { Button } from "@/components/ui/Button";
@@ -377,6 +379,70 @@ function taskLabel(task: RunTaskRecord): string {
   return String(task.title ?? task.workflow_node_id ?? task.task_type ?? task.id ?? "task");
 }
 
+function taskStableId(task: RunTaskRecord, fallback = "task"): string {
+  return String(task.id ?? task.workflow_node_id ?? task.task_type ?? fallback);
+}
+
+function taskOwner(task: RunTaskRecord): string {
+  const payload = asRecord(task.payload);
+  return (
+    pickText(task.owner) ||
+    pickText(task.claimed_by) ||
+    pickText(task.assignee) ||
+    pickText(payload?.owner) ||
+    pickText(payload?.claimed_by) ||
+    pickText(payload?.assignee) ||
+    ""
+  );
+}
+
+function taskFailureDetail(task: RunTaskRecord): string {
+  const payload = asRecord(task.payload);
+  return (
+    pickText(task.error_message) ||
+    pickText(task.error) ||
+    pickText(task.last_error) ||
+    pickText(payload?.error_message) ||
+    pickText(payload?.error) ||
+    pickText(payload?.last_error) ||
+    pickText(payload?.failure_reason) ||
+    pickText(payload?.reason) ||
+    pickText(payload?.stderr) ||
+    ""
+  );
+}
+
+function taskChangedFiles(task: RunTaskRecord): string[] {
+  return uniqueStrings(extractChangedFiles([task, asRecord(task.payload)]), 8);
+}
+
+function taskKindLabel(task: RunTaskRecord): string {
+  const payload = asRecord(task.payload);
+  return pickText(payload?.task_kind) || pickText(task.task_type) || "";
+}
+
+function taskWriteScope(task: RunTaskRecord): string {
+  const payload = asRecord(task.payload);
+  return (
+    pickText(payload?.write_scope) ||
+    pickText(payload?.writeScope) ||
+    pickText(payload?.target_scope) ||
+    ""
+  );
+}
+
+function taskVerificationPlan(task: RunTaskRecord): string {
+  const payload = asRecord(task.payload);
+  return (
+    pickText(payload?.verification_command) ||
+    pickText(payload?.verificationCommand) ||
+    pickText(payload?.build_command) ||
+    pickText(payload?.test_command) ||
+    pickText(payload?.lint_command) ||
+    ""
+  );
+}
+
 function memoryKindLabel(value: unknown): string {
   return pickText(value) || "memory";
 }
@@ -464,6 +530,133 @@ function includesContextValue(value: unknown, candidates: string[]): boolean {
   return candidates.some((candidate) => candidate && text.includes(candidate.toLowerCase()));
 }
 
+function uniqueStrings(values: string[], limit = 12): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const raw of values) {
+    const value = raw.trim();
+    if (!value) continue;
+    const key = value.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(value);
+    if (result.length >= limit) break;
+  }
+  return result;
+}
+
+function collectStrings(value: unknown, depth = 0): string[] {
+  if (depth > 4 || value == null) return [];
+  if (typeof value === "string") return [value];
+  if (typeof value === "number" || typeof value === "boolean") return [String(value)];
+  if (Array.isArray(value)) {
+    return value.flatMap((item) => collectStrings(item, depth + 1));
+  }
+  const record = asRecord(value);
+  if (!record) return [];
+  return Object.values(record).flatMap((item) => collectStrings(item, depth + 1));
+}
+
+function collectKeyedStrings(
+  value: unknown,
+  keyMatcher: (key: string) => boolean,
+  depth = 0
+): string[] {
+  if (depth > 5 || value == null) return [];
+  if (Array.isArray(value)) {
+    return value.flatMap((item) => collectKeyedStrings(item, keyMatcher, depth + 1));
+  }
+  const record = asRecord(value);
+  if (!record) return [];
+  const values: string[] = [];
+  for (const [key, child] of Object.entries(record)) {
+    if (keyMatcher(key.toLowerCase())) {
+      values.push(...collectStrings(child, depth + 1));
+    }
+    values.push(...collectKeyedStrings(child, keyMatcher, depth + 1));
+  }
+  return values;
+}
+
+function looksLikeFilePath(value: string): boolean {
+  const text = value.trim();
+  if (!text || text.startsWith("http://") || text.startsWith("https://")) return false;
+  if (text.length > 260 || text.includes("\n")) return false;
+  return (
+    text.includes("/") ||
+    text.includes("\\") ||
+    /\.[a-z0-9]{1,8}$/i.test(text) ||
+    /^[a-z0-9_.-]+\.[a-z0-9]{1,8}$/i.test(text)
+  );
+}
+
+function looksLikeCommand(value: string): boolean {
+  const text = value.trim();
+  if (!text || text.length > 240 || text.includes("\n")) return false;
+  return /(^|[\s])(cargo|pnpm|npm|yarn|bun|node|python|pytest|ruff|uv|make|cmake|go|rustc|git|bash|sh|zsh|deno|turbo|nx|jest|vitest|playwright|mvn|gradle)([\s]|$)/i.test(
+    text
+  );
+}
+
+function extractChangedFiles(value: unknown): string[] {
+  const keyed = collectKeyedStrings(
+    value,
+    (key) =>
+      key.includes("changed_file") ||
+      key.includes("files_changed") ||
+      key.includes("touched_file") ||
+      key.includes("modified_file") ||
+      key.includes("updated_file") ||
+      key.includes("created_file") ||
+      key === "path" ||
+      key === "file" ||
+      key === "file_path" ||
+      key === "target_file" ||
+      key === "relative_path"
+  );
+  return uniqueStrings(keyed.filter(looksLikeFilePath), 16);
+}
+
+function extractVerificationCommands(value: unknown): string[] {
+  const keyed = collectKeyedStrings(
+    value,
+    (key) =>
+      key === "command" ||
+      key === "cmd" ||
+      key === "commands" ||
+      key.includes("command_run") ||
+      key.includes("commands_run") ||
+      key.includes("verification_command") ||
+      key.includes("validation_command") ||
+      key.includes("test_command") ||
+      key.includes("lint_command") ||
+      key.includes("build_command")
+  );
+  return uniqueStrings(keyed.filter(looksLikeCommand), 12);
+}
+
+function extractPatchSummaries(value: unknown): string[] {
+  const keyed = collectKeyedStrings(
+    value,
+    (key) =>
+      key === "summary" ||
+      key.includes("patch_summary") ||
+      key.includes("diff_summary") ||
+      key.includes("change_summary") ||
+      key.includes("result_summary")
+  );
+  return uniqueStrings(
+    keyed.filter((entry) => entry.trim().length >= 12 && !looksLikeFilePath(entry)),
+    6
+  );
+}
+
+function extractTaskVerificationCommands(task: RunTaskRecord): string[] {
+  return extractVerificationCommands(task).concat(
+    extractVerificationCommands(asRecord(task.payload) ?? null)
+  );
+}
+
 export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRunViewerProps) {
   const [runs, setRuns] = useState<CoderRunRecord[]>([]);
   const [runQuery, setRunQuery] = useState("");
@@ -483,6 +676,7 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [selectedRun, setSelectedRun] = useState<CoderRunRecord | null>(null);
   const [runState, setRunState] = useState<Record<string, unknown> | null>(null);
+  const [codingSummary, setCodingSummary] = useState<CoderRunTelemetrySummary | null>(null);
   const [artifacts, setArtifacts] = useState<CoderArtifactRecord[]>([]);
   const [memoryHits, setMemoryHits] = useState<Record<string, unknown>[]>([]);
   const [memoryCandidates, setMemoryCandidates] = useState<CoderMemoryCandidateRecord[]>([]);
@@ -492,6 +686,7 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
   const [compareArtifactContent, setCompareArtifactContent] = useState<string>("");
   const [selectedDiffFileKey, setSelectedDiffFileKey] = useState<string | null>(null);
   const [compareDiffFileKey, setCompareDiffFileKey] = useState<string | null>(null);
+  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [artifactPreviewMode, setArtifactPreviewMode] = useState<"diff" | "raw">("diff");
   const [artifactDiffSplitView, setArtifactDiffSplitView] = useState(true);
   const [loadingArtifact, setLoadingArtifact] = useState(false);
@@ -541,6 +736,7 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
         ]);
       setSelectedRun(runPayload.coder_run);
       setRunState(runPayload.run);
+      setCodingSummary(runPayload.coding_summary ?? null);
       setArtifacts(asArray(artifactsPayload.artifacts));
       setMemoryHits(asArray(memoryHitsPayload.hits));
       setMemoryCandidates(asArray(memoryCandidatesPayload.candidates));
@@ -565,9 +761,11 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
     if (!selectedRunId) {
       setSelectedRun(null);
       setRunState(null);
+      setCodingSummary(null);
       setArtifacts([]);
       setMemoryHits([]);
       setMemoryCandidates([]);
+      setSelectedTaskId(null);
       setSelectedArtifactPath(null);
       setSelectedArtifactContent("");
       setCompareArtifactPath(null);
@@ -648,6 +846,19 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
     const tasks = runState?.tasks;
     return (Array.isArray(tasks) ? tasks : []) as RunTaskRecord[];
   }, [runState]);
+
+  useEffect(() => {
+    if (selectedTaskRows.length === 0) {
+      setSelectedTaskId(null);
+      return;
+    }
+    setSelectedTaskId((current) => {
+      if (current && selectedTaskRows.some((task) => taskStableId(task) === current)) {
+        return current;
+      }
+      return taskStableId(selectedTaskRows[0]);
+    });
+  }, [selectedTaskRows]);
 
   const selectedBlackboard = useMemo(() => {
     const blackboard = runState?.blackboard;
@@ -1277,12 +1488,103 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
     return { outcome, passed, validationsAttempted };
   }, [selectedArtifactJson]);
 
+  const selectedCodingSignals = useMemo(() => {
+    const changedFiles = uniqueStrings(
+      [
+        ...(codingSummary?.changed_files ?? []),
+        ...(artifactPreview?.kind === "diff"
+          ? artifactPreview.files.map((file) => file.label)
+          : []),
+        ...extractChangedFiles(selectedArtifactJson),
+        ...selectedTaskRows.flatMap((task) => extractChangedFiles(task)),
+        ...selectedRunEvents.flatMap((event) => extractChangedFiles(asRecord(event.payload))),
+      ],
+      18
+    );
+    const verificationCommands = uniqueStrings(
+      [
+        ...(codingSummary?.verification_commands ?? []),
+        ...validationTasks.flatMap((task) => extractTaskVerificationCommands(task)),
+        ...extractVerificationCommands(selectedArtifactJson),
+        ...selectedRunEvents.flatMap((event) =>
+          extractVerificationCommands(asRecord(event.payload))
+        ),
+      ],
+      12
+    );
+    const patchSummaries = uniqueStrings(
+      [
+        ...(codingSummary?.patch_summaries ?? []),
+        ...extractPatchSummaries(selectedArtifactJson),
+        ...selectedRunEvents.flatMap((event) => extractPatchSummaries(asRecord(event.payload))),
+      ],
+      6
+    );
+    return {
+      changedFiles,
+      verificationCommands,
+      patchSummaries,
+      validationFailures: uniqueStrings(codingSummary?.validation_failures ?? [], 8),
+    };
+  }, [
+    artifactPreview,
+    codingSummary,
+    selectedArtifactJson,
+    selectedRunEvents,
+    selectedTaskRows,
+    validationTasks,
+  ]);
+
+  const codingTaskSummaryById = useMemo(() => {
+    const entries: Array<[string, CoderTaskTelemetry]> =
+      codingSummary?.task_summaries.map((summary): [string, CoderTaskTelemetry] => [
+        summary.task_id.toLowerCase(),
+        summary,
+      ]) ?? [];
+    return new Map<string, CoderTaskTelemetry>(entries);
+  }, [codingSummary]);
+
+  const codingTaskSummaryForTask = useCallback(
+    (task: RunTaskRecord) => {
+      const candidates = [
+        pickText(task.id),
+        pickText(task.workflow_node_id),
+        pickText(task.task_type),
+      ]
+        .map((value) => value.toLowerCase())
+        .filter(Boolean);
+      for (const candidate of candidates) {
+        const match = codingTaskSummaryById.get(candidate);
+        if (match) return match;
+      }
+      return null;
+    },
+    [codingTaskSummaryById]
+  );
+
+  const selectedTask = useMemo(() => {
+    if (!selectedTaskId) return null;
+    return selectedTaskRows.find((task) => taskStableId(task) === selectedTaskId) ?? null;
+  }, [selectedTaskId, selectedTaskRows]);
+
+  const selectedTaskSummary = useMemo(
+    () => (selectedTask ? codingTaskSummaryForTask(selectedTask) : null),
+    [codingTaskSummaryForTask, selectedTask]
+  );
+
+  const selectedTaskArtifacts = useMemo(
+    () => (selectedTask ? relatedArtifactsForTask(artifacts, selectedTask) : []),
+    [artifacts, selectedTask]
+  );
+
   const selectedRunOverview = useMemo(() => {
     return {
       tasks: selectedTaskRows.length,
       decisions: decisions.length,
       artifacts: artifacts.length,
       validationTasks: validationTasks.length,
+      changedFiles: selectedCodingSignals.changedFiles.length,
+      verificationCommands: selectedCodingSignals.verificationCommands.length,
       duplicateArtifacts:
         artifactGroups.find((group) => group.key === "duplicate")?.artifacts.length ?? 0,
     };
@@ -1290,6 +1592,8 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
     artifactGroups,
     artifacts.length,
     decisions.length,
+    selectedCodingSignals.changedFiles.length,
+    selectedCodingSignals.verificationCommands.length,
     selectedTaskRows.length,
     validationTasks.length,
   ]);
@@ -2359,6 +2663,116 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
                       </button>
                     ))}
                   </div>
+                  <div className="mt-3 grid gap-3 xl:grid-cols-3">
+                    <Card className="border-border bg-surface-elevated/30">
+                      <CardHeader className="pb-2">
+                        <CardTitle className="flex items-center gap-2 text-sm">
+                          <GitBranch className="h-4 w-4" />
+                          Changed Files
+                        </CardTitle>
+                        <CardDescription>
+                          Files inferred from diff artifacts, task payloads, and run events.
+                        </CardDescription>
+                      </CardHeader>
+                      <CardContent className="space-y-2 pt-0">
+                        {selectedCodingSignals.changedFiles.length === 0 ? (
+                          <p className="text-sm text-text-muted">No changed files surfaced yet.</p>
+                        ) : (
+                          selectedCodingSignals.changedFiles.map((file) => (
+                            <div
+                              key={file}
+                              className="rounded-xl border border-border bg-surface px-2.5 py-2 font-mono text-[11px] text-text-muted"
+                            >
+                              {file}
+                            </div>
+                          ))
+                        )}
+                      </CardContent>
+                    </Card>
+
+                    <Card className="border-border bg-surface-elevated/30">
+                      <CardHeader className="pb-2">
+                        <CardTitle className="flex items-center gap-2 text-sm">
+                          <SquareCheckBig className="h-4 w-4" />
+                          Verification Commands
+                        </CardTitle>
+                        <CardDescription>
+                          Validation, build, test, and lint commands detected for this run.
+                        </CardDescription>
+                      </CardHeader>
+                      <CardContent className="space-y-2 pt-0">
+                        {selectedCodingSignals.verificationCommands.length === 0 ? (
+                          <p className="text-sm text-text-muted">
+                            No verification commands surfaced yet.
+                          </p>
+                        ) : (
+                          selectedCodingSignals.verificationCommands.map((command) => (
+                            <div
+                              key={command}
+                              className="rounded-xl border border-border bg-surface px-2.5 py-2 font-mono text-[11px] text-text-muted"
+                            >
+                              {command}
+                            </div>
+                          ))
+                        )}
+                      </CardContent>
+                    </Card>
+
+                    <Card className="border-border bg-surface-elevated/30">
+                      <CardHeader className="pb-2">
+                        <CardTitle className="flex items-center gap-2 text-sm">
+                          <Database className="h-4 w-4" />
+                          Patch Summary
+                        </CardTitle>
+                        <CardDescription>
+                          Latest high-level diff and implementation notes recovered from artifacts.
+                        </CardDescription>
+                      </CardHeader>
+                      <CardContent className="space-y-2 pt-0">
+                        {selectedCodingSignals.patchSummaries.length === 0 ? (
+                          <p className="text-sm text-text-muted">No patch summary surfaced yet.</p>
+                        ) : (
+                          selectedCodingSignals.patchSummaries.map((summary, index) => (
+                            <div
+                              key={`${index}-${summary.slice(0, 24)}`}
+                              className="rounded-xl border border-border bg-surface px-2.5 py-2 text-sm text-text-muted"
+                            >
+                              {summary}
+                            </div>
+                          ))
+                        )}
+                      </CardContent>
+                    </Card>
+
+                    <Card className="border-border bg-surface-elevated/30">
+                      <CardHeader className="pb-2">
+                        <CardTitle className="flex items-center gap-2 text-sm">
+                          <AlertCircle className="h-4 w-4" />
+                          Validation Failures
+                        </CardTitle>
+                        <CardDescription>
+                          Latest explicit failure details recovered from task and artifact
+                          telemetry.
+                        </CardDescription>
+                      </CardHeader>
+                      <CardContent className="space-y-2 pt-0">
+                        {selectedCodingSignals.validationFailures.length === 0 ? (
+                          <p className="text-sm text-text-muted">
+                            No validation failure details surfaced yet.
+                          </p>
+                        ) : (
+                          selectedCodingSignals.validationFailures.map((failure, index) => (
+                            <div
+                              key={`${index}-${failure.slice(0, 24)}`}
+                              className="rounded-xl border border-rose-500/20 bg-rose-500/10 px-2.5 py-2 text-sm text-rose-100"
+                            >
+                              {failure}
+                            </div>
+                          ))
+                        )}
+                      </CardContent>
+                    </Card>
+                  </div>
                 </CardContent>
               </Card>
 
@@ -2474,6 +2888,38 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
                                         artifacts,
                                         task
                                       ).slice(0, 3);
+                                      const taskSummary = codingTaskSummaryForTask(task);
+                                      const owner = taskSummary?.owner || taskOwner(task);
+                                      const verificationCommands = uniqueStrings(
+                                        [
+                                          ...(taskSummary?.verification_commands ?? []),
+                                          ...extractTaskVerificationCommands(task),
+                                        ],
+                                        2
+                                      );
+                                      const changedFiles = uniqueStrings(
+                                        [
+                                          ...(taskSummary?.changed_files ?? []),
+                                          ...taskChangedFiles(task),
+                                        ],
+                                        2
+                                      );
+                                      const diffFiles = uniqueStrings(
+                                        taskSummary?.diff_files ?? [],
+                                        2
+                                      );
+                                      const failure =
+                                        taskSummary?.failure_detail || taskFailureDetail(task);
+                                      const artifactPaths = uniqueStrings(
+                                        taskSummary?.artifact_paths ?? [],
+                                        2
+                                      );
+                                      const verificationOutcome = taskSummary?.verification_outcome;
+                                      const verificationPassed = taskSummary?.verification_passed;
+                                      const validationsAttempted =
+                                        taskSummary?.validations_attempted;
+                                      const latestFailingCommand =
+                                        taskSummary?.latest_failing_command;
                                       return (
                                         <div
                                           key={String(
@@ -2493,6 +2939,126 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
                                           <p className="mt-1 text-[11px] text-text-muted">
                                             {String(task.workflow_node_id ?? task.task_type ?? "")}
                                           </p>
+                                          <div className="mt-2">
+                                            <Button
+                                              variant="secondary"
+                                              size="sm"
+                                              onClick={() => {
+                                                setSelectedTaskId(taskStableId(task));
+                                                setDetailTab("overview");
+                                              }}
+                                            >
+                                              Inspect
+                                            </Button>
+                                          </div>
+                                          {owner ? (
+                                            <div className="mt-2">
+                                              <span className="rounded-full border border-border px-2 py-0.5 text-[10px] uppercase tracking-[0.16em] text-text-muted">
+                                                Owner {owner}
+                                              </span>
+                                            </div>
+                                          ) : null}
+                                          {changedFiles.length > 0 ? (
+                                            <div className="mt-3 space-y-1">
+                                              <p className="text-[10px] uppercase tracking-[0.16em] text-text-muted">
+                                                Changed files
+                                              </p>
+                                              {changedFiles.map((file) => (
+                                                <div
+                                                  key={file}
+                                                  className="rounded-lg border border-border bg-surface-elevated/40 px-2 py-1 font-mono text-[10px] text-text-muted"
+                                                >
+                                                  {file}
+                                                </div>
+                                              ))}
+                                            </div>
+                                          ) : null}
+                                          {diffFiles.length > 0 ? (
+                                            <div className="mt-3 space-y-1">
+                                              <p className="text-[10px] uppercase tracking-[0.16em] text-text-muted">
+                                                Diff files
+                                              </p>
+                                              {diffFiles.map((file) => (
+                                                <div
+                                                  key={file}
+                                                  className="rounded-lg border border-border bg-surface-elevated/40 px-2 py-1 font-mono text-[10px] text-text-muted"
+                                                >
+                                                  {file}
+                                                </div>
+                                              ))}
+                                            </div>
+                                          ) : null}
+                                          {verificationCommands.length > 0 ? (
+                                            <div className="mt-3 space-y-1">
+                                              <p className="text-[10px] uppercase tracking-[0.16em] text-text-muted">
+                                                Verification
+                                              </p>
+                                              {verificationCommands.map((command) => (
+                                                <div
+                                                  key={command}
+                                                  className="rounded-lg border border-border bg-surface-elevated/40 px-2 py-1 font-mono text-[10px] text-text-muted"
+                                                >
+                                                  {command}
+                                                </div>
+                                              ))}
+                                            </div>
+                                          ) : null}
+                                          {verificationOutcome ||
+                                          verificationPassed !== undefined ? (
+                                            <div className="mt-3 grid gap-2 md:grid-cols-2">
+                                              <div className="rounded-lg border border-border bg-surface-elevated/40 px-2 py-2">
+                                                <p className="text-[10px] uppercase tracking-[0.16em] text-text-muted">
+                                                  Outcome
+                                                </p>
+                                                <p className="mt-1 text-[11px] text-text">
+                                                  {verificationOutcome || "Unknown"}
+                                                </p>
+                                              </div>
+                                              <div className="rounded-lg border border-border bg-surface-elevated/40 px-2 py-2">
+                                                <p className="text-[10px] uppercase tracking-[0.16em] text-text-muted">
+                                                  Passed
+                                                </p>
+                                                <p className="mt-1 text-[11px] text-text">
+                                                  {verificationPassed === undefined ||
+                                                  verificationPassed === null
+                                                    ? "Unknown"
+                                                    : verificationPassed
+                                                      ? "Yes"
+                                                      : "No"}
+                                                </p>
+                                              </div>
+                                            </div>
+                                          ) : null}
+                                          {typeof validationsAttempted === "number" ? (
+                                            <div className="mt-3 rounded-lg border border-border bg-surface-elevated/40 px-2 py-2 text-[11px] text-text-muted">
+                                              {validationsAttempted} validation checks recorded
+                                            </div>
+                                          ) : null}
+                                          {latestFailingCommand ? (
+                                            <div className="mt-3 rounded-lg border border-amber-500/20 bg-amber-500/10 px-2 py-2 font-mono text-[10px] text-amber-100">
+                                              {latestFailingCommand}
+                                            </div>
+                                          ) : null}
+                                          {failure ? (
+                                            <div className="mt-3 rounded-lg border border-rose-500/20 bg-rose-500/10 px-2 py-2 text-[11px] text-rose-100">
+                                              {failure}
+                                            </div>
+                                          ) : null}
+                                          {artifactPaths.length > 0 ? (
+                                            <div className="mt-3 space-y-1">
+                                              <p className="text-[10px] uppercase tracking-[0.16em] text-text-muted">
+                                                Artifacts
+                                              </p>
+                                              {artifactPaths.map((path) => (
+                                                <div
+                                                  key={path}
+                                                  className="rounded-lg border border-border bg-surface-elevated/40 px-2 py-1 font-mono text-[10px] text-text-muted"
+                                                >
+                                                  {path}
+                                                </div>
+                                              ))}
+                                            </div>
+                                          ) : null}
                                           {relatedArtifacts.length > 0 ? (
                                             <div className="mt-3 flex flex-wrap gap-2">
                                               {relatedArtifacts.map((artifact) => (
@@ -2526,6 +3092,280 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
                       </CardContent>
                     </Card>
                   </div>
+
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="flex items-center gap-2 text-base">
+                        <Search className="h-4 w-4" />
+                        Task Inspector
+                      </CardTitle>
+                      <CardDescription>
+                        Focus a single coding task to review ownership, artifacts, and verification.
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      {!selectedTask ? (
+                        <p className="text-sm text-text-muted">
+                          Select a task from the kanban or validation list to inspect it here.
+                        </p>
+                      ) : (
+                        <>
+                          <div className="flex flex-wrap items-start justify-between gap-3">
+                            <div>
+                              <p className="text-sm font-medium text-text">
+                                {taskLabel(selectedTask)}
+                              </p>
+                              <p className="mt-1 text-[11px] text-text-muted">
+                                {pickText(selectedTask.workflow_node_id) ||
+                                  pickText(selectedTask.task_type) ||
+                                  "task"}
+                              </p>
+                            </div>
+                            <span
+                              className={cn(
+                                "rounded-full border px-2 py-1 text-[10px] font-medium uppercase tracking-[0.18em]",
+                                statusTone(
+                                  selectedTaskSummary?.status ?? pickText(selectedTask.status)
+                                )
+                              )}
+                            >
+                              {selectedTaskSummary?.status ||
+                                pickText(selectedTask.status) ||
+                                "unknown"}
+                            </span>
+                          </div>
+
+                          <div className="flex flex-wrap gap-2">
+                            {taskKindLabel(selectedTask) ? (
+                              <span className="rounded-full border border-border bg-surface-elevated/40 px-2.5 py-1 text-[10px] uppercase tracking-[0.18em] text-text-muted">
+                                {taskKindLabel(selectedTask)}
+                              </span>
+                            ) : null}
+                            {pickText(selectedTask.workflow_node_id) ? (
+                              <span className="rounded-full border border-border bg-surface-elevated/40 px-2.5 py-1 text-[10px] uppercase tracking-[0.18em] text-text-muted">
+                                {pickText(selectedTask.workflow_node_id)}
+                              </span>
+                            ) : null}
+                            {pickText(selectedTask.id) ? (
+                              <span className="rounded-full border border-border bg-surface-elevated/40 px-2.5 py-1 text-[10px] uppercase tracking-[0.18em] text-text-muted">
+                                {pickText(selectedTask.id)}
+                              </span>
+                            ) : null}
+                          </div>
+
+                          <div className="grid gap-3 md:grid-cols-4">
+                            {[
+                              [
+                                "Owner",
+                                selectedTaskSummary?.owner || taskOwner(selectedTask) || "Unknown",
+                              ],
+                              ["Outcome", selectedTaskSummary?.verification_outcome || "Unknown"],
+                              [
+                                "Passed",
+                                selectedTaskSummary?.verification_passed === undefined ||
+                                selectedTaskSummary?.verification_passed === null
+                                  ? "Unknown"
+                                  : selectedTaskSummary.verification_passed
+                                    ? "Yes"
+                                    : "No",
+                              ],
+                              [
+                                "Checks",
+                                typeof selectedTaskSummary?.validations_attempted === "number"
+                                  ? String(selectedTaskSummary.validations_attempted)
+                                  : "Unknown",
+                              ],
+                            ].map(([label, value]) => (
+                              <div
+                                key={label}
+                                className="rounded-2xl border border-border bg-surface-elevated/40 p-3"
+                              >
+                                <p className="text-[11px] uppercase tracking-[0.2em] text-text-muted">
+                                  {label}
+                                </p>
+                                <p className="mt-1 text-sm font-medium text-text">{value}</p>
+                              </div>
+                            ))}
+                          </div>
+
+                          <div className="grid gap-3 md:grid-cols-2">
+                            <div className="rounded-2xl border border-border bg-surface-elevated/40 p-3">
+                              <p className="text-[11px] uppercase tracking-[0.2em] text-text-muted">
+                                Write Scope
+                              </p>
+                              <p className="mt-1 text-sm text-text">
+                                {taskWriteScope(selectedTask) || "Not declared"}
+                              </p>
+                            </div>
+                            <div className="rounded-2xl border border-border bg-surface-elevated/40 p-3">
+                              <p className="text-[11px] uppercase tracking-[0.2em] text-text-muted">
+                                Verification Plan
+                              </p>
+                              <p className="mt-1 font-mono text-[11px] text-text">
+                                {taskVerificationPlan(selectedTask) || "Not declared"}
+                              </p>
+                            </div>
+                          </div>
+
+                          <div className="flex flex-wrap gap-2">
+                            {pickText(selectedTask.workflow_node_id) ? (
+                              <Button
+                                variant="secondary"
+                                size="sm"
+                                onClick={() =>
+                                  openBlackboardContext(
+                                    "task",
+                                    pickText(selectedTask.workflow_node_id),
+                                    null
+                                  )
+                                }
+                              >
+                                <PanelsTopLeft className="h-4 w-4" />
+                                Jump To Task Column
+                              </Button>
+                            ) : null}
+                            {pickText(selectedTask.source_event_id) ? (
+                              <Button
+                                variant="secondary"
+                                size="sm"
+                                onClick={() =>
+                                  openRelatedEventContext(pickText(selectedTask.source_event_id))
+                                }
+                              >
+                                <Workflow className="h-4 w-4" />
+                                Jump To Timeline
+                              </Button>
+                            ) : null}
+                          </div>
+
+                          <div className="grid gap-4 xl:grid-cols-2">
+                            <div className="space-y-2">
+                              <p className="text-sm font-medium text-text">Changed files</p>
+                              {uniqueStrings(
+                                [
+                                  ...(selectedTaskSummary?.changed_files ?? []),
+                                  ...taskChangedFiles(selectedTask),
+                                ],
+                                8
+                              ).map((file) => (
+                                <div
+                                  key={file}
+                                  className="rounded-xl border border-border bg-surface-elevated/40 px-2.5 py-2 font-mono text-[11px] text-text-muted"
+                                >
+                                  {file}
+                                </div>
+                              ))}
+                            </div>
+
+                            <div className="space-y-2">
+                              <p className="text-sm font-medium text-text">Verification commands</p>
+                              {uniqueStrings(
+                                [
+                                  ...(selectedTaskSummary?.verification_commands ?? []),
+                                  ...extractTaskVerificationCommands(selectedTask),
+                                ],
+                                8
+                              ).map((command) => (
+                                <div
+                                  key={command}
+                                  className="rounded-xl border border-border bg-surface-elevated/40 px-2.5 py-2 font-mono text-[11px] text-text-muted"
+                                >
+                                  {command}
+                                </div>
+                              ))}
+                            </div>
+
+                            <div className="space-y-2">
+                              <p className="text-sm font-medium text-text">Diff files</p>
+                              {(selectedTaskSummary?.diff_files ?? []).length === 0 ? (
+                                <p className="text-sm text-text-muted">
+                                  No diff file hints recorded for this task.
+                                </p>
+                              ) : (
+                                (selectedTaskSummary?.diff_files ?? []).map((file) => (
+                                  <div
+                                    key={file}
+                                    className="rounded-xl border border-border bg-surface-elevated/40 px-2.5 py-2 font-mono text-[11px] text-text-muted"
+                                  >
+                                    {file}
+                                  </div>
+                                ))
+                              )}
+                            </div>
+
+                            <div className="space-y-2">
+                              <p className="text-sm font-medium text-text">Artifact paths</p>
+                              {(selectedTaskSummary?.artifact_paths ?? []).length === 0 ? (
+                                <p className="text-sm text-text-muted">
+                                  No artifact paths recorded for this task.
+                                </p>
+                              ) : (
+                                (selectedTaskSummary?.artifact_paths ?? []).map((path) => (
+                                  <button
+                                    key={path}
+                                    type="button"
+                                    onClick={() => {
+                                      setSelectedArtifactPath(path);
+                                      setDetailTab("artifacts");
+                                    }}
+                                    className="w-full rounded-xl border border-border bg-surface-elevated/40 px-2.5 py-2 text-left font-mono text-[11px] text-text-muted transition-colors hover:bg-surface-elevated"
+                                  >
+                                    {path}
+                                  </button>
+                                ))
+                              )}
+                            </div>
+                          </div>
+
+                          {selectedTaskSummary?.latest_failing_command ? (
+                            <div className="rounded-xl border border-amber-500/20 bg-amber-500/10 px-3 py-2">
+                              <p className="text-[11px] uppercase tracking-[0.2em] text-amber-200">
+                                Latest Failing Command
+                              </p>
+                              <p className="mt-2 font-mono text-[11px] text-amber-100">
+                                {selectedTaskSummary.latest_failing_command}
+                              </p>
+                            </div>
+                          ) : null}
+
+                          {selectedTaskSummary?.failure_detail ||
+                          taskFailureDetail(selectedTask) ? (
+                            <div className="rounded-xl border border-rose-500/20 bg-rose-500/10 px-3 py-2">
+                              <p className="text-[11px] uppercase tracking-[0.2em] text-rose-200">
+                                Failure Detail
+                              </p>
+                              <p className="mt-2 text-sm text-rose-100">
+                                {selectedTaskSummary?.failure_detail ||
+                                  taskFailureDetail(selectedTask)}
+                              </p>
+                            </div>
+                          ) : null}
+
+                          {selectedTaskArtifacts.length > 0 ? (
+                            <div className="flex flex-wrap gap-2">
+                              {selectedTaskArtifacts.slice(0, 6).map((artifact) => (
+                                <Button
+                                  key={artifact.id}
+                                  variant="secondary"
+                                  size="sm"
+                                  onClick={() => {
+                                    setSelectedArtifactPath(artifact.path);
+                                    setDetailTab(
+                                      artifactCategory(artifact) === "validation"
+                                        ? "validation"
+                                        : "artifacts"
+                                    );
+                                  }}
+                                >
+                                  {artifact.artifact_type}
+                                </Button>
+                              ))}
+                            </div>
+                          ) : null}
+                        </>
+                      )}
+                    </CardContent>
+                  </Card>
 
                   <div className="grid gap-4 xl:grid-cols-2">
                     <div ref={blackboardRef}>
@@ -3936,6 +4776,10 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
                           ["Validation tasks", validationTasks.length],
                           ["Validation artifacts", validationArtifacts.length],
                           ["Selected checks", selectedValidationSummary?.validationsAttempted ?? 0],
+                          ["Changed files", selectedCodingSignals.changedFiles.length],
+                          ["Commands", selectedCodingSignals.verificationCommands.length],
+                          ["Patch notes", selectedCodingSignals.patchSummaries.length],
+                          ["Failures", selectedCodingSignals.validationFailures.length],
                         ].map(([label, value]) => (
                           <button
                             key={label}
@@ -3948,8 +4792,10 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
                                   setSelectedArtifactPath(latestValidationArtifact.path);
                                 }
                                 focusTabSection("validation", "validation_artifacts");
-                              } else {
+                              } else if (label === "Selected checks") {
                                 focusTabSection("validation", "validation_inspector");
+                              } else {
+                                focusTabSection("validation", "validation_tasks");
                               }
                             }}
                             className="rounded-2xl border border-border bg-surface-elevated/40 p-3 text-left transition-colors hover:bg-surface-elevated"
@@ -3960,6 +4806,80 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
                             <p className="mt-1 text-lg font-semibold text-text">{String(value)}</p>
                           </button>
                         ))}
+                      </div>
+
+                      <div className="grid gap-4 xl:grid-cols-3">
+                        <div className="space-y-2">
+                          <p className="text-sm font-medium text-text">Changed files</p>
+                          {selectedCodingSignals.changedFiles.length === 0 ? (
+                            <p className="text-sm text-text-muted">
+                              No changed files surfaced from validation context yet.
+                            </p>
+                          ) : (
+                            selectedCodingSignals.changedFiles.map((file) => (
+                              <div
+                                key={file}
+                                className="rounded-xl border border-border bg-surface-elevated/40 px-2.5 py-2 font-mono text-[11px] text-text-muted"
+                              >
+                                {file}
+                              </div>
+                            ))
+                          )}
+                        </div>
+
+                        <div className="space-y-2">
+                          <p className="text-sm font-medium text-text">Verification commands</p>
+                          {selectedCodingSignals.verificationCommands.length === 0 ? (
+                            <p className="text-sm text-text-muted">
+                              No verification commands were captured yet.
+                            </p>
+                          ) : (
+                            selectedCodingSignals.verificationCommands.map((command) => (
+                              <div
+                                key={command}
+                                className="rounded-xl border border-border bg-surface-elevated/40 px-2.5 py-2 font-mono text-[11px] text-text-muted"
+                              >
+                                {command}
+                              </div>
+                            ))
+                          )}
+                        </div>
+
+                        <div className="space-y-2">
+                          <p className="text-sm font-medium text-text">Patch summaries</p>
+                          {selectedCodingSignals.patchSummaries.length === 0 ? (
+                            <p className="text-sm text-text-muted">
+                              No patch summaries were captured yet.
+                            </p>
+                          ) : (
+                            selectedCodingSignals.patchSummaries.map((summary, index) => (
+                              <div
+                                key={`${index}-${summary.slice(0, 24)}`}
+                                className="rounded-xl border border-border bg-surface-elevated/40 px-2.5 py-2 text-sm text-text-muted"
+                              >
+                                {summary}
+                              </div>
+                            ))
+                          )}
+                        </div>
+
+                        <div className="space-y-2">
+                          <p className="text-sm font-medium text-text">Failure details</p>
+                          {selectedCodingSignals.validationFailures.length === 0 ? (
+                            <p className="text-sm text-text-muted">
+                              No explicit failure detail was captured yet.
+                            </p>
+                          ) : (
+                            selectedCodingSignals.validationFailures.map((failure, index) => (
+                              <div
+                                key={`${index}-${failure.slice(0, 24)}`}
+                                className="rounded-xl border border-rose-500/20 bg-rose-500/10 px-2.5 py-2 text-sm text-rose-100"
+                              >
+                                {failure}
+                              </div>
+                            ))
+                          )}
+                        </div>
                       </div>
 
                       <div ref={validationTasksRef} className="space-y-2">
@@ -3974,6 +4894,29 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
                               0,
                               3
                             );
+                            const taskSummary = codingTaskSummaryForTask(task);
+                            const owner = taskSummary?.owner || taskOwner(task);
+                            const verificationCommands = uniqueStrings(
+                              [
+                                ...(taskSummary?.verification_commands ?? []),
+                                ...extractTaskVerificationCommands(task),
+                              ],
+                              3
+                            );
+                            const changedFiles = uniqueStrings(
+                              [...(taskSummary?.changed_files ?? []), ...taskChangedFiles(task)],
+                              3
+                            );
+                            const diffFiles = uniqueStrings(taskSummary?.diff_files ?? [], 3);
+                            const artifactPaths = uniqueStrings(
+                              taskSummary?.artifact_paths ?? [],
+                              3
+                            );
+                            const failure = taskSummary?.failure_detail || taskFailureDetail(task);
+                            const verificationOutcome = taskSummary?.verification_outcome;
+                            const verificationPassed = taskSummary?.verification_passed;
+                            const validationsAttempted = taskSummary?.validations_attempted;
+                            const latestFailingCommand = taskSummary?.latest_failing_command;
                             return (
                               <div
                                 key={String(
@@ -3997,6 +4940,130 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
                                     pickText(task.task_type) ||
                                     "validation"}
                                 </p>
+                                <div className="mt-2">
+                                  <Button
+                                    variant="secondary"
+                                    size="sm"
+                                    onClick={() => {
+                                      setSelectedTaskId(taskStableId(task));
+                                      setDetailTab("overview");
+                                    }}
+                                  >
+                                    Inspect
+                                  </Button>
+                                </div>
+                                {owner ? (
+                                  <div className="mt-2">
+                                    <span className="rounded-full border border-border px-2 py-0.5 text-[10px] uppercase tracking-[0.16em] text-text-muted">
+                                      Owner {owner}
+                                    </span>
+                                  </div>
+                                ) : null}
+                                {verificationCommands.length > 0 ? (
+                                  <div className="mt-3 space-y-1">
+                                    <p className="text-[10px] uppercase tracking-[0.16em] text-text-muted">
+                                      Commands
+                                    </p>
+                                    {verificationCommands.map((command) => (
+                                      <div
+                                        key={command}
+                                        className="rounded-lg border border-border bg-surface px-2 py-1 font-mono text-[10px] text-text-muted"
+                                      >
+                                        {command}
+                                      </div>
+                                    ))}
+                                  </div>
+                                ) : null}
+                                {changedFiles.length > 0 ? (
+                                  <div className="mt-3 space-y-1">
+                                    <p className="text-[10px] uppercase tracking-[0.16em] text-text-muted">
+                                      Changed files
+                                    </p>
+                                    {changedFiles.map((file) => (
+                                      <div
+                                        key={file}
+                                        className="rounded-lg border border-border bg-surface px-2 py-1 font-mono text-[10px] text-text-muted"
+                                      >
+                                        {file}
+                                      </div>
+                                    ))}
+                                  </div>
+                                ) : null}
+                                {diffFiles.length > 0 ? (
+                                  <div className="mt-3 space-y-1">
+                                    <p className="text-[10px] uppercase tracking-[0.16em] text-text-muted">
+                                      Diff files
+                                    </p>
+                                    {diffFiles.map((file) => (
+                                      <div
+                                        key={file}
+                                        className="rounded-lg border border-border bg-surface px-2 py-1 font-mono text-[10px] text-text-muted"
+                                      >
+                                        {file}
+                                      </div>
+                                    ))}
+                                  </div>
+                                ) : null}
+                                {verificationOutcome || verificationPassed !== undefined ? (
+                                  <div className="mt-3 grid gap-2 md:grid-cols-3">
+                                    <div className="rounded-lg border border-border bg-surface px-2 py-2">
+                                      <p className="text-[10px] uppercase tracking-[0.16em] text-text-muted">
+                                        Outcome
+                                      </p>
+                                      <p className="mt-1 text-[11px] text-text">
+                                        {verificationOutcome || "Unknown"}
+                                      </p>
+                                    </div>
+                                    <div className="rounded-lg border border-border bg-surface px-2 py-2">
+                                      <p className="text-[10px] uppercase tracking-[0.16em] text-text-muted">
+                                        Passed
+                                      </p>
+                                      <p className="mt-1 text-[11px] text-text">
+                                        {verificationPassed === undefined ||
+                                        verificationPassed === null
+                                          ? "Unknown"
+                                          : verificationPassed
+                                            ? "Yes"
+                                            : "No"}
+                                      </p>
+                                    </div>
+                                    <div className="rounded-lg border border-border bg-surface px-2 py-2">
+                                      <p className="text-[10px] uppercase tracking-[0.16em] text-text-muted">
+                                        Checks
+                                      </p>
+                                      <p className="mt-1 text-[11px] text-text">
+                                        {typeof validationsAttempted === "number"
+                                          ? validationsAttempted
+                                          : "Unknown"}
+                                      </p>
+                                    </div>
+                                  </div>
+                                ) : null}
+                                {latestFailingCommand ? (
+                                  <div className="mt-3 rounded-xl border border-amber-500/20 bg-amber-500/10 px-3 py-2 font-mono text-[10px] text-amber-100">
+                                    {latestFailingCommand}
+                                  </div>
+                                ) : null}
+                                {failure ? (
+                                  <div className="mt-3 rounded-xl border border-rose-500/20 bg-rose-500/10 px-3 py-2 text-[11px] text-rose-100">
+                                    {failure}
+                                  </div>
+                                ) : null}
+                                {artifactPaths.length > 0 ? (
+                                  <div className="mt-3 space-y-1">
+                                    <p className="text-[10px] uppercase tracking-[0.16em] text-text-muted">
+                                      Artifact paths
+                                    </p>
+                                    {artifactPaths.map((path) => (
+                                      <div
+                                        key={path}
+                                        className="rounded-lg border border-border bg-surface px-2 py-1 font-mono text-[10px] text-text-muted"
+                                      >
+                                        {path}
+                                      </div>
+                                    ))}
+                                  </div>
+                                ) : null}
                                 {relatedArtifacts.length > 0 ? (
                                   <div className="mt-3 flex flex-wrap gap-2">
                                     {relatedArtifacts.map((artifact) => (

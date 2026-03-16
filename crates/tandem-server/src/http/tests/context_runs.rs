@@ -1452,6 +1452,149 @@ async fn context_task_transition_command_id_is_idempotent() {
 }
 
 #[tokio::test]
+async fn context_task_claim_requeues_stale_lease_before_claiming() {
+    let state = test_state().await;
+    let app = app_router(state.clone());
+
+    let create_run_req = Request::builder()
+        .method("POST")
+        .uri("/context/runs")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "run_id": "ctx-run-task-stale-claim",
+                "objective": "stale lease claim"
+            })
+            .to_string(),
+        ))
+        .expect("create run request");
+    let create_run_resp = app
+        .clone()
+        .oneshot(create_run_req)
+        .await
+        .expect("create run response");
+    assert_eq!(create_run_resp.status(), StatusCode::OK);
+
+    let create_tasks_req = Request::builder()
+        .method("POST")
+        .uri("/context/runs/ctx-run-task-stale-claim/tasks")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "tasks": [
+                    {
+                        "id": "task-1",
+                        "task_type": "unit_work",
+                        "status": "in_progress",
+                        "payload": { "title": "Stale task" }
+                    }
+                ]
+            })
+            .to_string(),
+        ))
+        .expect("create tasks request");
+    let create_tasks_resp = app
+        .clone()
+        .oneshot(create_tasks_req)
+        .await
+        .expect("create tasks response");
+    assert_eq!(create_tasks_resp.status(), StatusCode::OK);
+
+    let mut run =
+        crate::http::context_runs::load_context_run_state(&state, "ctx-run-task-stale-claim")
+            .await
+            .expect("load run");
+    let task = run
+        .tasks
+        .iter_mut()
+        .find(|task| task.id == "task-1")
+        .expect("task present");
+    task.lease_owner = Some("agent-stale".to_string());
+    task.assigned_agent = Some("agent-stale".to_string());
+    task.lease_token = Some("lease-stale".to_string());
+    task.lease_expires_at_ms = Some(crate::now_ms().saturating_sub(1_000));
+    crate::http::context_runs::save_context_run_state(&state, &run)
+        .await
+        .expect("save stale run");
+
+    let claim_req = Request::builder()
+        .method("POST")
+        .uri("/context/runs/ctx-run-task-stale-claim/tasks/claim")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "agent_id": "agent-fresh",
+                "command_id": "claim-stale-lease"
+            })
+            .to_string(),
+        ))
+        .expect("claim request");
+    let claim_resp = app
+        .clone()
+        .oneshot(claim_req)
+        .await
+        .expect("claim response");
+    assert_eq!(claim_resp.status(), StatusCode::OK);
+    let claim_body = to_bytes(claim_resp.into_body(), usize::MAX)
+        .await
+        .expect("claim body");
+    let claim_payload: Value = serde_json::from_slice(&claim_body).expect("claim json");
+    assert_eq!(
+        claim_payload
+            .get("task")
+            .and_then(|task| task.get("id"))
+            .and_then(Value::as_str),
+        Some("task-1")
+    );
+    assert_eq!(
+        claim_payload
+            .get("task")
+            .and_then(|task| task.get("assigned_agent"))
+            .and_then(Value::as_str),
+        Some("agent-fresh")
+    );
+
+    let blackboard_req = Request::builder()
+        .method("GET")
+        .uri("/context/runs/ctx-run-task-stale-claim/blackboard")
+        .body(Body::empty())
+        .expect("blackboard request");
+    let blackboard_resp = app
+        .clone()
+        .oneshot(blackboard_req)
+        .await
+        .expect("blackboard response");
+    assert_eq!(blackboard_resp.status(), StatusCode::OK);
+    let blackboard_body = to_bytes(blackboard_resp.into_body(), usize::MAX)
+        .await
+        .expect("blackboard body");
+    let blackboard_payload: Value =
+        serde_json::from_slice(&blackboard_body).expect("blackboard json");
+    let tasks = blackboard_payload
+        .get("blackboard")
+        .and_then(|value| value.get("tasks"))
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let task = tasks
+        .iter()
+        .find(|task| task.get("id").and_then(Value::as_str) == Some("task-1"))
+        .expect("task in blackboard");
+    assert_eq!(
+        task.get("status").and_then(Value::as_str),
+        Some("in_progress")
+    );
+    assert_eq!(
+        task.get("assigned_agent").and_then(Value::as_str),
+        Some("agent-fresh")
+    );
+    assert_eq!(
+        task.get("last_error").and_then(Value::as_str),
+        Some("task lease expired while assigned to agent-stale")
+    );
+}
+
+#[tokio::test]
 async fn context_task_transition_rejects_task_revision_mismatch() {
     let state = test_state().await;
     let app = app_router(state.clone());

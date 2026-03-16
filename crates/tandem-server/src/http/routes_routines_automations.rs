@@ -99,6 +99,30 @@ pub(super) fn apply(router: Router<AppState>) -> Router<AppState> {
             post(automations_v2_run_repair),
         )
         .route(
+            "/automations/v2/runs/{run_id}/tasks/{node_id}/retry",
+            post(automations_v2_run_task_retry),
+        )
+        .route(
+            "/automations/v2/runs/{run_id}/tasks/{node_id}/reset_preview",
+            get(automations_v2_run_task_reset_preview),
+        )
+        .route(
+            "/automations/v2/runs/{run_id}/tasks/{node_id}/continue",
+            post(automations_v2_run_task_continue),
+        )
+        .route(
+            "/automations/v2/runs/{run_id}/tasks/{node_id}/requeue",
+            post(automations_v2_run_task_requeue),
+        )
+        .route(
+            "/automations/v2/runs/{run_id}/backlog/tasks/{task_id}/claim",
+            post(automations_v2_run_backlog_task_claim),
+        )
+        .route(
+            "/automations/v2/runs/{run_id}/backlog/tasks/{task_id}/requeue",
+            post(automations_v2_run_backlog_task_requeue),
+        )
+        .route(
             "/automations/v2/runs/{run_id}/gate",
             post(automations_v2_run_gate_decide),
         )

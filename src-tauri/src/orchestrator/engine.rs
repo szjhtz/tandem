@@ -469,6 +469,7 @@ impl OrchestratorEngine {
                 "write",
                 "edit",
                 "apply_patch",
+                "bash",
                 "todowrite",
                 "todo_write",
                 "update_todo_list",
@@ -496,6 +497,7 @@ impl OrchestratorEngine {
                 "grep",
                 "codesearch",
                 "read",
+                "bash",
                 "websearch",
                 "webfetch",
                 "webfetch_html",
@@ -4677,5 +4679,16 @@ mod tests {
         assert!(summary.contains("Engine state is source-of-truth"));
         assert!(summary.contains("Only operate within leased workspace"));
         assert!(summary.len() <= OrchestratorEngine::ROLLING_SUMMARY_MAX_CHARS);
+    }
+
+    #[test]
+    fn coding_roles_expose_bash_for_implementation_and_verification() {
+        let worker = OrchestratorEngine::role_tool_allowlist(AgentRole::Worker);
+        let tester = OrchestratorEngine::role_tool_allowlist(AgentRole::Tester);
+        let reviewer = OrchestratorEngine::role_tool_allowlist(AgentRole::Reviewer);
+
+        assert!(worker.contains(&"bash"));
+        assert!(tester.contains(&"bash"));
+        assert!(reviewer.contains(&"bash"));
     }
 }

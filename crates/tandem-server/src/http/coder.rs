@@ -8052,6 +8052,7 @@ async fn run_issue_fix_worker_session(
         tool_allowlist: None,
         context_mode: Some(tandem_types::ContextMode::Full),
         write_required: Some(true),
+        prewrite_requirements: None,
     };
 
     state

@@ -2604,6 +2604,139 @@ class AutomationsV2 {
     );
   }
 
+  async retryTask(
+    runId: string,
+    nodeId: string,
+    reason?: string
+  ): Promise<{
+    ok?: boolean;
+    run?: AutomationV2RunRecord;
+    node_id?: string;
+    reset_nodes?: string[];
+    cleared_outputs?: string[];
+  }> {
+    return this.req<{
+      ok?: boolean;
+      run?: AutomationV2RunRecord;
+      node_id?: string;
+      reset_nodes?: string[];
+      cleared_outputs?: string[];
+    }>(
+      `/automations/v2/runs/${encodeURIComponent(runId)}/tasks/${encodeURIComponent(nodeId)}/retry`,
+      { method: "POST", body: JSON.stringify({ reason: reason ?? "" }) }
+    );
+  }
+
+  async previewTaskReset(
+    runId: string,
+    nodeId: string
+  ): Promise<{
+    ok?: boolean;
+    preview?: {
+      run_id?: string;
+      node_id?: string;
+      reset_nodes?: string[];
+      cleared_outputs?: string[];
+      preserves_upstream_outputs?: boolean;
+    };
+  }> {
+    return this.req<{
+      ok?: boolean;
+      preview?: {
+        run_id?: string;
+        node_id?: string;
+        reset_nodes?: string[];
+        cleared_outputs?: string[];
+        preserves_upstream_outputs?: boolean;
+      };
+    }>(
+      `/automations/v2/runs/${encodeURIComponent(runId)}/tasks/${encodeURIComponent(nodeId)}/reset_preview`
+    );
+  }
+
+  async continueTask(
+    runId: string,
+    nodeId: string,
+    reason?: string
+  ): Promise<{
+    ok?: boolean;
+    run?: AutomationV2RunRecord;
+    node_id?: string;
+    reset_nodes?: string[];
+  }> {
+    return this.req<{
+      ok?: boolean;
+      run?: AutomationV2RunRecord;
+      node_id?: string;
+      reset_nodes?: string[];
+    }>(
+      `/automations/v2/runs/${encodeURIComponent(runId)}/tasks/${encodeURIComponent(nodeId)}/continue`,
+      { method: "POST", body: JSON.stringify({ reason: reason ?? "" }) }
+    );
+  }
+
+  async requeueTask(
+    runId: string,
+    nodeId: string,
+    reason?: string
+  ): Promise<{
+    ok?: boolean;
+    run?: AutomationV2RunRecord;
+    node_id?: string;
+    reset_nodes?: string[];
+    cleared_outputs?: string[];
+  }> {
+    return this.req<{
+      ok?: boolean;
+      run?: AutomationV2RunRecord;
+      node_id?: string;
+      reset_nodes?: string[];
+      cleared_outputs?: string[];
+    }>(
+      `/automations/v2/runs/${encodeURIComponent(runId)}/tasks/${encodeURIComponent(nodeId)}/requeue`,
+      { method: "POST", body: JSON.stringify({ reason: reason ?? "" }) }
+    );
+  }
+
+  async claimBacklogTask(
+    runId: string,
+    taskId: string,
+    input?: { reason?: string; agent_id?: string; lease_ms?: number }
+  ): Promise<{
+    ok?: boolean;
+    task?: JsonObject;
+    agent_id?: string;
+    reason?: string;
+    blackboard?: JsonObject;
+  }> {
+    return this.req<{
+      ok?: boolean;
+      task?: JsonObject;
+      agent_id?: string;
+      reason?: string;
+      blackboard?: JsonObject;
+    }>(
+      `/automations/v2/runs/${encodeURIComponent(runId)}/backlog/tasks/${encodeURIComponent(taskId)}/claim`,
+      { method: "POST", body: JSON.stringify(input || {}) }
+    );
+  }
+
+  async requeueBacklogTask(
+    runId: string,
+    taskId: string,
+    reason?: string
+  ): Promise<{ ok?: boolean; task?: JsonObject; reason?: string; blackboard?: JsonObject }> {
+    return this.req<{
+      ok?: boolean;
+      task?: JsonObject;
+      reason?: string;
+      blackboard?: JsonObject;
+    }>(
+      `/automations/v2/runs/${encodeURIComponent(runId)}/backlog/tasks/${encodeURIComponent(taskId)}/requeue`,
+      { method: "POST", body: JSON.stringify({ reason: reason ?? "" }) }
+    );
+  }
+
   async cancelRun(
     runId: string,
     reason?: string

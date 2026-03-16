@@ -1190,6 +1190,30 @@ export interface CoderArtifactRecord {
   source_event_id?: string | null;
 }
 
+export interface CoderTaskTelemetry {
+  task_id: string;
+  label: string;
+  status: string;
+  owner?: string | null;
+  changed_files: string[];
+  diff_files: string[];
+  verification_commands: string[];
+  verification_outcome?: string | null;
+  verification_passed?: boolean | null;
+  validations_attempted?: number | null;
+  latest_failing_command?: string | null;
+  failure_detail?: string | null;
+  artifact_paths: string[];
+}
+
+export interface CoderRunTelemetrySummary {
+  changed_files: string[];
+  verification_commands: string[];
+  patch_summaries: string[];
+  validation_failures: string[];
+  task_summaries: CoderTaskTelemetry[];
+}
+
 export interface CoderMemoryCandidateRecord {
   candidate_id: string;
   kind: string;
@@ -1272,6 +1296,7 @@ export async function listCoderRuns(params?: {
 export async function getCoderRun(runId: string): Promise<{
   coder_run: CoderRunRecord;
   run: Record<string, unknown>;
+  coding_summary?: CoderRunTelemetrySummary;
 }> {
   return invoke("coder_get_run", { runId });
 }

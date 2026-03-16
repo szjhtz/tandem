@@ -866,6 +866,44 @@ function nodeOutputArtifactValidation(value: any) {
   return value?.artifact_validation || value?.artifactValidation || null;
 }
 
+function uniqueStrings(values: Array<any>) {
+  const seen = new Set<string>();
+  const rows: string[] = [];
+  for (const value of values) {
+    const text = String(value || "").trim();
+    if (!text || seen.has(text)) continue;
+    seen.add(text);
+    rows.push(text);
+  }
+  return rows;
+}
+
+function looksLikePath(text: string) {
+  const value = String(text || "").trim();
+  if (!value) return false;
+  if (value.includes("/") || value.includes("\\")) return true;
+  return /\.[a-z0-9]{1,8}$/i.test(value);
+}
+
+function collectPathStrings(value: any, keyHint = "", depth = 0): string[] {
+  if (depth > 4 || value == null) return [];
+  if (typeof value === "string") {
+    const text = value.trim();
+    if (!text) return [];
+    if (/(path|file|artifact)/i.test(keyHint) || looksLikePath(text)) return [text];
+    return [];
+  }
+  if (Array.isArray(value)) {
+    return value.flatMap((item) => collectPathStrings(item, keyHint, depth + 1));
+  }
+  if (typeof value === "object") {
+    return Object.entries(value).flatMap(([key, entry]) =>
+      collectPathStrings(entry, key, depth + 1)
+    );
+  }
+  return [];
+}
+
 function sessionMessageText(message: any) {
   const parts = Array.isArray(message?.parts) ? message.parts : [];
   const rows = parts
@@ -936,6 +974,28 @@ function workflowNodeIdFromText(raw: string) {
   return "";
 }
 
+function workflowDescendantTaskIds(tasks: any[], rootTaskId: string) {
+  const root = String(rootTaskId || "").trim();
+  if (!root) return [];
+  const descendants = new Set<string>([root]);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const task of Array.isArray(tasks) ? tasks : []) {
+      const taskId = String(task?.id || "").trim();
+      if (!taskId || descendants.has(taskId)) continue;
+      const deps = Array.isArray(task?.dependencies)
+        ? task.dependencies.map((dep: any) => String(dep || "").trim()).filter(Boolean)
+        : [];
+      if (deps.some((dep) => descendants.has(dep))) {
+        descendants.add(taskId);
+        changed = true;
+      }
+    }
+  }
+  return Array.from(descendants);
+}
+
 function workflowTaskStateFromCheckpoint(
   nodeId: string,
   checkpoint: any,
@@ -956,6 +1016,7 @@ function workflowTaskStateFromCheckpoint(
   const outputStatus = String(output?.status || output?.content?.status || "")
     .trim()
     .toLowerCase();
+  if (outputStatus === "verify_failed" || outputStatus === "failed") return "failed";
   if (blocked.has(taskId) || outputStatus === "blocked") return "blocked";
   const errorText = String(
     output?.error ||
@@ -1002,6 +1063,7 @@ function buildWorkflowProjectionFromRunSnapshot(run: any, activeTaskId = "") {
         : state === "pending" && ready
           ? "runnable"
           : state;
+    const builder = node?.metadata?.builder || {};
     return {
       id: taskId,
       title: String(node?.objective || nodeId || "Workflow node"),
@@ -1012,11 +1074,22 @@ function buildWorkflowProjectionFromRunSnapshot(run: any, activeTaskId = "") {
         checkpoint?.node_attempts?.[nodeId] || checkpoint?.nodeAttempts?.[nodeId] || 0
       ),
       error_message: String(output?.error || output?.content?.error || ""),
-      runtime_status: String(output?.content?.status || ""),
+      runtime_status: String(output?.status || output?.content?.status || ""),
       runtime_detail: String(output?.summary || output?.content?.message || ""),
       assigned_role: String(node?.agent_id || ""),
       workflow_id: String(run?.automation_id || ""),
       session_id: String(output?.content?.session_id || output?.content?.sessionId || ""),
+      projects_backlog_tasks: Boolean(builder?.project_backlog_tasks),
+      backlog_task_id: String(builder?.task_id || ""),
+      task_kind: String(builder?.task_kind || ""),
+      repo_root: String(builder?.repo_root || ""),
+      write_scope: String(builder?.write_scope || ""),
+      acceptance_criteria: String(builder?.acceptance_criteria || ""),
+      task_dependencies: String(builder?.task_dependencies || ""),
+      verification_state: String(builder?.verification_state || ""),
+      task_owner: String(builder?.task_owner || ""),
+      verification_command: String(builder?.verification_command || ""),
+      output_path: String(builder?.output_path || ""),
     };
   });
   const currentTaskId =
@@ -3269,10 +3342,12 @@ function MyAutomations({
   const [selectedSessionId, setSelectedSessionId] = useState<string>("");
   const [selectedSessionFilterId, setSelectedSessionFilterId] = useState<string>("all");
   const [selectedBoardTaskId, setSelectedBoardTaskId] = useState<string>("");
+  const [selectedRunArtifactKey, setSelectedRunArtifactKey] = useState<string>("");
   const [sessionEvents, setSessionEvents] = useState<Array<{ id: string; at: number; event: any }>>(
     []
   );
   const boardDetailRef = useRef<HTMLDivElement | null>(null);
+  const artifactsSectionRef = useRef<HTMLDivElement | null>(null);
   const sessionLogRef = useRef<HTMLDivElement | null>(null);
   const [sessionLogPinnedToBottom, setSessionLogPinnedToBottom] = useState(true);
   const [workflowEditDraft, setWorkflowEditDraft] = useState<WorkflowEditDraft | null>(null);
@@ -3368,6 +3443,25 @@ function MyAutomations({
     queryFn: () =>
       client?.automations?.listArtifacts?.(selectedRunId).catch(() => ({ artifacts: [] })),
     refetchInterval: selectedRunId ? 8000 : false,
+  });
+  const taskResetPreviewQuery = useQuery({
+    queryKey: ["automations", "run", "task-reset-preview", selectedRunId, selectedBoardTaskId],
+    enabled:
+      !!selectedRunId &&
+      isWorkflowRun &&
+      String(selectedBoardTaskId || "").startsWith("node-") &&
+      !!String(selectedBoardTaskId || "").trim() &&
+      !!client?.automationsV2?.previewTaskReset,
+    queryFn: () =>
+      client?.automationsV2
+        ?.previewTaskReset(
+          selectedRunId,
+          String(selectedBoardTaskId || "")
+            .replace(/^node-/, "")
+            .trim()
+        )
+        .catch(() => ({ preview: null })) ?? Promise.resolve({ preview: null }),
+    refetchInterval: false,
   });
   const availableSessionIds = useMemo(
     () => extractSessionIdsFromRun((runDetailQuery.data as any)?.run),
@@ -3556,6 +3650,145 @@ function MyAutomations({
       await queryClient.invalidateQueries({ queryKey: ["automations"] });
       if (runId) {
         onSelectRunId(runId);
+        onOpenRunningView();
+      }
+    },
+    onError: (error) => toast("err", error instanceof Error ? error.message : String(error)),
+  });
+  const workflowTaskRetryMutation = useMutation({
+    mutationFn: async ({
+      runId,
+      nodeId,
+      reason,
+    }: {
+      runId: string;
+      nodeId: string;
+      reason?: string;
+    }) => {
+      if (!client?.automationsV2?.retryTask) {
+        throw new Error("Task retry is not available in this client.");
+      }
+      return client.automationsV2.retryTask(runId, nodeId, reason);
+    },
+    onSuccess: async (payload: any) => {
+      const runId = String(
+        payload?.run?.run_id || payload?.run?.runId || selectedRunId || ""
+      ).trim();
+      toast("ok", "Task retried and subtree requeued.");
+      await queryClient.invalidateQueries({ queryKey: ["automations"] });
+      if (runId) {
+        onSelectRunId(runId);
+        onOpenRunningView();
+      }
+    },
+    onError: (error) => toast("err", error instanceof Error ? error.message : String(error)),
+  });
+  const workflowTaskContinueMutation = useMutation({
+    mutationFn: async ({
+      runId,
+      nodeId,
+      reason,
+    }: {
+      runId: string;
+      nodeId: string;
+      reason?: string;
+    }) => {
+      if (!client?.automationsV2?.continueTask) {
+        throw new Error("Task continue is not available in this client.");
+      }
+      return client.automationsV2.continueTask(runId, nodeId, reason);
+    },
+    onSuccess: async (payload: any) => {
+      const runId = String(
+        payload?.run?.run_id || payload?.run?.runId || selectedRunId || ""
+      ).trim();
+      toast("ok", "Blocked task continued with minimal reset.");
+      await queryClient.invalidateQueries({ queryKey: ["automations"] });
+      if (runId) {
+        onSelectRunId(runId);
+        onOpenRunningView();
+      }
+    },
+    onError: (error) => toast("err", error instanceof Error ? error.message : String(error)),
+  });
+  const workflowTaskRequeueMutation = useMutation({
+    mutationFn: async ({
+      runId,
+      nodeId,
+      reason,
+    }: {
+      runId: string;
+      nodeId: string;
+      reason?: string;
+    }) => {
+      if (!client?.automationsV2?.requeueTask) {
+        throw new Error("Task requeue is not available in this client.");
+      }
+      return client.automationsV2.requeueTask(runId, nodeId, reason);
+    },
+    onSuccess: async (payload: any) => {
+      const runId = String(
+        payload?.run?.run_id || payload?.run?.runId || selectedRunId || ""
+      ).trim();
+      toast("ok", "Task requeued and subtree reset.");
+      await queryClient.invalidateQueries({ queryKey: ["automations"] });
+      if (runId) {
+        onSelectRunId(runId);
+        onOpenRunningView();
+      }
+    },
+    onError: (error) => toast("err", error instanceof Error ? error.message : String(error)),
+  });
+  const backlogTaskClaimMutation = useMutation({
+    mutationFn: async ({
+      runId,
+      taskId,
+      agentId,
+      reason,
+    }: {
+      runId: string;
+      taskId: string;
+      agentId?: string;
+      reason?: string;
+    }) => {
+      if (!client?.automationsV2?.claimBacklogTask) {
+        throw new Error("Backlog task claim is not available in this client.");
+      }
+      return client.automationsV2.claimBacklogTask(runId, taskId, {
+        agent_id: agentId,
+        reason,
+      });
+    },
+    onSuccess: async () => {
+      toast("ok", "Backlog task claimed.");
+      await queryClient.invalidateQueries({ queryKey: ["automations"] });
+      if (selectedRunId) {
+        onSelectRunId(selectedRunId);
+        onOpenRunningView();
+      }
+    },
+    onError: (error) => toast("err", error instanceof Error ? error.message : String(error)),
+  });
+  const backlogTaskRequeueMutation = useMutation({
+    mutationFn: async ({
+      runId,
+      taskId,
+      reason,
+    }: {
+      runId: string;
+      taskId: string;
+      reason?: string;
+    }) => {
+      if (!client?.automationsV2?.requeueBacklogTask) {
+        throw new Error("Backlog task requeue is not available in this client.");
+      }
+      return client.automationsV2.requeueBacklogTask(runId, taskId, reason);
+    },
+    onSuccess: async () => {
+      toast("ok", "Backlog task requeued.");
+      await queryClient.invalidateQueries({ queryKey: ["automations"] });
+      if (selectedRunId) {
+        onSelectRunId(selectedRunId);
         onOpenRunningView();
       }
     },
@@ -3867,6 +4100,32 @@ function MyAutomations({
       null
     );
   }, [selectedBoardTask, selectedRun]);
+  const selectedBoardTaskTelemetry = useMemo(
+    () => nodeOutputToolTelemetry(selectedBoardTaskOutput),
+    [selectedBoardTaskOutput]
+  );
+  const selectedBoardTaskArtifactValidation = useMemo(
+    () => nodeOutputArtifactValidation(selectedBoardTaskOutput),
+    [selectedBoardTaskOutput]
+  );
+  const selectedBoardTaskTouchedFiles = useMemo(
+    () =>
+      Array.isArray(selectedBoardTaskArtifactValidation?.touched_files)
+        ? selectedBoardTaskArtifactValidation.touched_files
+            .map((value: any) => String(value || "").trim())
+            .filter(Boolean)
+        : [],
+    [selectedBoardTaskArtifactValidation]
+  );
+  const selectedBoardTaskUndeclaredFiles = useMemo(
+    () =>
+      Array.isArray(selectedBoardTaskArtifactValidation?.undeclared_files_created)
+        ? selectedBoardTaskArtifactValidation.undeclared_files_created
+            .map((value: any) => String(value || "").trim())
+            .filter(Boolean)
+        : [],
+    [selectedBoardTaskArtifactValidation]
+  );
   const continueBlockedTask =
     String(selectedBoardTask?.state || "").toLowerCase() === "blocked"
       ? selectedBoardTask
@@ -3884,11 +4143,211 @@ function MyAutomations({
     if (!selectedBoardTask || !boardDetailRef.current) return;
     boardDetailRef.current.scrollIntoView({ block: "nearest", behavior: "smooth" });
   }, [selectedBoardTask]);
+  useEffect(() => {
+    setSelectedRunArtifactKey("");
+  }, [selectedRunId, selectedBoardTaskId]);
   const runArtifacts = isWorkflowRun
     ? Array.isArray(workflowBlackboard?.artifacts)
       ? workflowBlackboard.artifacts
       : []
     : toArray(runArtifactsQuery.data, "artifacts");
+  const runArtifactEntries = useMemo(
+    () =>
+      runArtifacts.map((artifact: any, index: number) => {
+        const key = String(artifact?.id || artifact?.artifact_id || `artifact-${index + 1}`).trim();
+        const name = String(
+          artifact?.name ||
+            artifact?.label ||
+            artifact?.kind ||
+            artifact?.type ||
+            artifact?.path ||
+            key
+        ).trim();
+        const kind = String(artifact?.kind || artifact?.type || artifact?.path || "").trim();
+        const paths = uniqueStrings(collectPathStrings(artifact));
+        return { key, name: name || key, kind, artifact, paths };
+      }),
+    [runArtifacts]
+  );
+  const selectedBoardTaskRelatedPaths = useMemo(() => {
+    if (!selectedBoardTask) return [];
+    return uniqueStrings([
+      ...collectPathStrings(selectedBoardTaskOutput),
+      ...collectPathStrings(selectedBoardTaskArtifactValidation),
+      String((selectedBoardTask as any).output_path || "").trim(),
+    ]);
+  }, [selectedBoardTask, selectedBoardTaskArtifactValidation, selectedBoardTaskOutput]);
+  const selectedBoardTaskRelatedArtifacts = useMemo(() => {
+    if (!selectedBoardTaskRelatedPaths.length) return [];
+    return runArtifactEntries.filter((entry) =>
+      entry.paths.some((path) => selectedBoardTaskRelatedPaths.includes(path))
+    );
+  }, [runArtifactEntries, selectedBoardTaskRelatedPaths]);
+  const selectedBoardTaskVerificationOutcome = useMemo(() => {
+    const approved = selectedBoardTaskOutput?.approved;
+    if (typeof approved === "boolean") return approved ? "approved" : "not approved";
+    const status = String(selectedBoardTaskOutput?.status || "")
+      .trim()
+      .toLowerCase();
+    if (status) return status;
+    const state = String(selectedBoardTask?.state || "")
+      .trim()
+      .toLowerCase();
+    if (state === "done") return "completed";
+    if (state === "blocked") return "blocked";
+    if (state === "failed") return "failed";
+    if (state) return state;
+    return "unknown";
+  }, [selectedBoardTask, selectedBoardTaskOutput]);
+  const selectedBoardTaskVerificationPassed = useMemo(() => {
+    if (typeof selectedBoardTaskOutput?.approved === "boolean")
+      return selectedBoardTaskOutput.approved;
+    if (["approved", "completed", "done"].includes(selectedBoardTaskVerificationOutcome))
+      return true;
+    if (["blocked", "failed", "not approved"].includes(selectedBoardTaskVerificationOutcome))
+      return false;
+    return null;
+  }, [selectedBoardTaskOutput, selectedBoardTaskVerificationOutcome]);
+  const selectedBoardTaskNodeId = useMemo(
+    () =>
+      String(selectedBoardTask?.id || "").startsWith("node-")
+        ? String(selectedBoardTask?.id || "")
+            .replace(/^node-/, "")
+            .trim()
+        : "",
+    [selectedBoardTask]
+  );
+  const selectedBoardTaskIsWorkflowNode = useMemo(
+    () => String(selectedBoardTask?.id || "").startsWith("node-"),
+    [selectedBoardTask]
+  );
+  const selectedBoardTaskIsProjectedBacklogItem = useMemo(
+    () => String((selectedBoardTask as any)?.task_type || "").trim() === "automation_backlog_item",
+    [selectedBoardTask]
+  );
+  const selectedBoardTaskStateNormalized = useMemo(
+    () =>
+      String(selectedBoardTask?.state || "")
+        .trim()
+        .toLowerCase(),
+    [selectedBoardTask]
+  );
+  const selectedBoardTaskLeaseExpiresAtMs = useMemo(
+    () => Number((selectedBoardTask as any)?.lease_expires_at_ms || 0) || 0,
+    [selectedBoardTask]
+  );
+  const selectedBoardTaskIsStale = useMemo(
+    () =>
+      Boolean((selectedBoardTask as any)?.is_stale) ||
+      (selectedBoardTaskStateNormalized === "in_progress" &&
+        selectedBoardTaskLeaseExpiresAtMs > 0 &&
+        selectedBoardTaskLeaseExpiresAtMs <= Date.now()),
+    [selectedBoardTask, selectedBoardTaskLeaseExpiresAtMs, selectedBoardTaskStateNormalized]
+  );
+  const selectedBoardTaskFailureDetail = useMemo(
+    () =>
+      String(
+        selectedBoardTaskOutput?.blocked_reason ||
+          selectedBoardTaskOutput?.blockedReason ||
+          selectedBoardTaskArtifactValidation?.rejected_artifact_reason ||
+          (selectedBoardTask as any)?.error_message ||
+          ""
+      ).trim(),
+    [selectedBoardTask, selectedBoardTaskArtifactValidation, selectedBoardTaskOutput]
+  );
+  const selectedBoardTaskResetTaskIds = useMemo(
+    () => workflowDescendantTaskIds(workflowProjection.tasks, selectedBoardTask?.id || ""),
+    [selectedBoardTask, workflowProjection.tasks]
+  );
+  const selectedBoardTaskResetTasks = useMemo(
+    () =>
+      selectedBoardTaskResetTaskIds
+        .map((taskId) => workflowProjection.tasks.find((task) => task.id === taskId) || null)
+        .filter(Boolean) as any[],
+    [selectedBoardTaskResetTaskIds, workflowProjection.tasks]
+  );
+  const selectedBoardTaskResetNodeIds = useMemo(() => {
+    const preview = (taskResetPreviewQuery.data as any)?.preview;
+    const previewNodes = Array.isArray(preview?.reset_nodes)
+      ? preview.reset_nodes.map((value: any) => String(value || "").trim()).filter(Boolean)
+      : [];
+    if (previewNodes.length) return previewNodes;
+    return selectedBoardTaskResetTaskIds
+      .map((taskId) => taskId.replace(/^node-/, "").trim())
+      .filter(Boolean);
+  }, [selectedBoardTaskResetTaskIds, taskResetPreviewQuery.data]);
+  const selectedBoardTaskResetOutputPaths = useMemo(() => {
+    const preview = (taskResetPreviewQuery.data as any)?.preview;
+    const previewOutputs = Array.isArray(preview?.cleared_outputs)
+      ? preview.cleared_outputs.map((value: any) => String(value || "").trim()).filter(Boolean)
+      : [];
+    if (previewOutputs.length) return uniqueStrings(previewOutputs);
+    return uniqueStrings(
+      selectedBoardTaskResetTasks.map((task) => String((task as any)?.output_path || "").trim())
+    );
+  }, [selectedBoardTaskResetTasks, taskResetPreviewQuery.data]);
+  const focusArtifactEntry = (path: string) => {
+    const targetPath = String(path || "").trim();
+    const match = runArtifactEntries.find((entry) => entry.paths.includes(targetPath));
+    setSelectedRunArtifactKey(match?.key || "");
+    if (artifactsSectionRef.current) {
+      artifactsSectionRef.current.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    }
+  };
+  const canTaskRetry =
+    isWorkflowRun &&
+    !!selectedRunId &&
+    selectedBoardTaskIsWorkflowNode &&
+    !!selectedBoardTaskNodeId &&
+    ["blocked", "failed"].includes(selectedBoardTaskStateNormalized);
+  const canTaskContinue =
+    isWorkflowRun &&
+    !!selectedRunId &&
+    selectedBoardTaskIsWorkflowNode &&
+    !!selectedBoardTaskNodeId &&
+    selectedBoardTaskStateNormalized === "blocked";
+  const canTaskRequeue =
+    isWorkflowRun &&
+    !!selectedRunId &&
+    selectedBoardTaskIsWorkflowNode &&
+    !!selectedBoardTaskNodeId &&
+    !["in_progress", "done", "blocked", "failed"].includes(selectedBoardTaskStateNormalized);
+  const canBacklogTaskClaim =
+    isWorkflowRun &&
+    !!selectedRunId &&
+    selectedBoardTaskIsProjectedBacklogItem &&
+    !selectedBoardTaskIsWorkflowNode &&
+    ["pending", "runnable"].includes(selectedBoardTaskStateNormalized);
+  const canBacklogTaskRequeue =
+    isWorkflowRun &&
+    !!selectedRunId &&
+    selectedBoardTaskIsProjectedBacklogItem &&
+    !selectedBoardTaskIsWorkflowNode &&
+    (["blocked", "failed"].includes(selectedBoardTaskStateNormalized) || selectedBoardTaskIsStale);
+  const selectedBoardTaskImpactSummary = useMemo(() => {
+    const preview = (taskResetPreviewQuery.data as any)?.preview;
+    const rootTitle = String(selectedBoardTask?.title || selectedBoardTaskNodeId || "task").trim();
+    const subtreeCount = selectedBoardTaskResetNodeIds.length;
+    const descendantCount = Math.max(0, subtreeCount - (selectedBoardTaskNodeId ? 1 : 0));
+    const outputCount = selectedBoardTaskResetOutputPaths.length;
+    return {
+      rootTitle,
+      subtreeCount,
+      descendantCount,
+      outputCount,
+      previewBacked: Boolean((taskResetPreviewQuery.data as any)?.preview),
+      preservesUpstreamOutputs:
+        typeof preview?.preserves_upstream_outputs === "boolean"
+          ? preview.preserves_upstream_outputs
+          : true,
+    };
+  }, [
+    selectedBoardTask,
+    selectedBoardTaskNodeId,
+    selectedBoardTaskResetNodeIds.length,
+    selectedBoardTaskResetOutputPaths.length,
+    taskResetPreviewQuery.data,
+  ]);
   const runHints = deriveRunDebugHints(selectedRun, runArtifacts);
   const runHistoryEvents = isWorkflowRun
     ? (() => {
@@ -4768,25 +5227,25 @@ function MyAutomations({
                       type="button"
                       className="tcp-btn h-8 w-full px-2 text-xs sm:w-auto"
                       onClick={() =>
-                        workflowRepairMutation.mutate({
+                        workflowTaskContinueMutation.mutate({
                           runId: selectedRunId,
                           nodeId: continueBlockedNodeId,
-                          reason: `continued from blocked node ${continueBlockedNodeId}`,
+                          reason: `continued blocked task ${continueBlockedNodeId} from run debugger`,
                         })
                       }
                       disabled={
                         !continueBlockedNodeId ||
-                        workflowRepairMutation.isPending ||
+                        workflowTaskContinueMutation.isPending ||
                         runActionMutation.isPending
                       }
                       title={
                         continueBlockedNodeId
-                          ? `Reset and continue from ${continueBlockedNodeId}`
+                          ? `Continue blocked task ${continueBlockedNodeId} with minimal reset`
                           : "Select a blocked node to continue"
                       }
                     >
                       <i data-lucide="skip-forward"></i>
-                      {workflowRepairMutation.isPending ? "Continuing..." : "Continue"}
+                      {workflowTaskContinueMutation.isPending ? "Continuing..." : "Continue"}
                     </button>
                   ) : null}
                   {canRecoverWorkflowRun ? (
@@ -4987,6 +5446,22 @@ function MyAutomations({
                                   agent: {selectedBoardTask.assigned_role}
                                 </span>
                               ) : null}
+                              {String((selectedBoardTask as any).task_kind || "").trim() ? (
+                                <span className="tcp-badge-info">
+                                  task: {String((selectedBoardTask as any).task_kind).trim()}
+                                </span>
+                              ) : null}
+                              {String((selectedBoardTask as any).backlog_task_id || "").trim() ? (
+                                <span className="tcp-badge-info">
+                                  backlog:{" "}
+                                  {String((selectedBoardTask as any).backlog_task_id).trim()}
+                                </span>
+                              ) : null}
+                              {String((selectedBoardTask as any).task_owner || "").trim() ? (
+                                <span className="tcp-badge-info">
+                                  owner: {String((selectedBoardTask as any).task_owner).trim()}
+                                </span>
+                              ) : null}
                               {selectedBoardTask.session_id ? (
                                 <span className="tcp-badge-info">
                                   {sessionLabel(selectedBoardTask.session_id)}
@@ -5019,20 +5494,25 @@ function MyAutomations({
                                     approved: {String(selectedBoardTaskOutput.approved)}
                                   </span>
                                 ) : null}
-                                {nodeOutputToolTelemetry(selectedBoardTaskOutput)
-                                  ?.workspace_inspection_used ? (
+                                {selectedBoardTaskTelemetry?.workspace_inspection_used ? (
                                   <span className="tcp-badge-info">workspace inspected</span>
                                 ) : null}
-                                {nodeOutputToolTelemetry(selectedBoardTaskOutput)
-                                  ?.web_research_used ? (
+                                {selectedBoardTaskTelemetry?.web_research_used ? (
                                   <span className="tcp-badge-info">web research used</span>
                                 ) : null}
                                 {String(
-                                  nodeOutputArtifactValidation(selectedBoardTaskOutput)
-                                    ?.rejected_artifact_reason || ""
+                                  selectedBoardTaskArtifactValidation?.rejected_artifact_reason ||
+                                    ""
                                 ).trim() ? (
                                   <span className="tcp-badge-warn">artifact rejected</span>
                                 ) : null}
+                              </div>
+                            ) : null}
+                            {!selectedBoardTaskIsWorkflowNode ? (
+                              <div className="rounded-lg border border-slate-700/60 bg-slate-950/20 p-3 text-xs text-slate-300">
+                                {selectedBoardTaskIsProjectedBacklogItem
+                                  ? "This is a projected backlog task derived from workflow output. You can claim or requeue it here without resetting the source workflow node."
+                                  : "This is a projected backlog task derived from workflow output, not a direct automation node. Inspect it here, but use the source workflow stage for retry, continue, or requeue actions."}
                               </div>
                             ) : null}
                             {selectedBoardTask.runtime_detail ? (
@@ -5040,62 +5520,517 @@ function MyAutomations({
                                 {selectedBoardTask.runtime_detail}
                               </div>
                             ) : null}
-                            {String(
-                              selectedBoardTaskOutput?.blocked_reason ||
-                                selectedBoardTaskOutput?.blockedReason ||
-                                ""
-                            ).trim() ? (
-                              <div className="whitespace-pre-wrap break-words rounded-lg border border-amber-500/30 bg-amber-950/20 p-3 text-xs text-amber-100/90">
-                                {String(
-                                  selectedBoardTaskOutput?.blocked_reason ||
-                                    selectedBoardTaskOutput?.blockedReason ||
-                                    ""
-                                ).trim()}
+                            {String((selectedBoardTask as any).write_scope || "").trim() ||
+                            String((selectedBoardTask as any).repo_root || "").trim() ||
+                            String((selectedBoardTask as any).acceptance_criteria || "").trim() ||
+                            String((selectedBoardTask as any).task_dependencies || "").trim() ||
+                            String((selectedBoardTask as any).verification_state || "").trim() ||
+                            String((selectedBoardTask as any).verification_command || "").trim() ||
+                            String((selectedBoardTask as any).output_path || "").trim() ? (
+                              <div className="rounded-lg border border-slate-700/60 bg-slate-950/20 p-3 text-xs text-slate-300">
+                                <div className="font-medium text-slate-200">
+                                  Coding Task Context
+                                </div>
+                                <div className="mt-2 space-y-1">
+                                  <div>
+                                    backlog task:{" "}
+                                    {String(
+                                      (selectedBoardTask as any).backlog_task_id || ""
+                                    ).trim() || "n/a"}
+                                  </div>
+                                  <div>
+                                    repo root:{" "}
+                                    {String((selectedBoardTask as any).repo_root || "").trim() ||
+                                      "n/a"}
+                                  </div>
+                                  <div>
+                                    output path:{" "}
+                                    {String((selectedBoardTask as any).output_path || "").trim() ||
+                                      "n/a"}
+                                  </div>
+                                  <div>
+                                    write scope:{" "}
+                                    {String((selectedBoardTask as any).write_scope || "").trim() ||
+                                      "n/a"}
+                                  </div>
+                                  <div>
+                                    acceptance criteria:{" "}
+                                    {String(
+                                      (selectedBoardTask as any).acceptance_criteria || ""
+                                    ).trim() || "n/a"}
+                                  </div>
+                                  <div>
+                                    task dependencies:{" "}
+                                    {String(
+                                      (selectedBoardTask as any).task_dependencies || ""
+                                    ).trim() || "n/a"}
+                                  </div>
+                                  <div>
+                                    verification state:{" "}
+                                    {String(
+                                      (selectedBoardTask as any).verification_state || ""
+                                    ).trim() || "n/a"}
+                                  </div>
+                                  <div>
+                                    owner:{" "}
+                                    {String((selectedBoardTask as any).task_owner || "").trim() ||
+                                      "n/a"}
+                                  </div>
+                                  <div>
+                                    lease owner:{" "}
+                                    {String((selectedBoardTask as any).lease_owner || "").trim() ||
+                                      "n/a"}
+                                  </div>
+                                  <div>
+                                    lease expires:{" "}
+                                    {selectedBoardTaskLeaseExpiresAtMs
+                                      ? formatRunDateTime(selectedBoardTaskLeaseExpiresAtMs)
+                                      : "n/a"}
+                                  </div>
+                                  <div>stale lease: {selectedBoardTaskIsStale ? "yes" : "no"}</div>
+                                  <div>
+                                    verification:{" "}
+                                    {String(
+                                      (selectedBoardTask as any).verification_command || ""
+                                    ).trim() || "n/a"}
+                                  </div>
+                                </div>
                               </div>
                             ) : null}
-                            {String(selectedBoardTask?.state || "").toLowerCase() === "blocked" &&
-                            selectedRunId &&
-                            continueBlockedNodeId ===
-                              String(selectedBoardTask.id || "")
-                                .replace(/^node-/, "")
-                                .trim() ? (
-                              <div className="flex flex-wrap gap-2">
-                                <button
-                                  type="button"
-                                  className="tcp-btn h-8 px-3 text-xs"
-                                  onClick={() =>
-                                    workflowRepairMutation.mutate({
-                                      runId: selectedRunId,
-                                      nodeId: continueBlockedNodeId,
-                                      reason: `continued from blocked node ${continueBlockedNodeId}`,
-                                    })
-                                  }
-                                  disabled={workflowRepairMutation.isPending}
-                                >
-                                  <i data-lucide="skip-forward"></i>
-                                  {workflowRepairMutation.isPending
-                                    ? "Continuing..."
-                                    : "Continue From Here"}
-                                </button>
-                                <button
-                                  type="button"
-                                  className="tcp-btn h-8 px-3 text-xs"
-                                  onClick={() => {
-                                    const automationId = String(
-                                      selectedRun?.automation_id || ""
-                                    ).trim();
-                                    if (!automationId) return;
-                                    runNowV2Mutation.mutate(automationId);
-                                  }}
-                                  disabled={
-                                    workflowRepairMutation.isPending ||
-                                    runNowV2Mutation.isPending ||
-                                    !String(selectedRun?.automation_id || "").trim()
-                                  }
-                                >
-                                  <i data-lucide="rotate-ccw"></i>
-                                  {runNowV2Mutation.isPending ? "Retrying..." : "Retry Workflow"}
-                                </button>
+                            {selectedBoardTaskOutput ||
+                            selectedBoardTaskRelatedPaths.length ||
+                            selectedBoardTaskFailureDetail ? (
+                              <div className="rounded-lg border border-slate-700/60 bg-slate-950/20 p-3 text-xs text-slate-300">
+                                <div className="font-medium text-slate-200">
+                                  Coding Verification & Failures
+                                </div>
+                                <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                                  <div className="rounded-md border border-slate-800/80 bg-slate-950/30 p-2">
+                                    <div className="tcp-subtle">verification outcome</div>
+                                    <div className="mt-1 font-medium text-slate-100">
+                                      {selectedBoardTaskVerificationOutcome}
+                                    </div>
+                                  </div>
+                                  <div className="rounded-md border border-slate-800/80 bg-slate-950/30 p-2">
+                                    <div className="tcp-subtle">verification passed</div>
+                                    <div className="mt-1 font-medium text-slate-100">
+                                      {typeof selectedBoardTaskVerificationPassed === "boolean"
+                                        ? selectedBoardTaskVerificationPassed
+                                          ? "yes"
+                                          : "no"
+                                        : "n/a"}
+                                    </div>
+                                  </div>
+                                </div>
+                                {selectedBoardTaskFailureDetail ? (
+                                  <div className="mt-3 rounded-md border border-amber-500/30 bg-amber-950/20 p-2 text-amber-100/90">
+                                    <div className="tcp-subtle mb-1 text-amber-100/70">
+                                      failure detail
+                                    </div>
+                                    <div className="whitespace-pre-wrap break-words">
+                                      {selectedBoardTaskFailureDetail}
+                                    </div>
+                                  </div>
+                                ) : null}
+                                {selectedBoardTaskRelatedPaths.length ? (
+                                  <div className="mt-3">
+                                    <div className="tcp-subtle mb-1">related artifacts</div>
+                                    <div className="flex flex-wrap gap-2">
+                                      {selectedBoardTaskRelatedPaths.map((path) => (
+                                        <button
+                                          key={path}
+                                          type="button"
+                                          className="rounded-full border border-slate-700/70 bg-slate-950/30 px-2 py-1 font-mono text-[11px] text-slate-200 transition hover:border-sky-500/40 hover:text-sky-100"
+                                          onClick={() => focusArtifactEntry(path)}
+                                          title={path}
+                                        >
+                                          Open {compactIdentifier(path, 44)}
+                                        </button>
+                                      ))}
+                                    </div>
+                                    {selectedBoardTaskRelatedArtifacts.length ? (
+                                      <div className="mt-2 tcp-subtle">
+                                        matched run artifacts:{" "}
+                                        {selectedBoardTaskRelatedArtifacts
+                                          .map((entry) => entry.name)
+                                          .join(", ")}
+                                      </div>
+                                    ) : (
+                                      <div className="mt-2 tcp-subtle">
+                                        No matching run artifact found yet. The button will still
+                                        jump to the artifacts section.
+                                      </div>
+                                    )}
+                                  </div>
+                                ) : null}
+                                {(canTaskContinue ||
+                                  canTaskRetry ||
+                                  canTaskRequeue ||
+                                  canBacklogTaskClaim ||
+                                  canBacklogTaskRequeue ||
+                                  canRecoverWorkflowRun) &&
+                                selectedRunId ? (
+                                  <div className="mt-3 space-y-3">
+                                    {selectedBoardTaskIsWorkflowNode ? (
+                                      <div className="rounded-md border border-slate-800/80 bg-slate-950/30 p-2 text-[11px] text-slate-300">
+                                        <div className="font-medium text-slate-100">
+                                          Action impact
+                                        </div>
+                                        <div className="mt-1 tcp-subtle">
+                                          {taskResetPreviewQuery.isLoading
+                                            ? "Loading engine preview..."
+                                            : selectedBoardTaskImpactSummary.previewBacked
+                                              ? "Engine preview"
+                                              : "UI-estimated preview"}
+                                        </div>
+                                        <div className="mt-1">
+                                          Selected task: {selectedBoardTaskImpactSummary.rootTitle}
+                                        </div>
+                                        <div>
+                                          Reset scope:{" "}
+                                          {canTaskContinue
+                                            ? "minimal reset of the blocked task"
+                                            : `${selectedBoardTaskImpactSummary.subtreeCount} task${
+                                                selectedBoardTaskImpactSummary.subtreeCount === 1
+                                                  ? ""
+                                                  : "s"
+                                              }${
+                                                selectedBoardTaskImpactSummary.descendantCount > 0
+                                                  ? ` (${selectedBoardTaskImpactSummary.descendantCount} descendant${
+                                                      selectedBoardTaskImpactSummary.descendantCount ===
+                                                      1
+                                                        ? ""
+                                                        : "s"
+                                                    })`
+                                                  : ""
+                                              }`}
+                                        </div>
+                                        <div>
+                                          Preserves:{" "}
+                                          {selectedBoardTaskImpactSummary.preservesUpstreamOutputs
+                                            ? "completed upstream outputs outside this subtree"
+                                            : "n/a"}
+                                        </div>
+                                        <div>
+                                          Clears: stale outputs for{" "}
+                                          {selectedBoardTaskImpactSummary.outputCount} declared
+                                          artifact
+                                          {selectedBoardTaskImpactSummary.outputCount === 1
+                                            ? ""
+                                            : "s"}
+                                        </div>
+                                        {selectedBoardTaskResetOutputPaths.length ? (
+                                          <div className="mt-2 flex flex-wrap gap-1">
+                                            {selectedBoardTaskResetOutputPaths.map((path) => (
+                                              <span
+                                                key={path}
+                                                className="rounded-full border border-slate-700/70 bg-slate-950/30 px-2 py-1 font-mono text-[11px] text-slate-300"
+                                              >
+                                                {path}
+                                              </span>
+                                            ))}
+                                          </div>
+                                        ) : null}
+                                      </div>
+                                    ) : selectedBoardTaskIsProjectedBacklogItem ? (
+                                      <div className="rounded-md border border-slate-800/80 bg-slate-950/30 p-2 text-[11px] text-slate-300">
+                                        <div className="font-medium text-slate-100">
+                                          Action impact
+                                        </div>
+                                        <div className="mt-1">
+                                          Claiming assigns this backlog task to an agent without
+                                          resetting any workflow nodes.
+                                        </div>
+                                        <div>
+                                          Requeueing clears stale lease state and returns the task
+                                          to the runnable queue.
+                                        </div>
+                                        <div>
+                                          Upstream workflow artifacts are preserved because this
+                                          acts on the projected backlog task only.
+                                        </div>
+                                      </div>
+                                    ) : null}
+                                    <div className="flex flex-wrap gap-2">
+                                      {canBacklogTaskClaim ? (
+                                        <div className="space-y-1">
+                                          <button
+                                            type="button"
+                                            className="tcp-btn h-8 px-3 text-xs"
+                                            onClick={() =>
+                                              backlogTaskClaimMutation.mutate({
+                                                runId: selectedRunId,
+                                                taskId: String(selectedBoardTask.id || ""),
+                                                agentId:
+                                                  String(
+                                                    (selectedBoardTask as any).task_owner || ""
+                                                  ).trim() || undefined,
+                                                reason: `claimed backlog task ${String(selectedBoardTask.id || "")} from debugger`,
+                                              })
+                                            }
+                                            disabled={
+                                              backlogTaskClaimMutation.isPending ||
+                                              backlogTaskRequeueMutation.isPending
+                                            }
+                                          >
+                                            {backlogTaskClaimMutation.isPending
+                                              ? "Claiming..."
+                                              : "Claim Task"}
+                                          </button>
+                                          <div className="tcp-subtle text-[11px]">
+                                            Assign this projected coding task and start its lease.
+                                          </div>
+                                        </div>
+                                      ) : null}
+                                      {canBacklogTaskRequeue ? (
+                                        <div className="space-y-1">
+                                          <button
+                                            type="button"
+                                            className="tcp-btn h-8 px-3 text-xs"
+                                            onClick={() =>
+                                              backlogTaskRequeueMutation.mutate({
+                                                runId: selectedRunId,
+                                                taskId: String(selectedBoardTask.id || ""),
+                                                reason: `requeued backlog task ${String(selectedBoardTask.id || "")} from debugger`,
+                                              })
+                                            }
+                                            disabled={
+                                              backlogTaskClaimMutation.isPending ||
+                                              backlogTaskRequeueMutation.isPending
+                                            }
+                                          >
+                                            {backlogTaskRequeueMutation.isPending
+                                              ? "Requeueing..."
+                                              : "Requeue Backlog Task"}
+                                          </button>
+                                          <div className="tcp-subtle text-[11px]">
+                                            Use when the task is blocked, failed, or its lease went
+                                            stale.
+                                          </div>
+                                        </div>
+                                      ) : null}
+                                      {canTaskContinue ? (
+                                        <div className="space-y-1">
+                                          <button
+                                            type="button"
+                                            className="tcp-btn h-8 px-3 text-xs"
+                                            onClick={() =>
+                                              workflowTaskContinueMutation.mutate({
+                                                runId: selectedRunId,
+                                                nodeId: selectedBoardTaskNodeId,
+                                                reason: `continued blocked task ${selectedBoardTaskNodeId} from debugger`,
+                                              })
+                                            }
+                                            disabled={
+                                              workflowTaskContinueMutation.isPending ||
+                                              workflowTaskRetryMutation.isPending ||
+                                              workflowTaskRequeueMutation.isPending ||
+                                              backlogTaskClaimMutation.isPending ||
+                                              backlogTaskRequeueMutation.isPending
+                                            }
+                                          >
+                                            {workflowTaskContinueMutation.isPending
+                                              ? "Continuing..."
+                                              : "Continue Task"}
+                                          </button>
+                                          <div className="tcp-subtle text-[11px]">
+                                            Minimal reset: reruns the blocked task itself and
+                                            preserves descendants unless they need to rerun later.
+                                          </div>
+                                        </div>
+                                      ) : null}
+                                      {canTaskRetry ? (
+                                        <div className="space-y-1">
+                                          <button
+                                            type="button"
+                                            className="tcp-btn h-8 px-3 text-xs"
+                                            onClick={() =>
+                                              workflowTaskRetryMutation.mutate({
+                                                runId: selectedRunId,
+                                                nodeId: selectedBoardTaskNodeId,
+                                                reason: `retried task ${selectedBoardTaskNodeId} from debugger`,
+                                              })
+                                            }
+                                            disabled={
+                                              workflowTaskContinueMutation.isPending ||
+                                              workflowTaskRetryMutation.isPending ||
+                                              workflowTaskRequeueMutation.isPending ||
+                                              backlogTaskClaimMutation.isPending ||
+                                              backlogTaskRequeueMutation.isPending
+                                            }
+                                          >
+                                            {workflowTaskRetryMutation.isPending
+                                              ? "Retrying task..."
+                                              : "Retry Task"}
+                                          </button>
+                                          <div className="tcp-subtle text-[11px]">
+                                            Best for blocked or failed work that should rerun from
+                                            this task downward.
+                                          </div>
+                                        </div>
+                                      ) : null}
+                                      {canTaskRequeue ? (
+                                        <div className="space-y-1">
+                                          <button
+                                            type="button"
+                                            className="tcp-btn h-8 px-3 text-xs"
+                                            onClick={() =>
+                                              workflowTaskRequeueMutation.mutate({
+                                                runId: selectedRunId,
+                                                nodeId: selectedBoardTaskNodeId,
+                                                reason: `requeued task ${selectedBoardTaskNodeId} from debugger`,
+                                              })
+                                            }
+                                            disabled={
+                                              workflowTaskContinueMutation.isPending ||
+                                              workflowTaskRetryMutation.isPending ||
+                                              workflowTaskRequeueMutation.isPending ||
+                                              backlogTaskClaimMutation.isPending ||
+                                              backlogTaskRequeueMutation.isPending
+                                            }
+                                          >
+                                            {workflowTaskRequeueMutation.isPending
+                                              ? "Requeueing..."
+                                              : "Requeue Task"}
+                                          </button>
+                                          <div className="tcp-subtle text-[11px]">
+                                            Use when this task should go back onto the queue with
+                                            its descendants reset.
+                                          </div>
+                                        </div>
+                                      ) : null}
+                                      {selectedBoardTaskStateNormalized === "blocked" &&
+                                      continueBlockedNodeId ? (
+                                        <div className="space-y-1">
+                                          <button
+                                            type="button"
+                                            className="tcp-btn h-8 px-3 text-xs"
+                                            onClick={() =>
+                                              workflowRepairMutation.mutate({
+                                                runId: selectedRunId,
+                                                nodeId: continueBlockedNodeId,
+                                                reason: `continued from blocked node ${continueBlockedNodeId}`,
+                                              })
+                                            }
+                                            disabled={
+                                              workflowTaskContinueMutation.isPending ||
+                                              workflowRepairMutation.isPending ||
+                                              !continueBlockedNodeId
+                                            }
+                                          >
+                                            {workflowRepairMutation.isPending
+                                              ? "Repairing..."
+                                              : "Repair Blocked Step"}
+                                          </button>
+                                          <div className="tcp-subtle text-[11px]">
+                                            Heavier reset/repair flow for blocked nodes when minimal
+                                            continue is not enough.
+                                          </div>
+                                        </div>
+                                      ) : null}
+                                      {canRecoverWorkflowRun ? (
+                                        <div className="space-y-1">
+                                          <button
+                                            type="button"
+                                            className="tcp-btn h-8 px-3 text-xs"
+                                            onClick={() =>
+                                              workflowRecoverMutation.mutate({
+                                                runId: selectedRunId,
+                                                reason: `retried from task ${String(selectedBoardTask.id || "").replace(/^node-/, "")}`,
+                                              })
+                                            }
+                                            disabled={workflowRecoverMutation.isPending}
+                                          >
+                                            {workflowRecoverMutation.isPending
+                                              ? "Retrying..."
+                                              : "Retry Workflow"}
+                                          </button>
+                                          <div className="tcp-subtle text-[11px]">
+                                            Recover the whole run, not just this task subtree.
+                                          </div>
+                                        </div>
+                                      ) : null}
+                                    </div>
+                                  </div>
+                                ) : null}
+                              </div>
+                            ) : null}
+                            {selectedBoardTaskArtifactValidation ||
+                            selectedBoardTaskTelemetry ||
+                            selectedBoardTaskTouchedFiles.length ||
+                            selectedBoardTaskUndeclaredFiles.length ? (
+                              <div className="rounded-lg border border-slate-700/60 bg-slate-950/20 p-3 text-xs text-slate-300">
+                                <div className="font-medium text-slate-200">Coding Signals</div>
+                                <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                                  <div className="rounded-md border border-slate-800/80 bg-slate-950/30 p-2">
+                                    <div className="tcp-subtle">execution mode</div>
+                                    <div className="mt-1 font-medium text-slate-100">
+                                      {String(
+                                        selectedBoardTaskArtifactValidation?.execution_policy
+                                          ?.mode || ""
+                                      ).trim() || "n/a"}
+                                    </div>
+                                  </div>
+                                  <div className="rounded-md border border-slate-800/80 bg-slate-950/30 p-2">
+                                    <div className="tcp-subtle">git diff</div>
+                                    <div className="mt-1 font-medium text-slate-100">
+                                      {String(
+                                        selectedBoardTaskArtifactValidation?.git_diff_summary
+                                          ?.stat || ""
+                                      ).trim() || "n/a"}
+                                    </div>
+                                  </div>
+                                  <div className="rounded-md border border-slate-800/80 bg-slate-950/30 p-2">
+                                    <div className="tcp-subtle">workspace inspection</div>
+                                    <div className="mt-1 font-medium text-slate-100">
+                                      {selectedBoardTaskTelemetry?.workspace_inspection_used
+                                        ? "yes"
+                                        : "no"}
+                                    </div>
+                                  </div>
+                                  <div className="rounded-md border border-slate-800/80 bg-slate-950/30 p-2">
+                                    <div className="tcp-subtle">web research</div>
+                                    <div className="mt-1 font-medium text-slate-100">
+                                      {selectedBoardTaskTelemetry?.web_research_used ? "yes" : "no"}
+                                    </div>
+                                  </div>
+                                </div>
+                                <div className="mt-3 space-y-2">
+                                  <div>
+                                    <div className="tcp-subtle mb-1">touched files</div>
+                                    {selectedBoardTaskTouchedFiles.length ? (
+                                      <div className="flex flex-wrap gap-1">
+                                        {selectedBoardTaskTouchedFiles.map((file) => (
+                                          <span
+                                            key={file}
+                                            className="rounded-full border border-slate-700/70 bg-slate-950/30 px-2 py-1 font-mono text-[11px] text-slate-300"
+                                          >
+                                            {file}
+                                          </span>
+                                        ))}
+                                      </div>
+                                    ) : (
+                                      <div className="tcp-subtle">none</div>
+                                    )}
+                                  </div>
+                                  <div>
+                                    <div className="tcp-subtle mb-1">undeclared files</div>
+                                    {selectedBoardTaskUndeclaredFiles.length ? (
+                                      <div className="flex flex-wrap gap-1">
+                                        {selectedBoardTaskUndeclaredFiles.map((file) => (
+                                          <span
+                                            key={file}
+                                            className="rounded-full border border-amber-500/30 bg-amber-950/20 px-2 py-1 font-mono text-[11px] text-amber-100"
+                                          >
+                                            {file}
+                                          </span>
+                                        ))}
+                                      </div>
+                                    ) : (
+                                      <div className="tcp-subtle">none</div>
+                                    )}
+                                  </div>
+                                </div>
                               </div>
                             ) : null}
                             {String(selectedBoardTask?.state || "").toLowerCase() === "blocked" ? (
@@ -5105,50 +6040,38 @@ function MyAutomations({
                                 requeue.
                               </div>
                             ) : null}
-                            {nodeOutputToolTelemetry(selectedBoardTaskOutput) ? (
+                            {selectedBoardTaskTelemetry ? (
                               <div className="rounded-lg border border-slate-700/60 bg-slate-950/30 p-3 text-xs text-slate-300">
                                 <div className="mb-2 font-medium text-slate-100">Node Tooling</div>
                                 <div className="grid gap-1">
                                   <div>
                                     offered:{" "}
-                                    {Array.isArray(
-                                      nodeOutputToolTelemetry(selectedBoardTaskOutput)
-                                        ?.requested_tools
-                                    )
-                                      ? nodeOutputToolTelemetry(
-                                          selectedBoardTaskOutput
-                                        ).requested_tools.join(", ") || "n/a"
+                                    {Array.isArray(selectedBoardTaskTelemetry?.requested_tools)
+                                      ? selectedBoardTaskTelemetry.requested_tools.join(", ") ||
+                                        "n/a"
                                       : "n/a"}
                                   </div>
                                   <div>
                                     executed:{" "}
-                                    {Array.isArray(
-                                      nodeOutputToolTelemetry(selectedBoardTaskOutput)
-                                        ?.executed_tools
-                                    )
-                                      ? nodeOutputToolTelemetry(
-                                          selectedBoardTaskOutput
-                                        ).executed_tools.join(", ") || "none"
+                                    {Array.isArray(selectedBoardTaskTelemetry?.executed_tools)
+                                      ? selectedBoardTaskTelemetry.executed_tools.join(", ") ||
+                                        "none"
                                       : "none"}
                                   </div>
                                   <div>
                                     workspace inspection:{" "}
-                                    {nodeOutputToolTelemetry(selectedBoardTaskOutput)
-                                      ?.workspace_inspection_used
+                                    {selectedBoardTaskTelemetry?.workspace_inspection_used
                                       ? "yes"
                                       : "no"}
                                   </div>
                                   <div>
                                     web research:{" "}
-                                    {nodeOutputToolTelemetry(selectedBoardTaskOutput)
-                                      ?.web_research_used
-                                      ? "yes"
-                                      : "no"}
+                                    {selectedBoardTaskTelemetry?.web_research_used ? "yes" : "no"}
                                   </div>
                                 </div>
                               </div>
                             ) : null}
-                            {nodeOutputArtifactValidation(selectedBoardTaskOutput) ? (
+                            {selectedBoardTaskArtifactValidation ? (
                               <div className="rounded-lg border border-slate-700/60 bg-slate-950/30 p-3 text-xs text-slate-300">
                                 <div className="mb-2 font-medium text-slate-100">
                                   Artifact Validation
@@ -5157,44 +6080,47 @@ function MyAutomations({
                                   <div>
                                     accepted path:{" "}
                                     {String(
-                                      nodeOutputArtifactValidation(selectedBoardTaskOutput)
-                                        ?.accepted_artifact_path || ""
+                                      selectedBoardTaskArtifactValidation?.accepted_artifact_path ||
+                                        ""
                                     ).trim() || "n/a"}
                                   </div>
                                   <div>
                                     rejected reason:{" "}
                                     {String(
-                                      nodeOutputArtifactValidation(selectedBoardTaskOutput)
-                                        ?.rejected_artifact_reason || ""
+                                      selectedBoardTaskArtifactValidation?.rejected_artifact_reason ||
+                                        ""
                                     ).trim() || "none"}
                                   </div>
                                   <div>
                                     auto-cleaned:{" "}
                                     {String(
-                                      Boolean(
-                                        nodeOutputArtifactValidation(selectedBoardTaskOutput)
-                                          ?.auto_cleaned
-                                      )
+                                      Boolean(selectedBoardTaskArtifactValidation?.auto_cleaned)
                                     )}
                                   </div>
                                   <div>
                                     undeclared files:{" "}
-                                    {Array.isArray(
-                                      nodeOutputArtifactValidation(selectedBoardTaskOutput)
-                                        ?.undeclared_files_created
-                                    ) &&
-                                    nodeOutputArtifactValidation(selectedBoardTaskOutput)
-                                      .undeclared_files_created.length
-                                      ? nodeOutputArtifactValidation(
-                                          selectedBoardTaskOutput
-                                        ).undeclared_files_created.join(", ")
+                                    {selectedBoardTaskUndeclaredFiles.length
+                                      ? selectedBoardTaskUndeclaredFiles.join(", ")
                                       : "none"}
                                   </div>
                                   <div>
                                     execution policy:{" "}
                                     {String(
-                                      nodeOutputArtifactValidation(selectedBoardTaskOutput)
-                                        ?.execution_policy?.mode || ""
+                                      selectedBoardTaskArtifactValidation?.execution_policy?.mode ||
+                                        ""
+                                    ).trim() || "n/a"}
+                                  </div>
+                                  <div>
+                                    touched files:{" "}
+                                    {selectedBoardTaskTouchedFiles.length
+                                      ? selectedBoardTaskTouchedFiles.join(", ")
+                                      : "none"}
+                                  </div>
+                                  <div>
+                                    git diff:{" "}
+                                    {String(
+                                      selectedBoardTaskArtifactValidation?.git_diff_summary?.stat ||
+                                        ""
                                     ).trim() || "n/a"}
                                   </div>
                                 </div>
@@ -5488,36 +6414,51 @@ function MyAutomations({
                           {String(selectedRun?.mission_snapshot?.objective || "n/a")}
                         </pre>
                       </div>
-                      <div className="tcp-list-item overflow-visible">
+                      <div ref={artifactsSectionRef} className="tcp-list-item overflow-visible">
                         <div className="font-medium">Artifacts ({runArtifacts.length})</div>
                         {runArtifacts.length ? (
                           <div className="mt-2 grid gap-2 overflow-auto pr-1 sm:max-h-40">
-                            {runArtifacts.map((artifact: any, index: number) => (
+                            {runArtifactEntries.map((entry) => (
                               <details
-                                key={`${String(artifact?.id || artifact?.artifact_id || index)}`}
-                                className="rounded-lg border border-slate-700/40 bg-slate-900/25 p-2"
+                                key={entry.key}
+                                open={selectedRunArtifactKey === entry.key ? true : undefined}
+                                className={
+                                  selectedRunArtifactKey === entry.key
+                                    ? "rounded-lg border border-sky-500/40 bg-sky-950/10 p-2"
+                                    : "rounded-lg border border-slate-700/40 bg-slate-900/25 p-2"
+                                }
                               >
-                                <summary className="cursor-pointer list-none">
+                                <summary
+                                  className="cursor-pointer list-none"
+                                  onClick={() =>
+                                    setSelectedRunArtifactKey((current) =>
+                                      current === entry.key ? "" : entry.key
+                                    )
+                                  }
+                                >
                                   <div className="flex items-center justify-between gap-2">
                                     <span className="text-xs font-medium text-slate-200">
-                                      {String(
-                                        artifact?.name ||
-                                          artifact?.label ||
-                                          artifact?.kind ||
-                                          artifact?.type ||
-                                          artifact?.id ||
-                                          `artifact-${index + 1}`
-                                      )}
+                                      {entry.name}
                                     </span>
                                     <span className="tcp-subtle text-[11px]">
-                                      {String(
-                                        artifact?.kind || artifact?.type || artifact?.path || ""
-                                      ).trim() || "artifact"}
+                                      {entry.kind || "artifact"}
                                     </span>
                                   </div>
                                 </summary>
+                                {entry.paths.length ? (
+                                  <div className="mt-2 flex flex-wrap gap-1">
+                                    {entry.paths.map((path) => (
+                                      <span
+                                        key={path}
+                                        className="rounded-full border border-slate-700/70 bg-slate-950/30 px-2 py-1 font-mono text-[11px] text-slate-300"
+                                      >
+                                        {path}
+                                      </span>
+                                    ))}
+                                  </div>
+                                ) : null}
                                 <pre className="tcp-code mt-2 max-h-32 overflow-auto text-[11px]">
-                                  {formatJson(artifact)}
+                                  {formatJson(entry.artifact)}
                                 </pre>
                               </details>
                             ))}

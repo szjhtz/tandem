@@ -6618,6 +6618,7 @@ pub(crate) fn collect_automation_descendants(
 
 fn render_automation_v2_prompt(
     automation: &AutomationV2Spec,
+    workspace_root: &str,
     run_id: &str,
     node: &AutomationFlowNode,
     agent: &AutomationAgentProfile,
@@ -6713,11 +6714,52 @@ fn render_automation_v2_prompt(
             "Local Assignment:\nTitle: {local_title}\nRole: {local_role}\nInstructions: {local_prompt}"
         ));
     }
-    if let Some(output_path) = automation_node_required_output_path(node) {
+    let execution_mode = automation_node_execution_mode(node, workspace_root);
+    sections.push(format!(
+        "Execution Policy:\n- Mode: `{}`.\n- Use only declared workflow artifact paths.\n- Keep status and blocker notes in the response JSON, not as placeholder file contents.",
+        execution_mode
+    ));
+    if automation_node_is_code_workflow(node) {
+        let task_kind =
+            automation_node_task_kind(node).unwrap_or_else(|| "code_change".to_string());
+        let project_backlog_tasks = automation_node_projects_backlog_tasks(node);
+        let task_id = automation_node_task_id(node).unwrap_or_else(|| "unassigned".to_string());
+        let repo_root = automation_node_repo_root(node).unwrap_or_else(|| ".".to_string());
+        let write_scope =
+            automation_node_write_scope(node).unwrap_or_else(|| "repo-scoped edits".to_string());
+        let acceptance_criteria = automation_node_acceptance_criteria(node)
+            .unwrap_or_else(|| "satisfy the declared coding task acceptance criteria".to_string());
+        let task_dependencies =
+            automation_node_task_dependencies(node).unwrap_or_else(|| "none declared".to_string());
+        let verification_state =
+            automation_node_verification_state(node).unwrap_or_else(|| "pending".to_string());
+        let task_owner =
+            automation_node_task_owner(node).unwrap_or_else(|| "unclaimed".to_string());
+        let verification_command =
+            automation_node_verification_command(node).unwrap_or_else(|| {
+                "run the most relevant repo-local build, test, or lint commands".to_string()
+            });
         sections.push(format!(
-            "Required Workspace Output:\n- Create or update `{}` relative to the workspace root.\n- Use `glob` to discover candidate paths and `read` only for concrete file paths.\n- Use the `write` tool to create the full file contents.\n- Only write declared workflow artifact files; do not create auxiliary touch files, status files, marker files, or placeholder preservation notes.\n- Overwrite the declared output with the actual artifact contents for this run instead of preserving a prior placeholder.\n- Do not report success unless this file exists in the workspace when the stage ends.",
-            output_path
+            "Coding Task Context:\n- Task id: `{}`.\n- Task kind: `{}`.\n- Repo root: `{}`.\n- Declared write scope: {}.\n- Acceptance criteria: {}.\n- Backlog dependencies: {}.\n- Verification state: {}.\n- Preferred owner: {}.\n- Verification expectation: {}.\n- Projects backlog tasks: {}.\n- Prefer repository edits plus a concise handoff artifact, not placeholder file rewrites.\n- Use `bash` for verification commands when tool access allows it.",
+            task_id, task_kind, repo_root, write_scope, acceptance_criteria, task_dependencies, verification_state, task_owner, verification_command, if project_backlog_tasks { "yes" } else { "no" }
         ));
+    }
+    if let Some(output_path) = automation_node_required_output_path(node) {
+        let output_rules = match execution_mode {
+            "git_patch" => format!(
+                "Required Workspace Output:\n- Create or update `{}` relative to the workspace root.\n- Use `glob` to discover candidate paths and `read` only for concrete file paths.\n- Prefer `apply_patch` for multi-line source edits and `edit` for localized replacements.\n- Use `write` only for brand-new files or when patch/edit cannot express the change.\n- Do not replace an existing source file with a status note, preservation note, or placeholder summary.\n- Only write declared workflow artifact files.\n- Do not report success unless this file exists in the workspace when the stage ends.",
+                output_path
+            ),
+            "filesystem_patch" => format!(
+                "Required Workspace Output:\n- Create or update `{}` relative to the workspace root.\n- Use `glob` to discover candidate paths and `read` only for concrete file paths.\n- Prefer `edit` for existing-file changes.\n- Use `write` for brand-new files or as a last resort when an edit cannot express the change.\n- Do not replace an existing file with a status note, preservation note, or placeholder summary.\n- Only write declared workflow artifact files.\n- Do not report success unless this file exists in the workspace when the stage ends.",
+                output_path
+            ),
+            _ => format!(
+                "Required Workspace Output:\n- Create or update `{}` relative to the workspace root.\n- Use `glob` to discover candidate paths and `read` only for concrete file paths.\n- Use the `write` tool to create the full file contents.\n- Only write declared workflow artifact files; do not create auxiliary touch files, status files, marker files, or placeholder preservation notes.\n- Overwrite the declared output with the actual artifact contents for this run instead of preserving a prior placeholder.\n- Do not report success unless this file exists in the workspace when the stage ends.",
+                output_path
+            ),
+        };
+        sections.push(output_rules);
     }
     if automation_node_web_research_expected(node) {
         sections.push(
@@ -6838,14 +6880,210 @@ fn merge_automation_agent_allowlist(
     allowlist
 }
 
-fn normalize_automation_requested_tools(raw: Vec<String>) -> Vec<String> {
+fn automation_node_output_extension(node: &AutomationFlowNode) -> Option<String> {
+    automation_node_required_output_path(node)
+        .as_deref()
+        .and_then(|value| std::path::Path::new(value).extension())
+        .and_then(|value| value.to_str())
+        .map(|value| value.to_ascii_lowercase())
+}
+
+fn automation_node_task_kind(node: &AutomationFlowNode) -> Option<String> {
+    automation_node_builder_metadata(node, "task_kind")
+        .map(|value| value.trim().to_ascii_lowercase())
+        .filter(|value| !value.is_empty())
+}
+
+fn automation_node_projects_backlog_tasks(node: &AutomationFlowNode) -> bool {
+    node.metadata
+        .as_ref()
+        .and_then(|metadata| metadata.get("builder"))
+        .and_then(Value::as_object)
+        .and_then(|builder| builder.get("project_backlog_tasks"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
+
+fn automation_node_task_id(node: &AutomationFlowNode) -> Option<String> {
+    automation_node_builder_metadata(node, "task_id")
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn automation_node_repo_root(node: &AutomationFlowNode) -> Option<String> {
+    automation_node_builder_metadata(node, "repo_root")
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn automation_node_write_scope(node: &AutomationFlowNode) -> Option<String> {
+    automation_node_builder_metadata(node, "write_scope")
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn automation_node_acceptance_criteria(node: &AutomationFlowNode) -> Option<String> {
+    automation_node_builder_metadata(node, "acceptance_criteria")
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn automation_node_task_dependencies(node: &AutomationFlowNode) -> Option<String> {
+    automation_node_builder_metadata(node, "task_dependencies")
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn automation_node_verification_state(node: &AutomationFlowNode) -> Option<String> {
+    automation_node_builder_metadata(node, "verification_state")
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn automation_node_task_owner(node: &AutomationFlowNode) -> Option<String> {
+    automation_node_builder_metadata(node, "task_owner")
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn automation_node_verification_command(node: &AutomationFlowNode) -> Option<String> {
+    automation_node_builder_metadata(node, "verification_command")
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn automation_node_is_code_workflow(node: &AutomationFlowNode) -> bool {
+    if automation_node_task_kind(node)
+        .as_deref()
+        .is_some_and(|kind| matches!(kind, "code_change" | "repo_fix" | "implementation"))
+    {
+        return true;
+    }
+    let Some(extension) = automation_node_output_extension(node) else {
+        return false;
+    };
+    let code_extensions = [
+        "rs", "ts", "tsx", "js", "jsx", "py", "go", "java", "kt", "kts", "c", "cc", "cpp", "h",
+        "hpp", "cs", "rb", "php", "swift", "scala", "sh", "bash", "zsh",
+    ];
+    code_extensions.contains(&extension.as_str())
+}
+
+fn path_looks_like_source_file(path: &str) -> bool {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    let normalized = trimmed.replace('\\', "/");
+    let path = std::path::Path::new(&normalized);
+    let extension = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(|value| value.to_ascii_lowercase());
+    if extension.as_deref().is_some_and(|extension| {
+        [
+            "rs", "ts", "tsx", "js", "jsx", "py", "go", "java", "kt", "kts", "c", "cc", "cpp", "h",
+            "hpp", "cs", "rb", "php", "swift", "scala", "sh", "bash", "zsh", "toml", "yaml", "yml",
+            "json",
+        ]
+        .contains(&extension)
+    }) {
+        return true;
+    }
+    path.file_name()
+        .and_then(|value| value.to_str())
+        .map(|value| value.to_ascii_lowercase())
+        .is_some_and(|name| {
+            matches!(
+                name.as_str(),
+                "cargo.toml"
+                    | "cargo.lock"
+                    | "package.json"
+                    | "package-lock.json"
+                    | "pnpm-lock.yaml"
+                    | "tsconfig.json"
+                    | "deno.json"
+                    | "deno.jsonc"
+                    | "jest.config.js"
+                    | "jest.config.ts"
+                    | "vite.config.ts"
+                    | "vite.config.js"
+                    | "webpack.config.js"
+                    | "webpack.config.ts"
+                    | "next.config.js"
+                    | "next.config.mjs"
+                    | "pyproject.toml"
+                    | "requirements.txt"
+                    | "makefile"
+                    | "dockerfile"
+            )
+        })
+}
+
+fn workspace_has_git_repo(workspace_root: &str) -> bool {
+    std::process::Command::new("git")
+        .current_dir(workspace_root)
+        .args(["rev-parse", "--show-toplevel"])
+        .output()
+        .map(|output| output.status.success())
+        .unwrap_or(false)
+}
+
+fn automation_node_execution_mode(node: &AutomationFlowNode, workspace_root: &str) -> &'static str {
+    if !automation_node_is_code_workflow(node) {
+        return "artifact_write";
+    }
+    if workspace_has_git_repo(workspace_root) {
+        "git_patch"
+    } else {
+        "filesystem_patch"
+    }
+}
+
+fn normalize_automation_requested_tools(
+    node: &AutomationFlowNode,
+    workspace_root: &str,
+    raw: Vec<String>,
+) -> Vec<String> {
     let mut normalized = normalize_allowed_tools(raw);
+    if normalized.iter().any(|tool| tool == "*") {
+        return vec!["*".to_string()];
+    }
+    match automation_node_execution_mode(node, workspace_root) {
+        "git_patch" => {
+            normalized.extend([
+                "glob".to_string(),
+                "read".to_string(),
+                "edit".to_string(),
+                "apply_patch".to_string(),
+                "write".to_string(),
+                "bash".to_string(),
+            ]);
+        }
+        "filesystem_patch" => {
+            normalized.extend([
+                "glob".to_string(),
+                "read".to_string(),
+                "edit".to_string(),
+                "write".to_string(),
+                "bash".to_string(),
+            ]);
+        }
+        _ => {
+            if automation_node_required_output_path(node).is_some() {
+                normalized.push("write".to_string());
+            }
+        }
+    }
     let has_read = normalized.iter().any(|tool| tool == "read");
     let has_workspace_probe = normalized
         .iter()
         .any(|tool| matches!(tool.as_str(), "glob" | "ls" | "list"));
     if has_read && !has_workspace_probe {
         normalized.push("glob".to_string());
+    }
+    if automation_node_web_research_expected(node) {
+        normalized.push("websearch".to_string());
     }
     normalized.sort();
     normalized.dedup();
@@ -6912,33 +7150,24 @@ fn automation_node_web_research_expected(node: &AutomationFlowNode) -> bool {
 
 fn automation_node_execution_policy(node: &AutomationFlowNode, workspace_root: &str) -> Value {
     let output_path = automation_node_required_output_path(node);
-    let extension = output_path
-        .as_deref()
-        .and_then(|value| std::path::Path::new(value).extension())
-        .and_then(|value| value.to_str())
-        .map(|value| value.to_ascii_lowercase());
-    let code_extensions = [
-        "rs", "ts", "tsx", "js", "jsx", "py", "go", "java", "kt", "kts", "c", "cc", "cpp", "h",
-        "hpp", "cs", "rb", "php", "swift", "scala", "sh", "bash", "zsh",
-    ];
-    let code_workflow = extension
-        .as_deref()
-        .is_some_and(|value| code_extensions.contains(&value));
-    let git_backed = PathBuf::from(workspace_root).join(".git").exists();
-    let mode = if code_workflow {
-        if git_backed {
-            "git_backed"
-        } else {
-            "filesystem_strict"
-        }
-    } else {
-        "filesystem_standard"
-    };
+    let code_workflow = automation_node_is_code_workflow(node);
+    let git_backed = workspace_has_git_repo(workspace_root);
+    let mode = automation_node_execution_mode(node, workspace_root);
     json!({
         "mode": mode,
         "code_workflow": code_workflow,
         "git_backed": git_backed,
         "declared_output_path": output_path,
+        "project_backlog_tasks": automation_node_projects_backlog_tasks(node),
+        "task_id": automation_node_task_id(node),
+        "task_kind": automation_node_task_kind(node),
+        "repo_root": automation_node_repo_root(node),
+        "write_scope": automation_node_write_scope(node),
+        "acceptance_criteria": automation_node_acceptance_criteria(node),
+        "task_dependencies": automation_node_task_dependencies(node),
+        "verification_state": automation_node_verification_state(node),
+        "task_owner": automation_node_task_owner(node),
+        "verification_command": automation_node_verification_command(node),
     })
 }
 
@@ -7014,19 +7243,64 @@ fn remove_suspicious_automation_marker_files(workspace_root: &str) {
 fn automation_workspace_root_file_snapshot(
     workspace_root: &str,
 ) -> std::collections::BTreeSet<String> {
-    let Ok(entries) = std::fs::read_dir(workspace_root) else {
-        return std::collections::BTreeSet::new();
-    };
-    entries
-        .flatten()
-        .filter_map(|entry| entry.file_name().to_str().map(str::to_string))
-        .collect()
+    let workspace = PathBuf::from(workspace_root);
+    let mut snapshot = std::collections::BTreeSet::new();
+    let mut stack = vec![workspace.clone()];
+    while let Some(current) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&current) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            let display = path
+                .strip_prefix(&workspace)
+                .ok()
+                .and_then(|value| value.to_str().map(str::to_string))
+                .filter(|value| !value.is_empty())
+                .unwrap_or_else(|| path.to_string_lossy().to_string());
+            snapshot.insert(display);
+        }
+    }
+    snapshot
 }
 
 fn placeholder_like_artifact_text(text: &str) -> bool {
     let trimmed = text.trim();
     if trimmed.is_empty() {
         return true;
+    }
+    // TODO(coding-hardening): Replace this phrase-based placeholder detection with
+    // structural artifact validation. The long-term design should score artifact
+    // substance from session mutation history + contract-kind-specific structure
+    // (sections, length, citations, required headings) rather than hard-coded text
+    // markers that are brittle across providers, prompts, and languages.
+    if trimmed.len() <= 160 {
+        let compact = trimmed.to_ascii_lowercase();
+        let status_only_markers = [
+            "completed",
+            "written to",
+            "already written",
+            "no content change",
+            "no content changes",
+            "confirmed",
+            "preserving existing artifact",
+            "finalization",
+            "write completion",
+        ];
+        if status_only_markers
+            .iter()
+            .any(|marker| compact.contains(marker))
+            && !compact.contains("## ")
+            && !compact.contains("\n## ")
+            && !compact.contains("files reviewed")
+            && !compact.contains("proof points")
+        {
+            return true;
+        }
     }
     let lowered = trimmed
         .chars()
@@ -7037,6 +7311,10 @@ fn placeholder_like_artifact_text(text: &str) -> bool {
         "completed previously in this run",
         "preserving file creation requirement",
         "preserving current workspace output state",
+        "created/updated to satisfy workflow artifact requirement",
+        "see existing workspace research already completed in this run",
+        "already written in prior step",
+        "no content changes needed",
         "placeholder preservation note",
         "touch file",
         "status note",
@@ -7144,6 +7422,231 @@ fn best_session_write_candidate(
         .or_else(|| candidates.pop())
 }
 
+fn session_file_mutation_summary(session: &Session, workspace_root: &str) -> Value {
+    let mut touched_files = Vec::<String>::new();
+    let mut mutation_tool_by_file = serde_json::Map::new();
+    let workspace_root_path = PathBuf::from(workspace_root);
+    for message in &session.messages {
+        for part in &message.parts {
+            let MessagePart::ToolInvocation {
+                tool, args, error, ..
+            } = part
+            else {
+                continue;
+            };
+            if error.as_ref().is_some_and(|value| !value.trim().is_empty()) {
+                continue;
+            }
+            let tool_name = tool.trim().to_ascii_lowercase().replace('-', "_");
+            let candidate_paths = if tool_name == "apply_patch" {
+                args.get("patchText")
+                    .and_then(Value::as_str)
+                    .map(|patch| {
+                        patch
+                            .lines()
+                            .filter_map(|line| {
+                                let trimmed = line.trim();
+                                trimmed
+                                    .strip_prefix("*** Add File: ")
+                                    .or_else(|| trimmed.strip_prefix("*** Update File: "))
+                                    .or_else(|| trimmed.strip_prefix("*** Delete File: "))
+                                    .map(str::trim)
+                                    .filter(|value| !value.is_empty())
+                                    .map(str::to_string)
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default()
+            } else {
+                args.get("path")
+                    .and_then(Value::as_str)
+                    .map(|value| vec![value.trim().to_string()])
+                    .unwrap_or_default()
+            };
+            for candidate in candidate_paths {
+                let Some(resolved) = resolve_automation_output_path(workspace_root, &candidate)
+                    .ok()
+                    .or_else(|| {
+                        let path = PathBuf::from(candidate.trim());
+                        if path.is_absolute()
+                            && tandem_core::is_within_workspace_root(&path, &workspace_root_path)
+                        {
+                            Some(path)
+                        } else {
+                            None
+                        }
+                    })
+                else {
+                    continue;
+                };
+                let display = resolved
+                    .strip_prefix(&workspace_root_path)
+                    .ok()
+                    .and_then(|value| value.to_str().map(str::to_string))
+                    .filter(|value| !value.is_empty())
+                    .unwrap_or_else(|| resolved.to_string_lossy().to_string());
+                if !touched_files.iter().any(|existing| existing == &display) {
+                    touched_files.push(display.clone());
+                }
+                match mutation_tool_by_file.get_mut(&display) {
+                    Some(Value::Array(values)) => {
+                        if !values
+                            .iter()
+                            .any(|value| value.as_str() == Some(tool_name.as_str()))
+                        {
+                            values.push(json!(tool_name.clone()));
+                        }
+                    }
+                    _ => {
+                        mutation_tool_by_file.insert(display.clone(), json!([tool_name.clone()]));
+                    }
+                }
+            }
+        }
+    }
+    touched_files.sort();
+    json!({
+        "touched_files": touched_files,
+        "mutation_tool_by_file": mutation_tool_by_file,
+    })
+}
+
+fn session_verification_summary(node: &AutomationFlowNode, session: &Session) -> Value {
+    let verification_command = automation_node_verification_command(node);
+    let Some(expected_command) = verification_command.as_deref() else {
+        return json!({
+            "verification_expected": false,
+            "verification_command": Value::Null,
+            "verification_ran": false,
+            "verification_failed": false,
+            "latest_verification_command": Value::Null,
+            "latest_verification_failure": Value::Null,
+        });
+    };
+    let expected_normalized = expected_command.trim().to_ascii_lowercase();
+    let mut verification_ran = false;
+    let mut verification_failed = false;
+    let mut latest_verification_command = None::<String>;
+    let mut latest_verification_failure = None::<String>;
+    for message in &session.messages {
+        for part in &message.parts {
+            let MessagePart::ToolInvocation {
+                tool,
+                args,
+                result,
+                error,
+            } = part
+            else {
+                continue;
+            };
+            if tool.trim().to_ascii_lowercase().replace('-', "_") != "bash" {
+                continue;
+            }
+            let Some(command) = args.get("command").and_then(Value::as_str).map(str::trim) else {
+                continue;
+            };
+            let command_normalized = command.to_ascii_lowercase();
+            if !command_normalized.contains(&expected_normalized) {
+                continue;
+            }
+            verification_ran = true;
+            latest_verification_command = Some(command.to_string());
+            let failure = if let Some(error) = error
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            {
+                Some(error.to_string())
+            } else {
+                let metadata = result
+                    .as_ref()
+                    .and_then(|value| value.get("metadata"))
+                    .cloned()
+                    .unwrap_or(Value::Null);
+                let exit_code = metadata.get("exit_code").and_then(Value::as_i64);
+                let timed_out = metadata
+                    .get("timeout")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+                let cancelled = metadata
+                    .get("cancelled")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+                let stderr = metadata
+                    .get("stderr")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string);
+                if timed_out {
+                    Some(format!("verification command timed out: {}", command))
+                } else if cancelled {
+                    Some(format!("verification command was cancelled: {}", command))
+                } else if exit_code.is_some_and(|code| code != 0) {
+                    Some(
+                        stderr
+                            .filter(|value| !value.is_empty())
+                            .map(|value| {
+                                format!(
+                                    "verification command failed with exit code {}: {}",
+                                    exit_code.unwrap_or_default(),
+                                    truncate_text(&value, 240)
+                                )
+                            })
+                            .unwrap_or_else(|| {
+                                format!(
+                                    "verification command failed with exit code {}: {}",
+                                    exit_code.unwrap_or_default(),
+                                    command
+                                )
+                            }),
+                    )
+                } else {
+                    None
+                }
+            };
+            if let Some(failure) = failure {
+                verification_failed = true;
+                latest_verification_failure = Some(failure);
+            }
+        }
+    }
+    json!({
+        "verification_expected": true,
+        "verification_command": expected_command,
+        "verification_ran": verification_ran,
+        "verification_failed": verification_failed,
+        "latest_verification_command": latest_verification_command,
+        "latest_verification_failure": latest_verification_failure,
+    })
+}
+
+fn git_diff_summary_for_paths(workspace_root: &str, paths: &[String]) -> Option<Value> {
+    if paths.is_empty() || !workspace_has_git_repo(workspace_root) {
+        return None;
+    }
+    let mut cmd = std::process::Command::new("git");
+    cmd.current_dir(workspace_root)
+        .arg("diff")
+        .arg("--stat")
+        .arg("--");
+    for path in paths {
+        cmd.arg(path);
+    }
+    let output = cmd.output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let summary = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if summary.is_empty() {
+        None
+    } else {
+        Some(json!({
+            "stat": summary
+        }))
+    }
+}
+
 fn validate_automation_artifact_output(
     node: &AutomationFlowNode,
     session: &Session,
@@ -7167,6 +7670,23 @@ fn validate_automation_artifact_output(
     }
 
     let execution_policy = automation_node_execution_policy(node, workspace_root);
+    let mutation_summary = session_file_mutation_summary(session, workspace_root);
+    let verification_summary = session_verification_summary(node, session);
+    let touched_files = mutation_summary
+        .get("touched_files")
+        .and_then(Value::as_array)
+        .map(|rows| {
+            rows.iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let mutation_tool_by_file = mutation_summary
+        .get("mutation_tool_by_file")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
     let mut rejected_reason = if undeclared_files_created.is_empty() {
         None
     } else {
@@ -7178,9 +7698,39 @@ fn validate_automation_artifact_output(
     let mut semantic_block_reason = None::<String>;
     let mut accepted_output = verified_output;
     let mut recovered_from_session_write = false;
+    let execution_mode = execution_policy
+        .get("mode")
+        .and_then(Value::as_str)
+        .unwrap_or("artifact_write");
+    if rejected_reason.is_none() && matches!(execution_mode, "git_patch" | "filesystem_patch") {
+        let unsafe_raw_write_paths = touched_files
+            .iter()
+            .filter(|path| workspace_snapshot_before.contains((*path).as_str()))
+            .filter(|path| path_looks_like_source_file(path))
+            .filter(|path| {
+                mutation_tool_by_file
+                    .get(*path)
+                    .and_then(Value::as_array)
+                    .is_some_and(|tools| {
+                        let used_write = tools.iter().any(|value| value.as_str() == Some("write"));
+                        let used_safe_patch = tools.iter().any(|value| {
+                            matches!(value.as_str(), Some("edit") | Some("apply_patch"))
+                        });
+                        used_write && !used_safe_patch
+                    })
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        if !unsafe_raw_write_paths.is_empty() {
+            rejected_reason = Some(format!(
+                "unsafe raw source rewrite rejected: {}",
+                unsafe_raw_write_paths.join(", ")
+            ));
+        }
+    }
 
-    if let Some((path, text)) = accepted_output.as_ref() {
-        let recovered_candidate = best_session_write_candidate(session, workspace_root, path);
+    if let Some((path, text)) = accepted_output.clone() {
+        let recovered_candidate = best_session_write_candidate(session, workspace_root, &path);
         let lowered = text.to_ascii_lowercase();
         let requested_has_read = tool_telemetry
             .get("requested_tools")
@@ -7195,17 +7745,37 @@ fn validate_automation_artifact_output(
             .get("web_research_used")
             .and_then(Value::as_bool)
             .unwrap_or(false);
-        if rejected_reason.is_none() && placeholder_like_artifact_text(text) {
+        // TODO(coding-hardening): These lexical overwrite heuristics are a temporary
+        // stopgap. The proper architecture is "best substantive artifact candidate wins"
+        // based on structured scoring of all writes/patches to the declared output,
+        // with status kept in node metadata rather than inferred from artifact text.
+        if rejected_reason.is_none() && placeholder_like_artifact_text(&text) {
             rejected_reason = Some("placeholder overwrite rejected".to_string());
         }
         if rejected_reason.is_none()
             && preexisting_output.is_some_and(substantive_artifact_text)
             && (text.trim().len() + 80) < preexisting_output.unwrap_or_default().trim().len()
-            && (placeholder_like_artifact_text(text)
+            && (placeholder_like_artifact_text(&text)
                 || lowered.contains("preserving")
                 || lowered.contains("completed previously"))
         {
             rejected_reason = Some("short placeholder overwrite rejected".to_string());
+        }
+        if rejected_reason.is_none()
+            && recovered_candidate
+                .as_ref()
+                .is_some_and(|candidate| substantive_artifact_text(candidate))
+            && (text.trim().len() + 120)
+                < recovered_candidate
+                    .as_ref()
+                    .map(|candidate| candidate.trim().len())
+                    .unwrap_or_default()
+            && (placeholder_like_artifact_text(&text)
+                || lowered.contains("artifact requirement")
+                || lowered.contains("already completed")
+                || lowered.contains("no content changes needed"))
+        {
+            rejected_reason = Some("session placeholder overwrite rejected".to_string());
         }
         if rejected_reason.is_none()
             && node
@@ -7214,7 +7784,7 @@ fn validate_automation_artifact_output(
                 .is_some_and(|contract| contract.kind == "brief")
             && requested_has_read
             && (!executed_has_read
-                || !files_reviewed_section_lists_paths(text)
+                || !files_reviewed_section_lists_paths(&text)
                 || (web_research_expected && !web_research_used))
         {
             semantic_block_reason = Some(
@@ -7222,26 +7792,77 @@ fn validate_automation_artifact_output(
                     .to_string(),
             );
         }
+        if rejected_reason.is_none()
+            && recovered_candidate
+                .as_ref()
+                .is_some_and(|candidate| substantive_artifact_text(candidate))
+            && !substantive_artifact_text(&text)
+        {
+            rejected_reason = Some(
+                "non-substantive final overwrite rejected in favor of session artifact".to_string(),
+            );
+        }
+        if rejected_reason.is_none()
+            && matches!(execution_mode, "git_patch" | "filesystem_patch")
+            && preexisting_output.is_some()
+            && path_looks_like_source_file(&path)
+            && tool_telemetry
+                .get("executed_tools")
+                .and_then(Value::as_array)
+                .is_some_and(|tools| {
+                    tools.iter().any(|value| value.as_str() == Some("write"))
+                        && !tools.iter().any(|value| value.as_str() == Some("edit"))
+                        && !tools
+                            .iter()
+                            .any(|value| value.as_str() == Some("apply_patch"))
+                })
+        {
+            rejected_reason =
+                Some("code workflow used raw write without patch/edit safety".to_string());
+        }
         if let Some(reason) = rejected_reason.clone() {
-            if let Ok(resolved) = resolve_automation_output_path(workspace_root, path) {
+            if let Ok(resolved) = resolve_automation_output_path(workspace_root, &path) {
+                if reason.contains("placeholder")
+                    || reason.contains("non-substantive final overwrite")
+                {
+                    if let Some(candidate) = recovered_candidate
+                        .as_ref()
+                        .filter(|candidate| substantive_artifact_text(candidate))
+                    {
+                        let _ = std::fs::write(&resolved, candidate);
+                        accepted_output = Some((path.clone(), candidate.clone()));
+                        rejected_reason = None;
+                        recovered_from_session_write = true;
+                    } else if let Some(previous) = preexisting_output {
+                        let _ = std::fs::write(&resolved, previous);
+                        accepted_output = None;
+                    } else {
+                        let _ = std::fs::remove_file(&resolved);
+                        accepted_output = None;
+                    }
+                }
+            }
+            let _ = session_text;
+            let _ = reason;
+        }
+        if semantic_block_reason.is_some()
+            && !recovered_from_session_write
+            && !substantive_artifact_text(&text)
+        {
+            // TODO(coding-hardening): Fold this recovery path into a single
+            // artifact-finalization step that deterministically picks the best
+            // candidate before node output is wrapped, instead of patching up the
+            // final file after semantic validation fires.
+            if let Ok(resolved) = resolve_automation_output_path(workspace_root, &path) {
                 if let Some(candidate) = recovered_candidate
                     .as_ref()
                     .filter(|candidate| substantive_artifact_text(candidate))
                 {
                     let _ = std::fs::write(&resolved, candidate);
                     accepted_output = Some((path.clone(), candidate.clone()));
-                    rejected_reason = None;
                     recovered_from_session_write = true;
-                } else if let Some(previous) = preexisting_output {
-                    let _ = std::fs::write(&resolved, previous);
-                    accepted_output = None;
-                } else {
-                    let _ = std::fs::remove_file(&resolved);
-                    accepted_output = None;
                 }
             }
-            let _ = session_text;
-            let _ = reason;
         }
     }
 
@@ -7253,6 +7874,10 @@ fn validate_automation_artifact_output(
         "undeclared_files_created": undeclared_files_created,
         "auto_cleaned": auto_cleaned,
         "execution_policy": execution_policy,
+        "touched_files": touched_files,
+        "mutation_tool_by_file": Value::Object(mutation_tool_by_file),
+        "verification": verification_summary,
+        "git_diff_summary": git_diff_summary_for_paths(workspace_root, &touched_files),
     });
     let rejected = metadata
         .get("rejected_artifact_reason")
@@ -7303,7 +7928,11 @@ fn parse_status_json(raw: &str) -> Option<Value> {
     None
 }
 
-fn summarize_automation_tool_activity(session: &Session, requested_tools: &[String]) -> Value {
+fn summarize_automation_tool_activity(
+    node: &AutomationFlowNode,
+    session: &Session,
+    requested_tools: &[String],
+) -> Value {
     let mut executed_tools = Vec::new();
     let mut counts = serde_json::Map::new();
     let mut workspace_inspection_used = false;
@@ -7340,12 +7969,19 @@ fn summarize_automation_tool_activity(session: &Session, requested_tools: &[Stri
             }
         }
     }
+    let verification = session_verification_summary(node, session);
     json!({
         "requested_tools": requested_tools,
         "executed_tools": executed_tools,
         "tool_call_counts": counts,
         "workspace_inspection_used": workspace_inspection_used,
-        "web_research_used": web_research_used
+        "web_research_used": web_research_used,
+        "verification_expected": verification.get("verification_expected").cloned().unwrap_or(json!(false)),
+        "verification_command": verification.get("verification_command").cloned().unwrap_or(Value::Null),
+        "verification_ran": verification.get("verification_ran").cloned().unwrap_or(json!(false)),
+        "verification_failed": verification.get("verification_failed").cloned().unwrap_or(json!(false)),
+        "latest_verification_command": verification.get("latest_verification_command").cloned().unwrap_or(Value::Null),
+        "latest_verification_failure": verification.get("latest_verification_failure").cloned().unwrap_or(Value::Null),
     })
 }
 
@@ -7368,6 +8004,18 @@ fn detect_automation_node_status(
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_string);
+    if parsed
+        .as_ref()
+        .and_then(|value| value.get("status"))
+        .and_then(Value::as_str)
+        .is_some_and(|status| status.eq_ignore_ascii_case("verify_failed"))
+    {
+        return (
+            "verify_failed".to_string(),
+            explicit_reason.or_else(|| Some("verification command failed".to_string())),
+            approved,
+        );
+    }
     if parsed
         .as_ref()
         .and_then(|value| value.get("status"))
@@ -7404,6 +8052,9 @@ fn detect_automation_node_status(
         .take(1600)
         .collect::<String>()
         .to_ascii_lowercase();
+    // TODO(coding-hardening): Replace these content markers with structured node
+    // status signals from the runtime/session wrapper. Prompt text should not be the
+    // primary source of truth for blocked vs completed vs verify_failed decisions.
     let blocked_markers = [
         "status: blocked",
         "status blocked",
@@ -7423,6 +8074,27 @@ fn detect_automation_node_status(
         "i’m blocked",
         "i'm blocked",
     ];
+    // TODO(coding-hardening): Same here for verification failures. We should rely on
+    // explicit verification result metadata and command outcomes, not phrase matching.
+    let verify_failed_markers = [
+        "status: verify_failed",
+        "status verify_failed",
+        "verification failed",
+        "tests failed",
+        "build failed",
+        "lint failed",
+        "verify failed",
+    ];
+    if verify_failed_markers
+        .iter()
+        .any(|marker| lowered.contains(marker))
+    {
+        return (
+            "verify_failed".to_string(),
+            explicit_reason.or_else(|| Some("verification command failed".to_string())),
+            approved,
+        );
+    }
     if blocked_markers
         .iter()
         .any(|marker| lowered.contains(marker))
@@ -7460,6 +8132,41 @@ fn detect_automation_node_status(
         .output_contract
         .as_ref()
         .is_some_and(|contract| contract.kind == "brief");
+    let verification_expected = tool_telemetry
+        .get("verification_expected")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let verification_ran = tool_telemetry
+        .get("verification_ran")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let verification_failed = tool_telemetry
+        .get("verification_failed")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let verification_failure_reason = tool_telemetry
+        .get("latest_verification_failure")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    if verification_expected && verification_failed {
+        return (
+            "verify_failed".to_string(),
+            explicit_reason.or(verification_failure_reason),
+            approved,
+        );
+    }
+    if automation_node_is_code_workflow(node) && verification_expected && !verification_ran {
+        return (
+            "blocked".to_string(),
+            Some(
+                "coding task completed without running the declared verification command"
+                    .to_string(),
+            ),
+            approved,
+        );
+    }
     let mentions_missing_file_evidence = lowered.contains("file contents were not")
         || lowered.contains("could not safely cite exact file-derived claims")
         || lowered.contains("could not be confirmed from file contents")
@@ -7522,7 +8229,7 @@ fn wrap_automation_node_output(
         .as_ref()
         .map(|(_, text)| text.as_str())
         .unwrap_or_else(|| session_text.trim());
-    let tool_telemetry = summarize_automation_tool_activity(session, requested_tools);
+    let tool_telemetry = summarize_automation_tool_activity(node, session, requested_tools);
     let (status, blocked_reason, approved) = detect_automation_node_status(
         node,
         session_text,
@@ -7590,6 +8297,22 @@ fn automation_output_is_blocked(output: &Value) -> bool {
         .get("status")
         .and_then(Value::as_str)
         .is_some_and(|value| value.eq_ignore_ascii_case("blocked"))
+}
+
+fn automation_output_is_verify_failed(output: &Value) -> bool {
+    output
+        .get("status")
+        .and_then(Value::as_str)
+        .is_some_and(|value| value.eq_ignore_ascii_case("verify_failed"))
+}
+
+fn automation_output_failure_reason(output: &Value) -> Option<String> {
+    output
+        .get("blocked_reason")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
 }
 
 fn automation_output_blocked_reason(output: &Value) -> Option<String> {
@@ -7770,7 +8493,8 @@ async fn execute_automation_v2_node(
     if let Some(mcp_tools) = agent.mcp_policy.allowed_tools.as_ref() {
         allowlist.extend(mcp_tools.clone());
     }
-    let requested_tools = normalize_automation_requested_tools(allowlist.clone());
+    let requested_tools =
+        normalize_automation_requested_tools(node, &workspace_root, allowlist.clone());
     state
         .engine_loop
         .set_session_allowed_tools(&session_id, requested_tools.clone())
@@ -7796,6 +8520,7 @@ async fn execute_automation_v2_node(
     };
     let prompt = render_automation_v2_prompt(
         automation,
+        &workspace_root,
         run_id,
         node,
         agent,
@@ -7874,7 +8599,7 @@ async fn execute_automation_v2_node(
     } else {
         None
     };
-    let tool_telemetry = summarize_automation_tool_activity(&session, &requested_tools);
+    let tool_telemetry = summarize_automation_tool_activity(node, &session, &requested_tools);
     let (verified_output, artifact_validation, artifact_rejected_reason) =
         validate_automation_artifact_output(
             node,
@@ -8210,11 +8935,13 @@ pub async fn run_automation_v2_executor(state: AppState) {
                             .unwrap_or_default()
                             .to_string();
                         let blocked = automation_output_is_blocked(&output);
+                        let verify_failed = automation_output_is_verify_failed(&output);
                         let blocked_reason = automation_output_blocked_reason(&output);
+                        let failure_reason = automation_output_failure_reason(&output);
                         let attempt = latest_attempts.get(&node_id).copied().unwrap_or(1);
                         let _ = state
                             .update_automation_v2_run(&run.run_id, |row| {
-                                let blocked_descendants = if blocked {
+                                let blocked_descendants = if blocked || verify_failed {
                                     collect_automation_descendants(
                                         &automation,
                                         &std::iter::once(node_id.clone()).collect(),
@@ -8226,6 +8953,7 @@ pub async fn run_automation_v2_executor(state: AppState) {
                                     id != &node_id && !blocked_descendants.contains(id)
                                 });
                                 if !blocked
+                                    && !verify_failed
                                     && !row
                                         .checkpoint
                                         .completed_nodes
@@ -8251,22 +8979,36 @@ pub async fn run_automation_v2_executor(state: AppState) {
                                     }
                                 }
                                 row.checkpoint.node_outputs.insert(node_id.clone(), output);
-                                if row
-                                    .checkpoint
-                                    .last_failure
-                                    .as_ref()
-                                    .is_some_and(|failure| failure.node_id == node_id)
+                                if !verify_failed
+                                    && row
+                                        .checkpoint
+                                        .last_failure
+                                        .as_ref()
+                                        .is_some_and(|failure| failure.node_id == node_id)
                                 {
                                     row.checkpoint.last_failure = None;
                                 }
+                                if verify_failed {
+                                    row.checkpoint.last_failure = Some(AutomationFailureRecord {
+                                        node_id: node_id.clone(),
+                                        reason: failure_reason
+                                            .clone()
+                                            .unwrap_or_else(|| "verification failed".to_string()),
+                                        failed_at_ms: now_ms(),
+                                    });
+                                }
                                 record_automation_lifecycle_event_with_metadata(
                                     row,
-                                    if blocked {
+                                    if verify_failed {
+                                        "node_verify_failed"
+                                    } else if blocked {
                                         "node_blocked"
                                     } else {
                                         "node_completed"
                                     },
-                                    Some(if blocked {
+                                    Some(if verify_failed {
+                                        format!("node `{}` failed verification", node_id)
+                                    } else if blocked {
                                         format!("node `{}` blocked downstream execution", node_id)
                                     } else {
                                         format!("node `{}` completed", node_id)
@@ -8278,17 +9020,36 @@ pub async fn run_automation_v2_executor(state: AppState) {
                                         "session_id": session_id,
                                         "summary": summary,
                                         "contract_kind": contract_kind,
-                                        "status": if blocked { "blocked" } else { "completed" },
+                                        "status": if verify_failed {
+                                            "verify_failed"
+                                        } else if blocked {
+                                            "blocked"
+                                        } else {
+                                            "completed"
+                                        },
                                         "blocked_reason": blocked_reason,
+                                        "failure_reason": failure_reason,
                                         "blocked_descendants": blocked_descendants,
                                     })),
                                 );
-                                if !blocked {
+                                if !blocked && !verify_failed {
                                     record_milestone_promotions(&automation, row, &node_id);
                                 }
                                 refresh_automation_runtime_state(&automation, row);
                             })
                             .await;
+                        if verify_failed {
+                            terminal_failure = Some(failure_reason.unwrap_or_else(|| {
+                                format!("node `{}` failed verification", node_id)
+                            }));
+                            let _ = state
+                                .update_automation_v2_run(&run.run_id, |row| {
+                                    row.status = AutomationRunStatus::Failed;
+                                    row.detail = terminal_failure.clone();
+                                })
+                                .await;
+                            break;
+                        }
                     }
                     Err(error) => {
                         let should_ignore = state
@@ -9556,6 +10317,15 @@ mod tests {
             "Completed previously in this run; preserving file creation requirement."
         ));
         assert!(placeholder_like_artifact_text(
+            "Created/updated to satisfy workflow artifact requirement. See existing workspace research already completed in this run."
+        ));
+        assert!(placeholder_like_artifact_text(
+            "Marketing brief completed and written to marketing-brief.md."
+        ));
+        assert!(placeholder_like_artifact_text(
+            "Marketing brief already written in prior step; no content change."
+        ));
+        assert!(placeholder_like_artifact_text(
             "# Status\n\nBlocked handoff"
         ));
         assert!(!placeholder_like_artifact_text(
@@ -9614,5 +10384,313 @@ mod tests {
         assert_eq!(status, "blocked");
         assert_eq!(reason.as_deref(), Some("placeholder overwrite rejected"));
         assert_eq!(approved, None);
+    }
+
+    #[test]
+    fn code_workflow_verification_failure_sets_verify_failed_status() {
+        let node = AutomationFlowNode {
+            node_id: "implement".to_string(),
+            agent_id: "agent-a".to_string(),
+            objective: "Implement feature".to_string(),
+            depends_on: Vec::new(),
+            input_refs: Vec::new(),
+            output_contract: Some(AutomationFlowOutputContract {
+                kind: "report_markdown".to_string(),
+                schema: None,
+                summary_guidance: None,
+            }),
+            retry_policy: None,
+            timeout_ms: None,
+            stage_kind: None,
+            gate: None,
+            metadata: Some(json!({
+                "builder": {
+                    "task_kind": "code_change",
+                    "verification_command": "cargo test"
+                }
+            })),
+        };
+        let tool_telemetry = json!({
+            "requested_tools": ["glob", "read", "edit", "apply_patch", "write", "bash"],
+            "executed_tools": ["read", "apply_patch", "bash"],
+            "verification_expected": true,
+            "verification_ran": true,
+            "verification_failed": true,
+            "latest_verification_failure": "verification command failed with exit code 101: cargo test"
+        });
+
+        let (status, reason, approved) = detect_automation_node_status(
+            &node,
+            "Done\n\n{\"status\":\"completed\"}",
+            None,
+            &tool_telemetry,
+            None,
+        );
+
+        assert_eq!(status, "verify_failed");
+        assert_eq!(
+            reason.as_deref(),
+            Some("verification command failed with exit code 101: cargo test")
+        );
+        assert_eq!(approved, None);
+    }
+
+    #[test]
+    fn code_workflow_without_verification_run_is_blocked() {
+        let node = AutomationFlowNode {
+            node_id: "implement".to_string(),
+            agent_id: "agent-a".to_string(),
+            objective: "Implement feature".to_string(),
+            depends_on: Vec::new(),
+            input_refs: Vec::new(),
+            output_contract: Some(AutomationFlowOutputContract {
+                kind: "report_markdown".to_string(),
+                schema: None,
+                summary_guidance: None,
+            }),
+            retry_policy: None,
+            timeout_ms: None,
+            stage_kind: None,
+            gate: None,
+            metadata: Some(json!({
+                "builder": {
+                    "task_kind": "code_change",
+                    "verification_command": "cargo test"
+                }
+            })),
+        };
+        let tool_telemetry = json!({
+            "requested_tools": ["glob", "read", "edit", "apply_patch", "write", "bash"],
+            "executed_tools": ["read", "apply_patch"],
+            "verification_expected": true,
+            "verification_ran": false,
+            "verification_failed": false
+        });
+
+        let (status, reason, approved) = detect_automation_node_status(
+            &node,
+            "Done\n\n{\"status\":\"completed\"}",
+            None,
+            &tool_telemetry,
+            None,
+        );
+
+        assert_eq!(status, "blocked");
+        assert_eq!(
+            reason.as_deref(),
+            Some("coding task completed without running the declared verification command")
+        );
+        assert_eq!(approved, None);
+    }
+
+    #[test]
+    fn code_workflow_rejects_unsafe_raw_source_rewrites() {
+        let workspace_root = std::env::temp_dir().join(format!(
+            "tandem-automation-unsafe-write-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(workspace_root.join("src")).expect("create workspace");
+        std::fs::write(workspace_root.join("src/lib.rs"), "pub fn before() {}\n")
+            .expect("seed source");
+        let snapshot = automation_workspace_root_file_snapshot(
+            workspace_root.to_str().expect("workspace root string"),
+        );
+        let long_handoff = format!(
+            "# Handoff\n\n{}\n",
+            "Detailed implementation summary. ".repeat(20)
+        );
+        let node = AutomationFlowNode {
+            node_id: "implement".to_string(),
+            agent_id: "agent-a".to_string(),
+            objective: "Implement feature".to_string(),
+            depends_on: Vec::new(),
+            input_refs: Vec::new(),
+            output_contract: Some(AutomationFlowOutputContract {
+                kind: "report_markdown".to_string(),
+                schema: None,
+                summary_guidance: None,
+            }),
+            retry_policy: None,
+            timeout_ms: None,
+            stage_kind: None,
+            gate: None,
+            metadata: Some(json!({
+                "builder": {
+                    "task_kind": "code_change",
+                    "output_path": "handoff.md"
+                }
+            })),
+        };
+        let mut session = Session::new(
+            Some("unsafe raw write".to_string()),
+            Some(
+                workspace_root
+                    .to_str()
+                    .expect("workspace root string")
+                    .to_string(),
+            ),
+        );
+        session.messages.push(tandem_types::Message::new(
+            MessageRole::Assistant,
+            vec![
+                MessagePart::ToolInvocation {
+                    tool: "write".to_string(),
+                    args: json!({
+                        "path": "src/lib.rs",
+                        "content": "pub fn after() {}\n"
+                    }),
+                    result: Some(json!({"ok": true})),
+                    error: None,
+                },
+                MessagePart::ToolInvocation {
+                    tool: "write".to_string(),
+                    args: json!({
+                        "path": "handoff.md",
+                        "content": long_handoff
+                    }),
+                    result: Some(json!({"ok": true})),
+                    error: None,
+                },
+            ],
+        ));
+
+        let (_, metadata, rejected) = validate_automation_artifact_output(
+            &node,
+            &session,
+            workspace_root.to_str().expect("workspace root string"),
+            "",
+            &json!({
+                "requested_tools": ["read", "write"],
+                "executed_tools": ["write"]
+            }),
+            None,
+            Some(("handoff.md".to_string(), long_handoff)),
+            &snapshot,
+        );
+
+        assert_eq!(
+            rejected.as_deref(),
+            Some("unsafe raw source rewrite rejected: src/lib.rs")
+        );
+        assert_eq!(
+            metadata
+                .get("rejected_artifact_reason")
+                .and_then(Value::as_str),
+            Some("unsafe raw source rewrite rejected: src/lib.rs")
+        );
+
+        let _ = std::fs::remove_dir_all(workspace_root);
+    }
+
+    #[test]
+    fn artifact_validation_restores_substantive_session_write_over_short_completion_note() {
+        let workspace_root = std::env::temp_dir().join(format!(
+            "tandem-automation-restore-write-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&workspace_root).expect("create workspace");
+        let snapshot = automation_workspace_root_file_snapshot(
+            workspace_root.to_str().expect("workspace root string"),
+        );
+        let substantive = format!(
+            "# Marketing Brief\n\n## Workspace source audit\n{}\n",
+            "Real sourced marketing brief content. ".repeat(40)
+        );
+        std::fs::write(
+            workspace_root.join("marketing-brief.md"),
+            "Marketing brief completed and written to marketing-brief.md.\n",
+        )
+        .expect("seed placeholder");
+        let node = AutomationFlowNode {
+            node_id: "research".to_string(),
+            agent_id: "agent-a".to_string(),
+            objective: "Research".to_string(),
+            depends_on: Vec::new(),
+            input_refs: Vec::new(),
+            output_contract: Some(AutomationFlowOutputContract {
+                kind: "brief".to_string(),
+                schema: None,
+                summary_guidance: None,
+            }),
+            retry_policy: None,
+            timeout_ms: None,
+            stage_kind: None,
+            gate: None,
+            metadata: Some(json!({
+                "builder": {
+                    "output_path": "marketing-brief.md",
+                    "web_research_expected": true
+                }
+            })),
+        };
+        let mut session = Session::new(
+            Some("restore substantive write".to_string()),
+            Some(
+                workspace_root
+                    .to_str()
+                    .expect("workspace root string")
+                    .to_string(),
+            ),
+        );
+        session.messages.push(tandem_types::Message::new(
+            MessageRole::Assistant,
+            vec![
+                MessagePart::ToolInvocation {
+                    tool: "write".to_string(),
+                    args: json!({
+                        "path": "marketing-brief.md",
+                        "content": substantive
+                    }),
+                    result: Some(json!({"ok": true})),
+                    error: None,
+                },
+                MessagePart::ToolInvocation {
+                    tool: "write".to_string(),
+                    args: json!({
+                        "path": "marketing-brief.md",
+                        "content": "Marketing brief completed and written to marketing-brief.md."
+                    }),
+                    result: Some(json!({"ok": true})),
+                    error: None,
+                },
+            ],
+        ));
+
+        let (accepted_output, metadata, rejected) = validate_automation_artifact_output(
+            &node,
+            &session,
+            workspace_root
+                .to_str()
+                .expect("workspace root string"),
+            "Done — `marketing-brief.md` was written in the workspace.\n\n{\"status\":\"completed\",\"approved\":true}",
+            &json!({
+                "requested_tools": ["glob", "read", "websearch", "write"],
+                "executed_tools": ["glob", "websearch", "write"],
+                "workspace_inspection_used": true,
+                "web_research_used": true
+            }),
+            None,
+            Some((
+                "marketing-brief.md".to_string(),
+                "Marketing brief completed and written to marketing-brief.md.".to_string(),
+            )),
+            &snapshot,
+        );
+
+        assert_eq!(rejected, None);
+        assert_eq!(
+            metadata
+                .get("recovered_from_session_write")
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+        assert!(accepted_output
+            .as_ref()
+            .is_some_and(|(_, text)| text.contains("## Workspace source audit")));
+        let disk_text = std::fs::read_to_string(workspace_root.join("marketing-brief.md"))
+            .expect("read restored file");
+        assert!(disk_text.contains("## Workspace source audit"));
+
+        let _ = std::fs::remove_dir_all(workspace_root);
     }
 }

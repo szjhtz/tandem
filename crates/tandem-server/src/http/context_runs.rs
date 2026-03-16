@@ -1115,6 +1115,195 @@ fn context_task_transition_requires_valid_lease(
         )
 }
 
+fn context_task_retry_window_open(task: &ContextBlackboardTask, now: u64) -> bool {
+    task.next_retry_at_ms
+        .map(|retry_at| retry_at <= now)
+        .unwrap_or(true)
+}
+
+fn context_task_dependencies_satisfied(
+    run: &ContextRunState,
+    task: &ContextBlackboardTask,
+) -> bool {
+    task.depends_on_task_ids.iter().all(|dep| {
+        run.tasks
+            .iter()
+            .find(|row| row.id == *dep)
+            .map(|row| matches!(row.status, ContextBlackboardTaskStatus::Done))
+            .unwrap_or(false)
+    })
+}
+
+fn context_task_matches_filters(
+    task: &ContextBlackboardTask,
+    task_type: Option<&str>,
+    workflow_id: Option<&str>,
+) -> bool {
+    if let Some(task_type) = task_type {
+        if task.task_type != task_type {
+            return false;
+        }
+    }
+    if let Some(workflow_id) = workflow_id {
+        if task.workflow_id.as_deref() != Some(workflow_id) {
+            return false;
+        }
+    }
+    true
+}
+
+fn context_task_is_claimable(
+    run: &ContextRunState,
+    task: &ContextBlackboardTask,
+    now: u64,
+    task_type: Option<&str>,
+    workflow_id: Option<&str>,
+) -> bool {
+    context_task_matches_filters(task, task_type, workflow_id)
+        && matches!(
+            task.status,
+            ContextBlackboardTaskStatus::Runnable | ContextBlackboardTaskStatus::Pending
+        )
+        && context_task_dependencies_satisfied(run, task)
+        && context_task_retry_window_open(task, now)
+}
+
+fn context_task_has_stale_lease(task: &ContextBlackboardTask, now: u64) -> bool {
+    matches!(task.status, ContextBlackboardTaskStatus::InProgress)
+        && task
+            .lease_expires_at_ms
+            .map(|lease_expires_at_ms| lease_expires_at_ms <= now)
+            .unwrap_or(false)
+}
+
+async fn requeue_stale_context_tasks_locked(
+    state: &AppState,
+    run_id: &str,
+    run_status: ContextRunStatus,
+    run: &ContextRunState,
+) -> Result<Vec<ContextBlackboardTask>, StatusCode> {
+    let now = crate::now_ms();
+    let stale_tasks = run
+        .tasks
+        .iter()
+        .filter(|task| context_task_has_stale_lease(task, now))
+        .cloned()
+        .collect::<Vec<_>>();
+    if stale_tasks.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut requeued = Vec::with_capacity(stale_tasks.len());
+    for current in stale_tasks {
+        let next_rev = current.task_rev.saturating_add(1);
+        let lease_owner = current
+            .lease_owner
+            .clone()
+            .or(current.assigned_agent.clone())
+            .unwrap_or_else(|| "unknown-agent".to_string());
+        let detail = format!("task lease expired while assigned to {lease_owner}");
+        let requeued_task = ContextBlackboardTask {
+            status: ContextBlackboardTaskStatus::Runnable,
+            lease_owner: None,
+            lease_token: None,
+            lease_expires_at_ms: None,
+            last_error: Some(detail.clone()),
+            next_retry_at_ms: Some(now),
+            task_rev: next_rev,
+            updated_ts: now,
+            ..current.clone()
+        };
+        context_run_engine()
+            .commit_task_mutation(
+                state,
+                run_id,
+                requeued_task.clone(),
+                ContextBlackboardPatchOp::UpdateTaskState,
+                json!({
+                    "task_id": current.id,
+                    "status": ContextBlackboardTaskStatus::Runnable,
+                    "lease_owner": Value::Null,
+                    "lease_token": Value::Null,
+                    "lease_expires_at_ms": Value::Null,
+                    "task_rev": next_rev,
+                    "error": detail,
+                    "attempt": current.attempt,
+                    "next_retry_at_ms": now,
+                    "stale_requeue": true,
+                }),
+                "context.task.stale_requeued".to_string(),
+                run_status.clone(),
+                None,
+                json!({
+                    "task_id": current.id,
+                    "workflow_id": current.workflow_id,
+                    "lease_owner": lease_owner,
+                    "stale_requeue": true,
+                }),
+            )
+            .await?;
+        requeued.push(requeued_task);
+    }
+
+    Ok(requeued)
+}
+
+async fn commit_context_task_claim(
+    state: &AppState,
+    run_id: &str,
+    run_status: ContextRunStatus,
+    selected: &ContextBlackboardTask,
+    agent_id: &str,
+    lease_ms: Option<u64>,
+    command_id: Option<String>,
+) -> Result<ContextBlackboardTask, StatusCode> {
+    let now = crate::now_ms();
+    let lease_ms = lease_ms.unwrap_or(30_000).clamp(5_000, 300_000);
+    let lease_token = format!("lease-{}", Uuid::new_v4());
+    let next_rev = selected.task_rev.saturating_add(1);
+    let mut payload = json!({
+        "task_id": selected.id,
+        "status": ContextBlackboardTaskStatus::InProgress,
+        "assigned_agent": agent_id.trim(),
+        "lease_owner": agent_id.trim(),
+        "lease_token": lease_token,
+        "lease_expires_at_ms": now.saturating_add(lease_ms),
+        "task_rev": next_rev,
+    });
+    let claimed_task = ContextBlackboardTask {
+        status: ContextBlackboardTaskStatus::InProgress,
+        assigned_agent: Some(agent_id.trim().to_string()),
+        lease_owner: Some(agent_id.trim().to_string()),
+        lease_token: Some(lease_token.clone()),
+        lease_expires_at_ms: Some(now.saturating_add(lease_ms)),
+        task_rev: next_rev,
+        updated_ts: now,
+        ..selected.clone()
+    };
+    if let Some(command_id) = command_id.clone() {
+        payload["command_id"] = json!(command_id);
+    }
+    context_run_engine()
+        .commit_task_mutation(
+            state,
+            run_id,
+            claimed_task.clone(),
+            ContextBlackboardPatchOp::UpdateTaskState,
+            payload,
+            "context.task.claimed".to_string(),
+            run_status,
+            command_id,
+            json!({
+                "task_id": selected.id,
+                "agent_id": agent_id.trim(),
+                "task_rev": next_rev,
+                "workflow_id": selected.workflow_id,
+            }),
+        )
+        .await?;
+    Ok(claimed_task)
+}
+
 pub(super) async fn context_run_lock_for(run_id: &str) -> Arc<tokio::sync::Mutex<()>> {
     static LOCKS: std::sync::OnceLock<
         tokio::sync::Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
@@ -2303,36 +2492,14 @@ pub(super) async fn claim_next_context_task(
         .map(|run| run.status)
         .unwrap_or(ContextRunStatus::Running);
     let run = load_context_run_state(state, run_id).await?;
+    let _ = requeue_stale_context_tasks_locked(state, run_id, run_status.clone(), &run).await?;
+    let run = load_context_run_state(state, run_id).await?;
     let now = crate::now_ms();
     let mut task_idx = run
         .tasks
         .iter()
         .enumerate()
-        .filter(|(_, task)| {
-            if let Some(task_type) = task_type {
-                if task.task_type != task_type {
-                    return false;
-                }
-            }
-            if let Some(workflow_id) = workflow_id {
-                if task.workflow_id.as_deref() != Some(workflow_id) {
-                    return false;
-                }
-            }
-            matches!(
-                task.status,
-                ContextBlackboardTaskStatus::Runnable | ContextBlackboardTaskStatus::Pending
-            )
-        })
-        .filter(|(_, task)| {
-            task.depends_on_task_ids.iter().all(|dep| {
-                run.tasks
-                    .iter()
-                    .find(|row| row.id == *dep)
-                    .map(|row| matches!(row.status, ContextBlackboardTaskStatus::Done))
-                    .unwrap_or(false)
-            })
-        })
+        .filter(|(_, task)| context_task_is_claimable(&run, task, now, task_type, workflow_id))
         .map(|(idx, _)| idx)
         .collect::<Vec<_>>();
     task_idx.sort_by(|a, b| {
@@ -2347,51 +2514,130 @@ pub(super) async fn claim_next_context_task(
         return Ok(None);
     };
     let selected = run.tasks[selected_idx].clone();
-    let lease_ms = lease_ms.unwrap_or(30_000).clamp(5_000, 300_000);
-    let lease_token = format!("lease-{}", Uuid::new_v4());
-    let next_rev = selected.task_rev.saturating_add(1);
-    let mut payload = json!({
-        "task_id": selected.id,
-        "status": ContextBlackboardTaskStatus::InProgress,
-        "assigned_agent": agent_id.trim(),
-        "lease_owner": agent_id.trim(),
-        "lease_token": lease_token,
-        "lease_expires_at_ms": now.saturating_add(lease_ms),
-        "task_rev": next_rev,
-    });
-    let claimed_task = ContextBlackboardTask {
-        status: ContextBlackboardTaskStatus::InProgress,
-        assigned_agent: Some(agent_id.trim().to_string()),
-        lease_owner: Some(agent_id.trim().to_string()),
-        lease_token: Some(lease_token.clone()),
-        lease_expires_at_ms: Some(now.saturating_add(lease_ms)),
+    let claimed_task = commit_context_task_claim(
+        state, run_id, run_status, &selected, agent_id, lease_ms, command_id,
+    )
+    .await?;
+    Ok(Some(claimed_task))
+}
+
+pub(super) async fn claim_context_task_by_id(
+    state: &AppState,
+    run_id: &str,
+    task_id: &str,
+    agent_id: &str,
+    lease_ms: Option<u64>,
+    command_id: Option<String>,
+) -> Result<Option<ContextBlackboardTask>, StatusCode> {
+    let lock = context_run_lock_for(run_id).await;
+    let _guard = lock.lock().await;
+    if agent_id.trim().is_empty() || task_id.trim().is_empty() {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    if let Some(command_id) = command_id.as_deref() {
+        if context_run_events_have_command_id(state, run_id, command_id) {
+            return Ok(None);
+        }
+    }
+    let run_status = load_context_run_state(state, run_id)
+        .await
+        .ok()
+        .map(|run| run.status)
+        .unwrap_or(ContextRunStatus::Running);
+    let run = load_context_run_state(state, run_id).await?;
+    let _ = requeue_stale_context_tasks_locked(state, run_id, run_status.clone(), &run).await?;
+    let run = load_context_run_state(state, run_id).await?;
+    let now = crate::now_ms();
+    let Some(selected) = run.tasks.iter().find(|task| task.id == task_id).cloned() else {
+        return Ok(None);
+    };
+    if !context_task_is_claimable(&run, &selected, now, None, None) {
+        return Ok(None);
+    }
+    let claimed_task = commit_context_task_claim(
+        state, run_id, run_status, &selected, agent_id, lease_ms, command_id,
+    )
+    .await?;
+    Ok(Some(claimed_task))
+}
+
+pub(super) async fn requeue_context_task_by_id(
+    state: &AppState,
+    run_id: &str,
+    task_id: &str,
+    command_id: Option<String>,
+    detail: Option<String>,
+) -> Result<Option<ContextBlackboardTask>, StatusCode> {
+    let lock = context_run_lock_for(run_id).await;
+    let _guard = lock.lock().await;
+    if task_id.trim().is_empty() {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    if let Some(command_id) = command_id.as_deref() {
+        if context_run_events_have_command_id(state, run_id, command_id) {
+            return Ok(None);
+        }
+    }
+    let run_status = load_context_run_state(state, run_id)
+        .await
+        .ok()
+        .map(|run| run.status)
+        .unwrap_or(ContextRunStatus::Running);
+    let run = load_context_run_state(state, run_id).await?;
+    let Some(current) = run.tasks.iter().find(|task| task.id == task_id).cloned() else {
+        return Ok(None);
+    };
+    if matches!(current.status, ContextBlackboardTaskStatus::Done) {
+        return Ok(None);
+    }
+
+    let now = crate::now_ms();
+    let next_rev = current.task_rev.saturating_add(1);
+    let next_task = ContextBlackboardTask {
+        status: ContextBlackboardTaskStatus::Runnable,
+        lease_owner: None,
+        lease_token: None,
+        lease_expires_at_ms: None,
+        next_retry_at_ms: Some(now),
         task_rev: next_rev,
         updated_ts: now,
-        ..selected.clone()
+        last_error: detail.clone().or(current.last_error.clone()),
+        ..current.clone()
     };
+    let mut payload = json!({
+        "task_id": current.id,
+        "status": ContextBlackboardTaskStatus::Runnable,
+        "lease_owner": Value::Null,
+        "lease_token": Value::Null,
+        "lease_expires_at_ms": Value::Null,
+        "task_rev": next_rev,
+        "attempt": current.attempt,
+        "next_retry_at_ms": now,
+    });
+    if let Some(detail) = detail.clone() {
+        payload["error"] = json!(detail);
+    }
     if let Some(command_id) = command_id.clone() {
         payload["command_id"] = json!(command_id);
     }
-    let outcome = context_run_engine()
+    context_run_engine()
         .commit_task_mutation(
             state,
             run_id,
-            claimed_task.clone(),
+            next_task.clone(),
             ContextBlackboardPatchOp::UpdateTaskState,
             payload,
-            "context.task.claimed".to_string(),
-            run_status.clone(),
+            "context.task.requeued".to_string(),
+            run_status,
             command_id,
             json!({
-                "task_id": selected.id,
-                "agent_id": agent_id.trim(),
-                "task_rev": next_rev,
-                "workflow_id": selected.workflow_id,
+                "task_id": current.id,
+                "workflow_id": current.workflow_id,
+                "manual_requeue": true,
             }),
         )
         .await?;
-    let _ = outcome;
-    Ok(Some(claimed_task))
+    Ok(Some(next_task))
 }
 
 pub(super) async fn context_run_task_transition(
@@ -3180,11 +3426,7 @@ pub(super) async fn sync_automation_v2_run_blackboard(
             let task = ContextBlackboardTask {
                 id: task_id.clone(),
                 task_type: "automation_node".to_string(),
-                payload: json!({
-                    "node_id": node.node_id,
-                    "name": node.objective,
-                    "agent_id": node.agent_id,
-                }),
+                payload: automation_node_task_payload(node),
                 status,
                 workflow_id: Some(automation.automation_id.clone()),
                 workflow_node_id: Some(node.node_id.clone()),
@@ -3228,6 +3470,61 @@ pub(super) async fn sync_automation_v2_run_blackboard(
         }
     }
 
+    for node in &automation.flow.nodes {
+        for projected_task in parse_backlog_projection_tasks(automation, node, run, now) {
+            let existing = run_state
+                .tasks
+                .iter()
+                .find(|task| task.id == projected_task.id)
+                .cloned();
+            let needs_update = match existing.as_ref() {
+                Some(task) => {
+                    serde_json::to_value(task).ok() != serde_json::to_value(&projected_task).ok()
+                }
+                None => true,
+            };
+            if !needs_update {
+                continue;
+            }
+            let payload = serde_json::to_value(&projected_task)
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+            let event_name = if existing.is_some() {
+                "context.task.projected".to_string()
+            } else {
+                "context.task.created".to_string()
+            };
+            let _ = context_run_engine()
+                .commit_task_mutation(
+                    state,
+                    &run_id,
+                    projected_task.clone(),
+                    ContextBlackboardPatchOp::AddTask,
+                    payload,
+                    event_name,
+                    automation_run_status_to_context(&run.status),
+                    None,
+                    json!({
+                        "task_id": projected_task.id,
+                        "task_type": projected_task.task_type,
+                        "task_rev": projected_task.task_rev,
+                        "source": "automation_v2_backlog_projection",
+                        "automation_id": automation.automation_id,
+                        "workflow_node_id": node.node_id,
+                    }),
+                )
+                .await?;
+            if let Some(existing_task) = run_state
+                .tasks
+                .iter_mut()
+                .find(|task| task.id == projected_task.id)
+            {
+                *existing_task = projected_task.clone();
+            } else {
+                run_state.tasks.push(projected_task.clone());
+            }
+        }
+    }
+
     Ok(())
 }
 
@@ -3264,6 +3561,263 @@ fn workflow_run_status_to_context(status: &crate::WorkflowRunStatus) -> ContextR
         }
         crate::WorkflowRunStatus::Failed => ContextRunStatus::Failed,
     }
+}
+
+fn automation_node_builder_string(node: &crate::AutomationFlowNode, key: &str) -> Option<String> {
+    node.metadata
+        .as_ref()
+        .and_then(|metadata| metadata.get("builder"))
+        .and_then(Value::as_object)
+        .and_then(|builder| builder.get(key))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+fn automation_node_builder_bool(node: &crate::AutomationFlowNode, key: &str) -> bool {
+    node.metadata
+        .as_ref()
+        .and_then(|metadata| metadata.get("builder"))
+        .and_then(Value::as_object)
+        .and_then(|builder| builder.get(key))
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
+
+fn automation_node_task_payload(node: &crate::AutomationFlowNode) -> Value {
+    json!({
+        "node_id": node.node_id,
+        "title": automation_node_builder_string(node, "title").unwrap_or_else(|| node.objective.clone()),
+        "name": node.objective,
+        "description": node.objective,
+        "agent_id": node.agent_id,
+        "task_kind": automation_node_builder_string(node, "task_kind"),
+        "backlog_task_id": automation_node_builder_string(node, "task_id"),
+        "repo_root": automation_node_builder_string(node, "repo_root"),
+        "write_scope": automation_node_builder_string(node, "write_scope"),
+        "acceptance_criteria": automation_node_builder_string(node, "acceptance_criteria"),
+        "task_dependencies": automation_node_builder_string(node, "task_dependencies"),
+        "verification_state": automation_node_builder_string(node, "verification_state"),
+        "task_owner": automation_node_builder_string(node, "task_owner"),
+        "verification_command": automation_node_builder_string(node, "verification_command"),
+        "output_path": automation_node_builder_string(node, "output_path"),
+        "projects_backlog_tasks": automation_node_builder_bool(node, "project_backlog_tasks"),
+    })
+}
+
+fn extract_markdown_json_blocks(text: &str) -> Vec<String> {
+    let mut blocks = Vec::new();
+    let mut remainder = text;
+    while let Some(start) = remainder.find("```") {
+        remainder = &remainder[start + 3..];
+        let Some(line_end) = remainder.find('\n') else {
+            break;
+        };
+        let lang = remainder[..line_end].trim().to_ascii_lowercase();
+        remainder = &remainder[line_end + 1..];
+        let Some(end) = remainder.find("```") else {
+            break;
+        };
+        let block = remainder[..end].trim();
+        if !block.is_empty() && (lang.is_empty() || lang == "json" || lang == "javascript") {
+            blocks.push(block.to_string());
+        }
+        remainder = &remainder[end + 3..];
+    }
+    blocks
+}
+
+fn extract_backlog_task_values(candidate: &Value) -> Vec<Value> {
+    match candidate {
+        Value::Array(items) => items.clone(),
+        Value::Object(map) => {
+            if let Some(items) = map.get("backlog_tasks").and_then(Value::as_array) {
+                return items.clone();
+            }
+            if let Some(items) = map.get("tasks").and_then(Value::as_array) {
+                return items.clone();
+            }
+            Vec::new()
+        }
+        _ => Vec::new(),
+    }
+}
+
+fn normalize_backlog_task_identifier(value: &str) -> String {
+    let mut normalized = String::with_capacity(value.len());
+    for ch in value.chars() {
+        if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.') {
+            normalized.push(ch);
+        } else if !normalized.ends_with('-') {
+            normalized.push('-');
+        }
+    }
+    normalized.trim_matches('-').to_string()
+}
+
+fn parse_backlog_dependencies(value: Option<&Value>) -> Vec<String> {
+    if let Some(items) = value.and_then(Value::as_array) {
+        return items
+            .iter()
+            .filter_map(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+            .collect();
+    }
+    value
+        .and_then(Value::as_str)
+        .map(|text| {
+            text.split(',')
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn backlog_task_status_from_value(value: &Value) -> ContextBlackboardTaskStatus {
+    let status = value
+        .get("status")
+        .or_else(|| value.get("verification_state"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .unwrap_or("runnable")
+        .to_ascii_lowercase();
+    match status.as_str() {
+        "blocked" => ContextBlackboardTaskStatus::Blocked,
+        "failed" | "verify_failed" => ContextBlackboardTaskStatus::Failed,
+        "done" | "completed" | "verified" => ContextBlackboardTaskStatus::Done,
+        "in_progress" | "running" | "claimed" => ContextBlackboardTaskStatus::InProgress,
+        "ready" | "runnable" | "todo" | "queued" => ContextBlackboardTaskStatus::Runnable,
+        _ => ContextBlackboardTaskStatus::Pending,
+    }
+}
+
+fn parse_backlog_projection_tasks(
+    automation: &crate::AutomationV2Spec,
+    node: &crate::AutomationFlowNode,
+    run: &crate::AutomationV2RunRecord,
+    now: u64,
+) -> Vec<ContextBlackboardTask> {
+    let projects_backlog_tasks = automation_node_builder_bool(node, "project_backlog_tasks")
+        || automation_node_builder_string(node, "task_kind")
+            .is_some_and(|kind| kind.eq_ignore_ascii_case("repo_plan"));
+    if !projects_backlog_tasks {
+        return Vec::new();
+    }
+    let Some(output) = run.checkpoint.node_outputs.get(&node.node_id) else {
+        return Vec::new();
+    };
+    let text_candidates = [
+        output
+            .get("content")
+            .and_then(|content| content.get("text"))
+            .and_then(Value::as_str),
+        output
+            .get("content")
+            .and_then(|content| content.get("raw_text"))
+            .and_then(Value::as_str),
+    ];
+    let mut parsed_items = Vec::new();
+    for text in text_candidates.into_iter().flatten() {
+        let trimmed = text.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if let Ok(value) = serde_json::from_str::<Value>(trimmed) {
+            parsed_items.extend(extract_backlog_task_values(&value));
+        }
+        for block in extract_markdown_json_blocks(trimmed) {
+            if let Ok(value) = serde_json::from_str::<Value>(&block) {
+                parsed_items.extend(extract_backlog_task_values(&value));
+            }
+        }
+    }
+    parsed_items
+        .into_iter()
+        .filter_map(|item| {
+            let object = item.as_object()?;
+            let title = object
+                .get("title")
+                .or_else(|| object.get("objective"))
+                .or_else(|| object.get("name"))
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())?
+                .to_string();
+            let raw_task_id = object
+                .get("task_id")
+                .or_else(|| object.get("id"))
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+                .unwrap_or_else(|| title.to_ascii_lowercase().replace(' ', "-"));
+            let normalized_task_id = normalize_backlog_task_identifier(&raw_task_id);
+            if normalized_task_id.is_empty() {
+                return None;
+            }
+            let task_dependencies =
+                parse_backlog_dependencies(object.get("task_dependencies").or_else(|| object.get("dependencies")));
+            let task_owner = object
+                .get("task_owner")
+                .or_else(|| object.get("owner"))
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+                .or_else(|| automation_node_builder_string(node, "task_owner"));
+            Some(ContextBlackboardTask {
+                id: format!("backlog-{}-{}", node.node_id, normalized_task_id),
+                task_type: "automation_backlog_item".to_string(),
+                payload: json!({
+                    "title": title,
+                    "description": object.get("description").or_else(|| object.get("summary")).and_then(Value::as_str).map(str::trim).unwrap_or_default(),
+                    "task_id": raw_task_id,
+                    "backlog_task_id": raw_task_id,
+                    "task_kind": object.get("task_kind").and_then(Value::as_str).unwrap_or("code_change"),
+                    "repo_root": object.get("repo_root").and_then(Value::as_str).map(str::trim).filter(|value| !value.is_empty()).map(str::to_string).or_else(|| automation_node_builder_string(node, "repo_root")),
+                    "write_scope": object.get("write_scope").and_then(Value::as_str).map(str::trim).filter(|value| !value.is_empty()).map(str::to_string).or_else(|| automation_node_builder_string(node, "write_scope")),
+                    "acceptance_criteria": object.get("acceptance_criteria").and_then(Value::as_str).map(str::trim).filter(|value| !value.is_empty()).map(str::to_string).or_else(|| automation_node_builder_string(node, "acceptance_criteria")),
+                    "task_dependencies": task_dependencies,
+                    "verification_state": object.get("verification_state").and_then(Value::as_str).map(str::trim).filter(|value| !value.is_empty()).map(str::to_string).or_else(|| automation_node_builder_string(node, "verification_state")),
+                    "task_owner": task_owner,
+                    "verification_command": object.get("verification_command").and_then(Value::as_str).map(str::trim).filter(|value| !value.is_empty()).map(str::to_string).or_else(|| automation_node_builder_string(node, "verification_command")),
+                    "source_node_id": node.node_id,
+                    "projects_backlog_tasks": true,
+                }),
+                status: backlog_task_status_from_value(&item),
+                workflow_id: Some(automation.automation_id.clone()),
+                workflow_node_id: Some(node.node_id.clone()),
+                parent_task_id: Some(format!("node-{}", node.node_id)),
+                depends_on_task_ids: task_dependencies
+                    .iter()
+                    .map(|dep| format!("backlog-{}-{}", node.node_id, normalize_backlog_task_identifier(dep)))
+                    .collect(),
+                decision_ids: Vec::new(),
+                artifact_ids: Vec::new(),
+                assigned_agent: task_owner,
+                priority: object
+                    .get("priority")
+                    .and_then(Value::as_i64)
+                    .unwrap_or(0)
+                    .clamp(i32::MIN as i64, i32::MAX as i64) as i32,
+                attempt: 0,
+                max_attempts: 3,
+                last_error: None,
+                next_retry_at_ms: None,
+                lease_owner: None,
+                lease_token: None,
+                lease_expires_at_ms: None,
+                task_rev: 1,
+                created_ts: now,
+                updated_ts: now,
+            })
+        })
+        .collect()
 }
 
 fn workflow_action_status_to_context(

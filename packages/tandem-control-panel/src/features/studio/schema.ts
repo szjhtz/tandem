@@ -40,6 +40,16 @@ export type StudioNodeDraft = {
   inputRefs: Array<{ fromStepId: string; alias: string }>;
   outputKind: string;
   outputPath: string;
+  taskKind?: string;
+  projectBacklogTasks?: boolean;
+  backlogTaskId?: string;
+  repoRoot?: string;
+  writeScope?: string;
+  acceptanceCriteria?: string;
+  taskDependencies?: string;
+  verificationState?: string;
+  taskOwner?: string;
+  verificationCommand?: string;
 };
 
 export type StudioWorkflowDraft = {

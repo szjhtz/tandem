@@ -49,13 +49,70 @@ function safeString(value: unknown) {
   return String(value || "").trim();
 }
 
+function isCodeLikeOutputPath(value: string) {
+  const normalized = safeString(value).toLowerCase();
+  const ext = normalized.includes(".") ? normalized.split(".").pop() || "" : "";
+  return [
+    "rs",
+    "ts",
+    "tsx",
+    "js",
+    "jsx",
+    "py",
+    "go",
+    "java",
+    "kt",
+    "kts",
+    "c",
+    "cc",
+    "cpp",
+    "h",
+    "hpp",
+    "cs",
+    "rb",
+    "php",
+    "swift",
+    "scala",
+    "sh",
+    "bash",
+    "zsh",
+  ].includes(ext);
+}
+
+function isCodeLikeNode(node: StudioNodeDraft) {
+  const taskKind = safeString(node.taskKind).toLowerCase();
+  return (
+    taskKind === "code_change" ||
+    taskKind === "repo_fix" ||
+    taskKind === "implementation" ||
+    isCodeLikeOutputPath(node.outputPath)
+  );
+}
+
+function isBacklogProjectingNode(node: StudioNodeDraft) {
+  return !!node.projectBacklogTasks;
+}
+
 function normalizeWorkspaceToolAllowlist(values: string[]) {
   const normalized = values.map((entry) => safeString(entry)).filter(Boolean);
+  if (normalized.includes("*")) return ["*"];
   const withWorkspaceInspection =
     normalized.includes("read") && !normalized.includes("glob")
       ? [...normalized, "glob"]
       : normalized;
   return Array.from(new Set(withWorkspaceInspection));
+}
+
+function normalizeNodeAwareToolAllowlist(values: string[], nodes: StudioNodeDraft[]) {
+  const normalized = normalizeWorkspaceToolAllowlist(values);
+  if (normalized.includes("*")) return ["*"];
+  const hasCodeNode = nodes.some((node) => isCodeLikeNode(node));
+  const required = hasCodeNode
+    ? ["read", "glob", "edit", "apply_patch", "write", "bash"]
+    : normalized.includes("read")
+      ? ["glob"]
+      : [];
+  return Array.from(new Set([...normalized, ...required]));
 }
 
 function shortId(value: unknown) {
@@ -366,18 +423,68 @@ function normalizeNodeDraft(row: any): StudioNodeDraft {
         metadataBuilder?.output_path ||
         row?.metadata?.studio?.output_path
     ),
+    taskKind: safeString(row?.taskKind || row?.task_kind || metadataBuilder?.task_kind),
+    projectBacklogTasks: Boolean(
+      row?.projectBacklogTasks ||
+      row?.project_backlog_tasks ||
+      metadataBuilder?.project_backlog_tasks
+    ),
+    backlogTaskId: safeString(
+      row?.backlogTaskId || row?.backlog_task_id || metadataBuilder?.task_id
+    ),
+    repoRoot: safeString(row?.repoRoot || row?.repo_root || metadataBuilder?.repo_root),
+    writeScope: safeString(row?.writeScope || row?.write_scope || metadataBuilder?.write_scope),
+    acceptanceCriteria: safeString(
+      row?.acceptanceCriteria || row?.acceptance_criteria || metadataBuilder?.acceptance_criteria
+    ),
+    taskDependencies: safeString(
+      row?.taskDependencies || row?.task_dependencies || metadataBuilder?.task_dependencies
+    ),
+    verificationState: safeString(
+      row?.verificationState || row?.verification_state || metadataBuilder?.verification_state
+    ),
+    taskOwner: safeString(row?.taskOwner || row?.task_owner || metadataBuilder?.task_owner),
+    verificationCommand: safeString(
+      row?.verificationCommand || row?.verification_command || metadataBuilder?.verification_command
+    ),
   };
 }
 
 function composeNodeExecutionPrompt(node: StudioNodeDraft, agent: StudioAgentDraft) {
+  const codeLike = isCodeLikeNode(node);
   const canGlob = agent.toolAllowlist.includes("glob");
   const canRead = agent.toolAllowlist.includes("read");
+  const canEdit = agent.toolAllowlist.includes("edit") || codeLike;
+  const canPatch = agent.toolAllowlist.includes("apply_patch") || codeLike;
+  const canBash = agent.toolAllowlist.includes("bash");
   const lines = [
     safeString(node.objective),
     safeString(agent.prompt.mission),
     safeString(agent.prompt.inputs),
     safeString(agent.prompt.outputContract),
     safeString(agent.prompt.guardrails),
+    safeString(node.taskKind) ? `Task kind: ${safeString(node.taskKind)}.` : "",
+    isBacklogProjectingNode(node)
+      ? "Project backlog tasks for this run. Include a fenced `json` block containing either an array of tasks or an object with `backlog_tasks`, where each task includes `task_id`, `title`, `description`, `repo_root`, `write_scope`, `acceptance_criteria`, `task_dependencies`, `verification_state`, `task_owner`, and `verification_command` when known."
+      : "",
+    safeString(node.backlogTaskId) ? `Backlog task id: ${safeString(node.backlogTaskId)}.` : "",
+    safeString(node.repoRoot) ? `Repository root for this task: ${safeString(node.repoRoot)}.` : "",
+    safeString(node.writeScope) ? `Declared write scope: ${safeString(node.writeScope)}.` : "",
+    safeString(node.acceptanceCriteria)
+      ? `Acceptance criteria: ${safeString(node.acceptanceCriteria)}.`
+      : "",
+    safeString(node.taskDependencies)
+      ? `Backlog task dependencies: ${safeString(node.taskDependencies)}.`
+      : "",
+    safeString(node.verificationState)
+      ? `Expected verification state progression: ${safeString(node.verificationState)}.`
+      : "",
+    safeString(node.taskOwner)
+      ? `Preferred task owner or claimer: ${safeString(node.taskOwner)}.`
+      : "",
+    safeString(node.verificationCommand)
+      ? `Expected verification command or rule: ${safeString(node.verificationCommand)}.`
+      : "",
     "Execution rules:",
     canGlob || canRead
       ? `- Inspect the workspace before writing using ${[
@@ -393,9 +500,20 @@ function composeNodeExecutionPrompt(node: StudioNodeDraft, agent: StudioAgentDra
     agent.toolAllowlist.includes("websearch")
       ? "- Use `websearch` to gather current external evidence before finalizing the file."
       : "",
-    safeString(node.outputPath)
-      ? `- Create or update \`${safeString(node.outputPath)}\` in the workspace with the \`write\` tool.`
-      : "- If this stage creates a file, use the `write` tool rather than a prose-only response.",
+    codeLike && canPatch
+      ? "- Prefer `apply_patch` for multi-line source edits when a git-backed patch tool is available."
+      : "",
+    codeLike && canEdit
+      ? "- Prefer `edit` for existing-file source changes; use `write` only for new files or when patch/edit cannot express the change."
+      : safeString(node.outputPath)
+        ? `- Create or update \`${safeString(node.outputPath)}\` in the workspace with the \`write\` tool.`
+        : "- If this stage creates a file, use the `write` tool rather than a prose-only response.",
+    codeLike && canBash
+      ? "- Use `bash` for repo-appropriate build, test, or lint commands after editing, and report the exact commands run."
+      : "",
+    codeLike
+      ? "- Do not replace an existing source file with a status note, placeholder, or preservation summary."
+      : "",
     safeString(node.outputPath)
       ? `- Do not claim success unless \`${safeString(node.outputPath)}\` was actually written.`
       : "- Do not claim success unless the required artifact was actually created.",
@@ -1034,6 +1152,16 @@ export function WorkflowStudioPage({ client, api, toast, navigate }: AppPageProp
         : [],
       outputKind: "artifact",
       outputPath: "",
+      taskKind: "",
+      projectBacklogTasks: false,
+      backlogTaskId: "",
+      repoRoot: "",
+      writeScope: "",
+      acceptanceCriteria: "",
+      taskDependencies: "",
+      verificationState: "",
+      taskOwner: "",
+      verificationCommand: "",
     };
     setDraft((current) => ({ ...current, nodes: [...current.nodes, nextNode] }));
     setSelectedNodeId(fallbackId);
@@ -1261,7 +1389,10 @@ export function WorkflowStudioPage({ client, api, toast, navigate }: AppPageProp
           model_policy: buildModelPolicy(agent),
           skills: agent.skills.map((skill) => safeString(skill)).filter(Boolean),
           tool_policy: {
-            allowlist: normalizeWorkspaceToolAllowlist(agent.toolAllowlist),
+            allowlist: normalizeNodeAwareToolAllowlist(
+              agent.toolAllowlist,
+              normalizedNodes.filter((node) => node.agentId === agent.agentId)
+            ),
             denylist: agent.toolDenylist.map((entry) => safeString(entry)).filter(Boolean),
           },
           mcp_policy: {
@@ -1275,6 +1406,7 @@ export function WorkflowStudioPage({ client, api, toast, navigate }: AppPageProp
           nodes: normalizedNodes.map((node) => {
             const agent = workingDraft.agents.find((entry) => entry.agentId === node.agentId);
             const outputPath = safeString(node.outputPath);
+            const codeLike = isCodeLikeNode(node);
             return {
               node_id: safeString(node.nodeId),
               agent_id: safeString(node.agentId),
@@ -1287,7 +1419,9 @@ export function WorkflowStudioPage({ client, api, toast, navigate }: AppPageProp
               output_contract: {
                 kind: safeString(node.outputKind) || "artifact",
                 summary_guidance: outputPath
-                  ? `Create or update \`${outputPath}\` in the workspace and use the write tool before completing this stage.`
+                  ? codeLike
+                    ? `Apply the scoped repository changes, update \`${outputPath}\` in the workspace, and use patch/edit/write tools before completing this stage.`
+                    : `Create or update \`${outputPath}\` in the workspace and use the write tool before completing this stage.`
                   : undefined,
               },
               metadata: {
@@ -1300,6 +1434,16 @@ export function WorkflowStudioPage({ client, api, toast, navigate }: AppPageProp
                   output_path: outputPath || undefined,
                   write_required: !!outputPath,
                   web_research_expected: !!agent?.toolAllowlist?.includes("websearch"),
+                  task_kind: safeString(node.taskKind) || undefined,
+                  project_backlog_tasks: isBacklogProjectingNode(node) || undefined,
+                  task_id: safeString(node.backlogTaskId) || undefined,
+                  repo_root: safeString(node.repoRoot) || undefined,
+                  write_scope: safeString(node.writeScope) || undefined,
+                  acceptance_criteria: safeString(node.acceptanceCriteria) || undefined,
+                  task_dependencies: safeString(node.taskDependencies) || undefined,
+                  verification_state: safeString(node.verificationState) || undefined,
+                  task_owner: safeString(node.taskOwner) || undefined,
+                  verification_command: safeString(node.verificationCommand) || undefined,
                   prompt: composeNodeExecutionPrompt(
                     node,
                     agent || emptyAgent(safeString(node.agentId), safeString(node.agentId))
@@ -2130,6 +2274,135 @@ export function WorkflowStudioPage({ client, api, toast, navigate }: AppPageProp
                       onInput={(event) =>
                         updateNode(selectedNode.nodeId, {
                           outputPath: (event.target as HTMLInputElement).value,
+                        })
+                      }
+                    />
+                  </label>
+                  <label className="grid gap-1">
+                    <span className="text-xs text-slate-400">Task Kind</span>
+                    <input
+                      className="tcp-input text-sm"
+                      placeholder="code_change"
+                      value={selectedNode.taskKind || ""}
+                      onInput={(event) =>
+                        updateNode(selectedNode.nodeId, {
+                          taskKind: (event.target as HTMLInputElement).value,
+                        })
+                      }
+                    />
+                  </label>
+                  <label className="grid gap-1">
+                    <span className="text-xs text-slate-400">Project Backlog Tasks</span>
+                    <input
+                      type="checkbox"
+                      checked={Boolean(selectedNode.projectBacklogTasks)}
+                      onChange={(event) =>
+                        updateNode(selectedNode.nodeId, {
+                          projectBacklogTasks: (event.target as HTMLInputElement).checked,
+                        })
+                      }
+                    />
+                  </label>
+                  <label className="grid gap-1">
+                    <span className="text-xs text-slate-400">Backlog Task ID</span>
+                    <input
+                      className="tcp-input text-sm"
+                      placeholder="BACKLOG-123"
+                      value={selectedNode.backlogTaskId || ""}
+                      onInput={(event) =>
+                        updateNode(selectedNode.nodeId, {
+                          backlogTaskId: (event.target as HTMLInputElement).value,
+                        })
+                      }
+                    />
+                  </label>
+                  <label className="grid gap-1">
+                    <span className="text-xs text-slate-400">Repo Root</span>
+                    <input
+                      className="tcp-input text-sm"
+                      placeholder="."
+                      value={selectedNode.repoRoot || ""}
+                      onInput={(event) =>
+                        updateNode(selectedNode.nodeId, {
+                          repoRoot: (event.target as HTMLInputElement).value,
+                        })
+                      }
+                    />
+                  </label>
+                  <label className="grid gap-1">
+                    <span className="text-xs text-slate-400">Write Scope</span>
+                    <input
+                      className="tcp-input text-sm"
+                      placeholder="src/api, tests/api, Cargo.toml"
+                      value={selectedNode.writeScope || ""}
+                      onInput={(event) =>
+                        updateNode(selectedNode.nodeId, {
+                          writeScope: (event.target as HTMLInputElement).value,
+                        })
+                      }
+                    />
+                  </label>
+                  <label className="grid gap-1 sm:col-span-2">
+                    <span className="text-xs text-slate-400">Acceptance Criteria</span>
+                    <input
+                      className="tcp-input text-sm"
+                      placeholder="Describe what must be true for this coding task to count as done."
+                      value={selectedNode.acceptanceCriteria || ""}
+                      onInput={(event) =>
+                        updateNode(selectedNode.nodeId, {
+                          acceptanceCriteria: (event.target as HTMLInputElement).value,
+                        })
+                      }
+                    />
+                  </label>
+                  <label className="grid gap-1">
+                    <span className="text-xs text-slate-400">Backlog Dependencies</span>
+                    <input
+                      className="tcp-input text-sm"
+                      placeholder="BACKLOG-101, BACKLOG-102"
+                      value={selectedNode.taskDependencies || ""}
+                      onInput={(event) =>
+                        updateNode(selectedNode.nodeId, {
+                          taskDependencies: (event.target as HTMLInputElement).value,
+                        })
+                      }
+                    />
+                  </label>
+                  <label className="grid gap-1">
+                    <span className="text-xs text-slate-400">Verification State</span>
+                    <input
+                      className="tcp-input text-sm"
+                      placeholder="pending"
+                      value={selectedNode.verificationState || ""}
+                      onInput={(event) =>
+                        updateNode(selectedNode.nodeId, {
+                          verificationState: (event.target as HTMLInputElement).value,
+                        })
+                      }
+                    />
+                  </label>
+                  <label className="grid gap-1">
+                    <span className="text-xs text-slate-400">Task Owner / Claimer</span>
+                    <input
+                      className="tcp-input text-sm"
+                      placeholder="implementer"
+                      value={selectedNode.taskOwner || ""}
+                      onInput={(event) =>
+                        updateNode(selectedNode.nodeId, {
+                          taskOwner: (event.target as HTMLInputElement).value,
+                        })
+                      }
+                    />
+                  </label>
+                  <label className="grid gap-1">
+                    <span className="text-xs text-slate-400">Verification Command</span>
+                    <input
+                      className="tcp-input text-sm"
+                      placeholder="cargo test -p tandem-server"
+                      value={selectedNode.verificationCommand || ""}
+                      onInput={(event) =>
+                        updateNode(selectedNode.nodeId, {
+                          verificationCommand: (event.target as HTMLInputElement).value,
                         })
                       }
                     />

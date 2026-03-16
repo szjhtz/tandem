@@ -4175,7 +4175,7 @@ impl Tool for ApplyPatchTool {
     fn schema(&self) -> ToolSchema {
         ToolSchema {
             name: "apply_patch".to_string(),
-            description: "Validate patch text and report applicability".to_string(),
+            description: "Apply a Codex-style patch in a git workspace, or validate patch text when git patching is unavailable".to_string(),
             input_schema: json!({"type":"object","properties":{"patchText":{"type":"string"}}}),
         }
     }
@@ -4183,26 +4183,147 @@ impl Tool for ApplyPatchTool {
         let patch = args["patchText"].as_str().unwrap_or("");
         let has_begin = patch.contains("*** Begin Patch");
         let has_end = patch.contains("*** End Patch");
-        let file_ops = patch
-            .lines()
-            .filter(|line| {
-                line.starts_with("*** Add File:")
-                    || line.starts_with("*** Update File:")
-                    || line.starts_with("*** Delete File:")
-            })
-            .count();
+        let patch_paths = extract_apply_patch_paths(patch);
+        let file_ops = patch_paths.len();
         let valid = has_begin && has_end && file_ops > 0;
+        if !valid {
+            return Ok(ToolResult {
+                output: "Invalid patch format. Expected Begin/End markers and at least one file operation."
+                    .to_string(),
+                metadata: json!({"valid": false, "fileOps": file_ops}),
+            });
+        }
+        let workspace_root =
+            workspace_root_from_args(&args).unwrap_or_else(|| effective_cwd_from_args(&args));
+        let git_root = resolve_git_root_for_dir(&workspace_root).await;
+        if let Some(git_root) = git_root {
+            let denied_paths = patch_paths
+                .iter()
+                .filter_map(|rel| {
+                    let resolved = git_root.join(rel);
+                    if is_within_workspace_root(&resolved, &workspace_root) {
+                        None
+                    } else {
+                        Some(rel.clone())
+                    }
+                })
+                .collect::<Vec<_>>();
+            if !denied_paths.is_empty() {
+                return Ok(ToolResult {
+                    output: format!(
+                        "patch denied by workspace policy for paths: {}",
+                        denied_paths.join(", ")
+                    ),
+                    metadata: json!({
+                        "valid": true,
+                        "applied": false,
+                        "reason": "path_outside_workspace",
+                        "paths": patch_paths
+                    }),
+                });
+            }
+            let tmp_name = format!(
+                "tandem-apply-patch-{}-{}.patch",
+                std::process::id(),
+                now_millis()
+            );
+            let patch_path = std::env::temp_dir().join(tmp_name);
+            fs::write(&patch_path, patch).await?;
+            let output = Command::new("git")
+                .current_dir(&git_root)
+                .arg("apply")
+                .arg("--3way")
+                .arg("--recount")
+                .arg("--whitespace=nowarn")
+                .arg(&patch_path)
+                .output()
+                .await?;
+            let _ = fs::remove_file(&patch_path).await;
+            let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            let ok = output.status.success();
+            return Ok(ToolResult {
+                output: if ok {
+                    if stdout.is_empty() {
+                        "ok".to_string()
+                    } else {
+                        stdout.clone()
+                    }
+                } else if stderr.is_empty() {
+                    "git apply failed".to_string()
+                } else {
+                    stderr.clone()
+                },
+                metadata: json!({
+                    "valid": true,
+                    "applied": ok,
+                    "paths": patch_paths,
+                    "git_root": git_root.to_string_lossy(),
+                    "stdout": stdout,
+                    "stderr": stderr
+                }),
+            });
+        }
         Ok(ToolResult {
-            output: if valid {
-                "Patch format validated. Host-level patch application must execute this patch."
-                    .to_string()
-            } else {
-                "Invalid patch format. Expected Begin/End markers and at least one file operation."
-                    .to_string()
-            },
-            metadata: json!({"valid": valid, "fileOps": file_ops}),
+            output: "Patch format validated, but no git workspace was detected. Use `edit` for existing files or `write` for new files in this workspace."
+                .to_string(),
+            metadata: json!({
+                "valid": true,
+                "applied": false,
+                "reason": "git_workspace_unavailable",
+                "paths": patch_paths
+            }),
         })
     }
+}
+
+fn extract_apply_patch_paths(patch: &str) -> Vec<String> {
+    let mut paths = Vec::new();
+    for line in patch.lines() {
+        let trimmed = line.trim();
+        let marker = if let Some(value) = trimmed.strip_prefix("*** Add File: ") {
+            Some(value)
+        } else if let Some(value) = trimmed.strip_prefix("*** Update File: ") {
+            Some(value)
+        } else {
+            trimmed.strip_prefix("*** Delete File: ")
+        };
+        let Some(path) = marker.map(str::trim).filter(|value| !value.is_empty()) else {
+            continue;
+        };
+        if !paths.iter().any(|existing| existing == path) {
+            paths.push(path.to_string());
+        }
+    }
+    paths
+}
+
+async fn resolve_git_root_for_dir(dir: &Path) -> Option<PathBuf> {
+    let output = Command::new("git")
+        .current_dir(dir)
+        .arg("rev-parse")
+        .arg("--show-toplevel")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .output()
+        .await
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let root = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if root.is_empty() {
+        None
+    } else {
+        Some(PathBuf::from(root))
+    }
+}
+
+fn now_millis() -> u128 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|value| value.as_millis())
+        .unwrap_or(0)
 }
 
 struct BatchTool;
