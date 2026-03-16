@@ -23,6 +23,22 @@ export type RunBlocker = {
   reason: string;
 };
 
+export type RunLifecycleEntry = {
+  event: string;
+  recorded_at_ms: number;
+  reason: string | null;
+  stop_kind: string | null;
+  metadata: Record<string, unknown> | null;
+};
+
+type LifecycleEntryLike = {
+  event: string;
+  recorded_at_ms: number;
+  reason?: string | null;
+  stop_kind?: string | null;
+  metadata?: Record<string, unknown> | null;
+};
+
 export function coderMetadataFromAutomation(
   automation: AutomationV2Spec | null | undefined
 ): CoderAutomationMetadata | null {
@@ -194,6 +210,99 @@ export function extractRunLifecycleHistory(run: AutomationV2RunRecord | null) {
   return history.map(
     (entry) => ((entry as Record<string, unknown>) || {}) as Record<string, unknown>
   );
+}
+
+export function runLifecycleEntries(run: AutomationV2RunRecord | null): RunLifecycleEntry[] {
+  return extractRunLifecycleHistory(run)
+    .map((row) => ({
+      event: String(row.event || "").trim(),
+      recorded_at_ms: Number(row.recorded_at_ms || 0),
+      reason: row.reason ? String(row.reason) : null,
+      stop_kind: row.stop_kind ? String(row.stop_kind) : null,
+      metadata: ((row.metadata as Record<string, unknown> | undefined) || null) as Record<
+        string,
+        unknown
+      > | null,
+    }))
+    .sort((a, b) => Number(b.recorded_at_ms || 0) - Number(a.recorded_at_ms || 0));
+}
+
+function normalizedLifecycleEvent(entry: Pick<LifecycleEntryLike, "event">) {
+  return String(entry.event || "")
+    .trim()
+    .toLowerCase();
+}
+
+export function recoveryLifecycleEntries(
+  entries: LifecycleEntryLike[] | AutomationV2RunRecord | null
+): RunLifecycleEntry[] {
+  const history = Array.isArray(entries) ? entries : runLifecycleEntries(entries);
+  return history
+    .filter((entry) => normalizedLifecycleEvent(entry).includes("recover"))
+    .map((entry) => ({
+      event: String(entry.event || "").trim(),
+      recorded_at_ms: Number(entry.recorded_at_ms || 0),
+      reason: entry.reason ? String(entry.reason) : null,
+      stop_kind: entry.stop_kind ? String(entry.stop_kind) : null,
+      metadata: (entry.metadata || null) as Record<string, unknown> | null,
+    }));
+}
+
+export function promotionLifecycleEntries(
+  entries: LifecycleEntryLike[] | AutomationV2RunRecord | null
+): RunLifecycleEntry[] {
+  const history = Array.isArray(entries) ? entries : runLifecycleEntries(entries);
+  return history
+    .filter((entry) => normalizedLifecycleEvent(entry) === "milestone_promoted")
+    .map((entry) => ({
+      event: String(entry.event || "").trim(),
+      recorded_at_ms: Number(entry.recorded_at_ms || 0),
+      reason: entry.reason ? String(entry.reason) : null,
+      stop_kind: entry.stop_kind ? String(entry.stop_kind) : null,
+      metadata: (entry.metadata || null) as Record<string, unknown> | null,
+    }));
+}
+
+export function repairLifecycleEntries(
+  entries: LifecycleEntryLike[] | AutomationV2RunRecord | null
+): RunLifecycleEntry[] {
+  const history = Array.isArray(entries) ? entries : runLifecycleEntries(entries);
+  return history
+    .filter((entry) => normalizedLifecycleEvent(entry) === "run_step_repaired")
+    .map((entry) => ({
+      event: String(entry.event || "").trim(),
+      recorded_at_ms: Number(entry.recorded_at_ms || 0),
+      reason: entry.reason ? String(entry.reason) : null,
+      stop_kind: entry.stop_kind ? String(entry.stop_kind) : null,
+      metadata: (entry.metadata || null) as Record<string, unknown> | null,
+    }));
+}
+
+export function failureChainLifecycleEntries(
+  entries: LifecycleEntryLike[] | AutomationV2RunRecord | null,
+  lastFailure?: Record<string, unknown> | null,
+  limit = 8
+): RunLifecycleEntry[] {
+  const history = Array.isArray(entries) ? entries : runLifecycleEntries(entries);
+  const rows = history.filter((entry) => {
+    const event = normalizedLifecycleEvent(entry);
+    return (
+      event.includes("fail") ||
+      event.includes("recover") ||
+      event.includes("stop") ||
+      event.includes("cancel")
+    );
+  });
+  if (lastFailure) {
+    rows.unshift({
+      event: "last_failure",
+      recorded_at_ms: Number(lastFailure.recorded_at_ms || 0),
+      reason: lastFailure.reason ? String(lastFailure.reason) : null,
+      stop_kind: null,
+      metadata: null,
+    });
+  }
+  return rows.slice(0, limit);
 }
 
 export function completedNodeIds(run: AutomationV2RunRecord | null) {

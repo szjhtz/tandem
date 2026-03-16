@@ -5,15 +5,19 @@ import {
   blockedNodeIds,
   completedNodeIds,
   extractRunBlockers,
-  extractRunLifecycleHistory,
   extractRunNodeOutputs,
   extractSessionIdsFromRun,
+  failureChainLifecycleEntries,
   nodeOutputSessionId,
   nodeOutputSummary,
   nodeOutputText,
   pendingNodeIds,
+  promotionLifecycleEntries,
+  recoveryLifecycleEntries,
+  repairLifecycleEntries,
   runDisplayTitle,
   runGateHistory,
+  runLifecycleEntries,
   runLastFailure,
   runNodeAttempts,
   runNodeOutputMap,
@@ -1458,18 +1462,7 @@ export function AgentAutomationPage({
     return runUsageMetrics(selectedRunDetail);
   }, [selectedRunDetail]);
   const selectedLifecycleHistory = useMemo<StepLifecycleEntry[]>(() => {
-    return extractRunLifecycleHistory(selectedRunDetail)
-      .map((row) => ({
-        event: String(row.event || "").trim(),
-        recorded_at_ms: Number(row.recorded_at_ms || 0),
-        reason: row.reason ? String(row.reason) : null,
-        stop_kind: row.stop_kind ? String(row.stop_kind) : null,
-        metadata: ((row.metadata as Record<string, unknown> | undefined) || null) as Record<
-          string,
-          unknown
-        > | null,
-      }))
-      .sort((a, b) => Number(b.recorded_at_ms || 0) - Number(a.recorded_at_ms || 0));
+    return runLifecycleEntries(selectedRunDetail);
   }, [selectedRunDetail]);
   const selectedGateHistory = useMemo(() => {
     return runGateHistory(selectedRunDetail).sort(
@@ -1477,13 +1470,7 @@ export function AgentAutomationPage({
     );
   }, [selectedRunDetail]);
   const selectedRecoveryHistory = useMemo(
-    () =>
-      selectedLifecycleHistory.filter((entry) =>
-        String(entry.event || "")
-          .trim()
-          .toLowerCase()
-          .includes("recover")
-      ),
+    () => recoveryLifecycleEntries(selectedLifecycleHistory),
     [selectedLifecycleHistory]
   );
   const selectedBlockedNodeDiagnostics = useMemo(
@@ -1491,46 +1478,14 @@ export function AgentAutomationPage({
     [selectedRunDetail, selectedRunAutomation]
   );
   const selectedFailureChain = useMemo(() => {
-    const entries = selectedLifecycleHistory.filter((entry) => {
-      const event = String(entry.event || "")
-        .trim()
-        .toLowerCase();
-      return (
-        event.includes("fail") ||
-        event.includes("recover") ||
-        event.includes("stop") ||
-        event.includes("cancel")
-      );
-    });
-    if (selectedLastFailure) {
-      entries.unshift({
-        event: "last_failure",
-        recorded_at_ms: Number(selectedLastFailure.recorded_at_ms || 0),
-        reason: selectedLastFailure.reason ? String(selectedLastFailure.reason) : null,
-        stop_kind: null,
-        metadata: null,
-      });
-    }
-    return entries.slice(0, 8);
+    return failureChainLifecycleEntries(selectedLifecycleHistory, selectedLastFailure, 8);
   }, [selectedLifecycleHistory, selectedLastFailure]);
   const selectedPromotionHistory = useMemo(
-    () =>
-      selectedLifecycleHistory.filter(
-        (entry) =>
-          String(entry.event || "")
-            .trim()
-            .toLowerCase() === "milestone_promoted"
-      ),
+    () => promotionLifecycleEntries(selectedLifecycleHistory),
     [selectedLifecycleHistory]
   );
   const selectedRepairHistory = useMemo(
-    () =>
-      selectedLifecycleHistory.filter(
-        (entry) =>
-          String(entry.event || "")
-            .trim()
-            .toLowerCase() === "run_step_repaired"
-      ),
+    () => repairLifecycleEntries(selectedLifecycleHistory),
     [selectedLifecycleHistory]
   );
   const selectedTranscriptSessions = useMemo(
