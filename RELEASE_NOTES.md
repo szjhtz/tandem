@@ -12,6 +12,7 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
   - workflow board now gets its own row and desktop lanes can be horizontally scrolled with jump-to-active controls
   - blocked/failed runs now expose `Continue`, `Continue From Here`, `Retry`, and `Retry Workflow`
   - task details now show semantic node status, blocked reason, approval, tool telemetry, and artifact-validation results
+  - coding task details now show per-step verification results, and successfully verified code nodes finish as `done` instead of generic `completed`
 
 - Repo coding backlog workflows now have real task operations
   - projected backlog items can now be claimed and manually requeued through `automation_v2` run APIs
@@ -25,6 +26,7 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
   - blocked node outcomes now stop descendants instead of letting downstream stages fabricate blocked handoffs
   - research briefs that cite local sources without any `read` calls now block instead of slipping through as “completed”
   - timed-out `websearch` attempts no longer count as successful external research for workflows that require current market evidence
+  - code workflows now support multi-step build/test/lint verification summaries, with partial verification blocking completion and failed verification surfacing as `verify_failed`
 
 - Artifact integrity protections for workflow outputs
   - placeholder/status-note overwrites no longer silently replace declared output artifacts

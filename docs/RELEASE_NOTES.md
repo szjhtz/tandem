@@ -12,6 +12,7 @@
 - Made the desktop workflow board horizontally scrollable with jump-to-active controls so off-screen task lanes are reachable in long workflows.
 - Added richer task details including semantic node status, blocked reason, approval state, tool telemetry, and artifact-validation details.
 - Added `Continue`, `Continue From Here`, `Retry`, and `Retry Workflow` actions for blocked/failed workflow runs.
+- Added richer coding-task verification details in task inspection, including per-step verification results and explicit `done` status for successfully verified code tasks.
 - Added projected backlog-task operations in the debugger:
   - projected coding backlog items can now be claimed and manually requeued through `automation_v2`
   - backlog task details now show lease expiry / stale-state visibility and direct `Claim Task` / `Requeue Backlog Task` actions
@@ -25,6 +26,7 @@
 - Added explicit blocked-run semantics so blocked node outcomes stop descendants instead of letting downstream stages fabricate blocked handoff artifacts.
 - Fixed source-backed research briefs being accepted without any `read` calls; file-cited research now blocks if the node never actually read the files it claims to have reviewed.
 - Timed-out `websearch` attempts no longer satisfy required current-market research for workflow briefs; those runs now block at the research stage instead of drifting into later copy/review steps.
+- Code workflows now support multi-step build/test/lint verification summaries, with partial verification blocking completion, failed verification emitting `verify_failed`, and fully verified code tasks finishing as `done`.
 - Added stale-lease recovery for long-running coding backlog work so expired `in_progress` context tasks automatically return to the runnable queue before the next claim.
 
 ### Artifact Integrity and File Safety

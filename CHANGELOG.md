@@ -30,6 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - moved the workflow board onto its own full-width row in the Run Debugger
   - made desktop workflow lanes horizontally scrollable with jump-to-active controls instead of clipping off-screen columns
   - surfaced offered/executed tools, workspace-inspection usage, web-research usage, and artifact-validation details directly in task inspection
+  - added richer coding-task verification details in the Run Debugger, including per-step verification results and `done` status for successfully verified code tasks
 - **Automation execution now prefers deterministic file-backed workflow behavior**:
   - `automation_v2` nodes now run with explicit required tool sets instead of relying on the generic auto-router alone
   - normalized workflow tool exposure so `read` implies `glob` for workspace discovery
@@ -48,6 +49,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - fixed review nodes with `approved: false` to propagate a blocked status cleanly through the automation runtime and debugger
   - fixed file-backed research briefs being marked `completed` when they cited workspace sources without ever calling `read`; these now block even if the model writes a polished “source-backed” brief
   - fixed timed-out `websearch` attempts still counting as successful current-market research; research now blocks when required web research only timed out or returned no usable result
+  - code workflows with multi-step verification plans now emit explicit verification outcomes; partial verification blocks completion, failed verification emits `verify_failed`, and fully verified code tasks finish as `done`
   - fixed `/workspace/...` tool paths so file-backed workflow nodes resolve against the actual workspace root instead of failing on a fake alias
 - **Saved Studio workflow deletion and restart persistence**:
   - fixed saved Studio workflows reappearing after engine restart by cascading automation deletion into persisted `automation_v2` run history so old run snapshots cannot recreate deleted workflows

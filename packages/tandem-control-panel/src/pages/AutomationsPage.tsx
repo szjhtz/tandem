@@ -1016,6 +1016,7 @@ function workflowTaskStateFromCheckpoint(
   const outputStatus = String(output?.status || output?.content?.status || "")
     .trim()
     .toLowerCase();
+  if (outputStatus === "done") return "done";
   if (outputStatus === "verify_failed" || outputStatus === "failed") return "failed";
   if (blocked.has(taskId) || outputStatus === "blocked") return "blocked";
   const errorText = String(
@@ -4186,6 +4187,10 @@ function MyAutomations({
   const selectedBoardTaskVerificationOutcome = useMemo(() => {
     const approved = selectedBoardTaskOutput?.approved;
     if (typeof approved === "boolean") return approved ? "approved" : "not approved";
+    const telemetryOutcome = String(selectedBoardTaskTelemetry?.verification_outcome || "")
+      .trim()
+      .toLowerCase();
+    if (telemetryOutcome) return telemetryOutcome;
     const status = String(selectedBoardTaskOutput?.status || "")
       .trim()
       .toLowerCase();
@@ -4198,7 +4203,7 @@ function MyAutomations({
     if (state === "failed") return "failed";
     if (state) return state;
     return "unknown";
-  }, [selectedBoardTask, selectedBoardTaskOutput]);
+  }, [selectedBoardTask, selectedBoardTaskOutput, selectedBoardTaskTelemetry]);
   const selectedBoardTaskVerificationPassed = useMemo(() => {
     if (typeof selectedBoardTaskOutput?.approved === "boolean")
       return selectedBoardTaskOutput.approved;
@@ -4208,6 +4213,13 @@ function MyAutomations({
       return false;
     return null;
   }, [selectedBoardTaskOutput, selectedBoardTaskVerificationOutcome]);
+  const selectedBoardTaskVerificationResults = useMemo(
+    () =>
+      Array.isArray(selectedBoardTaskTelemetry?.verification_results)
+        ? selectedBoardTaskTelemetry.verification_results
+        : [],
+    [selectedBoardTaskTelemetry]
+  );
   const selectedBoardTaskNodeId = useMemo(
     () =>
       String(selectedBoardTask?.id || "").startsWith("node-")
@@ -5622,6 +5634,60 @@ function MyAutomations({
                                     </div>
                                   </div>
                                 </div>
+                                {selectedBoardTaskTelemetry?.verification_expected ? (
+                                  <div className="mt-3 rounded-md border border-slate-800/80 bg-slate-950/30 p-2">
+                                    <div className="tcp-subtle mb-2">verification plan</div>
+                                    <div className="mb-2 text-slate-200/80">
+                                      {Number(
+                                        selectedBoardTaskTelemetry?.verification_completed || 0
+                                      )}{" "}
+                                      /{" "}
+                                      {Number(selectedBoardTaskTelemetry?.verification_total || 0)}{" "}
+                                      checks ran
+                                    </div>
+                                    {selectedBoardTaskVerificationResults.length ? (
+                                      <div className="grid gap-2">
+                                        {selectedBoardTaskVerificationResults.map(
+                                          (result: any, index: number) => (
+                                            <div
+                                              key={`${String(result?.command || index)}-${index}`}
+                                              className="rounded-md border border-slate-800/80 bg-slate-950/40 p-2"
+                                            >
+                                              <div className="flex flex-wrap items-center gap-2">
+                                                <span className="tcp-badge-info">
+                                                  {String(result?.kind || "verify")}
+                                                </span>
+                                                <span
+                                                  className={
+                                                    result?.failed
+                                                      ? "tcp-badge-warn"
+                                                      : result?.ran
+                                                        ? "tcp-badge-ok"
+                                                        : "tcp-badge-info"
+                                                  }
+                                                >
+                                                  {result?.failed
+                                                    ? "failed"
+                                                    : result?.ran
+                                                      ? "passed"
+                                                      : "not run"}
+                                                </span>
+                                              </div>
+                                              <div className="mt-1 break-words font-mono text-[11px] text-slate-200">
+                                                {String(result?.command || "").trim() || "n/a"}
+                                              </div>
+                                              {String(result?.failure || "").trim() ? (
+                                                <div className="mt-1 whitespace-pre-wrap break-words text-[11px] text-amber-100/90">
+                                                  {String(result?.failure || "").trim()}
+                                                </div>
+                                              ) : null}
+                                            </div>
+                                          )
+                                        )}
+                                      </div>
+                                    ) : null}
+                                  </div>
+                                ) : null}
                                 {selectedBoardTaskFailureDetail ? (
                                   <div className="mt-3 rounded-md border border-amber-500/30 bg-amber-950/20 p-2 text-amber-100/90">
                                     <div className="tcp-subtle mb-1 text-amber-100/70">
