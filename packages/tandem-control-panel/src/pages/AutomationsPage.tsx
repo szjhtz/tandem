@@ -7,6 +7,7 @@ import { TaskBoard } from "../features/orchestration/TaskBoard";
 import {
   workflowArtifactCandidates,
   workflowArtifactValidation,
+  workflowEventSummary,
   workflowNodeOutputEntries,
   workflowNodeOutputText,
   workflowNodeToolTelemetry,
@@ -5624,33 +5625,34 @@ function MyAutomations({
                                   <div className="mt-3 grid gap-2">
                                     <div className="tcp-subtle">recent workflow events</div>
                                     {selectedBoardTaskLifecycleEvents.map(
-                                      (event: any, index: number) => (
-                                        <div
-                                          key={`${String(event?.event || "event")}-${String(event?.recorded_at_ms || index)}`}
-                                          className="rounded-md border border-slate-800/80 bg-slate-950/30 p-2"
-                                        >
-                                          <div className="flex flex-wrap items-center gap-2">
-                                            <span className="tcp-badge-info">
-                                              {String(event?.event || "event")}
-                                            </span>
-                                            {event?.metadata?.phase ? (
+                                      (event: any, index: number) => {
+                                        const summary = workflowEventSummary(event);
+                                        return (
+                                          <div
+                                            key={`${summary.event}-${String(summary.recordedAtMs || index)}`}
+                                            className="rounded-md border border-slate-800/80 bg-slate-950/30 p-2"
+                                          >
+                                            <div className="flex flex-wrap items-center gap-2">
                                               <span className="tcp-badge-info">
-                                                {String(event.metadata.phase)}
+                                                {summary.event}
                                               </span>
-                                            ) : null}
-                                            {event?.metadata?.failure_kind ? (
-                                              <span className="tcp-badge-warn">
-                                                {String(event.metadata.failure_kind)}
-                                              </span>
-                                            ) : null}
-                                          </div>
-                                          {event?.reason ? (
-                                            <div className="mt-1 text-slate-300">
-                                              {String(event.reason)}
+                                              {summary.phase ? (
+                                                <span className="tcp-badge-info">
+                                                  {summary.phase}
+                                                </span>
+                                              ) : null}
+                                              {summary.failureKind ? (
+                                                <span className="tcp-badge-warn">
+                                                  {summary.failureKind}
+                                                </span>
+                                              ) : null}
                                             </div>
-                                          ) : null}
-                                        </div>
-                                      )
+                                            <div className="mt-1 text-slate-300">
+                                              {summary.reason}
+                                            </div>
+                                          </div>
+                                        );
+                                      }
                                     )}
                                   </div>
                                 ) : null}

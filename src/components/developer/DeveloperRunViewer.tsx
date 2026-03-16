@@ -28,6 +28,7 @@ import {
   type CoderRunTelemetrySummary,
 } from "@/lib/tauri";
 import { DiffViewer } from "@/components/plan/DiffViewer";
+import { summarizeWorkflowEvent } from "@/components/coder/shared/coderRunUtils";
 import { Button } from "@/components/ui/Button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/Card";
 import { cn } from "@/lib/utils";
@@ -3366,31 +3367,36 @@ export function DeveloperRunViewer({ repoSlug, onOpenMcpSettings }: DeveloperRun
                               </p>
                               {(selectedTaskSummary?.workflow_events ?? [])
                                 .slice(0, 6)
-                                .map((event, index) => (
-                                  <div
-                                    key={`${event.event}-${event.recorded_at_ms ?? index}`}
-                                    className="rounded-xl border border-border bg-surface-elevated/40 px-3 py-2"
-                                  >
-                                    <div className="flex flex-wrap items-center gap-2">
-                                      <span className="rounded-full border border-border bg-surface px-2 py-1 text-[10px] uppercase tracking-[0.18em] text-text-muted">
-                                        {event.event}
-                                      </span>
-                                      {event.phase ? (
-                                        <span className="rounded-full border border-sky-500/30 bg-sky-500/10 px-2 py-1 text-[10px] uppercase tracking-[0.18em] text-sky-200">
-                                          {event.phase}
+                                .map((event, index) => {
+                                  const summary = summarizeWorkflowEvent(
+                                    event as Record<string, unknown>
+                                  );
+                                  return (
+                                    <div
+                                      key={`${summary.event}-${summary.recordedAtMs ?? index}`}
+                                      className="rounded-xl border border-border bg-surface-elevated/40 px-3 py-2"
+                                    >
+                                      <div className="flex flex-wrap items-center gap-2">
+                                        <span className="rounded-full border border-border bg-surface px-2 py-1 text-[10px] uppercase tracking-[0.18em] text-text-muted">
+                                          {summary.event}
                                         </span>
-                                      ) : null}
-                                      {event.failure_kind ? (
-                                        <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-[10px] uppercase tracking-[0.18em] text-amber-100">
-                                          {event.failure_kind}
-                                        </span>
-                                      ) : null}
+                                        {summary.phase ? (
+                                          <span className="rounded-full border border-sky-500/30 bg-sky-500/10 px-2 py-1 text-[10px] uppercase tracking-[0.18em] text-sky-200">
+                                            {summary.phase}
+                                          </span>
+                                        ) : null}
+                                        {summary.failureKind ? (
+                                          <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-[10px] uppercase tracking-[0.18em] text-amber-100">
+                                            {summary.failureKind}
+                                          </span>
+                                        ) : null}
+                                      </div>
+                                      <p className="mt-2 text-[11px] text-text-muted">
+                                        {summary.reason}
+                                      </p>
                                     </div>
-                                    <p className="mt-2 text-[11px] text-text-muted">
-                                      {event.reason || "No reason recorded"}
-                                    </p>
-                                  </div>
-                                ))}
+                                  );
+                                })}
                             </div>
                           ) : null}
 

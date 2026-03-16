@@ -31,6 +31,16 @@ export type RunLifecycleEntry = {
   metadata: Record<string, unknown> | null;
 };
 
+export type WorkflowEventSummary = {
+  event: string;
+  recordedAtMs: number;
+  phase: string;
+  failureKind: string;
+  workflowClass: string;
+  reason: string;
+  status: string;
+};
+
 type LifecycleEntryLike = {
   event: string;
   recorded_at_ms: number;
@@ -309,6 +319,20 @@ export function failureChainLifecycleEntries(
     stop_kind: entry.stop_kind ? String(entry.stop_kind) : null,
     metadata: (entry.metadata || null) as Record<string, unknown> | null,
   }));
+}
+
+export function summarizeWorkflowEvent(
+  event: Record<string, unknown> | null | undefined
+): WorkflowEventSummary {
+  return {
+    event: String(event?.event || "event").trim() || "event",
+    recordedAtMs: Number(event?.recorded_at_ms || event?.recordedAtMs || 0),
+    phase: String(event?.phase || "").trim(),
+    failureKind: String(event?.failure_kind || event?.failureKind || "").trim(),
+    workflowClass: String(event?.workflow_class || event?.workflowClass || "").trim(),
+    reason: String(event?.reason || "").trim() || "No reason recorded",
+    status: String(event?.status || "").trim(),
+  };
 }
 
 export function completedNodeIds(run: AutomationV2RunRecord | null) {

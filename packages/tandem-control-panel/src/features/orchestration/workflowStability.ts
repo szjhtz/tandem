@@ -115,6 +115,23 @@ export function workflowLatestStabilitySnapshot(run: any) {
   };
 }
 
+export function workflowEventSummary(event: any) {
+  const metadata = (event?.metadata || {}) as Record<string, any>;
+  return {
+    event: String(event?.event || "event").trim() || "event",
+    recordedAtMs: Number(event?.recorded_at_ms || event?.recordedAtMs || 0),
+    phase: String(event?.phase || metadata?.phase || "").trim(),
+    failureKind: String(
+      event?.failure_kind || event?.failureKind || metadata?.failure_kind || ""
+    ).trim(),
+    workflowClass: String(
+      event?.workflow_class || event?.workflowClass || metadata?.workflow_class || ""
+    ).trim(),
+    reason: String(event?.reason || metadata?.reason || "").trim() || "No reason recorded",
+    status: String(event?.status || metadata?.status || "").trim(),
+  };
+}
+
 export function workflowSessionIds(run: any) {
   const direct = Array.isArray(run?.active_session_ids)
     ? run.active_session_ids
