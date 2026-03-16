@@ -4349,6 +4349,23 @@ function MyAutomations({
         : [],
     [selectedBoardTaskArtifactValidation]
   );
+  const selectedBoardTaskLifecycleEvents = useMemo(() => {
+    if (!selectedBoardTaskNodeId) return [];
+    const lifecycleHistory = Array.isArray(selectedRun?.checkpoint?.lifecycle_history)
+      ? selectedRun.checkpoint.lifecycle_history
+      : Array.isArray(selectedRun?.checkpoint?.lifecycleHistory)
+        ? selectedRun.checkpoint.lifecycleHistory
+        : [];
+    return lifecycleHistory
+      .filter((event: any) => {
+        const metadataNodeId = String(
+          event?.metadata?.node_id || event?.metadata?.nodeId || ""
+        ).trim();
+        return metadataNodeId === selectedBoardTaskNodeId;
+      })
+      .slice(-8)
+      .reverse();
+  }, [selectedBoardTaskNodeId, selectedRun]);
   const selectedBoardTaskResetTaskIds = useMemo(
     () => workflowDescendantTaskIds(workflowProjection.tasks, selectedBoardTask?.id || ""),
     [selectedBoardTask, workflowProjection.tasks]
@@ -5677,6 +5694,40 @@ function MyAutomations({
                                           <div className="mt-1 tcp-subtle">
                                             {Number(candidate?.length || 0)} chars
                                           </div>
+                                        </div>
+                                      )
+                                    )}
+                                  </div>
+                                ) : null}
+                                {selectedBoardTaskLifecycleEvents.length ? (
+                                  <div className="mt-3 grid gap-2">
+                                    <div className="tcp-subtle">recent workflow events</div>
+                                    {selectedBoardTaskLifecycleEvents.map(
+                                      (event: any, index: number) => (
+                                        <div
+                                          key={`${String(event?.event || "event")}-${String(event?.recorded_at_ms || index)}`}
+                                          className="rounded-md border border-slate-800/80 bg-slate-950/30 p-2"
+                                        >
+                                          <div className="flex flex-wrap items-center gap-2">
+                                            <span className="tcp-badge-info">
+                                              {String(event?.event || "event")}
+                                            </span>
+                                            {event?.metadata?.phase ? (
+                                              <span className="tcp-badge-info">
+                                                {String(event.metadata.phase)}
+                                              </span>
+                                            ) : null}
+                                            {event?.metadata?.failure_kind ? (
+                                              <span className="tcp-badge-warn">
+                                                {String(event.metadata.failure_kind)}
+                                              </span>
+                                            ) : null}
+                                          </div>
+                                          {event?.reason ? (
+                                            <div className="mt-1 text-slate-300">
+                                              {String(event.reason)}
+                                            </div>
+                                          ) : null}
                                         </div>
                                       )
                                     )}

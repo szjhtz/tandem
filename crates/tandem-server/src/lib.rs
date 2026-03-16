@@ -6209,6 +6209,258 @@ pub(crate) fn record_automation_lifecycle_event_with_metadata(
         });
 }
 
+fn automation_lifecycle_event_metadata_for_node(
+    node_id: &str,
+    attempt: u32,
+    session_id: Option<&str>,
+    summary: &str,
+    contract_kind: &str,
+    workflow_class: &str,
+    phase: &str,
+    status: &str,
+    failure_kind: Option<&str>,
+) -> serde_json::Map<String, Value> {
+    let mut map = serde_json::Map::new();
+    map.insert("node_id".to_string(), json!(node_id));
+    map.insert("attempt".to_string(), json!(attempt));
+    map.insert("summary".to_string(), json!(summary));
+    map.insert("contract_kind".to_string(), json!(contract_kind));
+    map.insert("workflow_class".to_string(), json!(workflow_class));
+    map.insert("phase".to_string(), json!(phase));
+    map.insert("status".to_string(), json!(status));
+    map.insert("event_contract_version".to_string(), json!(1));
+    if let Some(value) = session_id.map(str::trim).filter(|value| !value.is_empty()) {
+        map.insert("session_id".to_string(), json!(value));
+    }
+    if let Some(value) = failure_kind
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        map.insert("failure_kind".to_string(), json!(value));
+    }
+    map
+}
+
+fn record_automation_workflow_state_events(
+    run: &mut AutomationV2RunRecord,
+    node_id: &str,
+    output: &Value,
+    attempt: u32,
+    session_id: Option<&str>,
+    summary: &str,
+    contract_kind: &str,
+) {
+    let workflow_class = output
+        .get("workflow_class")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("artifact");
+    let phase = output
+        .get("phase")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("unknown");
+    let status = output
+        .get("status")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("unknown");
+    let failure_kind = output
+        .get("failure_kind")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let artifact_validation = output.get("artifact_validation");
+    let base_reason = output
+        .get("blocked_reason")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+        .or_else(|| {
+            artifact_validation
+                .and_then(|value| value.get("semantic_block_reason"))
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToString::to_string)
+        })
+        .or_else(|| {
+            artifact_validation
+                .and_then(|value| value.get("rejected_artifact_reason"))
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToString::to_string)
+        });
+
+    let base_metadata = automation_lifecycle_event_metadata_for_node(
+        node_id,
+        attempt,
+        session_id,
+        summary,
+        contract_kind,
+        workflow_class,
+        phase,
+        status,
+        failure_kind,
+    );
+    record_automation_lifecycle_event_with_metadata(
+        run,
+        "workflow_state_changed",
+        base_reason.clone(),
+        None,
+        Some(Value::Object(base_metadata.clone())),
+    );
+
+    if let Some(candidates) = artifact_validation
+        .and_then(|value| value.get("artifact_candidates"))
+        .and_then(Value::as_array)
+    {
+        for candidate in candidates {
+            let mut metadata = base_metadata.clone();
+            metadata.insert("candidate".to_string(), candidate.clone());
+            record_automation_lifecycle_event_with_metadata(
+                run,
+                "artifact_candidate_written",
+                None,
+                None,
+                Some(Value::Object(metadata)),
+            );
+        }
+    }
+
+    if let Some(source) = artifact_validation
+        .and_then(|value| value.get("accepted_candidate_source"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        let mut metadata = base_metadata.clone();
+        metadata.insert("accepted_candidate_source".to_string(), json!(source));
+        record_automation_lifecycle_event_with_metadata(
+            run,
+            "artifact_accepted",
+            None,
+            None,
+            Some(Value::Object(metadata)),
+        );
+    }
+
+    if let Some(reason) = artifact_validation
+        .and_then(|value| value.get("rejected_artifact_reason"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        let mut metadata = base_metadata.clone();
+        metadata.insert("rejected_artifact_reason".to_string(), json!(reason));
+        record_automation_lifecycle_event_with_metadata(
+            run,
+            "artifact_rejected",
+            Some(reason.to_string()),
+            None,
+            Some(Value::Object(metadata)),
+        );
+    }
+
+    let repair_attempted = artifact_validation
+        .and_then(|value| value.get("repair_attempted"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let repair_succeeded = artifact_validation
+        .and_then(|value| value.get("repair_succeeded"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    if repair_attempted {
+        let mut metadata = base_metadata.clone();
+        metadata.insert("repair_succeeded".to_string(), json!(repair_succeeded));
+        record_automation_lifecycle_event_with_metadata(
+            run,
+            "repair_started",
+            None,
+            None,
+            Some(Value::Object(metadata.clone())),
+        );
+        if !repair_succeeded {
+            record_automation_lifecycle_event_with_metadata(
+                run,
+                "repair_exhausted",
+                base_reason.clone(),
+                None,
+                Some(Value::Object(metadata)),
+            );
+        }
+    }
+
+    if let Some(unmet_requirements) = artifact_validation
+        .and_then(|value| value.get("unmet_requirements"))
+        .and_then(Value::as_array)
+        .filter(|value| !value.is_empty())
+    {
+        if workflow_class == "research" {
+            let mut metadata = base_metadata.clone();
+            metadata.insert(
+                "unmet_requirements".to_string(),
+                Value::Array(unmet_requirements.clone()),
+            );
+            record_automation_lifecycle_event_with_metadata(
+                run,
+                "research_coverage_failed",
+                base_reason.clone(),
+                None,
+                Some(Value::Object(metadata)),
+            );
+        }
+    }
+
+    if let Some(verification) = artifact_validation.and_then(|value| value.get("verification")) {
+        let expected = verification
+            .get("verification_expected")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let ran = verification
+            .get("verification_ran")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let failed = verification
+            .get("verification_failed")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        if expected {
+            let mut metadata = base_metadata.clone();
+            metadata.insert("verification".to_string(), verification.clone());
+            record_automation_lifecycle_event_with_metadata(
+                run,
+                "verification_started",
+                None,
+                None,
+                Some(Value::Object(metadata.clone())),
+            );
+            if failed {
+                record_automation_lifecycle_event_with_metadata(
+                    run,
+                    "verification_failed",
+                    base_reason.clone(),
+                    None,
+                    Some(Value::Object(metadata)),
+                );
+            } else if ran {
+                record_automation_lifecycle_event_with_metadata(
+                    run,
+                    "verification_passed",
+                    None,
+                    None,
+                    Some(Value::Object(metadata)),
+                );
+            }
+        }
+    }
+}
+
 fn automation_output_session_id(output: &Value) -> Option<String> {
     output
         .get("content")
@@ -9836,7 +10088,9 @@ pub async fn run_automation_v2_executor(state: AppState) {
                                         }
                                     }
                                 }
-                                row.checkpoint.node_outputs.insert(node_id.clone(), output);
+                                row.checkpoint
+                                    .node_outputs
+                                    .insert(node_id.clone(), output.clone());
                                 if !verify_failed
                                     && row
                                         .checkpoint
@@ -9855,6 +10109,15 @@ pub async fn run_automation_v2_executor(state: AppState) {
                                         failed_at_ms: now_ms(),
                                     });
                                 }
+                                record_automation_workflow_state_events(
+                                    row,
+                                    &node_id,
+                                    &output,
+                                    attempt,
+                                    session_id.as_deref(),
+                                    &summary,
+                                    &contract_kind,
+                                );
                                 record_automation_lifecycle_event_with_metadata(
                                     row,
                                     if verify_failed {
@@ -11474,6 +11737,117 @@ mod tests {
                 .get("workflow_class")
                 .and_then(Value::as_str),
             Some("code")
+        );
+    }
+
+    #[test]
+    fn workflow_state_events_capture_typed_stability_transitions() {
+        let mut run = AutomationV2RunRecord {
+            run_id: "run-1".to_string(),
+            automation_id: "automation-1".to_string(),
+            trigger_type: "manual".to_string(),
+            status: AutomationRunStatus::Running,
+            created_at_ms: 0,
+            updated_at_ms: 0,
+            started_at_ms: Some(0),
+            finished_at_ms: None,
+            latest_session_id: None,
+            active_session_ids: Vec::new(),
+            active_instance_ids: Vec::new(),
+            checkpoint: AutomationRunCheckpoint {
+                completed_nodes: Vec::new(),
+                pending_nodes: Vec::new(),
+                node_outputs: std::collections::HashMap::new(),
+                node_attempts: std::collections::HashMap::new(),
+                blocked_nodes: Vec::new(),
+                awaiting_gate: None,
+                gate_history: Vec::new(),
+                lifecycle_history: Vec::new(),
+                last_failure: None,
+            },
+            automation_snapshot: None,
+            pause_reason: None,
+            resume_reason: None,
+            detail: None,
+            stop_kind: None,
+            stop_reason: None,
+            prompt_tokens: 0,
+            completion_tokens: 0,
+            total_tokens: 0,
+            estimated_cost_usd: 0.0,
+        };
+        let output = json!({
+            "status": "blocked",
+            "workflow_class": "research",
+            "phase": "research_validation",
+            "failure_kind": "research_missing_reads",
+            "blocked_reason": "research completed without concrete file reads",
+            "artifact_validation": {
+                "accepted_candidate_source": "session_write_recovery",
+                "artifact_candidates": [
+                    {
+                        "source": "session_write",
+                        "length": 1200,
+                        "substantive": true,
+                        "placeholder_like": false,
+                        "accepted": false
+                    }
+                ],
+                "repair_attempted": true,
+                "repair_succeeded": false,
+                "unmet_requirements": ["no_concrete_reads"],
+                "verification": {
+                    "verification_expected": false,
+                    "verification_ran": false,
+                    "verification_failed": false
+                }
+            }
+        });
+
+        record_automation_workflow_state_events(
+            &mut run,
+            "research-brief",
+            &output,
+            2,
+            Some("session-1"),
+            "blocked brief",
+            "brief",
+        );
+
+        let events = run
+            .checkpoint
+            .lifecycle_history
+            .iter()
+            .map(|event| event.event.as_str())
+            .collect::<Vec<_>>();
+        assert!(events.contains(&"workflow_state_changed"));
+        assert!(events.contains(&"artifact_candidate_written"));
+        assert!(events.contains(&"artifact_accepted"));
+        assert!(events.contains(&"repair_started"));
+        assert!(events.contains(&"repair_exhausted"));
+        assert!(events.contains(&"research_coverage_failed"));
+
+        let state_event = run
+            .checkpoint
+            .lifecycle_history
+            .iter()
+            .find(|event| event.event == "workflow_state_changed")
+            .expect("workflow state event");
+        assert_eq!(
+            state_event
+                .metadata
+                .as_ref()
+                .and_then(|value| value.get("workflow_class"))
+                .and_then(Value::as_str),
+            Some("research")
+        );
+        assert_eq!(
+            state_event
+                .metadata
+                .as_ref()
+                .and_then(|value| value.get("failure_kind"))
+                .and_then(Value::as_str),
+            Some("research_missing_reads")
         );
     }
 
