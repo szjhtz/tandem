@@ -14,6 +14,7 @@
 - Added `Continue`, `Continue From Here`, `Retry`, and `Retry Workflow` actions for blocked/failed workflow runs.
 - Added richer coding-task verification details in task inspection, including per-step verification results and explicit `done` status for successfully verified code tasks.
 - Failed automation runs now preserve the latest linked session id so the debugger can still surface transcript context after a node failure.
+- Workflow nodes now expose typed stability metadata including `workflow_class`, `phase`, `failure_kind`, and artifact-candidate summaries so debugger views are less dependent on transcript inference.
 - Added projected backlog-task operations in the debugger:
   - projected coding backlog items can now be claimed and manually requeued through `automation_v2`
   - backlog task details now show lease expiry / stale-state visibility and direct `Claim Task` / `Requeue Backlog Task` actions

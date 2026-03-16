@@ -32,6 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - surfaced offered/executed tools, workspace-inspection usage, web-research usage, and artifact-validation details directly in task inspection
   - added richer coding-task verification details in the Run Debugger, including per-step verification results and `done` status for successfully verified code tasks
   - failed automation runs now preserve the latest linked session id so the debugger can still link back to the most recent transcript context
+  - workflow node outputs now expose typed stability metadata including `workflow_class`, `phase`, `failure_kind`, and artifact-candidate summaries so the debugger is driven by backend state instead of transcript inference
 - **Workflow Studio model configuration**:
   - replaced free-text workflow model inputs with provider-backed selectors
   - added an optional shared-model mode so one provider/model choice can be applied across every workflow agent for cheaper runs

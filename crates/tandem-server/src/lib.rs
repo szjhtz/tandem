@@ -793,6 +793,12 @@ pub struct AutomationNodeOutput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub approved: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workflow_class: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub phase: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failure_kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_telemetry: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub artifact_validation: Option<Value>,
@@ -7391,8 +7397,10 @@ fn automation_node_execution_policy(node: &AutomationFlowNode, workspace_root: &
     let code_workflow = automation_node_is_code_workflow(node);
     let git_backed = workspace_has_git_repo(workspace_root);
     let mode = automation_node_execution_mode(node, workspace_root);
+    let workflow_class = automation_node_workflow_class(node);
     json!({
         "mode": mode,
+        "workflow_class": workflow_class,
         "code_workflow": code_workflow,
         "git_backed": git_backed,
         "declared_output_path": output_path,
@@ -7811,6 +7819,16 @@ fn best_session_write_candidate(
         .or_else(|| candidates.pop())
 }
 
+fn artifact_candidate_summary(source: &str, text: &str, accepted: bool) -> Value {
+    json!({
+        "source": source,
+        "length": text.trim().len(),
+        "substantive": substantive_artifact_text(text),
+        "placeholder_like": placeholder_like_artifact_text(text),
+        "accepted": accepted,
+    })
+}
+
 fn session_file_mutation_summary(session: &Session, workspace_root: &str) -> Value {
     let mut touched_files = Vec::<String>::new();
     let mut mutation_tool_by_file = serde_json::Map::new();
@@ -8178,6 +8196,8 @@ fn validate_automation_artifact_output(
     let mut unmet_requirements = Vec::<String>::new();
     let mut repair_attempted = false;
     let mut repair_succeeded = false;
+    let mut artifact_candidates = Vec::<Value>::new();
+    let mut accepted_candidate_source = None::<String>;
     let execution_mode = execution_policy
         .get("mode")
         .and_then(Value::as_str)
@@ -8213,6 +8233,21 @@ fn validate_automation_artifact_output(
         let recovered_candidate = best_session_write_candidate(session, workspace_root, &path);
         let session_write_candidates =
             session_write_candidates_for_output(session, workspace_root, &path);
+        artifact_candidates.extend(
+            session_write_candidates
+                .iter()
+                .map(|candidate| artifact_candidate_summary("session_write", candidate, false)),
+        );
+        if substantive_artifact_text(&text) || placeholder_like_artifact_text(&text) {
+            artifact_candidates.push(artifact_candidate_summary("verified_output", &text, false));
+        }
+        if let Some(previous) = preexisting_output.filter(|value| !value.trim().is_empty()) {
+            artifact_candidates.push(artifact_candidate_summary(
+                "preexisting_output",
+                previous,
+                false,
+            ));
+        }
         let lowered = text.to_ascii_lowercase();
         let requested_has_read = tool_telemetry
             .get("requested_tools")
@@ -8377,6 +8412,7 @@ fn validate_automation_artifact_output(
                         rejected_reason = None;
                         recovered_from_session_write = true;
                         repair_succeeded = true;
+                        accepted_candidate_source = Some("session_write_recovery".to_string());
                     } else if let Some(previous) = preexisting_output {
                         let _ = std::fs::write(&resolved, previous);
                         accepted_output = None;
@@ -8406,6 +8442,7 @@ fn validate_automation_artifact_output(
                     accepted_output = Some((path.clone(), candidate.clone()));
                     recovered_from_session_write = true;
                     repair_succeeded = true;
+                    accepted_candidate_source = Some("session_write_recovery".to_string());
                 }
             }
         }
@@ -8413,9 +8450,22 @@ fn validate_automation_artifact_output(
             repair_succeeded = true;
         }
     }
+    if let Some((_, accepted_text)) = accepted_output.as_ref() {
+        if accepted_candidate_source.is_none() {
+            accepted_candidate_source = Some("verified_output".to_string());
+        }
+        artifact_candidates.push(artifact_candidate_summary(
+            accepted_candidate_source
+                .as_deref()
+                .unwrap_or("verified_output"),
+            accepted_text,
+            true,
+        ));
+    }
 
     let metadata = json!({
         "accepted_artifact_path": accepted_output.as_ref().map(|(path, _)| path.clone()),
+        "accepted_candidate_source": accepted_candidate_source,
         "rejected_artifact_reason": rejected_reason,
         "semantic_block_reason": semantic_block_reason,
         "recovered_from_session_write": recovered_from_session_write,
@@ -8435,6 +8485,7 @@ fn validate_automation_artifact_output(
         "repair_attempted": repair_attempted,
         "repair_succeeded": repair_succeeded,
         "unmet_requirements": unmet_requirements,
+        "artifact_candidates": artifact_candidates,
     });
     let rejected = metadata
         .get("rejected_artifact_reason")
@@ -8854,6 +8905,149 @@ fn detect_automation_node_status(
     ("completed".to_string(), explicit_reason, approved)
 }
 
+fn automation_node_workflow_class(node: &AutomationFlowNode) -> String {
+    if automation_node_is_code_workflow(node) {
+        "code".to_string()
+    } else if node
+        .output_contract
+        .as_ref()
+        .is_some_and(|contract| contract.kind == "brief")
+    {
+        "research".to_string()
+    } else {
+        "artifact".to_string()
+    }
+}
+
+fn detect_automation_node_failure_kind(
+    node: &AutomationFlowNode,
+    status: &str,
+    approved: Option<bool>,
+    blocked_reason: Option<&str>,
+    artifact_validation: Option<&Value>,
+) -> Option<String> {
+    let normalized_status = status.trim().to_ascii_lowercase();
+    let reason = blocked_reason
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase();
+    let unmet_requirements = artifact_validation
+        .and_then(|value| value.get("unmet_requirements"))
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let has_unmet = |needle: &str| {
+        unmet_requirements
+            .iter()
+            .any(|value| value.as_str() == Some(needle))
+    };
+    let verification_failed = artifact_validation
+        .and_then(|value| value.get("verification"))
+        .and_then(|value| value.get("verification_failed"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    if verification_failed || normalized_status == "verify_failed" {
+        return Some("verification_failed".to_string());
+    }
+    if let Some(rejected_reason) = artifact_validation
+        .and_then(|value| value.get("rejected_artifact_reason"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        if rejected_reason.contains("placeholder") {
+            return Some("placeholder_overwrite_rejected".to_string());
+        }
+        if rejected_reason.contains("unsafe raw source rewrite")
+            || rejected_reason.contains("raw write without patch/edit")
+        {
+            return Some("unsafe_raw_write_rejected".to_string());
+        }
+        return Some("artifact_rejected".to_string());
+    }
+    if artifact_validation
+        .and_then(|value| value.get("semantic_block_reason"))
+        .and_then(Value::as_str)
+        .is_some()
+    {
+        if has_unmet("no_concrete_reads") {
+            return Some("research_missing_reads".to_string());
+        }
+        if has_unmet("missing_successful_web_research") {
+            return Some("research_missing_web_research".to_string());
+        }
+        if has_unmet("files_reviewed_missing")
+            || has_unmet("files_reviewed_not_backed_by_read")
+            || has_unmet("relevant_files_not_reviewed_or_skipped")
+        {
+            return Some("research_coverage_failed".to_string());
+        }
+        return Some("semantic_blocked".to_string());
+    }
+    if normalized_status == "blocked" && approved == Some(false) {
+        return Some("review_not_approved".to_string());
+    }
+    if normalized_status == "blocked" && reason.contains("upstream review did not approve") {
+        return Some("upstream_not_approved".to_string());
+    }
+    if normalized_status == "failed" {
+        return Some("run_failed".to_string());
+    }
+    if automation_node_is_code_workflow(node) && normalized_status == "done" {
+        return Some("verification_passed".to_string());
+    }
+    None
+}
+
+fn detect_automation_node_phase(
+    node: &AutomationFlowNode,
+    status: &str,
+    artifact_validation: Option<&Value>,
+) -> String {
+    let workflow_class = automation_node_workflow_class(node);
+    let normalized_status = status.trim().to_ascii_lowercase();
+    match workflow_class.as_str() {
+        "research" => {
+            if artifact_validation
+                .and_then(|value| value.get("semantic_block_reason"))
+                .and_then(Value::as_str)
+                .is_some()
+            {
+                "research_validation".to_string()
+            } else if normalized_status == "completed" {
+                "completed".to_string()
+            } else {
+                "research".to_string()
+            }
+        }
+        "code" => {
+            let verification_expected = artifact_validation
+                .and_then(|value| value.get("verification"))
+                .and_then(|value| value.get("verification_expected"))
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            if verification_expected {
+                if normalized_status == "done" {
+                    "completed".to_string()
+                } else {
+                    "verification".to_string()
+                }
+            } else if normalized_status == "done" {
+                "completed".to_string()
+            } else {
+                "implementation".to_string()
+            }
+        }
+        _ => {
+            if normalized_status == "completed" {
+                "completed".to_string()
+            } else {
+                "artifact_write".to_string()
+            }
+        }
+    }
+}
+
 fn wrap_automation_node_output(
     node: &AutomationFlowNode,
     session: &Session,
@@ -8901,6 +9095,15 @@ fn wrap_automation_node_output(
         &tool_telemetry,
         artifact_validation.as_ref(),
     );
+    let workflow_class = automation_node_workflow_class(node);
+    let phase = detect_automation_node_phase(node, &status, artifact_validation.as_ref());
+    let failure_kind = detect_automation_node_failure_kind(
+        node,
+        &status,
+        approved,
+        blocked_reason.as_deref(),
+        artifact_validation.as_ref(),
+    );
     let content = match contract_kind.as_str() {
         "report_markdown" | "text_summary" => {
             json!({
@@ -8942,6 +9145,9 @@ fn wrap_automation_node_output(
         status: Some(status),
         blocked_reason,
         approved,
+        workflow_class: Some(workflow_class),
+        phase: Some(phase),
+        failure_kind,
         tool_telemetry: Some(tool_telemetry),
         artifact_validation,
     })
@@ -11160,6 +11366,115 @@ mod tests {
         assert_eq!(status, "blocked");
         assert_eq!(reason.as_deref(), Some("placeholder overwrite rejected"));
         assert_eq!(approved, None);
+    }
+
+    #[test]
+    fn research_workflow_failure_kind_is_typed_from_unmet_requirements() {
+        let node = AutomationFlowNode {
+            node_id: "research".to_string(),
+            agent_id: "agent-a".to_string(),
+            objective: "Research".to_string(),
+            depends_on: Vec::new(),
+            input_refs: Vec::new(),
+            output_contract: Some(AutomationFlowOutputContract {
+                kind: "brief".to_string(),
+                schema: None,
+                summary_guidance: None,
+            }),
+            retry_policy: None,
+            timeout_ms: None,
+            stage_kind: None,
+            gate: None,
+            metadata: Some(json!({
+                "builder": {
+                    "output_path": "marketing-brief.md",
+                    "web_research_expected": true
+                }
+            })),
+        };
+        let artifact_validation = json!({
+            "semantic_block_reason": "research completed without concrete file reads or required source coverage",
+            "unmet_requirements": ["no_concrete_reads", "files_reviewed_not_backed_by_read"],
+            "verification": {
+                "verification_failed": false
+            }
+        });
+
+        assert_eq!(
+            detect_automation_node_failure_kind(
+                &node,
+                "blocked",
+                None,
+                Some("research completed without concrete file reads or required source coverage"),
+                Some(&artifact_validation),
+            )
+            .as_deref(),
+            Some("research_missing_reads")
+        );
+        assert_eq!(
+            detect_automation_node_phase(&node, "blocked", Some(&artifact_validation)),
+            "research_validation"
+        );
+    }
+
+    #[test]
+    fn execution_policy_reports_workflow_class() {
+        let research = AutomationFlowNode {
+            node_id: "research".to_string(),
+            agent_id: "agent-a".to_string(),
+            objective: "Research".to_string(),
+            depends_on: Vec::new(),
+            input_refs: Vec::new(),
+            output_contract: Some(AutomationFlowOutputContract {
+                kind: "brief".to_string(),
+                schema: None,
+                summary_guidance: None,
+            }),
+            retry_policy: None,
+            timeout_ms: None,
+            stage_kind: None,
+            gate: None,
+            metadata: Some(json!({
+                "builder": {
+                    "output_path": "marketing-brief.md"
+                }
+            })),
+        };
+        let code = AutomationFlowNode {
+            node_id: "code".to_string(),
+            agent_id: "agent-a".to_string(),
+            objective: "Code".to_string(),
+            depends_on: Vec::new(),
+            input_refs: Vec::new(),
+            output_contract: Some(AutomationFlowOutputContract {
+                kind: "report_markdown".to_string(),
+                schema: None,
+                summary_guidance: None,
+            }),
+            retry_policy: None,
+            timeout_ms: None,
+            stage_kind: None,
+            gate: None,
+            metadata: Some(json!({
+                "builder": {
+                    "task_kind": "code_change",
+                    "output_path": "handoff.md"
+                }
+            })),
+        };
+
+        assert_eq!(
+            automation_node_execution_policy(&research, ".")
+                .get("workflow_class")
+                .and_then(Value::as_str),
+            Some("research")
+        );
+        assert_eq!(
+            automation_node_execution_policy(&code, ".")
+                .get("workflow_class")
+                .and_then(Value::as_str),
+            Some("code")
+        );
     }
 
     #[test]

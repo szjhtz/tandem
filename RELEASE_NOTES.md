@@ -14,6 +14,7 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
   - task details now show semantic node status, blocked reason, approval, tool telemetry, and artifact-validation results
   - coding task details now show per-step verification results, and successfully verified code nodes finish as `done` instead of generic `completed`
   - failed automation runs now preserve the latest linked session id so the debugger can still surface transcript context after a node failure
+  - workflow nodes now expose typed stability metadata (`workflow_class`, `phase`, `failure_kind`, and artifact candidates) so the debugger can rely less on transcript parsing
 
 - Repo coding backlog workflows now have real task operations
   - projected backlog items can now be claimed and manually requeued through `automation_v2` run APIs

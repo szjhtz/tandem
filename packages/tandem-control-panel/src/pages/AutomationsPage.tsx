@@ -4320,6 +4320,35 @@ function MyAutomations({
       ).trim(),
     [selectedBoardTask, selectedBoardTaskArtifactValidation, selectedBoardTaskOutput]
   );
+  const selectedBoardTaskWorkflowClass = useMemo(
+    () =>
+      String(
+        selectedBoardTaskOutput?.workflow_class ||
+          selectedBoardTaskOutput?.workflowClass ||
+          selectedBoardTaskArtifactValidation?.execution_policy?.workflow_class ||
+          ""
+      ).trim(),
+    [selectedBoardTaskArtifactValidation, selectedBoardTaskOutput]
+  );
+  const selectedBoardTaskPhase = useMemo(
+    () =>
+      String(selectedBoardTaskOutput?.phase || selectedBoardTaskOutput?.node_phase || "").trim(),
+    [selectedBoardTaskOutput]
+  );
+  const selectedBoardTaskFailureKind = useMemo(
+    () =>
+      String(
+        selectedBoardTaskOutput?.failure_kind || selectedBoardTaskOutput?.failureKind || ""
+      ).trim(),
+    [selectedBoardTaskOutput]
+  );
+  const selectedBoardTaskArtifactCandidates = useMemo(
+    () =>
+      Array.isArray(selectedBoardTaskArtifactValidation?.artifact_candidates)
+        ? selectedBoardTaskArtifactValidation.artifact_candidates
+        : [],
+    [selectedBoardTaskArtifactValidation]
+  );
   const selectedBoardTaskResetTaskIds = useMemo(
     () => workflowDescendantTaskIds(workflowProjection.tasks, selectedBoardTask?.id || ""),
     [selectedBoardTask, workflowProjection.tasks]
@@ -5583,6 +5612,76 @@ function MyAutomations({
                             {selectedBoardTask.runtime_detail ? (
                               <div className="whitespace-pre-wrap break-words rounded-lg border border-slate-700/60 bg-slate-950/30 p-3 text-xs text-slate-300">
                                 {selectedBoardTask.runtime_detail}
+                              </div>
+                            ) : null}
+                            {selectedBoardTaskWorkflowClass ||
+                            selectedBoardTaskPhase ||
+                            selectedBoardTaskFailureKind ||
+                            selectedBoardTaskArtifactCandidates.length ? (
+                              <div className="rounded-lg border border-slate-700/60 bg-slate-950/20 p-3 text-xs text-slate-300">
+                                <div className="font-medium text-slate-200">Stability Contract</div>
+                                <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                                  <div className="rounded-md border border-slate-800/80 bg-slate-950/30 p-2">
+                                    <div className="tcp-subtle">workflow class</div>
+                                    <div className="mt-1 font-medium text-slate-100">
+                                      {selectedBoardTaskWorkflowClass || "n/a"}
+                                    </div>
+                                  </div>
+                                  <div className="rounded-md border border-slate-800/80 bg-slate-950/30 p-2">
+                                    <div className="tcp-subtle">phase</div>
+                                    <div className="mt-1 font-medium text-slate-100">
+                                      {selectedBoardTaskPhase || "n/a"}
+                                    </div>
+                                  </div>
+                                  <div className="rounded-md border border-slate-800/80 bg-slate-950/30 p-2">
+                                    <div className="tcp-subtle">failure kind</div>
+                                    <div className="mt-1 font-medium text-slate-100">
+                                      {selectedBoardTaskFailureKind || "n/a"}
+                                    </div>
+                                  </div>
+                                  <div className="rounded-md border border-slate-800/80 bg-slate-950/30 p-2">
+                                    <div className="tcp-subtle">artifact candidates</div>
+                                    <div className="mt-1 font-medium text-slate-100">
+                                      {selectedBoardTaskArtifactCandidates.length}
+                                    </div>
+                                  </div>
+                                </div>
+                                {selectedBoardTaskArtifactCandidates.length ? (
+                                  <div className="mt-3 grid gap-2">
+                                    {selectedBoardTaskArtifactCandidates.map(
+                                      (candidate: any, index: number) => (
+                                        <div
+                                          key={`${String(candidate?.source || "candidate")}-${index}`}
+                                          className="rounded-md border border-slate-800/80 bg-slate-950/30 p-2"
+                                        >
+                                          <div className="flex flex-wrap items-center gap-2">
+                                            <span className="tcp-badge-info">
+                                              {String(candidate?.source || "candidate")}
+                                            </span>
+                                            {candidate?.accepted ? (
+                                              <span className="tcp-badge-ok">accepted</span>
+                                            ) : null}
+                                            {candidate?.substantive ? (
+                                              <span className="tcp-badge-ok">substantive</span>
+                                            ) : (
+                                              <span className="tcp-badge-warn">
+                                                non-substantive
+                                              </span>
+                                            )}
+                                            {candidate?.placeholder_like ? (
+                                              <span className="tcp-badge-warn">
+                                                placeholder-like
+                                              </span>
+                                            ) : null}
+                                          </div>
+                                          <div className="mt-1 tcp-subtle">
+                                            {Number(candidate?.length || 0)} chars
+                                          </div>
+                                        </div>
+                                      )
+                                    )}
+                                  </div>
+                                ) : null}
                               </div>
                             ) : null}
                             {String((selectedBoardTask as any).write_scope || "").trim() ||
