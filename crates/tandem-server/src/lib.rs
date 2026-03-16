@@ -6392,6 +6392,77 @@ fn automation_filter_runnable_by_open_phase(
     }
 }
 
+fn normalize_write_scope_entries(scope: Option<String>) -> Vec<String> {
+    let Some(scope) = scope else {
+        return vec!["__repo__".to_string()];
+    };
+    let entries = scope
+        .split(|ch| matches!(ch, ',' | '\n' | ';'))
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.trim_matches('/').to_ascii_lowercase())
+        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>();
+    if entries.is_empty() {
+        vec!["__repo__".to_string()]
+    } else {
+        entries
+    }
+}
+
+fn write_scope_entries_conflict(left: &[String], right: &[String]) -> bool {
+    left.iter().any(|a| {
+        right.iter().any(|b| {
+            a == "__repo__"
+                || b == "__repo__"
+                || a == b
+                || a == "."
+                || b == "."
+                || a == "*"
+                || b == "*"
+                || a.starts_with(&format!("{}/", b))
+                || b.starts_with(&format!("{}/", a))
+        })
+    })
+}
+
+fn automation_filter_runnable_by_write_scope_conflicts(
+    runnable: Vec<AutomationFlowNode>,
+    max_parallel: usize,
+) -> Vec<AutomationFlowNode> {
+    if max_parallel <= 1 {
+        return runnable.into_iter().take(1).collect();
+    }
+    let mut selected = Vec::new();
+    let mut selected_scopes = Vec::<Vec<String>>::new();
+    for node in runnable {
+        let is_code = automation_node_is_code_workflow(&node);
+        let scope_entries = if is_code {
+            normalize_write_scope_entries(automation_node_write_scope(&node))
+        } else {
+            Vec::new()
+        };
+        let conflicts = is_code
+            && selected.iter().enumerate().any(|(index, existing)| {
+                automation_node_is_code_workflow(existing)
+                    && write_scope_entries_conflict(&scope_entries, &selected_scopes[index])
+            });
+        if conflicts {
+            continue;
+        }
+        if is_code {
+            selected_scopes.push(scope_entries);
+        } else {
+            selected_scopes.push(Vec::new());
+        }
+        selected.push(node);
+        if selected.len() >= max_parallel {
+            break;
+        }
+    }
+    selected
+}
+
 pub(crate) fn automation_blocked_nodes(
     automation: &AutomationV2Spec,
     run: &AutomationV2RunRecord,
@@ -9097,7 +9168,8 @@ pub async fn run_automation_v2_executor(state: AppState) {
                     &automation_node_sort_key(b, &phase_rank, current_open_phase_rank),
                 )
             });
-            let runnable = runnable.into_iter().take(max_parallel).collect::<Vec<_>>();
+            let runnable =
+                automation_filter_runnable_by_write_scope_conflicts(runnable, max_parallel);
 
             if runnable.is_empty() {
                 let _ = state
@@ -10650,6 +10722,129 @@ mod tests {
 
         assert_eq!(filtered.len(), 1);
         assert_eq!(filtered[0].node_id, "draft");
+    }
+
+    #[test]
+    fn runnable_write_scope_filter_skips_overlapping_code_nodes() {
+        let first = AutomationFlowNode {
+            node_id: "first".to_string(),
+            agent_id: "agent-a".to_string(),
+            objective: "First".to_string(),
+            depends_on: Vec::new(),
+            input_refs: Vec::new(),
+            output_contract: None,
+            retry_policy: None,
+            timeout_ms: None,
+            stage_kind: Some(AutomationNodeStageKind::Workstream),
+            gate: None,
+            metadata: Some(json!({
+                "builder": {
+                    "task_kind": "code_change",
+                    "write_scope": "src"
+                }
+            })),
+        };
+        let overlapping = AutomationFlowNode {
+            node_id: "overlap".to_string(),
+            agent_id: "agent-a".to_string(),
+            objective: "Overlap".to_string(),
+            depends_on: Vec::new(),
+            input_refs: Vec::new(),
+            output_contract: None,
+            retry_policy: None,
+            timeout_ms: None,
+            stage_kind: Some(AutomationNodeStageKind::Workstream),
+            gate: None,
+            metadata: Some(json!({
+                "builder": {
+                    "task_kind": "code_change",
+                    "write_scope": "src/lib"
+                }
+            })),
+        };
+        let disjoint = AutomationFlowNode {
+            node_id: "disjoint".to_string(),
+            agent_id: "agent-a".to_string(),
+            objective: "Disjoint".to_string(),
+            depends_on: Vec::new(),
+            input_refs: Vec::new(),
+            output_contract: None,
+            retry_policy: None,
+            timeout_ms: None,
+            stage_kind: Some(AutomationNodeStageKind::Workstream),
+            gate: None,
+            metadata: Some(json!({
+                "builder": {
+                    "task_kind": "code_change",
+                    "write_scope": "docs"
+                }
+            })),
+        };
+
+        let filtered = automation_filter_runnable_by_write_scope_conflicts(
+            vec![first.clone(), overlapping, disjoint.clone()],
+            3,
+        );
+
+        let ids = filtered
+            .iter()
+            .map(|node| node.node_id.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(ids, vec!["first", "disjoint"]);
+    }
+
+    #[test]
+    fn runnable_write_scope_filter_allows_non_code_nodes_to_run_in_parallel() {
+        let code = AutomationFlowNode {
+            node_id: "code".to_string(),
+            agent_id: "agent-a".to_string(),
+            objective: "Code".to_string(),
+            depends_on: Vec::new(),
+            input_refs: Vec::new(),
+            output_contract: None,
+            retry_policy: None,
+            timeout_ms: None,
+            stage_kind: Some(AutomationNodeStageKind::Workstream),
+            gate: None,
+            metadata: Some(json!({
+                "builder": {
+                    "task_kind": "code_change",
+                    "write_scope": "src"
+                }
+            })),
+        };
+        let brief = AutomationFlowNode {
+            node_id: "brief".to_string(),
+            agent_id: "agent-a".to_string(),
+            objective: "Brief".to_string(),
+            depends_on: Vec::new(),
+            input_refs: Vec::new(),
+            output_contract: Some(AutomationFlowOutputContract {
+                kind: "brief".to_string(),
+                schema: None,
+                summary_guidance: None,
+            }),
+            retry_policy: None,
+            timeout_ms: None,
+            stage_kind: Some(AutomationNodeStageKind::Workstream),
+            gate: None,
+            metadata: Some(json!({
+                "builder": {
+                    "output_path": "marketing-brief.md"
+                }
+            })),
+        };
+
+        let filtered = automation_filter_runnable_by_write_scope_conflicts(
+            vec![code.clone(), brief.clone()],
+            2,
+        );
+
+        let ids = filtered
+            .iter()
+            .map(|node| node.node_id.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(ids, vec!["code", "brief"]);
     }
 
     #[test]

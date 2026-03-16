@@ -16,6 +16,7 @@
 - Added projected backlog-task operations in the debugger:
   - projected coding backlog items can now be claimed and manually requeued through `automation_v2`
   - backlog task details now show lease expiry / stale-state visibility and direct `Claim Task` / `Requeue Backlog Task` actions
+- Overlapping code-task write scopes are now filtered out of the same runnable batch so parallel coding workflows stay conservative by default.
 
 ### Workflow Runtime Hardening
 

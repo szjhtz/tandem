@@ -18,6 +18,7 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
   - projected backlog items can now be claimed and manually requeued through `automation_v2` run APIs
   - stale `in_progress` backlog-task leases are automatically requeued by the shared context-task runtime before the next claim
   - the Run Debugger now shows lease expiry / stale state and exposes backlog `Claim Task` / `Requeue Backlog Task` actions
+  - overlapping code-task write scopes are now filtered out of the same runnable batch so parallel coding workflows stay conservative by default
 
 - File-backed workflow runtime hardening
   - `automation_v2` nodes now use deterministic required tool sets
