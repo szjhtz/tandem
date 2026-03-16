@@ -23,6 +23,7 @@
 
 - `automation_v2` nodes now run with deterministic required tool sets instead of leaning only on the generic auto-router.
 - Added workflow prewrite requirements so workspace inspection and web research stay available until those requirements are actually satisfied.
+- Write-required workflow retries now force the first missing artifact write instead of continuing to offer discovery tools before any declared output exists.
 - Brief/research nodes now also require concrete `read` coverage, successful web research when expected, and one automatic repair pass before they finalize as blocked.
 - Normalized workflow tool exposure so `read` implies `glob`, improving workspace discovery for saved workflows that only requested `read`.
 - Fixed `/workspace/...` path alias handling so workflow tool calls resolve against the actual workspace root.

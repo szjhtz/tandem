@@ -621,16 +621,21 @@ impl EngineLoop {
                             .any(|pattern| tool_name_matches_policy(pattern, &tool))
                     });
                 }
-                if requested_write_required
+                let prewrite_satisfied = prewrite_requirements_satisfied(
+                    &requested_prewrite_requirements,
+                    productive_workspace_inspection_total > 0,
+                    productive_concrete_read_total > 0,
+                    productive_web_research_total > 0,
+                    successful_web_research_total > 0,
+                );
+                let force_write_only_retry = requested_write_required
                     && required_write_retry_count > 0
-                    && (prewrite_requirements_satisfied(
-                        &requested_prewrite_requirements,
-                        productive_workspace_inspection_total > 0,
-                        productive_concrete_read_total > 0,
-                        productive_web_research_total > 0,
-                        successful_web_research_total > 0,
-                    ) || unmet_prewrite_repair_retry_count > 0)
-                {
+                    && (productive_write_tool_calls_total == 0 || prewrite_satisfied);
+                let allow_repair_tools = requested_write_required
+                    && unmet_prewrite_repair_retry_count > 0
+                    && productive_write_tool_calls_total > 0
+                    && !prewrite_satisfied;
+                if force_write_only_retry && !allow_repair_tools {
                     tool_schemas.retain(|schema| is_workspace_write_tool(&schema.name));
                 }
                 if active_agent.tools.is_some() {
@@ -3396,6 +3401,10 @@ fn build_write_required_retry_context(
         prompt.push(' ');
         prompt.push_str(
             "Your next response must be a `write` tool call for that file, not a prose-only reply.",
+        );
+        prompt.push(' ');
+        prompt.push_str(
+            "Do not call `glob`, `read`, or `websearch` again in your next response unless the engine explicitly gives you a repair pass after a successful write.",
         );
     }
     prompt

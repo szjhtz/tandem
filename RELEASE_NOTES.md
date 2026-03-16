@@ -24,6 +24,7 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
 - File-backed workflow runtime hardening
   - `automation_v2` nodes now use deterministic required tool sets
   - workflow tool normalization now gives `read` workflows `glob` for discovery
+  - write-required workflow retries now force the first missing artifact write instead of continuing to offer discovery tools before any declared output exists
   - `/workspace/...` file tool paths now resolve against the real workspace root
   - blocked node outcomes now stop descendants instead of letting downstream stages fabricate blocked handoffs
   - research briefs that cite local sources without any `read` calls now block instead of slipping through as “completed”

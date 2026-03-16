@@ -39,6 +39,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `automation_v2` nodes now run with explicit required tool sets instead of relying on the generic auto-router alone
   - normalized workflow tool exposure so `read` implies `glob` for workspace discovery
   - added prewrite requirements for workspace inspection and web research before file-finalization retries narrow down to write-only
+  - write-required workflow retries now force the first missing artifact write instead of continuing to offer discovery tools before any declared output exists
   - coding workflow scheduling now filters overlapping write scopes out of the same runnable batch so parallel code tasks do not edit the same repo area at once by default
 
 ### Fixed
