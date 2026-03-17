@@ -22,6 +22,7 @@ import {
   workflowNodeOutput,
   workflowPendingNodeCount,
   workflowPersistedHistoryEntries,
+  workflowTelemetrySeedEvents,
   workflowNodeStability,
   workflowProjectionFromRunSnapshot,
   workflowRecentNodeEventSummaries,
@@ -4275,26 +4276,14 @@ function MyAutomations({
         ? (runHistoryQuery.data as any).history
         : [];
   const telemetrySeedEvents = useMemo(() => {
-    const persisted = (
-      Array.isArray(persistedRunEventsQuery.data) ? persistedRunEventsQuery.data : []
-    ).map((event: any, index: number) => ({
-      id: `persisted:${selectedRunId}:${String(event?.seq || index)}:${String(eventType(event) || "")}`,
-      source: "automations" as const,
-      at: eventAt(event),
-      event,
-    }));
-    if (!isWorkflowRun) return persisted;
-    return [
-      ...persisted,
-      ...workflowContextEvents.map((event: any) => ({
-        id: `context:${String(event?.seq || "")}:${String(event?.event_type || "")}`,
-        source: "context",
-        at:
-          timestampOrNull(event?.created_at_ms || event?.timestamp_ms || event?.timestampMs) ||
-          Date.now(),
-        event,
-      })),
-    ];
+    return workflowTelemetrySeedEvents(
+      Array.isArray(persistedRunEventsQuery.data) ? persistedRunEventsQuery.data : [],
+      workflowContextEvents,
+      isWorkflowRun,
+      eventType,
+      eventAt,
+      selectedRunId
+    );
   }, [isWorkflowRun, persistedRunEventsQuery.data, selectedRunId, workflowContextEvents]);
   const telemetryEvents = useMemo(() => {
     const all = [...telemetrySeedEvents, ...runEvents];

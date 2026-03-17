@@ -385,6 +385,36 @@ export function workflowPersistedHistoryEntries(
     .sort((a, b) => Number(b.at || 0) - Number(a.at || 0));
 }
 
+export function workflowTelemetrySeedEvents(
+  persistedEvents: any[],
+  contextEvents: any[],
+  isWorkflowRun: boolean,
+  eventType: (event: any) => string,
+  eventAt: (event: any) => number,
+  runId = ""
+) {
+  const persisted = (Array.isArray(persistedEvents) ? persistedEvents : []).map(
+    (event: any, index: number) => ({
+      id: `persisted:${String(runId || "")}:${String(event?.seq || index)}:${String(eventType(event) || "")}`,
+      source: "automations" as const,
+      at: eventAt(event),
+      event,
+    })
+  );
+  if (!isWorkflowRun) return persisted;
+  return [
+    ...persisted,
+    ...(Array.isArray(contextEvents) ? contextEvents : []).map((event: any) => ({
+      id: `context:${String(event?.seq || "")}:${String(event?.event_type || "")}`,
+      source: "context" as const,
+      at:
+        workflowTimestamp(event?.created_at_ms || event?.timestamp_ms || event?.timestampMs) ||
+        Date.now(),
+      event,
+    })),
+  ];
+}
+
 export function workflowSessionIds(run: any) {
   const direct = Array.isArray(run?.active_session_ids)
     ? run.active_session_ids
