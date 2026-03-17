@@ -29,6 +29,7 @@ import {
   workflowPendingNodeCount,
   workflowPersistedHistoryEntries,
   workflowSessionLogEventEntries,
+  workflowTelemetryDisplayEntries,
   workflowTelemetrySeedEvents,
   workflowNodeStability,
   workflowProjectionFromRunSnapshot,
@@ -4235,6 +4236,10 @@ function MyAutomations({
   const filteredRunEvents = telemetryEvents.filter((item) =>
     selectedLogSource === "all" ? true : item.source === selectedLogSource
   );
+  const filteredRunEventEntries = useMemo(
+    () => workflowTelemetryDisplayEntries(filteredRunEvents),
+    [filteredRunEvents]
+  );
   const sessionMessages = useMemo(
     () =>
       sessionMessageQueries.flatMap((query, index) => {
@@ -6385,9 +6390,9 @@ function MyAutomations({
                             </button>
                           </div>
                         </div>
-                        {filteredRunEvents.length ? (
+                        {filteredRunEventEntries.length ? (
                           <div className="grid gap-2 overflow-auto pr-1 sm:max-h-[12rem]">
-                            {filteredRunEvents
+                            {filteredRunEventEntries
                               .slice(-40)
                               .reverse()
                               .map((item) => (
@@ -6398,18 +6403,16 @@ function MyAutomations({
                                   <summary className="cursor-pointer list-none">
                                     <div className="flex items-center justify-between gap-2">
                                       <span className="text-xs font-medium text-slate-200">
-                                        {workflowEventType(item.event) || "event"}
+                                        {item.label}
                                       </span>
                                       <span className="tcp-subtle text-[11px]">
                                         {formatTimestampLabel(item.at)} · {item.source}
                                       </span>
                                     </div>
-                                    <div className="tcp-subtle mt-1 text-xs">
-                                      {workflowEventReason(item.event) || "No summary available."}
-                                    </div>
+                                    <div className="tcp-subtle mt-1 text-xs">{item.detail}</div>
                                   </summary>
                                   <pre className="tcp-code mt-2 max-h-40 overflow-auto text-[11px]">
-                                    {formatJson(item.event?.properties || item.event)}
+                                    {formatJson(item.raw)}
                                   </pre>
                                 </details>
                               ))}

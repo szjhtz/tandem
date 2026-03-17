@@ -533,6 +533,20 @@ export function workflowEventBlockers(
   return blockers.sort((a, b) => (b.at || 0) - (a.at || 0));
 }
 
+export function workflowTelemetryDisplayEntries(
+  rows: Array<{ id: string; source: string; at: number; event: any } | null | undefined>
+) {
+  return (Array.isArray(rows) ? rows : []).map((row) => ({
+    id: String(row?.id || "").trim(),
+    source: String(row?.source || "").trim() || "event",
+    at: Number(row?.at || 0),
+    label: workflowEventType(row?.event) || "event",
+    detail: workflowEventReason(row?.event) || "No summary available.",
+    raw: row?.event?.properties || row?.event || null,
+    event: row?.event || null,
+  }));
+}
+
 export function workflowSessionIds(run: any) {
   const direct = Array.isArray(run?.active_session_ids)
     ? run.active_session_ids
