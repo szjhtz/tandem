@@ -1133,6 +1133,10 @@ fn normalize_and_validate_planner_plan(
         }
     }
 
+    for step in &mut candidate.steps {
+        normalize_workflow_step_metadata(step);
+    }
+
     validate_workflow_plan(&candidate)?;
     Ok(candidate)
 }
@@ -1284,6 +1288,76 @@ fn output_validator_kind_for_kind(kind: &str) -> crate::AutomationOutputValidato
         }
         "structured_json" => crate::AutomationOutputValidatorKind::StructuredJson,
         _ => crate::AutomationOutputValidatorKind::GenericArtifact,
+    }
+}
+
+fn workflow_step_metadata_defaults(
+    step_id: &str,
+    kind: &str,
+    objective: &str,
+    output_contract: Option<&crate::AutomationFlowOutputContract>,
+) -> Option<Value> {
+    let validator = output_contract
+        .and_then(|contract| contract.validator)
+        .unwrap_or_else(|| {
+            output_contract
+                .map(|contract| output_validator_kind_for_kind(&contract.kind))
+                .unwrap_or(crate::AutomationOutputValidatorKind::GenericArtifact)
+        });
+    if validator != crate::AutomationOutputValidatorKind::ResearchBrief {
+        return None;
+    }
+    let lowered_step_id = step_id.trim().to_ascii_lowercase();
+    let lowered_kind = kind.trim().to_ascii_lowercase();
+    let lowered_objective = objective.trim().to_ascii_lowercase();
+    let expects_web_research = lowered_step_id.contains("research")
+        || lowered_kind.contains("research")
+        || lowered_objective.contains("web")
+        || lowered_objective.contains("online")
+        || lowered_objective.contains("current")
+        || lowered_objective.contains("latest");
+    Some(json!({
+        "builder": {
+            "web_research_expected": expects_web_research,
+        }
+    }))
+}
+
+fn normalize_workflow_step_metadata(step: &mut crate::WorkflowPlanStep) {
+    let defaults = workflow_step_metadata_defaults(
+        &step.step_id,
+        &step.kind,
+        &step.objective,
+        step.output_contract.as_ref(),
+    );
+    match (step.metadata.as_mut(), defaults) {
+        (Some(metadata), Some(defaults)) => {
+            let Some(root) = metadata.as_object_mut() else {
+                step.metadata = Some(defaults);
+                return;
+            };
+            let builder = root
+                .entry("builder".to_string())
+                .or_insert_with(|| json!({}));
+            let Some(builder_map) = builder.as_object_mut() else {
+                *builder = defaults
+                    .get("builder")
+                    .cloned()
+                    .unwrap_or_else(|| json!({}));
+                return;
+            };
+            if let Some(default_builder) = defaults.get("builder").and_then(Value::as_object) {
+                for (key, value) in default_builder {
+                    builder_map
+                        .entry(key.clone())
+                        .or_insert_with(|| value.clone());
+                }
+            }
+        }
+        (None, Some(defaults)) => {
+            step.metadata = Some(defaults);
+        }
+        _ => {}
     }
 }
 
@@ -1913,10 +1987,11 @@ fn build_llm_workflow_creation_prompt(
             "- steps must form a valid DAG\n",
             "- input_refs and depends_on must reference existing steps\n",
             "WorkflowPlan.step schema:\n",
-            "- each step must use fields: step_id, kind, objective, agent_role, depends_on, input_refs, output_contract\n",
+            "- each step must use fields: step_id, kind, objective, agent_role, depends_on, input_refs, output_contract; metadata is optional\n",
             "- do not use alternate keys like id, type, label, or config as the primary step schema\n",
             "- input_refs must be objects shaped like {{\"from_step_id\":\"...\",\"alias\":\"...\"}}\n",
             "- output_contract must be either null or {{\"kind\":\"structured_json|report_markdown|text_summary|urls|citations|brief|review|review_summary|approval_gate\",\"validator\":\"structured_json|generic_artifact|research_brief|review_decision\"}}\n",
+            "- when a research brief step needs current web coverage, set metadata.builder.web_research_expected to true; set it to false when local/file research is enough\n",
             "Schedule schema:\n",
             "- manual: {{\"type\":\"manual\",\"timezone\":\"UTC\",\"misfire_policy\":{{\"type\":\"run_once\"}}}}\n",
             "- cron: {{\"type\":\"cron\",\"cron_expression\":\"...\",\"timezone\":\"UTC\",\"misfire_policy\":{{\"type\":\"run_once\"}}}}\n",
@@ -1985,10 +2060,11 @@ fn build_llm_workflow_revision_prompt(
             "- input_refs and depends_on must reference existing steps\n",
             "- keep the workflow graph minimal but sufficient\n",
             "WorkflowPlan.step schema:\n",
-            "- each step must use fields: step_id, kind, objective, agent_role, depends_on, input_refs, output_contract\n",
+            "- each step must use fields: step_id, kind, objective, agent_role, depends_on, input_refs, output_contract; metadata is optional\n",
             "- do not use alternate keys like id, type, label, or config as the primary step schema\n",
             "- input_refs must be objects shaped like {{\"from_step_id\":\"...\",\"alias\":\"...\"}}\n",
             "- output_contract must be either null or {{\"kind\":\"structured_json|report_markdown|text_summary|urls|citations|brief|review|review_summary|approval_gate\",\"validator\":\"structured_json|generic_artifact|research_brief|review_decision\"}}\n",
+            "- when a research brief step needs current web coverage, set metadata.builder.web_research_expected to true; set it to false when local/file research is enough\n",
             "You may revise title, description, schedule, workspace_root, allowed_mcp_servers, operator_preferences, steps, dependencies, input_refs, and output_contracts.\n",
             "Schedule schema:\n",
             "- manual | cron | interval using the same shape already present on WorkflowPlan.schedule\n",
@@ -2175,6 +2251,12 @@ fn plan_step_with_dep(
     input_refs: Vec<crate::AutomationFlowInputRef>,
     output_contract: Option<&str>,
 ) -> crate::WorkflowPlanStep {
+    let output_contract = output_contract.map(|kind| crate::AutomationFlowOutputContract {
+        kind: kind.to_string(),
+        validator: Some(output_validator_kind_for_kind(kind)),
+        schema: None,
+        summary_guidance: None,
+    });
     crate::WorkflowPlanStep {
         step_id: step_id.to_string(),
         kind: kind.to_string(),
@@ -2185,12 +2267,13 @@ fn plan_step_with_dep(
             .collect(),
         agent_role: agent_role.to_string(),
         input_refs,
-        output_contract: output_contract.map(|kind| crate::AutomationFlowOutputContract {
-            kind: kind.to_string(),
-            validator: Some(output_validator_kind_for_kind(kind)),
-            schema: None,
-            summary_guidance: None,
-        }),
+        output_contract: output_contract.clone(),
+        metadata: workflow_step_metadata_defaults(
+            step_id,
+            kind,
+            objective,
+            output_contract.as_ref(),
+        ),
     }
 }
 
@@ -2284,7 +2367,7 @@ pub(crate) fn compile_plan_to_automation_v2(
                 timeout_ms: None,
                 stage_kind: None,
                 gate: None,
-                metadata: None,
+                metadata: step.metadata.clone(),
             })
             .collect(),
     };

@@ -104,13 +104,35 @@ fn step_json(
     input_refs: Value,
     output_kind: &str,
 ) -> Value {
+    step_json_with_metadata(
+        step_id,
+        kind,
+        objective,
+        depends_on,
+        agent_role,
+        input_refs,
+        output_kind,
+        None,
+    )
+}
+
+fn step_json_with_metadata(
+    step_id: &str,
+    kind: &str,
+    objective: &str,
+    depends_on: &[&str],
+    agent_role: &str,
+    input_refs: Value,
+    output_kind: &str,
+    metadata: Option<Value>,
+) -> Value {
     let validator = match output_kind {
         "brief" => "research_brief",
         "review" | "review_summary" | "approval_gate" => "review_decision",
         "structured_json" => "structured_json",
         _ => "generic_artifact",
     };
-    json!({
+    let mut value = json!({
         "step_id": step_id,
         "kind": kind,
         "objective": objective,
@@ -121,7 +143,14 @@ fn step_json(
             "kind": output_kind,
             "validator": validator
         }
-    })
+    });
+    if let Some(metadata) = metadata {
+        value
+            .as_object_mut()
+            .expect("step object")
+            .insert("metadata".to_string(), metadata);
+    }
+    value
 }
 
 fn llm_plan_json(
@@ -682,6 +711,115 @@ async fn workflow_plan_apply_persists_automation_v2_with_planner_metadata() {
         .nodes
         .iter()
         .any(|node| !node.input_refs.is_empty()));
+}
+
+#[tokio::test]
+async fn workflow_plan_apply_preserves_research_web_expectation_metadata() {
+    let state = test_state().await;
+    configure_openai_provider(&state).await;
+    let app = app_router(state.clone());
+    let _guard = PlannerEnvGuard::new(&[
+        "TANDEM_WORKFLOW_PLANNER_TEST_BUILD_RESPONSE",
+        "TANDEM_WORKFLOW_PLANNER_TEST_RESPONSE",
+    ]);
+    _guard.set(
+        "TANDEM_WORKFLOW_PLANNER_TEST_BUILD_RESPONSE",
+        json!({
+            "action": "build",
+            "plan": llm_plan_json(
+                "Research Workflow",
+                "Research the latest topic and write a brief.",
+                manual_schedule_json(),
+                "/tmp/ignored",
+                vec![
+                    step_json_with_metadata(
+                        "research_sources",
+                        "research",
+                        "Research the latest topic and draft a citation-backed brief.",
+                        &[],
+                        "researcher",
+                        json!([]),
+                        "brief",
+                        Some(json!({
+                            "builder": {
+                                "web_research_expected": true
+                            }
+                        }))
+                    )
+                ],
+                None
+            )
+        })
+        .to_string(),
+    );
+
+    let preview_resp = app
+        .clone()
+        .oneshot(preview_request(json!({
+            "prompt": "Research the latest topic and write a citation-backed brief",
+            "workspace_root": "/tmp/custom-workspace",
+            "operator_preferences": planner_preferences()
+        })))
+        .await
+        .expect("preview response");
+    assert_eq!(preview_resp.status(), StatusCode::OK);
+    let preview_body = to_bytes(preview_resp.into_body(), usize::MAX)
+        .await
+        .expect("preview body");
+    let preview_payload: Value = serde_json::from_slice(&preview_body).expect("preview json");
+    let plan_id = preview_payload
+        .get("plan")
+        .and_then(|plan| plan.get("plan_id"))
+        .and_then(Value::as_str)
+        .expect("plan id");
+
+    let apply_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/workflow-plans/apply")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "plan_id": plan_id,
+                        "creator_id": "control-panel"
+                    })
+                    .to_string(),
+                ))
+                .expect("apply request"),
+        )
+        .await
+        .expect("apply response");
+    assert_eq!(apply_resp.status(), StatusCode::OK);
+    let apply_body = to_bytes(apply_resp.into_body(), usize::MAX)
+        .await
+        .expect("apply body");
+    let apply_payload: Value = serde_json::from_slice(&apply_body).expect("apply json");
+    let automation_id = apply_payload
+        .get("automation")
+        .and_then(|row| row.get("automation_id"))
+        .and_then(Value::as_str)
+        .expect("automation id");
+    let stored = state
+        .get_automation_v2(automation_id)
+        .await
+        .expect("stored automation");
+    let research_node = stored
+        .flow
+        .nodes
+        .iter()
+        .find(|node| node.node_id == "research_sources")
+        .expect("research node");
+    assert_eq!(
+        research_node
+            .metadata
+            .as_ref()
+            .and_then(|metadata| metadata.get("builder"))
+            .and_then(|builder| builder.get("web_research_expected"))
+            .and_then(Value::as_bool),
+        Some(true)
+    );
 }
 
 #[tokio::test]

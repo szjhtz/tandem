@@ -561,6 +561,7 @@ fn compile_skill_workflow_plan(
             agent_role: agent_role.to_string(),
             input_refs: Vec::new(),
             output_contract,
+            metadata: None,
         }],
         requires_integrations: Vec::new(),
         allowed_mcp_servers: Vec::new(),

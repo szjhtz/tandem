@@ -195,6 +195,8 @@ pub struct WorkflowPlanStep {
     pub input_refs: Vec<AutomationFlowInputRef>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output_contract: Option<AutomationFlowOutputContract>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -76,6 +76,7 @@ fn workflow_execution_plan(
                     schema: None,
                     summary_guidance: None,
                 }),
+                metadata: None,
             })
             .collect(),
         requires_integrations: Vec::new(),
