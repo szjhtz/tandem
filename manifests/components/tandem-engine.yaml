@@ -1,0 +1,89 @@
+id: tandem-engine
+name: Tandem Engine
+kind: runtime
+status: active
+summary: Shared Tandem runtime that exposes HTTP, SSE, and CLI surfaces for sessions, orchestration, tools, workflows, and scheduled automation.
+
+owns:
+  - session and run execution
+  - shared orchestration state
+  - blackboard and context state
+  - memory and checkpoints
+  - workflow execution and workflow planning
+  - routines and automations
+  - approvals, questions, and permission handling
+  - tool routing and MCP integration
+  - browser automation integration
+  - channel integrations
+  - packs, skills, and workflow loading
+  - headless HTTP, SSE, and CLI runtime surfaces
+
+does_not_own:
+  - external LLM provider services
+  - external MCP servers
+  - Slack, Discord, or Telegram platforms
+  - consumer apps not implemented in this repository
+  - example deployments and quickstart wrappers
+
+responsibilities:
+  - serve the Tandem HTTP API and event streams
+  - execute prompts, tool calls, and long-running runs
+  - coordinate multi-agent and workflow execution
+  - persist runtime state, memory, artifacts, and automation history
+  - load packs, skills, workflows, and runtime configuration
+
+inputs:
+  - session prompts and attached files
+  - workflow and automation definitions
+  - tool calls and MCP responses
+  - operator approvals and question replies
+  - provider credentials and runtime configuration
+
+outputs:
+  - SSE events and run logs
+  - artifacts and reports
+  - workflow and automation run records
+  - blackboard, memory, and checkpoint state
+  - HTTP and CLI responses
+
+interfaces:
+  - http api
+  - sse event streams
+  - cli
+  - local runtime storage
+
+consumed_by:
+  - tandem-desktop
+  - tandem-tui
+  - tandem-control-panel
+  - tandem-sdk-clients
+
+depends_on:
+  - local filesystem
+  - sqlite-backed storage
+  - configured llm providers
+  - optional external mcp servers
+  - optional channel platforms
+
+deployment_targets:
+  - local runtime
+  - headless server
+  - desktop sidecar runtime
+
+source_of_truth:
+  - path: engine
+    reason: engine binary entrypoint and embedded runtime resources
+  - path: crates/tandem-server
+    reason: primary HTTP, SSE, workflow, automation, and integration APIs
+  - path: crates/tandem-runtime
+    reason: runtime tool and connector execution layer
+  - path: crates/tandem-orchestrator
+    reason: orchestration and agent-team coordination logic
+  - path: crates/tandem-memory
+    reason: memory persistence and retrieval implementation
+  - path: crates/tandem-workflows
+    reason: workflow schema, loading, and validation
+
+notes:
+  - Workflows, automations, channels, browser automation, and MCP are represented here as engine capabilities rather than separate top-level manifests.
+  - Distribution wrappers under packages publish the engine binary but do not redefine engine ownership.

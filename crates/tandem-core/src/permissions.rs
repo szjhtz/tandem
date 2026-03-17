@@ -81,7 +81,7 @@ impl PermissionManager {
         let pattern = normalize_permission_alias(pattern);
         let rules = self.rules.read().await;
         if let Some(rule) = rules.iter().rev().find(|rule| {
-            normalize_permission_alias(&rule.permission) == permission
+            wildcard_matches(&normalize_permission_alias(&rule.permission), &permission)
                 && wildcard_matches(&normalize_permission_alias(&rule.pattern), &pattern)
         }) {
             return rule.action.clone();
@@ -431,5 +431,27 @@ mod tests {
 
         let action = manager.evaluate("todo_write", "todo_write").await;
         assert!(matches!(action, PermissionAction::Allow));
+    }
+
+    #[tokio::test]
+    async fn evaluate_supports_wildcard_permission_names() {
+        let bus = EventBus::new();
+        let manager = PermissionManager::new(bus);
+        manager.rules.write().await.push(PermissionRule {
+            id: Uuid::new_v4().to_string(),
+            permission: "mcp*".to_string(),
+            pattern: "*".to_string(),
+            action: PermissionAction::Allow,
+        });
+
+        let action = manager
+            .evaluate(
+                "mcp.composio_1.gmail_send_email",
+                "mcp.composio_1.gmail_send_email",
+            )
+            .await;
+        assert!(matches!(action, PermissionAction::Allow));
+        let unrelated = manager.evaluate("bash", "bash").await;
+        assert!(matches!(unrelated, PermissionAction::Ask));
     }
 }

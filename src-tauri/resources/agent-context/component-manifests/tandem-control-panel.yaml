@@ -1,0 +1,63 @@
+id: tandem-control-panel
+name: Tandem Control Panel
+kind: web-client
+status: active
+summary: Browser-based control surface and bootstrap layer for operating a Tandem engine through chat, orchestration, automations, memory, and runtime administration.
+
+owns:
+  - web control panel ui
+  - panel-side api gateway and bootstrap logic
+  - token-gated browser admin experience
+  - service setup and local install commands for the panel
+  - web views for automations, packs, memory, channels, and orchestrator status
+
+does_not_own:
+  - core engine execution
+  - workflow and automation persistence
+  - browser automation sidecar runtime
+  - desktop client behavior
+
+responsibilities:
+  - provide a browser ui for operating a Tandem engine
+  - proxy and organize engine capabilities for web operators
+  - bootstrap panel and engine local installs for headless usage
+  - expose setup, doctor, and service-management flows
+
+inputs:
+  - browser user actions
+  - engine api responses and event streams
+  - local env and service configuration
+  - operator sign-in token
+
+outputs:
+  - browser ui pages and live dashboards
+  - engine api requests
+  - service bootstrap actions
+  - health and orchestration status views
+
+interfaces:
+  - web ui
+  - local node service
+  - engine-facing http client
+  - setup cli
+
+consumed_by:
+  - local operators
+  - headless tandem installs
+
+depends_on:
+  - tandem-engine
+  - node runtime
+  - local service manager
+
+deployment_targets:
+  - local web app
+  - headless service install
+
+source_of_truth:
+  - path: packages/tandem-control-panel
+    reason: primary web app, gateway, setup cli, and service management implementation
+
+notes:
+  - The control panel talks to the engine and does not host the engine runtime as its own top-level component.
+  - Browser automation diagnostics in the panel reflect engine capabilities rather than panel-owned browser execution.

@@ -1,0 +1,63 @@
+id: tandem-desktop
+name: Tandem Desktop
+kind: desktop-client
+status: active
+summary: Tauri desktop application that provides the primary local GUI for Tandem sessions, approvals, configuration, and workspace interaction.
+
+owns:
+  - desktop application ui
+  - tauri command surface
+  - local vault and keystore flows
+  - desktop approval and request experience
+  - desktop workspace browsing and session views
+  - desktop-side engine attachment and sidecar management
+
+does_not_own:
+  - core workflow execution
+  - engine persistence and shared orchestration state
+  - external provider services
+  - web control panel behavior
+
+responsibilities:
+  - render the desktop user experience for Tandem
+  - bridge frontend actions to native tauri commands
+  - manage local desktop settings, provider entry, and secure key storage
+  - present staged edits, approvals, and run status to the operator
+
+inputs:
+  - user prompts and ui actions
+  - local workspace selection
+  - engine events and api responses
+  - provider and settings input
+
+outputs:
+  - tauri command invocations
+  - desktop ui state
+  - approval decisions
+  - local desktop notifications and views
+
+interfaces:
+  - react ui
+  - tauri ipc commands
+  - local desktop runtime
+
+consumed_by:
+  - local operators
+
+depends_on:
+  - tandem-engine
+  - tauri runtime
+  - local secure storage
+
+deployment_targets:
+  - desktop app
+
+source_of_truth:
+  - path: src
+    reason: primary React frontend implementation
+  - path: src-tauri
+    reason: native desktop backend, tauri commands, and integration logic
+
+notes:
+  - The desktop app is a first-party client of the engine and does not own shared run state.
+  - Older documentation may describe different sidecar arrangements; source paths above reflect the current in-repo implementation.

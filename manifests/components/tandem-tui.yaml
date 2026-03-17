@@ -1,0 +1,58 @@
+id: tandem-tui
+name: Tandem TUI
+kind: terminal-client
+status: active
+summary: Terminal-first Tandem client that attaches to or bootstraps an engine and exposes chat, requests, slash commands, and orchestration views in the terminal.
+
+owns:
+  - terminal ui rendering
+  - slash command surface
+  - request center and terminal approval flows
+  - terminal session management ux
+  - engine attach and bootstrap behavior for tui users
+
+does_not_own:
+  - engine http api implementation
+  - shared orchestration persistence
+  - desktop or web client ux
+  - external provider services
+
+responsibilities:
+  - provide a terminal interface for Tandem sessions and runs
+  - connect to a shared engine or bootstrap a local engine when needed
+  - render streamed events, requests, and task state in terminal form
+  - expose terminal commands for routines, packs, and agent-team operations
+
+inputs:
+  - terminal input and slash commands
+  - engine http responses
+  - engine event streams
+  - local tui configuration
+
+outputs:
+  - terminal views and prompts
+  - api calls to the engine
+  - approval and question replies
+
+interfaces:
+  - terminal ui
+  - slash commands
+  - http client to engine
+
+consumed_by:
+  - local operators
+
+depends_on:
+  - tandem-engine
+  - terminal runtime
+
+deployment_targets:
+  - terminal application
+
+source_of_truth:
+  - path: crates/tandem-tui
+    reason: primary TUI implementation, command handling, networking, and tests
+
+notes:
+  - The packaged npm binary wrapper is distribution-only and is not treated as a separate component manifest.
+  - Current repo code shows the TUI using the engine HTTP surface rather than owning core runtime state itself.

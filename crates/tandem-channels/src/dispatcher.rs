@@ -2207,6 +2207,22 @@ fn build_channel_session_create_body(title: &str) -> serde_json::Value {
             { "permission": "websearch", "pattern": "*", "action": "allow" },
             { "permission": "webfetch", "pattern": "*", "action": "allow" },
             { "permission": "webfetch_html", "pattern": "*", "action": "allow" },
+            // Channel sessions do not currently expose an in-app approval queue, so
+            // browser tools must be explicitly pre-approved here to avoid timing
+            // out on permission requests that the operator cannot answer from the
+            // channel surfaces.
+            { "permission": "browser_status", "pattern": "*", "action": "allow" },
+            { "permission": "browser_open", "pattern": "*", "action": "allow" },
+            { "permission": "browser_navigate", "pattern": "*", "action": "allow" },
+            { "permission": "browser_snapshot", "pattern": "*", "action": "allow" },
+            { "permission": "browser_click", "pattern": "*", "action": "allow" },
+            { "permission": "browser_type", "pattern": "*", "action": "allow" },
+            { "permission": "browser_press", "pattern": "*", "action": "allow" },
+            { "permission": "browser_wait", "pattern": "*", "action": "allow" },
+            { "permission": "browser_extract", "pattern": "*", "action": "allow" },
+            { "permission": "browser_screenshot", "pattern": "*", "action": "allow" },
+            { "permission": "browser_close", "pattern": "*", "action": "allow" },
+            { "permission": "mcp*", "pattern": "*", "action": "allow" },
             { "permission": "bash", "pattern": "*", "action": "allow" }
         ]
     })
@@ -5611,7 +5627,7 @@ mod tests {
     }
 
     #[test]
-    fn channel_session_create_body_allows_memory_tools() {
+    fn channel_session_create_body_allows_memory_and_browser_tools() {
         let body = build_channel_session_create_body("Channel Session");
         let permissions = body
             .get("permission")
@@ -5619,6 +5635,30 @@ mod tests {
             .expect("permission array");
 
         for permission_name in ["memory_search", "memory_store", "memory_list"] {
+            assert!(permissions.iter().any(|value| {
+                value.get("permission").and_then(|row| row.as_str()) == Some(permission_name)
+                    && value.get("action").and_then(|row| row.as_str()) == Some("allow")
+            }));
+        }
+
+        assert!(permissions.iter().any(|value| {
+            value.get("permission").and_then(|row| row.as_str()) == Some("mcp*")
+                && value.get("action").and_then(|row| row.as_str()) == Some("allow")
+        }));
+
+        for permission_name in [
+            "browser_status",
+            "browser_open",
+            "browser_navigate",
+            "browser_snapshot",
+            "browser_click",
+            "browser_type",
+            "browser_press",
+            "browser_wait",
+            "browser_extract",
+            "browser_screenshot",
+            "browser_close",
+        ] {
             assert!(permissions.iter().any(|value| {
                 value.get("permission").and_then(|row| row.as_str()) == Some(permission_name)
                     && value.get("action").and_then(|row| row.as_str()) == Some("allow")

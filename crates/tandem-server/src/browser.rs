@@ -190,11 +190,11 @@ impl BrowserSidecarClient {
         }
         cmd.env(
             "TANDEM_BROWSER_ALLOW_NO_SANDBOX",
-            if config.allow_no_sandbox { "1" } else { "0" },
+            bool_env_value(config.allow_no_sandbox),
         );
         cmd.env(
             "TANDEM_BROWSER_HEADLESS",
-            if config.headless_default { "1" } else { "0" },
+            bool_env_value(config.headless_default),
         );
 
         let mut child = cmd.spawn().with_context(|| {
@@ -664,6 +664,7 @@ impl BrowserTool {
         let ctx = parse_tool_context(&args);
         let mut request: BrowserOpenRequest =
             serde_json::from_value(args.clone()).context("invalid browser_open arguments")?;
+        normalize_browser_open_request(&mut request);
         let status = self.browser.status_snapshot().await;
         if !status.runnable {
             return browser_not_runnable_result(&status);
@@ -1735,6 +1736,22 @@ fn ensure_allowed_browser_url(url: &str, allow_hosts: &[String]) -> anyhow::Resu
     Ok(())
 }
 
+fn bool_env_value(enabled: bool) -> &'static str {
+    if enabled {
+        "true"
+    } else {
+        "false"
+    }
+}
+
+fn normalize_browser_open_request(request: &mut BrowserOpenRequest) {
+    request.profile_id = request
+        .profile_id
+        .take()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+}
+
 fn is_local_or_private_host(host: &str) -> bool {
     if host.eq_ignore_ascii_case("localhost") {
         return true;
@@ -2025,6 +2042,31 @@ mod tests {
         );
 
         std::env::remove_var("TANDEM_HOME");
+    }
+
+    #[test]
+    fn bool_env_value_uses_clap_friendly_literals() {
+        assert_eq!(bool_env_value(true), "true");
+        assert_eq!(bool_env_value(false), "false");
+    }
+
+    #[test]
+    fn normalize_browser_open_request_drops_empty_profile_id() {
+        let mut request = BrowserOpenRequest {
+            url: "https://example.com".to_string(),
+            profile_id: Some("   ".to_string()),
+            headless: None,
+            viewport: None,
+            wait_until: None,
+            executable_path: None,
+            user_data_root: None,
+            allow_no_sandbox: false,
+            headless_default: true,
+        };
+
+        normalize_browser_open_request(&mut request);
+
+        assert_eq!(request.profile_id, None);
     }
 
     #[tokio::test]

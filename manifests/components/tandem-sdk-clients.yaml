@@ -1,0 +1,62 @@
+id: tandem-sdk-clients
+name: Tandem SDK Clients
+kind: sdk
+status: active
+summary: Official TypeScript and Python client libraries for the Tandem HTTP and SSE API.
+
+owns:
+  - typed typescript api client
+  - typed python api client
+  - client-side request helpers
+  - client-side event stream helpers
+  - namespace wrappers for engine capabilities
+
+does_not_own:
+  - engine runtime execution
+  - workflow or automation scheduling
+  - desktop, web, or terminal user interfaces
+  - external provider services
+
+responsibilities:
+  - wrap the engine http api with language-specific clients
+  - expose typed access to sessions, memory, workflows, automations, mcp, channels, and agent teams
+  - normalize streaming event consumption for application developers
+
+inputs:
+  - engine base url and api token
+  - sdk method calls from consuming code
+  - engine http and sse responses
+
+outputs:
+  - typed client responses
+  - streamed event objects
+  - language-specific developer interfaces
+
+interfaces:
+  - typescript package
+  - python package
+  - http and sse client wrappers
+
+consumed_by:
+  - custom apps
+  - scripts and automations
+  - unknown
+
+depends_on:
+  - tandem-engine
+  - node runtime
+  - python runtime
+
+deployment_targets:
+  - node applications
+  - python applications
+
+source_of_truth:
+  - path: packages/tandem-client-ts
+    reason: official TypeScript SDK implementation
+  - path: packages/tandem-client-py
+    reason: official Python SDK implementation
+
+notes:
+  - These SDKs wrap a running engine; they do not bundle or replace the runtime.
+  - Both SDKs expose broad engine namespaces, but ownership remains at the client-library layer only.
