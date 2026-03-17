@@ -4327,3 +4327,182 @@ async fn automation_v2_code_workflow_smoke_exposes_verify_failed_state() {
         Some("cargo test -p tandem-server")
     );
 }
+
+#[tokio::test]
+async fn automation_v2_editorial_workflow_smoke_exposes_quality_validation_state() {
+    let state = test_state().await;
+    let app = app_router(state.clone());
+
+    let automation = crate::AutomationV2Spec {
+        automation_id: "auto-v2-smoke-editorial".to_string(),
+        name: "Editorial Smoke".to_string(),
+        description: Some("Editorial validation smoke test".to_string()),
+        status: crate::AutomationV2Status::Active,
+        schedule: crate::AutomationV2Schedule {
+            schedule_type: crate::AutomationV2ScheduleType::Manual,
+            cron_expression: None,
+            interval_seconds: None,
+            timezone: "UTC".to_string(),
+            misfire_policy: crate::RoutineMisfirePolicy::RunOnce,
+        },
+        agents: vec![crate::AutomationAgentProfile {
+            agent_id: "writer".to_string(),
+            template_id: None,
+            display_name: "Writer".to_string(),
+            avatar_url: None,
+            model_policy: None,
+            skills: Vec::new(),
+            tool_policy: crate::AutomationAgentToolPolicy {
+                allowlist: vec!["write".to_string()],
+                denylist: Vec::new(),
+            },
+            mcp_policy: crate::AutomationAgentMcpPolicy {
+                allowed_servers: Vec::new(),
+                allowed_tools: None,
+            },
+            approval_policy: None,
+        }],
+        flow: crate::AutomationFlowSpec {
+            nodes: vec![crate::AutomationFlowNode {
+                node_id: "draft-report".to_string(),
+                agent_id: "writer".to_string(),
+                objective: "Draft the final markdown report".to_string(),
+                depends_on: Vec::new(),
+                input_refs: Vec::new(),
+                output_contract: Some(crate::AutomationFlowOutputContract {
+                    kind: "report_markdown".to_string(),
+                    validator: Some(crate::AutomationOutputValidatorKind::GenericArtifact),
+                    schema: None,
+                    summary_guidance: None,
+                }),
+                retry_policy: None,
+                timeout_ms: None,
+                stage_kind: Some(crate::AutomationNodeStageKind::Workstream),
+                gate: None,
+                metadata: Some(json!({
+                    "builder": {
+                        "output_path": "final-report.md",
+                        "role": "writer"
+                    }
+                })),
+            }],
+        },
+        execution: crate::AutomationExecutionPolicy {
+            max_parallel_agents: Some(1),
+            max_total_runtime_ms: None,
+            max_total_tool_calls: None,
+            max_total_tokens: None,
+            max_total_cost_usd: None,
+        },
+        output_targets: vec!["final-report.md".to_string()],
+        created_at_ms: 0,
+        updated_at_ms: 0,
+        creator_id: "test".to_string(),
+        workspace_root: Some("/tmp".to_string()),
+        metadata: None,
+        next_fire_at_ms: None,
+        last_fired_at_ms: None,
+    };
+    state
+        .put_automation_v2(automation.clone())
+        .await
+        .expect("store automation");
+    let run = state
+        .create_automation_v2_run(&automation, "manual")
+        .await
+        .expect("create run");
+    state
+        .add_automation_v2_session(&run.run_id, "sess-editorial-smoke")
+        .await;
+    state
+        .update_automation_v2_run(&run.run_id, |row| {
+            row.status = crate::AutomationRunStatus::Blocked;
+            row.detail = Some("editorial quality requirements were not met".to_string());
+            row.checkpoint.pending_nodes = vec!["draft-report".to_string()];
+            row.checkpoint.blocked_nodes = vec!["draft-report".to_string()];
+            row.checkpoint.node_outputs.insert(
+                "draft-report".to_string(),
+                json!({
+                    "node_id": "draft-report",
+                    "status": "blocked",
+                    "workflow_class": "artifact",
+                    "phase": "editorial_validation",
+                    "failure_kind": "editorial_quality_failed",
+                    "summary": "Blocked editorial draft is too weak to publish.",
+                    "artifact_validation": {
+                        "accepted_artifact_path": "final-report.md",
+                        "heading_count": 1,
+                        "paragraph_count": 1,
+                        "repair_attempted": false,
+                        "repair_succeeded": false,
+                        "unmet_requirements": ["editorial_substance_missing", "markdown_structure_missing"]
+                    },
+                    "content": {
+                        "path": "final-report.md",
+                        "text": "# Draft\\n\\nTODO\\n",
+                        "session_id": "sess-editorial-smoke"
+                    }
+                }),
+            );
+        })
+        .await
+        .expect("update run");
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(format!("/automations/v2/runs/{}", run.run_id))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = to_bytes(resp.into_body(), usize::MAX).await.expect("body");
+    let payload: Value = serde_json::from_slice(&body).expect("json");
+    let draft_output = payload
+        .get("run")
+        .and_then(|value| value.get("checkpoint"))
+        .and_then(|value| value.get("node_outputs"))
+        .and_then(|value| value.get("draft-report"))
+        .expect("draft output");
+    assert_eq!(
+        draft_output.get("failure_kind").and_then(Value::as_str),
+        Some("editorial_quality_failed")
+    );
+    assert_eq!(
+        draft_output.get("phase").and_then(Value::as_str),
+        Some("editorial_validation")
+    );
+    assert_eq!(
+        draft_output.get("validator_kind").and_then(Value::as_str),
+        Some("generic_artifact")
+    );
+    assert_eq!(
+        draft_output
+            .get("validator_summary")
+            .and_then(|value| value.get("unmet_requirements"))
+            .and_then(Value::as_array)
+            .map(|rows| rows.clone()),
+        Some(vec![
+            json!("editorial_substance_missing"),
+            json!("markdown_structure_missing")
+        ])
+    );
+    assert_eq!(
+        draft_output
+            .get("artifact_validation")
+            .and_then(|value| value.get("heading_count"))
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        draft_output
+            .get("artifact_validation")
+            .and_then(|value| value.get("paragraph_count"))
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+}

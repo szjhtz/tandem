@@ -6711,6 +6711,8 @@ fn validate_automation_artifact_output(
     let mut repair_succeeded = false;
     let mut citation_count = 0usize;
     let mut web_sources_reviewed_present = false;
+    let mut heading_count = 0usize;
+    let mut paragraph_count = 0usize;
     let mut artifact_candidates = Vec::<Value>::new();
     let mut accepted_candidate_source = None::<String>;
     let execution_mode = execution_policy
@@ -6808,6 +6810,8 @@ fn validate_automation_artifact_output(
             reviewed_paths_backed_by_read = best.reviewed_paths_backed_by_read.clone();
             citation_count = best.citation_count;
             web_sources_reviewed_present = best.web_sources_reviewed_present;
+            heading_count = best.heading_count;
+            paragraph_count = best.paragraph_count;
             if discovered_relevant_paths.is_empty() {
                 discovered_relevant_paths = best.reviewed_paths.clone();
             }
@@ -6898,6 +6902,42 @@ fn validate_automation_artifact_output(
                 });
             }
         }
+        if automation_output_validator_kind(node)
+            == crate::AutomationOutputValidatorKind::GenericArtifact
+        {
+            let contract_kind = node
+                .output_contract
+                .as_ref()
+                .map(|contract| contract.kind.trim().to_ascii_lowercase())
+                .unwrap_or_default();
+            let selected = selected_assessment.cloned();
+            let missing_editorial_substance =
+                matches!(contract_kind.as_str(), "report_markdown" | "text_summary")
+                    && !selected.as_ref().is_some_and(|assessment| {
+                        !assessment.placeholder_like
+                            && (assessment.substantive
+                                || (assessment.length >= 120 && assessment.paragraph_count >= 1))
+                    });
+            let missing_markdown_structure = contract_kind == "report_markdown"
+                && !selected.as_ref().is_some_and(|assessment| {
+                    assessment.heading_count >= 1 && assessment.paragraph_count >= 2
+                });
+            if missing_editorial_substance {
+                unmet_requirements.push("editorial_substance_missing".to_string());
+            }
+            if missing_markdown_structure {
+                unmet_requirements.push("markdown_structure_missing".to_string());
+            }
+            if semantic_block_reason.is_none()
+                && (missing_editorial_substance || missing_markdown_structure)
+            {
+                semantic_block_reason = Some(if missing_markdown_structure {
+                    "editorial artifact is missing expected markdown structure".to_string()
+                } else {
+                    "editorial artifact is too weak or placeholder-like".to_string()
+                });
+            }
+        }
         if rejected_reason.is_none()
             && matches!(execution_mode, "git_patch" | "filesystem_patch")
             && preexisting_output.is_some()
@@ -6964,6 +7004,8 @@ fn validate_automation_artifact_output(
         "unreviewed_relevant_paths": unreviewed_relevant_paths,
         "citation_count": citation_count,
         "web_sources_reviewed_present": web_sources_reviewed_present,
+        "heading_count": heading_count,
+        "paragraph_count": paragraph_count,
         "web_research_attempted": tool_telemetry.get("web_research_used").cloned().unwrap_or(json!(false)),
         "web_research_succeeded": tool_telemetry.get("web_research_succeeded").cloned().unwrap_or(json!(false)),
         "repair_attempted": repair_attempted,
@@ -7428,6 +7470,8 @@ fn detect_automation_node_failure_kind(
         || has_unmet("files_reviewed_not_backed_by_read")
         || has_unmet("relevant_files_not_reviewed_or_skipped")
         || has_unmet("coverage_mode");
+    let editorial_requirements_blocked =
+        has_unmet("editorial_substance_missing") || has_unmet("markdown_structure_missing");
     let verification_failed = artifact_validation
         .and_then(|value| value.get("verification"))
         .and_then(|value| value.get("verification_failed"))
@@ -7460,6 +7504,10 @@ fn detect_automation_node_failure_kind(
             == crate::AutomationOutputValidatorKind::ResearchBrief
             && normalized_status == "blocked"
             && research_requirements_blocked)
+        || (automation_output_validator_kind(node)
+            == crate::AutomationOutputValidatorKind::GenericArtifact
+            && normalized_status == "blocked"
+            && editorial_requirements_blocked)
     {
         if has_unmet("no_concrete_reads") || has_unmet("concrete_read_required") {
             return Some("research_missing_reads".to_string());
@@ -7476,6 +7524,9 @@ fn detect_automation_node_failure_kind(
             || has_unmet("coverage_mode")
         {
             return Some("research_coverage_failed".to_string());
+        }
+        if editorial_requirements_blocked {
+            return Some("editorial_quality_failed".to_string());
         }
         return Some("semantic_blocked".to_string());
     }
@@ -7722,7 +7773,26 @@ fn detect_automation_node_phase(
             }
         }
         _ => {
-            if normalized_status == "completed" {
+            let unmet_requirements = artifact_validation
+                .and_then(|value| value.get("unmet_requirements"))
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            let has_unmet = |needle: &str| {
+                unmet_requirements
+                    .iter()
+                    .any(|value| value.as_str() == Some(needle))
+            };
+            let editorial_validation_blocked = (has_unmet("editorial_substance_missing")
+                || has_unmet("markdown_structure_missing"))
+                && (artifact_validation
+                    .and_then(|value| value.get("semantic_block_reason"))
+                    .and_then(Value::as_str)
+                    .is_some()
+                    || normalized_status == "blocked");
+            if editorial_validation_blocked {
+                "editorial_validation".to_string()
+            } else if normalized_status == "completed" {
                 "completed".to_string()
             } else {
                 "artifact_write".to_string()
@@ -10107,6 +10177,100 @@ mod tests {
         assert_eq!(summary.verification_outcome.as_deref(), Some("passed"));
         assert!(summary.repair_attempted);
         assert!(summary.repair_succeeded);
+    }
+
+    #[test]
+    fn generic_artifact_validation_blocks_weak_report_markdown() {
+        let workspace_root =
+            std::env::temp_dir().join(format!("tandem-editorial-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&workspace_root).expect("workspace dir");
+        let node = AutomationFlowNode {
+            node_id: "draft-report".to_string(),
+            agent_id: "writer".to_string(),
+            objective: "Draft the final report".to_string(),
+            depends_on: Vec::new(),
+            input_refs: Vec::new(),
+            output_contract: Some(AutomationFlowOutputContract {
+                kind: "report_markdown".to_string(),
+                validator: Some(crate::AutomationOutputValidatorKind::GenericArtifact),
+                schema: None,
+                summary_guidance: None,
+            }),
+            retry_policy: None,
+            timeout_ms: None,
+            stage_kind: None,
+            gate: None,
+            metadata: Some(json!({
+                "builder": {
+                    "output_path": "report.md"
+                }
+            })),
+        };
+        let session = Session::new(
+            Some("editorial".to_string()),
+            Some(workspace_root.to_string_lossy().to_string()),
+        );
+        let tool_telemetry = json!({
+            "requested_tools": ["write"],
+            "executed_tools": ["write"],
+            "tool_call_counts": {
+                "write": 1
+            }
+        });
+        let (_, artifact_validation, rejected) = validate_automation_artifact_output(
+            &node,
+            &session,
+            workspace_root.to_str().expect("workspace root"),
+            "",
+            &tool_telemetry,
+            None,
+            Some(("report.md".to_string(), "# Draft\n\nTODO\n".to_string())),
+            &std::collections::BTreeSet::new(),
+        );
+
+        assert_eq!(
+            rejected.as_deref(),
+            Some("editorial artifact is missing expected markdown structure")
+        );
+        assert_eq!(
+            artifact_validation
+                .get("unmet_requirements")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default(),
+            vec![
+                json!("editorial_substance_missing"),
+                json!("markdown_structure_missing")
+            ]
+        );
+        assert_eq!(
+            artifact_validation
+                .get("heading_count")
+                .and_then(Value::as_u64),
+            Some(1)
+        );
+        assert_eq!(
+            artifact_validation
+                .get("paragraph_count")
+                .and_then(Value::as_u64),
+            Some(1)
+        );
+        assert_eq!(
+            detect_automation_node_failure_kind(
+                &node,
+                "blocked",
+                None,
+                None,
+                Some(&artifact_validation),
+            ),
+            Some("editorial_quality_failed".to_string())
+        );
+        assert_eq!(
+            detect_automation_node_phase(&node, "blocked", Some(&artifact_validation)),
+            "editorial_validation"
+        );
+
+        let _ = std::fs::remove_dir_all(&workspace_root);
     }
 
     #[test]
