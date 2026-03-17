@@ -3854,6 +3854,188 @@ async fn automation_v2_research_workflow_smoke_exposes_blocked_artifact_state() 
 }
 
 #[tokio::test]
+async fn automation_v2_research_workflow_smoke_exposes_citation_validation_state() {
+    let state = test_state().await;
+    let app = app_router(state.clone());
+
+    let automation = crate::AutomationV2Spec {
+        automation_id: "auto-v2-smoke-research-citations".to_string(),
+        name: "Research Citation Smoke".to_string(),
+        description: Some("Research citation validation smoke test".to_string()),
+        status: crate::AutomationV2Status::Active,
+        schedule: crate::AutomationV2Schedule {
+            schedule_type: crate::AutomationV2ScheduleType::Manual,
+            cron_expression: None,
+            interval_seconds: None,
+            timezone: "UTC".to_string(),
+            misfire_policy: crate::RoutineMisfirePolicy::RunOnce,
+        },
+        agents: vec![crate::AutomationAgentProfile {
+            agent_id: "researcher".to_string(),
+            template_id: None,
+            display_name: "Researcher".to_string(),
+            avatar_url: None,
+            model_policy: None,
+            skills: Vec::new(),
+            tool_policy: crate::AutomationAgentToolPolicy {
+                allowlist: vec![
+                    "glob".to_string(),
+                    "read".to_string(),
+                    "write".to_string(),
+                    "websearch".to_string(),
+                ],
+                denylist: Vec::new(),
+            },
+            mcp_policy: crate::AutomationAgentMcpPolicy {
+                allowed_servers: Vec::new(),
+                allowed_tools: None,
+            },
+            approval_policy: None,
+        }],
+        flow: crate::AutomationFlowSpec {
+            nodes: vec![crate::AutomationFlowNode {
+                node_id: "research-brief".to_string(),
+                agent_id: "researcher".to_string(),
+                objective: "Produce a research brief with citations".to_string(),
+                depends_on: Vec::new(),
+                input_refs: Vec::new(),
+                output_contract: Some(crate::AutomationFlowOutputContract {
+                    kind: "brief".to_string(),
+                    validator: Some(crate::AutomationOutputValidatorKind::ResearchBrief),
+                    schema: None,
+                    summary_guidance: None,
+                }),
+                retry_policy: None,
+                timeout_ms: None,
+                stage_kind: Some(crate::AutomationNodeStageKind::Workstream),
+                gate: None,
+                metadata: Some(json!({
+                    "builder": {
+                        "output_path": "marketing-brief.md",
+                        "web_research_expected": true
+                    }
+                })),
+            }],
+        },
+        execution: crate::AutomationExecutionPolicy {
+            max_parallel_agents: Some(1),
+            max_total_runtime_ms: None,
+            max_total_tool_calls: None,
+            max_total_tokens: None,
+            max_total_cost_usd: None,
+        },
+        output_targets: vec!["marketing-brief.md".to_string()],
+        created_at_ms: 0,
+        updated_at_ms: 0,
+        creator_id: "test".to_string(),
+        workspace_root: Some("/tmp".to_string()),
+        metadata: None,
+        next_fire_at_ms: None,
+        last_fired_at_ms: None,
+    };
+    state
+        .put_automation_v2(automation.clone())
+        .await
+        .expect("store automation");
+    let run = state
+        .create_automation_v2_run(&automation, "manual")
+        .await
+        .expect("create run");
+    state
+        .add_automation_v2_session(&run.run_id, "sess-research-citation-smoke")
+        .await;
+    state
+        .update_automation_v2_run(&run.run_id, |row| {
+            row.status = crate::AutomationRunStatus::Blocked;
+            row.detail = Some("research citation requirements were not met".to_string());
+            row.checkpoint.pending_nodes = vec!["research-brief".to_string()];
+            row.checkpoint.blocked_nodes = vec!["research-brief".to_string()];
+            row.checkpoint.node_outputs.insert(
+                "research-brief".to_string(),
+                json!({
+                    "node_id": "research-brief",
+                    "status": "blocked",
+                    "workflow_class": "research",
+                    "phase": "blocked",
+                    "failure_kind": "research_citations_missing",
+                    "summary": "Blocked research brief is missing citation-backed claims.",
+                    "artifact_validation": {
+                        "accepted_artifact_path": "marketing-brief.md",
+                        "citation_count": 0,
+                        "web_sources_reviewed_present": false,
+                        "repair_attempted": true,
+                        "repair_succeeded": false,
+                        "unmet_requirements": ["citations_missing", "web_sources_reviewed_missing"]
+                    },
+                    "content": {
+                        "path": "marketing-brief.md",
+                        "text": "# Marketing Brief\n\n## Files reviewed\n- inputs/questions.md\n\n## Findings\nClaims are summarized here without explicit citations.\n",
+                        "session_id": "sess-research-citation-smoke"
+                    }
+                }),
+            );
+        })
+        .await
+        .expect("update run");
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(format!("/automations/v2/runs/{}", run.run_id))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = to_bytes(resp.into_body(), usize::MAX).await.expect("body");
+    let payload: Value = serde_json::from_slice(&body).expect("json");
+    let research_output = payload
+        .get("run")
+        .and_then(|value| value.get("checkpoint"))
+        .and_then(|value| value.get("node_outputs"))
+        .and_then(|value| value.get("research-brief"))
+        .expect("research output");
+    assert_eq!(
+        research_output.get("failure_kind").and_then(Value::as_str),
+        Some("research_citations_missing")
+    );
+    assert_eq!(
+        research_output
+            .get("validator_kind")
+            .and_then(Value::as_str),
+        Some("research_brief")
+    );
+    assert_eq!(
+        research_output
+            .get("validator_summary")
+            .and_then(|value| value.get("unmet_requirements"))
+            .and_then(Value::as_array)
+            .map(|rows| rows.clone()),
+        Some(vec![
+            json!("citations_missing"),
+            json!("web_sources_reviewed_missing")
+        ])
+    );
+    assert_eq!(
+        research_output
+            .get("artifact_validation")
+            .and_then(|value| value.get("citation_count"))
+            .and_then(Value::as_u64),
+        Some(0)
+    );
+    assert_eq!(
+        research_output
+            .get("artifact_validation")
+            .and_then(|value| value.get("web_sources_reviewed_present"))
+            .and_then(Value::as_bool),
+        Some(false)
+    );
+}
+
+#[tokio::test]
 async fn automation_v2_artifact_workflow_smoke_exposes_completed_output_state() {
     let state = test_state().await;
     let app = app_router(state.clone());

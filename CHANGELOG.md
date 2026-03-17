@@ -46,6 +46,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `automation_v2` output contracts now declare validator kinds explicitly, and node outputs persist validator kind plus a typed validator summary instead of relying on ad hoc inference alone
   - mission builder, workflow planner, and standup composer now emit explicit validator intent for research, review, structured JSON, and generic artifacts
   - `automation_v2` read APIs now normalize older node outputs to the current validator contract so operator views converge on one interpretation
+  - research brief validation now treats citation presence and `Web sources reviewed` structure as first-class source-coverage requirements, emits typed `citations_missing` / `web_sources_reviewed_missing` unmet requirements, and surfaces citation/source summary fields directly in `artifact_validation` and `automation_v2` run payloads
 - **More authoring surfaces now compile into `AutomationV2Spec`**:
   - `skills_compile` now emits an additive `automation_preview` for installed skill workflows by compiling `workflow.yaml` recipes through the shared `WorkflowPlan -> AutomationV2Spec` path
   - installed `pack_builder_recipe` skills no longer stop at an abstract execution summary; they now expose the same runtime-spec preview shape as the other automation authoring surfaces

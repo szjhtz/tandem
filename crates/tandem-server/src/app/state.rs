@@ -5889,6 +5889,8 @@ struct ArtifactCandidateAssessment {
     reviewed_paths: Vec<String>,
     reviewed_paths_backed_by_read: Vec<String>,
     unreviewed_relevant_paths: Vec<String>,
+    citation_count: usize,
+    web_sources_reviewed_present: bool,
 }
 
 fn artifact_required_section_count(node: &AutomationFlowNode, text: &str) -> usize {
@@ -5965,6 +5967,8 @@ fn assess_artifact_candidate(
         .cloned()
         .collect::<Vec<_>>();
     let files_reviewed_present = files_reviewed_section_lists_paths(trimmed);
+    let citation_count = markdown_citation_count(trimmed);
+    let web_sources_reviewed_present = web_sources_reviewed_section_lists_sources(trimmed);
     let effective_relevant_paths = if discovered_relevant_paths.is_empty() {
         reviewed_paths.clone()
     } else {
@@ -5991,6 +5995,10 @@ fn assess_artifact_candidate(
     }
     if files_reviewed_present {
         score += 180;
+    }
+    score += (citation_count.min(8) as i64) * 45;
+    if web_sources_reviewed_present {
+        score += 140;
     }
     if !reviewed_paths.is_empty() && reviewed_paths.len() == reviewed_paths_backed_by_read.len() {
         score += 260;
@@ -6020,6 +6028,8 @@ fn assess_artifact_candidate(
         reviewed_paths,
         reviewed_paths_backed_by_read,
         unreviewed_relevant_paths,
+        citation_count,
+        web_sources_reviewed_present,
     }
 }
 
@@ -6058,6 +6068,37 @@ fn files_reviewed_section_lists_paths(text: &str) -> bool {
                 || trimmed.contains(".md")
                 || trimmed.contains(".txt")
                 || trimmed.contains("readme"))
+    })
+}
+
+fn markdown_citation_count(text: &str) -> usize {
+    let markdown_links = text.match_indices("](").count();
+    let bare_urls = text
+        .split_whitespace()
+        .filter(|token| {
+            let trimmed = token.trim_matches(|ch: char| {
+                matches!(ch, ')' | '(' | '[' | ']' | ',' | '.' | ';' | '"' | '\'')
+            });
+            trimmed.starts_with("http://") || trimmed.starts_with("https://")
+        })
+        .count();
+    markdown_links.max(bare_urls)
+}
+
+fn web_sources_reviewed_section_lists_sources(text: &str) -> bool {
+    let lowered = text.to_ascii_lowercase();
+    let Some(start) = lowered.find("web sources reviewed") else {
+        return false;
+    };
+    let tail = &text[start..];
+    tail.lines().skip(1).take(24).any(|line| {
+        let trimmed = line.trim();
+        (trimmed.starts_with('-')
+            || trimmed.starts_with('*')
+            || trimmed.chars().next().is_some_and(|ch| ch.is_ascii_digit()))
+            && (trimmed.contains("http://")
+                || trimmed.contains("https://")
+                || trimmed.contains("]("))
     })
 }
 
@@ -6290,6 +6331,8 @@ fn artifact_candidate_summary(candidate: &ArtifactCandidateAssessment, accepted:
         "files_reviewed_present": candidate.files_reviewed_present,
         "reviewed_paths_backed_by_read": candidate.reviewed_paths_backed_by_read,
         "unreviewed_relevant_paths": candidate.unreviewed_relevant_paths,
+        "citation_count": candidate.citation_count,
+        "web_sources_reviewed_present": candidate.web_sources_reviewed_present,
         "accepted": accepted,
     })
 }
@@ -6666,6 +6709,8 @@ fn validate_automation_artifact_output(
     let mut unmet_requirements = Vec::<String>::new();
     let mut repair_attempted = false;
     let mut repair_succeeded = false;
+    let mut citation_count = 0usize;
+    let mut web_sources_reviewed_present = false;
     let mut artifact_candidates = Vec::<Value>::new();
     let mut accepted_candidate_source = None::<String>;
     let execution_mode = execution_policy
@@ -6761,6 +6806,8 @@ fn validate_automation_artifact_output(
         if let Some(best) = best_candidate.clone() {
             accepted_candidate_source = Some(best.source.clone());
             reviewed_paths_backed_by_read = best.reviewed_paths_backed_by_read.clone();
+            citation_count = best.citation_count;
+            web_sources_reviewed_present = best.web_sources_reviewed_present;
             if discovered_relevant_paths.is_empty() {
                 discovered_relevant_paths = best.reviewed_paths.clone();
             }
@@ -6802,9 +6849,17 @@ fn validate_automation_artifact_output(
                 || !files_reviewed_backed
                 || !unreviewed_relevant_paths.is_empty();
             let missing_web_research = web_research_expected && !web_research_succeeded;
+            let missing_citations =
+                !selected_assessment.is_some_and(|assessment| assessment.citation_count > 0);
+            let missing_web_sources_reviewed = web_research_expected
+                && !selected_assessment
+                    .is_some_and(|assessment| assessment.web_sources_reviewed_present);
             unmet_requirements.clear();
             if missing_concrete_reads {
                 unmet_requirements.push("no_concrete_reads".to_string());
+            }
+            if missing_citations {
+                unmet_requirements.push("citations_missing".to_string());
             }
             if !selected_assessment.is_some_and(|assessment| assessment.files_reviewed_present) {
                 unmet_requirements.push("files_reviewed_missing".to_string());
@@ -6815,13 +6870,25 @@ fn validate_automation_artifact_output(
             if !unreviewed_relevant_paths.is_empty() {
                 unmet_requirements.push("relevant_files_not_reviewed_or_skipped".to_string());
             }
+            if missing_web_sources_reviewed {
+                unmet_requirements.push("web_sources_reviewed_missing".to_string());
+            }
             if missing_web_research {
                 unmet_requirements.push("missing_successful_web_research".to_string());
             }
-            if missing_concrete_reads || missing_file_coverage || missing_web_research {
+            if missing_concrete_reads
+                || missing_citations
+                || missing_file_coverage
+                || missing_web_sources_reviewed
+                || missing_web_research
+            {
                 semantic_block_reason = Some(if missing_concrete_reads {
                     "research completed without concrete file reads or required source coverage"
                         .to_string()
+                } else if missing_citations {
+                    "research completed without citation-backed claims".to_string()
+                } else if missing_web_sources_reviewed {
+                    "research completed without a web sources reviewed section".to_string()
                 } else if missing_web_research {
                     "research completed without required current web research".to_string()
                 } else if !unreviewed_relevant_paths.is_empty() {
@@ -6895,6 +6962,8 @@ fn validate_automation_artifact_output(
         "discovered_relevant_paths": discovered_relevant_paths,
         "reviewed_paths_backed_by_read": reviewed_paths_backed_by_read,
         "unreviewed_relevant_paths": unreviewed_relevant_paths,
+        "citation_count": citation_count,
+        "web_sources_reviewed_present": web_sources_reviewed_present,
         "web_research_attempted": tool_telemetry.get("web_research_used").cloned().unwrap_or(json!(false)),
         "web_research_succeeded": tool_telemetry.get("web_research_succeeded").cloned().unwrap_or(json!(false)),
         "repair_attempted": repair_attempted,
@@ -7353,6 +7422,8 @@ fn detect_automation_node_failure_kind(
     let research_requirements_blocked = has_unmet("no_concrete_reads")
         || has_unmet("concrete_read_required")
         || has_unmet("missing_successful_web_research")
+        || has_unmet("citations_missing")
+        || has_unmet("web_sources_reviewed_missing")
         || has_unmet("files_reviewed_missing")
         || has_unmet("files_reviewed_not_backed_by_read")
         || has_unmet("relevant_files_not_reviewed_or_skipped")
@@ -7395,6 +7466,9 @@ fn detect_automation_node_failure_kind(
         }
         if has_unmet("missing_successful_web_research") {
             return Some("research_missing_web_research".to_string());
+        }
+        if has_unmet("citations_missing") || has_unmet("web_sources_reviewed_missing") {
+            return Some("research_citations_missing".to_string());
         }
         if has_unmet("files_reviewed_missing")
             || has_unmet("files_reviewed_not_backed_by_read")
@@ -7615,6 +7689,8 @@ fn detect_automation_node_phase(
                     && (has_unmet("no_concrete_reads")
                         || has_unmet("concrete_read_required")
                         || has_unmet("missing_successful_web_research")
+                        || has_unmet("citations_missing")
+                        || has_unmet("web_sources_reviewed_missing")
                         || has_unmet("files_reviewed_missing")
                         || has_unmet("files_reviewed_not_backed_by_read")
                         || has_unmet("relevant_files_not_reviewed_or_skipped")
@@ -9827,6 +9903,178 @@ mod tests {
                 "files_reviewed_not_backed_by_read".to_string()
             ]
         );
+    }
+
+    #[test]
+    fn research_workflow_failure_kind_detects_missing_citations() {
+        let node = AutomationFlowNode {
+            node_id: "research".to_string(),
+            agent_id: "agent-a".to_string(),
+            objective: "Research".to_string(),
+            depends_on: Vec::new(),
+            input_refs: Vec::new(),
+            output_contract: Some(AutomationFlowOutputContract {
+                kind: "brief".to_string(),
+                validator: None,
+                schema: None,
+                summary_guidance: None,
+            }),
+            retry_policy: None,
+            timeout_ms: None,
+            stage_kind: None,
+            gate: None,
+            metadata: Some(json!({
+                "builder": {
+                    "output_path": "marketing-brief.md",
+                    "web_research_expected": true
+                }
+            })),
+        };
+        let artifact_validation = json!({
+            "semantic_block_reason": "research completed without citation-backed claims",
+            "unmet_requirements": ["citations_missing", "web_sources_reviewed_missing"],
+            "verification": {
+                "verification_failed": false
+            }
+        });
+
+        assert_eq!(
+            detect_automation_node_failure_kind(
+                &node,
+                "blocked",
+                None,
+                Some("research completed without citation-backed claims"),
+                Some(&artifact_validation),
+            )
+            .as_deref(),
+            Some("research_citations_missing")
+        );
+        assert_eq!(
+            detect_automation_node_phase(&node, "blocked", Some(&artifact_validation)),
+            "research_validation"
+        );
+    }
+
+    #[test]
+    fn research_artifact_validation_requires_citations_and_web_sources_reviewed() {
+        let workspace_root =
+            std::env::temp_dir().join(format!("tandem-research-citation-test-{}", now_ms()));
+        std::fs::create_dir_all(workspace_root.join("inputs")).expect("create workspace");
+        std::fs::write(workspace_root.join("inputs/questions.md"), "Question")
+            .expect("seed input file");
+
+        let node = AutomationFlowNode {
+            node_id: "research".to_string(),
+            agent_id: "agent-a".to_string(),
+            objective: "Research".to_string(),
+            depends_on: Vec::new(),
+            input_refs: Vec::new(),
+            output_contract: Some(AutomationFlowOutputContract {
+                kind: "brief".to_string(),
+                validator: None,
+                schema: None,
+                summary_guidance: None,
+            }),
+            retry_policy: None,
+            timeout_ms: None,
+            stage_kind: None,
+            gate: None,
+            metadata: Some(json!({
+                "builder": {
+                    "output_path": "marketing-brief.md",
+                    "web_research_expected": true
+                }
+            })),
+        };
+        let mut session = Session::new(Some("research citations".to_string()), None);
+        session.messages.push(tandem_types::Message::new(
+            MessageRole::Assistant,
+            vec![
+                MessagePart::ToolInvocation {
+                    tool: "read".to_string(),
+                    args: json!({"path":"inputs/questions.md"}),
+                    result: Some(json!({"output":"Question"})),
+                    error: None,
+                },
+                MessagePart::ToolInvocation {
+                    tool: "websearch".to_string(),
+                    args: json!({"query":"market trends"}),
+                    result: Some(json!({"output":"Search results found"})),
+                    error: None,
+                },
+                MessagePart::ToolInvocation {
+                    tool: "write".to_string(),
+                    args: json!({
+                        "path":"marketing-brief.md",
+                        "content":"# Marketing Brief\n\n## Files reviewed\n- inputs/questions.md\n\n## Files not reviewed\n- inputs/references.md: not available in this run.\n\n## Findings\nClaims are summarized here without explicit citations.\n"
+                    }),
+                    result: Some(json!({"output":"written"})),
+                    error: None,
+                },
+            ],
+        ));
+
+        let tool_telemetry = summarize_automation_tool_activity(
+            &node,
+            &session,
+            &[
+                "read".to_string(),
+                "write".to_string(),
+                "websearch".to_string(),
+            ],
+        );
+        let (_, artifact_validation, rejected) = validate_automation_artifact_output(
+            &node,
+            &session,
+            workspace_root.to_str().expect("workspace root"),
+            "",
+            &tool_telemetry,
+            None,
+            Some((
+                "marketing-brief.md".to_string(),
+                "# Marketing Brief\n\n## Files reviewed\n- inputs/questions.md\n\n## Findings\nClaims are summarized here without explicit citations.\n".to_string(),
+            )),
+            &std::collections::BTreeSet::new(),
+        );
+
+        assert_eq!(
+            rejected.as_deref(),
+            Some("research completed without citation-backed claims")
+        );
+        assert_eq!(
+            artifact_validation
+                .get("unmet_requirements")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default(),
+            vec![
+                json!("citations_missing"),
+                json!("web_sources_reviewed_missing")
+            ]
+        );
+        assert_eq!(
+            artifact_validation
+                .get("artifact_candidates")
+                .and_then(Value::as_array)
+                .and_then(|rows| rows.first())
+                .and_then(|value| value.get("citation_count"))
+                .and_then(Value::as_u64),
+            Some(0)
+        );
+        assert_eq!(
+            artifact_validation
+                .get("citation_count")
+                .and_then(Value::as_u64),
+            Some(0)
+        );
+        assert_eq!(
+            artifact_validation
+                .get("web_sources_reviewed_present")
+                .and_then(Value::as_bool),
+            Some(false)
+        );
+
+        let _ = std::fs::remove_dir_all(&workspace_root);
     }
 
     #[test]

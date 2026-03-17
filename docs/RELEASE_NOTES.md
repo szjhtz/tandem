@@ -97,6 +97,7 @@
 - `automation_v2` output contracts now declare validator kinds explicitly, and node outputs persist validator kind plus a typed validator summary.
 - Mission builder, workflow planner, and standup composer now emit explicit research/review/structured/generic validator intent instead of leaning on fallback inference everywhere.
 - `automation_v2` read APIs normalize older node outputs to the current validator contract so operator views converge on one interpretation.
+- Research brief validation now treats citation presence and `Web sources reviewed` structure as first-class source-coverage requirements, emits typed `citations_missing` / `web_sources_reviewed_missing` unmet requirements, and surfaces citation/source summary fields directly in `artifact_validation` and `automation_v2` run payloads.
 
 ### External Action Receipts
 
