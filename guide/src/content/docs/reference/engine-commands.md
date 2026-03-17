@@ -9,20 +9,24 @@ The `tandem-engine` binary supports several subcommands for running the server a
 ```mermaid
 flowchart TD
   ROOT[tandem-engine] --> SERVE[serve]
+  ROOT --> STATUS[status]
   ROOT --> RUN[run]
   ROOT --> PAR[parallel]
   ROOT --> TOOL[tool]
   ROOT --> TOKEN[token]
   ROOT --> BROWSER[browser]
+  ROOT --> MEMORY[memory]
   ROOT --> PROV[providers]
   ROOT --> CHAT[chat placeholder]
 
   SERVE --> API[HTTP + SSE runtime]
+  STATUS --> HEALTH[Health check]
   RUN --> ONE[Single prompt]
   PAR --> MANY[Concurrent prompt batch]
   TOOL --> DIRECT[Direct tool execution]
   TOKEN --> AUTH[API token utilities]
   BROWSER --> DIAG[Browser diagnostics]
+  MEMORY --> IMPORT[Memory import utilities]
 ```
 
 ## `serve`
@@ -122,6 +126,38 @@ Browser automation does not require a visible desktop session. On Linux VPS host
 If the browser executable is not on `PATH`, set `TANDEM_BROWSER_EXECUTABLE` or `browser.executable_path`.
 
 For a full setup and test flow, see [Browser Setup and Testing](../browser-setup-and-testing/).
+
+## `memory`
+
+Memory import utilities for seeding Tandem memory from existing files or an OpenClaw export.
+
+```bash
+tandem-engine memory import [OPTIONS]
+```
+
+### `memory import`
+
+Import OpenClaw memory files or a markdown/text directory into Tandem memory.
+
+```bash
+tandem-engine memory import --path ./docs --tier global
+```
+
+- `--path <PATH>`: Path to an OpenClaw root or a directory of markdown/text files to import.
+- `--format <FORMAT>`: Import format, either `directory` or `openclaw` (default: `directory`).
+- `--tier <TIER>`: Target memory tier, one of `global`, `project`, or `session` (default: `global`).
+- `--project-id <PROJECT_ID>`: Required when `--tier project`.
+- `--session-id <SESSION_ID>`: Required when `--tier session`.
+- `--sync-deletes`: Remove previously imported records whose source files no longer exist under the import root.
+- `--state-dir <DIR>`: Engine state directory used to resolve `memory.sqlite` and config.
+
+**Examples:**
+
+```bash
+tandem-engine memory import --path ~/.openclaw --format openclaw
+tandem-engine memory import --path ./notes --tier global
+tandem-engine memory import --path ./docs --tier project --project-id repo-123 --sync-deletes
+```
 
 ## `run`
 

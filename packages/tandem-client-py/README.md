@@ -180,6 +180,24 @@ applied = await client.workflow_plans.apply(
 )
 ```
 
+### Additional namespaces
+
+The Python SDK already includes the newer engine surfaces that have landed across the repo:
+
+- `client.browser` for `status()`, `install()`, and `smoke_test()`
+- `client.workflows` for workflow registry, runs, hooks, simulation, and live events
+- `client.resources` for key-value resources
+- `client.skills` for list/get/import plus preview, templates, validation, routing, evals, compile, and generate flows
+- `client.packs` and `client.capabilities` for pack lifecycle and capability resolution
+- `client.automations_v2`, `client.bug_monitor`, `client.coder`, `client.agent_teams`, and `client.missions` for newer orchestration APIs
+
+```python
+browser = await client.browser.status()
+workflows = await client.workflows.list()
+resources = await client.resources.list(prefix="agent-config/")
+templates = await client.skills.templates()
+```
+
 ### `client.agent_teams` template management
 
 ```python
@@ -258,6 +276,9 @@ result = await client.memory.search("sqlite wal", limit=5)
 
 # List by user scope
 listing = await client.memory.list(user_id="user-123", q="sqlite")
+
+# Audit
+audit = await client.memory.audit(run_id="run-123")
 
 # Promote / demote / delete
 await client.memory.promote(listing.items[0].id)

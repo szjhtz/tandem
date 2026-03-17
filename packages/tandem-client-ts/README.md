@@ -143,6 +143,24 @@ await client.workflowPlans.apply({
 });
 ```
 
+### Additional namespaces
+
+The TypeScript SDK already includes the newer engine surfaces that have landed across the repo:
+
+- `client.browser` for `status()`, `install()`, and `smokeTest()`
+- `client.workflows` for workflow registry, runs, hooks, simulation, and live events
+- `client.resources` for key-value resources
+- `client.skills` for list/get/import plus validation, routing, evals, compile, and generate flows
+- `client.packs` and `client.capabilities` for pack lifecycle and capability resolution
+- `client.automationsV2`, `client.bugMonitor`, `client.coder`, `client.agentTeams`, and `client.missions` for newer orchestration APIs
+
+```typescript
+const browser = await client.browser.status();
+const workflows = await client.workflows.list();
+const resources = await client.resources.list({ prefix: "agent-config/" });
+const skillCatalog = await client.skills.catalog();
+```
+
 ### `client.mcp`
 
 | Method                      | Description                 |
@@ -219,6 +237,9 @@ const listing = await client.memory.list({ userId: "user-123", q: "sqlite" });
 await client.memory.promote({ id: listing.items[0].id! });
 await client.memory.demote({ id: listing.items[0].id!, runId: "run-123" });
 await client.memory.delete(listing.items[0].id!);
+
+// Audit
+const audit = await client.memory.audit({ run_id: "run-123" });
 ```
 
 ### `client.providers`

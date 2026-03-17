@@ -235,6 +235,24 @@ await client.memory.delete(items[0].id!);
 const log = await client.memory.audit({ run_id: "run-abc" });
 ```
 
+### Additional namespaces
+
+The TypeScript SDK also exposes the newer engine surfaces used across the Tandem repo:
+
+- `client.browser` for `status()`, `install()`, and `smokeTest()`
+- `client.workflows` for workflow registry, runs, hooks, simulation, and live events
+- `client.resources` for key-value resources
+- `client.skills` for validation, routing, evals, compile, and generate flows in addition to list/get/import
+- `client.packs` and `client.capabilities` for pack lifecycle and capability resolution
+- `client.automationsV2`, `client.bugMonitor`, `client.coder`, `client.agentTeams`, and `client.missions` for newer orchestration APIs
+
+```typescript
+const browser = await client.browser.status();
+const workflows = await client.workflows.list();
+const resources = await client.resources.list({ prefix: "agent-config/" });
+const catalog = await client.skills.catalog();
+```
+
 ### `client.skills`
 
 ```typescript

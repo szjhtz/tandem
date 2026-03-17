@@ -248,6 +248,24 @@ await client.memory.delete(listing.items[0].id)
 log = await client.memory.audit(run_id="run-abc")
 ```
 
+### Additional namespaces
+
+The Python SDK also exposes the newer engine surfaces used across the Tandem repo:
+
+- `client.browser` for `status()`, `install()`, and `smoke_test()`
+- `client.workflows` for workflow registry, runs, hooks, simulation, and live events
+- `client.resources` for key-value resources
+- `client.skills` for validation, routing, evals, compile, and generate flows in addition to list/get/import
+- `client.packs` and `client.capabilities` for pack lifecycle and capability resolution
+- `client.automations_v2`, `client.bug_monitor`, `client.coder`, `client.agent_teams`, and `client.missions` for newer orchestration APIs
+
+```python
+browser = await client.browser.status()
+workflows = await client.workflows.list()
+resources = await client.resources.list(prefix="agent-config/")
+catalog = await client.skills.templates()
+```
+
 ### `client.skills`
 
 ```python
