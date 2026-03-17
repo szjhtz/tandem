@@ -52,6 +52,10 @@ export function workflowEventReason(event: any) {
   ).trim();
 }
 
+export function workflowEventSessionId(event: any, fallbackSessionId = "") {
+  return String(event?.properties?.sessionID || event?.sessionID || fallbackSessionId || "").trim();
+}
+
 function checkpointStringArray(checkpoint: any, snakeKey: string, camelKey: string) {
   const raw = Array.isArray(checkpoint?.[snakeKey])
     ? checkpoint[snakeKey]
@@ -449,6 +453,27 @@ export function workflowTelemetrySeedEvents(
       event,
     })),
   ];
+}
+
+export function workflowSessionLogEventEntries(
+  sessionEvents: Array<{ id: string; at: number; event: any }>,
+  fallbackSessionId = ""
+) {
+  return (Array.isArray(sessionEvents) ? sessionEvents : []).map((item) => {
+    const sessionId = workflowEventSessionId(item?.event, fallbackSessionId);
+    const type = workflowEventType(item?.event);
+    return {
+      id: `event:${item?.id || ""}`,
+      kind: "event" as const,
+      sessionId,
+      at: Number(item?.at || 0),
+      variant: type === "session.error" ? "error" : type.startsWith("session.") ? "system" : "tool",
+      label: type || "event",
+      body: workflowEventReason(item?.event),
+      raw: item?.event,
+      parts: [] as any[],
+    };
+  });
 }
 
 export function workflowSessionIds(run: any) {

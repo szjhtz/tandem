@@ -16,6 +16,7 @@ import {
   workflowEventAt,
   workflowEventReason,
   workflowEventRunId,
+  workflowEventSessionId,
   workflowEventSummary,
   workflowEventType,
   workflowFirstPendingTaskId,
@@ -26,6 +27,7 @@ import {
   workflowNodeOutput,
   workflowPendingNodeCount,
   workflowPersistedHistoryEntries,
+  workflowSessionLogEventEntries,
   workflowTelemetrySeedEvents,
   workflowNodeStability,
   workflowProjectionFromRunSnapshot,
@@ -4537,29 +4539,12 @@ function MyAutomations({
       parts: sessionMessageParts(message),
       sessionLabel: sessionLabel(sessionId),
     }));
-    const liveEntries = sessionEvents.map((item) => ({
-      id: `event:${item.id}`,
-      kind: "event" as const,
-      sessionId: String(
-        item?.event?.properties?.sessionID || item?.event?.sessionID || selectedSessionId || ""
-      ).trim(),
-      at: item.at,
-      variant:
-        workflowEventType(item.event) === "session.error"
-          ? "error"
-          : workflowEventType(item.event).startsWith("session.")
-            ? "system"
-            : "tool",
-      label: workflowEventType(item.event) || "event",
-      body: workflowEventReason(item.event),
-      raw: item.event,
-      parts: [],
-      sessionLabel: sessionLabel(
-        String(
-          item?.event?.properties?.sessionID || item?.event?.sessionID || selectedSessionId || ""
-        ).trim()
-      ),
-    }));
+    const liveEntries = workflowSessionLogEventEntries(sessionEvents, selectedSessionId).map(
+      (entry) => ({
+        ...entry,
+        sessionLabel: sessionLabel(workflowEventSessionId(entry.raw, selectedSessionId)),
+      })
+    );
     const rows = [...messageEntries, ...liveEntries].sort((a, b) => a.at - b.at);
     if (selectedSessionFilterId === "all") return rows;
     return rows.filter((entry) => entry.sessionId === selectedSessionFilterId);
