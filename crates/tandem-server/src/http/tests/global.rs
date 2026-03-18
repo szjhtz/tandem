@@ -3726,6 +3726,7 @@ async fn automation_v2_research_workflow_smoke_exposes_blocked_artifact_state() 
                     output_contract: Some(crate::AutomationFlowOutputContract {
                         kind: "brief".to_string(),
                         validator: Some(crate::AutomationOutputValidatorKind::ResearchBrief),
+                        enforcement: None,
                         schema: None,
                         summary_guidance: None,
                     }),
@@ -4003,6 +4004,7 @@ async fn automation_v2_research_workflow_smoke_exposes_citation_validation_state
                 output_contract: Some(crate::AutomationFlowOutputContract {
                     kind: "brief".to_string(),
                     validator: Some(crate::AutomationOutputValidatorKind::ResearchBrief),
+                    enforcement: None,
                     schema: None,
                     summary_guidance: None,
                 }),
@@ -4474,6 +4476,7 @@ async fn automation_v2_editorial_workflow_smoke_exposes_quality_validation_state
                 output_contract: Some(crate::AutomationFlowOutputContract {
                     kind: "report_markdown".to_string(),
                     validator: Some(crate::AutomationOutputValidatorKind::GenericArtifact),
+                    enforcement: None,
                     schema: None,
                     summary_guidance: None,
                 }),
@@ -4654,6 +4657,7 @@ async fn automation_v2_publish_block_smoke_skips_external_action_receipts() {
                     output_contract: Some(crate::AutomationFlowOutputContract {
                         kind: "report_markdown".to_string(),
                         validator: Some(crate::AutomationOutputValidatorKind::GenericArtifact),
+                        enforcement: None,
                         schema: None,
                         summary_guidance: None,
                     }),

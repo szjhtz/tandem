@@ -1307,15 +1307,7 @@ fn workflow_step_metadata_defaults(
     if validator != crate::AutomationOutputValidatorKind::ResearchBrief {
         return None;
     }
-    let lowered_step_id = step_id.trim().to_ascii_lowercase();
-    let lowered_kind = kind.trim().to_ascii_lowercase();
-    let lowered_objective = objective.trim().to_ascii_lowercase();
-    let expects_web_research = lowered_step_id.contains("research")
-        || lowered_kind.contains("research")
-        || lowered_objective.contains("web")
-        || lowered_objective.contains("online")
-        || lowered_objective.contains("current")
-        || lowered_objective.contains("latest");
+    let expects_web_research = workflow_step_expects_web_research(step_id, kind, objective);
     Some(json!({
         "builder": {
             "web_research_expected": expects_web_research,
@@ -1323,7 +1315,126 @@ fn workflow_step_metadata_defaults(
     }))
 }
 
+fn workflow_step_expects_web_research(step_id: &str, kind: &str, objective: &str) -> bool {
+    let lowered_step_id = step_id.trim().to_ascii_lowercase();
+    let lowered_kind = kind.trim().to_ascii_lowercase();
+    let lowered_objective = objective.trim().to_ascii_lowercase();
+    lowered_step_id.contains("research")
+        || lowered_kind.contains("research")
+        || lowered_objective.contains("web")
+        || lowered_objective.contains("online")
+        || lowered_objective.contains("current")
+        || lowered_objective.contains("latest")
+}
+
+fn workflow_step_enforcement_defaults(
+    step_id: &str,
+    kind: &str,
+    objective: &str,
+    output_contract: Option<&crate::AutomationFlowOutputContract>,
+) -> Option<crate::AutomationOutputEnforcement> {
+    let validator = output_contract
+        .and_then(|contract| contract.validator)
+        .unwrap_or_else(|| {
+            output_contract
+                .map(|contract| output_validator_kind_for_kind(&contract.kind))
+                .unwrap_or(crate::AutomationOutputValidatorKind::GenericArtifact)
+        });
+    if validator != crate::AutomationOutputValidatorKind::ResearchBrief {
+        return None;
+    }
+    let expects_web_research = workflow_step_expects_web_research(step_id, kind, objective);
+    Some(crate::AutomationOutputEnforcement {
+        required_tools: vec![
+            "read".to_string(),
+            if expects_web_research {
+                "websearch".to_string()
+            } else {
+                String::new()
+            },
+        ]
+        .into_iter()
+        .filter(|value| !value.is_empty())
+        .collect(),
+        required_evidence: vec!["local_source_reads".to_string()]
+            .into_iter()
+            .chain(
+                expects_web_research
+                    .then_some("external_sources".to_string())
+                    .into_iter(),
+            )
+            .collect(),
+        required_sections: vec![
+            "files_reviewed".to_string(),
+            "files_not_reviewed".to_string(),
+            "citations".to_string(),
+        ]
+        .into_iter()
+        .chain(
+            expects_web_research
+                .then_some("web_sources_reviewed".to_string())
+                .into_iter(),
+        )
+        .collect(),
+        prewrite_gates: vec![
+            "workspace_inspection".to_string(),
+            "concrete_reads".to_string(),
+        ]
+        .into_iter()
+        .chain(
+            expects_web_research
+                .then_some("successful_web_research".to_string())
+                .into_iter(),
+        )
+        .collect(),
+        retry_on_missing: vec![
+            "local_source_reads".to_string(),
+            "files_reviewed".to_string(),
+            "files_not_reviewed".to_string(),
+            "citations".to_string(),
+            "workspace_inspection".to_string(),
+            "concrete_reads".to_string(),
+        ]
+        .into_iter()
+        .chain(
+            expects_web_research
+                .then_some("external_sources".to_string())
+                .into_iter(),
+        )
+        .chain(
+            expects_web_research
+                .then_some("web_sources_reviewed".to_string())
+                .into_iter(),
+        )
+        .chain(
+            expects_web_research
+                .then_some("successful_web_research".to_string())
+                .into_iter(),
+        )
+        .collect(),
+        terminal_on: vec![
+            "tool_unavailable".to_string(),
+            "repair_budget_exhausted".to_string(),
+        ],
+        repair_budget: Some(tandem_core::prewrite_repair_retry_max_attempts() as u32),
+        session_text_recovery: Some("require_prewrite_satisfied".to_string()),
+    })
+}
+
 fn normalize_workflow_step_metadata(step: &mut crate::WorkflowPlanStep) {
+    let enforcement_defaults = workflow_step_enforcement_defaults(
+        &step.step_id,
+        &step.kind,
+        &step.objective,
+        step.output_contract.as_ref(),
+    );
+    if let (Some(contract), Some(enforcement)) =
+        (step.output_contract.as_mut(), enforcement_defaults)
+    {
+        if contract.enforcement.is_none() {
+            contract.enforcement = Some(enforcement);
+        }
+    }
     let defaults = workflow_step_metadata_defaults(
         &step.step_id,
         &step.kind,
@@ -2254,6 +2365,7 @@ fn plan_step_with_dep(
     let output_contract = output_contract.map(|kind| crate::AutomationFlowOutputContract {
         kind: kind.to_string(),
         validator: Some(output_validator_kind_for_kind(kind)),
+        enforcement: None,
         schema: None,
         summary_guidance: None,
     });

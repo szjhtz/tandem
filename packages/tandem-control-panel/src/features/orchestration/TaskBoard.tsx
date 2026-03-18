@@ -16,9 +16,17 @@ const LABELS: Record<TaskState, string> = {
 function statusClass(state: TaskState) {
   if (state === "done" || state === "validated") return "tcp-badge-ok";
   if (state === "failed") return "tcp-badge-err";
+  if (state === "blocked") return "border border-emerald-400/60 bg-emerald-400/10 text-emerald-200";
   if (state === "in_progress" || state === "runnable" || state === "assigned")
     return "tcp-badge-warn";
   return "tcp-badge-info";
+}
+
+function taskCardClass(state: TaskState, isCurrent: boolean, isSelected: boolean) {
+  if (isSelected) return "border-cyan-400/70 bg-cyan-950/20";
+  if (state === "blocked") return "border-emerald-500/35 bg-emerald-950/18";
+  if (isCurrent) return "border-emerald-400/70 bg-emerald-950/14";
+  return "border-slate-700/60 bg-slate-900/20";
 }
 
 function statusIcon(state: TaskState) {
@@ -52,13 +60,11 @@ function TaskCard({
       : "";
   return (
     <div
-      className={`cursor-pointer rounded-lg border p-2 ${
-        isSelected
-          ? "border-cyan-400/70 bg-cyan-950/20"
-          : isCurrent
-            ? "border-amber-400/70"
-            : "border-slate-700/60 bg-slate-900/20"
-      }`}
+      className={`cursor-pointer rounded-lg border p-2 ${taskCardClass(
+        task.state,
+        isCurrent,
+        Boolean(isSelected)
+      )}`}
       onClick={() => onTaskSelect?.(task)}
     >
       <div className="mb-1 flex items-start justify-between gap-2">
@@ -81,7 +87,7 @@ function TaskCard({
             </span>
           ) : null}
           {task.gate ? (
-            <span className="rounded border border-amber-600/50 bg-amber-950/30 px-1.5 py-0.5">
+            <span className="rounded border border-emerald-600/50 bg-emerald-950/30 px-1.5 py-0.5 text-emerald-200">
               gate: {task.gate}
             </span>
           ) : null}
@@ -100,7 +106,11 @@ function TaskCard({
         </div>
       ) : null}
       {error ? (
-        <div className="mt-1 text-xs text-rose-300">
+        <div
+          className={`mt-1 text-xs ${
+            task.state === "blocked" ? "text-emerald-200/90" : "text-rose-300"
+          }`}
+        >
           <div className={expanded ? "whitespace-pre-wrap break-words" : "line-clamp-2"}>
             {error}
           </div>
@@ -247,7 +257,7 @@ export function TaskBoard({
           {currentTaskId ? (
             <button
               type="button"
-              className="rounded-full border border-amber-400/60 bg-amber-400/10 px-3 py-1.5 text-[11px] font-medium text-amber-200"
+              className="rounded-full border border-emerald-400/60 bg-emerald-400/10 px-3 py-1.5 text-[11px] font-medium text-emerald-200"
               onClick={() => setMobileColumnKey(activeColumnKey)}
             >
               Jump to active task
@@ -263,7 +273,7 @@ export function TaskBoard({
                 type="button"
                 className={`shrink-0 rounded-full border px-3 py-1.5 text-[11px] font-medium ${
                   active
-                    ? "border-amber-400/60 bg-amber-400/10 text-amber-200"
+                    ? "border-emerald-400/60 bg-emerald-400/10 text-emerald-200"
                     : "border-slate-700/60 bg-slate-900/20 text-slate-300"
                 }`}
                 onClick={() => setMobileColumnKey(column.key)}
@@ -306,7 +316,7 @@ export function TaskBoard({
           {currentTaskId ? (
             <button
               type="button"
-              className="rounded-full border border-amber-400/60 bg-amber-400/10 px-3 py-1.5 text-[11px] font-medium text-amber-200"
+              className="rounded-full border border-emerald-400/60 bg-emerald-400/10 px-3 py-1.5 text-[11px] font-medium text-emerald-200"
               onClick={scrollToCurrentTask}
             >
               Jump to active task
@@ -321,7 +331,7 @@ export function TaskBoard({
                   type="button"
                   className={`rounded-full border px-3 py-1.5 text-[11px] font-medium ${
                     active
-                      ? "border-amber-400/60 bg-amber-400/10 text-amber-200"
+                      ? "border-emerald-400/60 bg-emerald-400/10 text-emerald-200"
                       : "border-slate-700/60 bg-slate-900/20 text-slate-300"
                   }`}
                   onClick={() => scrollToColumn(column.key)}
@@ -342,7 +352,7 @@ export function TaskBoard({
                 }}
                 className={`min-h-[16rem] w-[320px] shrink-0 rounded-xl border p-2 ${
                   column.key === activeColumnKey
-                    ? "border-amber-400/60 bg-amber-400/5"
+                    ? "border-emerald-400/60 bg-emerald-400/5"
                     : "border-slate-700/60 bg-slate-900/20"
                 }`}
               >

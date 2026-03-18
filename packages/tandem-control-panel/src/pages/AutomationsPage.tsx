@@ -4272,12 +4272,13 @@ function MyAutomations({
     setSessionLogPinnedToBottom(true);
   }, [selectedRunId, selectedContextRunId]);
 
+  const prevAutoSelectRunId = useRef("");
   useEffect(() => {
     if (!selectedRunId || !workflowProjection.tasks.length) return;
-    setSelectedBoardTaskId((current) => {
-      if (current && workflowProjection.tasks.some((task) => task.id === current)) return current;
-      return (
-        workflowProjection.currentTaskId ||
+    if (prevAutoSelectRunId.current === selectedRunId) return;
+    prevAutoSelectRunId.current = selectedRunId;
+    setSelectedBoardTaskId(
+      workflowProjection.currentTaskId ||
         workflowProjection.tasks.find((task) =>
           ["in_progress", "blocked", "assigned", "runnable", "pending"].includes(
             String(task.state || "").toLowerCase()
@@ -4285,8 +4286,7 @@ function MyAutomations({
         )?.id ||
         workflowProjection.tasks[0]?.id ||
         ""
-      );
-    });
+    );
   }, [selectedRunId, workflowProjection.currentTaskId, workflowProjection.tasks]);
 
   useEngineStream(
@@ -4416,7 +4416,7 @@ function MyAutomations({
     const s = String(status || "").toLowerCase();
     if (s === "active" || s === "completed" || s === "done") return "tcp-badge-ok";
     if (s === "running" || s === "in_progress") return "tcp-badge-warn";
-    if (s === "blocked") return "tcp-badge-warn";
+    if (s === "blocked") return "border border-emerald-400/60 bg-emerald-400/10 text-emerald-200";
     if (s === "failed" || s === "error") return "tcp-badge-err";
     return "tcp-badge-info";
   };
@@ -5538,7 +5538,7 @@ function MyAutomations({
                                       {selectedBoardTaskUnmetResearchRequirements.map((item) => (
                                         <span
                                           key={item}
-                                          className="rounded-full border border-amber-500/30 bg-amber-950/20 px-2 py-1 text-[11px] text-amber-100/90"
+                                          className="rounded-full border border-emerald-500/30 bg-emerald-950/20 px-2 py-1 text-[11px] text-emerald-100/90"
                                         >
                                           {item}
                                         </span>
@@ -5631,7 +5631,7 @@ function MyAutomations({
                                                 {String(result?.command || "").trim() || "n/a"}
                                               </div>
                                               {String(result?.failure || "").trim() ? (
-                                                <div className="mt-1 whitespace-pre-wrap break-words text-[11px] text-amber-100/90">
+                                                <div className="mt-1 whitespace-pre-wrap break-words text-[11px] text-emerald-100/90">
                                                   {String(result?.failure || "").trim()}
                                                 </div>
                                               ) : null}
@@ -5643,8 +5643,8 @@ function MyAutomations({
                                   </div>
                                 ) : null}
                                 {selectedBoardTaskFailureDetail ? (
-                                  <div className="mt-3 rounded-md border border-amber-500/30 bg-amber-950/20 p-2 text-amber-100/90">
-                                    <div className="tcp-subtle mb-1 text-amber-100/70">
+                                  <div className="mt-3 rounded-md border border-emerald-500/30 bg-emerald-950/20 p-2 text-emerald-100/90">
+                                    <div className="tcp-subtle mb-1 text-emerald-100/70">
                                       failure detail
                                     </div>
                                     <div className="whitespace-pre-wrap break-words">
@@ -6397,18 +6397,20 @@ function MyAutomations({
                             {blockers.map((blocker) => (
                               <div
                                 key={blocker.key}
-                                className="rounded-lg border border-amber-500/30 bg-amber-950/20 p-3"
+                                className="rounded-lg border border-emerald-500/30 bg-emerald-950/20 p-3"
                               >
                                 <div className="mb-1 flex flex-wrap items-center gap-2">
                                   <strong>{blocker.title}</strong>
-                                  <span className="tcp-badge-warn">{blocker.source}</span>
+                                  <span className="border border-emerald-400/60 bg-emerald-400/10 text-emerald-200 tcp-badge">
+                                    {blocker.source}
+                                  </span>
                                   {blocker.at ? (
                                     <span className="tcp-subtle text-[11px]">
                                       {new Date(blocker.at).toLocaleTimeString()}
                                     </span>
                                   ) : null}
                                 </div>
-                                <div className="whitespace-pre-wrap break-words text-sm text-amber-100/90">
+                                <div className="whitespace-pre-wrap break-words text-sm text-emerald-100/90">
                                   {blocker.reason}
                                 </div>
                               </div>
@@ -6430,7 +6432,7 @@ function MyAutomations({
                         <div className="tcp-list-item overflow-visible">
                           <div className="mb-2 flex items-center justify-between gap-2">
                             <div className="font-medium">Next Required Actions</div>
-                            <span className="tcp-badge-warn">
+                            <span className="border border-emerald-400/60 bg-emerald-400/10 text-emerald-200 tcp-badge">
                               {runRepairGuidanceEntries.length} node
                               {runRepairGuidanceEntries.length === 1 ? "" : "s"}
                             </span>
@@ -6455,7 +6457,11 @@ function MyAutomations({
                                 isWorkflowRun &&
                                 !!selectedRunId &&
                                 !hasActiveSessions &&
-                                ["blocked", "failed", "needs_repair"].includes(normalizedStatus);
+                                (["blocked", "failed", "needs_repair"].includes(normalizedStatus) ||
+                                  // Also allow retry on completed nodes that appear in guidance
+                                  // because they have unmet requirements (upstream quality issues)
+                                  (normalizedStatus === "completed" &&
+                                    (actions.length > 0 || unmet.length > 0)));
                               const canGuidanceContinue =
                                 isWorkflowRun &&
                                 !!selectedRunId &&
@@ -6464,12 +6470,14 @@ function MyAutomations({
                               return (
                                 <div
                                   key={nodeId}
-                                  className="rounded-lg border border-amber-500/30 bg-amber-950/20 p-3"
+                                  className="rounded-lg border border-emerald-500/30 bg-emerald-950/20 p-3"
                                 >
                                   <div className="mb-2 flex flex-wrap items-center gap-2">
                                     <strong>{nodeId}</strong>
                                     {status ? (
-                                      <span className="tcp-badge-warn">{status}</span>
+                                      <span className="border border-emerald-400/60 bg-emerald-400/10 text-emerald-200 tcp-badge">
+                                        {status}
+                                      </span>
                                     ) : null}
                                     {blockingClassification ? (
                                       <span className="tcp-subtle text-[11px]">
@@ -6541,7 +6549,7 @@ function MyAutomations({
                                     ) : null}
                                   </div>
                                   {reason ? (
-                                    <div className="mb-2 whitespace-pre-wrap break-words text-sm text-amber-100/90">
+                                    <div className="mb-2 whitespace-pre-wrap break-words text-sm text-emerald-100/90">
                                       {reason}
                                     </div>
                                   ) : null}
@@ -6550,7 +6558,7 @@ function MyAutomations({
                                       {actions.map((action: any, index: number) => (
                                         <div
                                           key={`${nodeId}-action-${index}`}
-                                          className="rounded-md border border-amber-400/20 bg-black/20 px-2 py-1 text-xs text-amber-50"
+                                          className="rounded-md border border-emerald-400/20 bg-black/20 px-2 py-1 text-xs text-emerald-50"
                                         >
                                           {String(action || "")}
                                         </div>
@@ -6562,7 +6570,7 @@ function MyAutomations({
                                       {unmet.map((item: any) => (
                                         <span
                                           key={`${nodeId}-${String(item)}`}
-                                          className="rounded-full border border-amber-400/25 bg-black/20 px-2 py-1 text-[11px] text-amber-100/90"
+                                          className="rounded-full border border-emerald-400/25 bg-black/20 px-2 py-1 text-[11px] text-emerald-100/90"
                                         >
                                           {String(item || "").replace(/_/g, " ")}
                                         </span>

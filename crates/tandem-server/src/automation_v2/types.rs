@@ -121,9 +121,31 @@ pub struct AutomationFlowOutputContract {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub validator: Option<AutomationOutputValidatorKind>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enforcement: Option<AutomationOutputEnforcement>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub schema: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub summary_guidance: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct AutomationOutputEnforcement {
+    #[serde(default)]
+    pub required_tools: Vec<String>,
+    #[serde(default)]
+    pub required_evidence: Vec<String>,
+    #[serde(default)]
+    pub required_sections: Vec<String>,
+    #[serde(default)]
+    pub prewrite_gates: Vec<String>,
+    #[serde(default)]
+    pub retry_on_missing: Vec<String>,
+    #[serde(default)]
+    pub terminal_on: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repair_budget: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_text_recovery: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]

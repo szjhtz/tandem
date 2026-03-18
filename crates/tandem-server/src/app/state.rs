@@ -4955,6 +4955,32 @@ pub fn collect_automation_descendants(
     descendants
 }
 
+/// Returns all transitive ancestors of `node_id` (i.e. every node that
+/// `node_id` directly or indirectly depends on), not including `node_id`
+/// itself.
+pub fn collect_automation_ancestors(
+    automation: &AutomationV2Spec,
+    node_id: &str,
+) -> std::collections::HashSet<String> {
+    let mut ancestors = std::collections::HashSet::new();
+    let mut queue = vec![node_id.to_string()];
+    while let Some(current_id) = queue.pop() {
+        if let Some(node) = automation
+            .flow
+            .nodes
+            .iter()
+            .find(|n| n.node_id == current_id)
+        {
+            for dep in &node.depends_on {
+                if ancestors.insert(dep.clone()) {
+                    queue.push(dep.clone());
+                }
+            }
+        }
+    }
+    ancestors
+}
+
 fn render_automation_v2_prompt(
     automation: &AutomationV2Spec,
     workspace_root: &str,
@@ -5768,21 +5794,35 @@ fn automation_node_prewrite_requirements(
     if !write_required {
         return None;
     }
+    let enforcement = automation_node_output_enforcement(node);
+    let required_tools = enforcement.required_tools.clone();
+    let web_research_expected = enforcement_requires_external_sources(&enforcement);
     let workspace_inspection_required = requested_tools
         .iter()
         .any(|tool| matches!(tool.as_str(), "glob" | "ls" | "list" | "read"));
-    let web_research_required = automation_node_web_research_expected(node)
-        && requested_tools.iter().any(|tool| tool == "websearch");
-    let brief_research_node = automation_output_validator_kind(node)
-        == crate::AutomationOutputValidatorKind::ResearchBrief;
-    let required_tools = automation_node_required_tools(node);
+    let web_research_required =
+        web_research_expected && requested_tools.iter().any(|tool| tool == "websearch");
+    let brief_research_node = enforcement
+        .required_sections
+        .iter()
+        .any(|item| item == "files_reviewed");
     let has_required_read = required_tools.iter().any(|tool| tool == "read");
     let has_required_websearch = required_tools.iter().any(|tool| tool == "websearch");
     let has_any_required_tools = !required_tools.is_empty();
-    let concrete_read_required = (brief_research_node || has_required_read)
+    let concrete_read_required = (brief_research_node
+        || has_required_read
+        || enforcement
+            .prewrite_gates
+            .iter()
+            .any(|gate| gate == "concrete_reads"))
         && requested_tools.iter().any(|tool| tool == "read");
-    let successful_web_research_required = (brief_research_node || has_required_websearch)
-        && automation_node_web_research_expected(node)
+    let successful_web_research_required = (brief_research_node
+        || has_required_websearch
+        || enforcement
+            .prewrite_gates
+            .iter()
+            .any(|gate| gate == "successful_web_research"))
+        && web_research_expected
         && requested_tools.iter().any(|tool| tool == "websearch");
     Some(PrewriteRequirements {
         workspace_inspection_required,
@@ -5796,6 +5836,161 @@ fn automation_node_prewrite_requirements(
             PrewriteCoverageMode::None
         },
     })
+}
+
+fn automation_node_output_enforcement(
+    node: &AutomationFlowNode,
+) -> crate::AutomationOutputEnforcement {
+    let mut enforcement = node
+        .output_contract
+        .as_ref()
+        .and_then(|contract| contract.enforcement.clone())
+        .unwrap_or_default();
+    let validator_kind = automation_output_validator_kind(node);
+    let legacy_required_tools = automation_node_legacy_required_tools(node);
+    let legacy_web_research_expected = automation_node_legacy_web_research_expected(node);
+    let is_research_contract =
+        validator_kind == crate::AutomationOutputValidatorKind::ResearchBrief;
+
+    if enforcement.required_tools.is_empty() {
+        enforcement.required_tools = legacy_required_tools.clone();
+        if is_research_contract && !enforcement.required_tools.iter().any(|tool| tool == "read") {
+            enforcement.required_tools.push("read".to_string());
+        }
+        if legacy_web_research_expected
+            && !enforcement
+                .required_tools
+                .iter()
+                .any(|tool| tool == "websearch")
+        {
+            enforcement.required_tools.push("websearch".to_string());
+        }
+    }
+
+    if enforcement.required_evidence.is_empty() {
+        if is_research_contract || enforcement.required_tools.iter().any(|tool| tool == "read") {
+            enforcement
+                .required_evidence
+                .push("local_source_reads".to_string());
+        }
+        if legacy_web_research_expected
+            || enforcement
+                .required_tools
+                .iter()
+                .any(|tool| tool == "websearch")
+        {
+            enforcement
+                .required_evidence
+                .push("external_sources".to_string());
+        }
+    }
+
+    if enforcement.required_sections.is_empty() && is_research_contract {
+        enforcement.required_sections.extend([
+            "files_reviewed".to_string(),
+            "files_not_reviewed".to_string(),
+            "citations".to_string(),
+        ]);
+        if legacy_web_research_expected || enforcement_requires_external_sources(&enforcement) {
+            enforcement
+                .required_sections
+                .push("web_sources_reviewed".to_string());
+        }
+    }
+
+    if enforcement.prewrite_gates.is_empty() && automation_node_required_output_path(node).is_some()
+    {
+        enforcement
+            .prewrite_gates
+            .push("workspace_inspection".to_string());
+        if enforcement
+            .required_evidence
+            .iter()
+            .any(|item| item == "local_source_reads")
+            || enforcement.required_tools.iter().any(|tool| tool == "read")
+        {
+            enforcement
+                .prewrite_gates
+                .push("concrete_reads".to_string());
+        }
+        if enforcement_requires_external_sources(&enforcement) {
+            enforcement
+                .prewrite_gates
+                .push("successful_web_research".to_string());
+        }
+    }
+
+    if enforcement.retry_on_missing.is_empty() {
+        enforcement
+            .retry_on_missing
+            .extend(enforcement.required_evidence.iter().cloned());
+        enforcement
+            .retry_on_missing
+            .extend(enforcement.required_sections.iter().cloned());
+        enforcement
+            .retry_on_missing
+            .extend(enforcement.prewrite_gates.iter().cloned());
+    }
+
+    if enforcement.terminal_on.is_empty() && !enforcement.retry_on_missing.is_empty() {
+        enforcement.terminal_on.extend([
+            "tool_unavailable".to_string(),
+            "repair_budget_exhausted".to_string(),
+        ]);
+    }
+
+    if enforcement.repair_budget.is_none()
+        && (!enforcement.retry_on_missing.is_empty() || !enforcement.required_tools.is_empty())
+    {
+        enforcement.repair_budget = Some(tandem_core::prewrite_repair_retry_max_attempts() as u32);
+    }
+
+    if enforcement.session_text_recovery.is_none() {
+        enforcement.session_text_recovery = Some(
+            if !enforcement.prewrite_gates.is_empty()
+                || enforcement
+                    .required_sections
+                    .iter()
+                    .any(|item| item == "files_reviewed")
+            {
+                "require_prewrite_satisfied".to_string()
+            } else {
+                "allow".to_string()
+            },
+        );
+    }
+
+    enforcement.required_tools = normalize_non_empty_list(enforcement.required_tools);
+    enforcement.required_evidence = normalize_non_empty_list(enforcement.required_evidence);
+    enforcement.required_sections = normalize_non_empty_list(enforcement.required_sections);
+    enforcement.prewrite_gates = normalize_non_empty_list(enforcement.prewrite_gates);
+    enforcement.retry_on_missing = normalize_non_empty_list(enforcement.retry_on_missing);
+    enforcement.terminal_on = normalize_non_empty_list(enforcement.terminal_on);
+    enforcement
+}
+
+fn enforcement_requires_external_sources(enforcement: &crate::AutomationOutputEnforcement) -> bool {
+    enforcement
+        .required_evidence
+        .iter()
+        .any(|item| item == "external_sources")
+        || enforcement
+            .required_tools
+            .iter()
+            .any(|tool| tool == "websearch")
+        || enforcement
+            .prewrite_gates
+            .iter()
+            .any(|gate| gate == "successful_web_research")
+}
+
+fn automation_node_legacy_builder(
+    node: &AutomationFlowNode,
+) -> Option<&serde_json::Map<String, Value>> {
+    node.metadata
+        .as_ref()
+        .and_then(|metadata| metadata.get("builder"))
+        .and_then(Value::as_object)
 }
 
 fn resolve_automation_agent_model(
@@ -5828,19 +6023,22 @@ pub fn automation_node_required_output_path(node: &AutomationFlowNode) -> Option
 }
 
 fn automation_node_web_research_expected(node: &AutomationFlowNode) -> bool {
-    node.metadata
-        .as_ref()
-        .and_then(|metadata| metadata.get("builder"))
-        .and_then(Value::as_object)
+    enforcement_requires_external_sources(&automation_node_output_enforcement(node))
+}
+
+fn automation_node_required_tools(node: &AutomationFlowNode) -> Vec<String> {
+    automation_node_output_enforcement(node).required_tools
+}
+
+fn automation_node_legacy_web_research_expected(node: &AutomationFlowNode) -> bool {
+    automation_node_legacy_builder(node)
         .and_then(|builder| builder.get("web_research_expected"))
         .and_then(Value::as_bool)
         .unwrap_or(false)
 }
 
-fn automation_node_required_tools(node: &AutomationFlowNode) -> Vec<String> {
-    node.metadata
-        .as_ref()
-        .and_then(|metadata| metadata.get("builder"))
+fn automation_node_legacy_required_tools(node: &AutomationFlowNode) -> Vec<String> {
+    automation_node_legacy_builder(node)
         .and_then(|builder| builder.get("required_tools"))
         .and_then(Value::as_array)
         .map(|rows| {
@@ -6892,6 +7090,7 @@ fn validate_automation_artifact_output(
         auto_cleaned = true;
     }
 
+    let enforcement = automation_node_output_enforcement(node);
     let execution_policy = automation_node_execution_policy(node, workspace_root);
     let mutation_summary = session_file_mutation_summary(session, workspace_root);
     let verification_summary = session_verification_summary(node, session);
@@ -6939,6 +7138,11 @@ fn validate_automation_artifact_output(
         .and_then(Value::as_str)
         .unwrap_or("artifact_write");
     let parsed_status = parse_status_json(session_text);
+    let repair_exhausted_hint = parsed_status
+        .as_ref()
+        .and_then(|value| value.get("repairExhausted"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
     if rejected_reason.is_none() && matches!(execution_mode, "git_patch" | "filesystem_patch") {
         let unsafe_raw_write_paths = touched_files
             .iter()
@@ -6969,6 +7173,17 @@ fn validate_automation_artifact_output(
     if let Some((path, text)) = accepted_output.clone() {
         let session_write_candidates =
             session_write_candidates_for_output(session, workspace_root, &path);
+        let requested_tools_for_contract = tool_telemetry
+            .get("requested_tools")
+            .and_then(Value::as_array)
+            .map(|tools| {
+                tools
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_string)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
         let requested_has_read = tool_telemetry
             .get("requested_tools")
             .and_then(Value::as_array)
@@ -6977,11 +7192,30 @@ fn validate_automation_artifact_output(
             .get("executed_tools")
             .and_then(Value::as_array)
             .is_some_and(|tools| tools.iter().any(|value| value.as_str() == Some("read")));
-        let web_research_expected = automation_node_web_research_expected(node);
+        let web_research_expected = enforcement_requires_external_sources(&enforcement);
         let web_research_succeeded = tool_telemetry
             .get("web_research_succeeded")
             .and_then(Value::as_bool)
             .unwrap_or(false);
+        let workspace_inspection_satisfied = tool_telemetry
+            .get("workspace_inspection_used")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+            || executed_has_read;
+        let prewrite_requirements =
+            automation_node_prewrite_requirements(node, &requested_tools_for_contract);
+        let session_text_recovery_requires_prewrite =
+            enforcement.session_text_recovery.as_deref() == Some("require_prewrite_satisfied");
+        let session_text_recovery_allowed =
+            prewrite_requirements.as_ref().is_none_or(|requirements| {
+                !session_text_recovery_requires_prewrite
+                    || repair_exhausted_hint
+                    || ((!requirements.workspace_inspection_required
+                        || workspace_inspection_satisfied)
+                        && (!requirements.concrete_read_required || executed_has_read)
+                        && (!requirements.successful_web_research_required
+                            || web_research_succeeded))
+            });
         let mut candidate_assessments = session_write_candidates
             .iter()
             .map(|candidate| {
@@ -7038,11 +7272,14 @@ fn validate_automation_artifact_output(
             unreviewed_relevant_paths = best.unreviewed_relevant_paths.clone();
             let best_is_verified_output = best.source == "verified_output" && best.text == text;
             if !best_is_verified_output {
-                if let Ok(resolved) = resolve_automation_output_path(workspace_root, &path) {
-                    let _ = std::fs::write(&resolved, &best.text);
+                if session_text_recovery_allowed {
+                    if let Ok(resolved) = resolve_automation_output_path(workspace_root, &path) {
+                        let _ = std::fs::write(&resolved, &best.text);
+                        accepted_output = Some((path.clone(), best.text.clone()));
+                    }
                 }
-                recovered_from_session_write = best.source == "session_write";
-                accepted_output = Some((path.clone(), best.text.clone()));
+                recovered_from_session_write =
+                    session_text_recovery_allowed && best.source == "session_write";
             } else {
                 accepted_output = Some((path.clone(), best.text.clone()));
             }
@@ -7061,27 +7298,58 @@ fn validate_automation_artifact_output(
         let validator_kind = automation_output_validator_kind(node);
         let is_research_brief =
             validator_kind == crate::AutomationOutputValidatorKind::ResearchBrief;
-        let required_tools_for_node = automation_node_required_tools(node);
+        let required_tools_for_node = enforcement.required_tools.clone();
         let has_required_tools = !required_tools_for_node.is_empty();
+        let requires_local_source_reads = enforcement
+            .required_evidence
+            .iter()
+            .any(|item| item == "local_source_reads");
+        let requires_external_sources = enforcement
+            .required_evidence
+            .iter()
+            .any(|item| item == "external_sources");
+        let requires_files_reviewed = enforcement
+            .required_sections
+            .iter()
+            .any(|item| item == "files_reviewed");
+        let requires_files_not_reviewed = enforcement
+            .required_sections
+            .iter()
+            .any(|item| item == "files_not_reviewed");
+        let requires_citations = enforcement
+            .required_sections
+            .iter()
+            .any(|item| item == "citations");
+        let requires_web_sources_reviewed = enforcement
+            .required_sections
+            .iter()
+            .any(|item| item == "web_sources_reviewed");
+        let has_research_contract = requires_local_source_reads
+            || requires_external_sources
+            || requires_files_reviewed
+            || requires_files_not_reviewed
+            || requires_citations
+            || requires_web_sources_reviewed;
         let requires_read = required_tools_for_node.iter().any(|tool| tool == "read");
         let requires_websearch = required_tools_for_node
             .iter()
             .any(|tool| tool == "websearch");
-        if is_research_brief && requested_has_read {
-            let missing_concrete_reads = !executed_has_read;
+        if has_research_contract && (requested_has_read || requires_local_source_reads) {
+            let missing_concrete_reads = requires_local_source_reads && !executed_has_read;
             let files_reviewed_backed = selected_assessment.is_some_and(|assessment| {
                 !assessment.reviewed_paths.is_empty()
                     && assessment.reviewed_paths.len()
                         == assessment.reviewed_paths_backed_by_read.len()
             });
-            let missing_file_coverage = !selected_assessment
-                .is_some_and(|assessment| assessment.files_reviewed_present)
+            let missing_file_coverage = (requires_files_reviewed
+                && !selected_assessment
+                    .is_some_and(|assessment| assessment.files_reviewed_present))
                 || !files_reviewed_backed
-                || !unreviewed_relevant_paths.is_empty();
-            let missing_web_research = web_research_expected && !web_research_succeeded;
-            let missing_citations =
-                !selected_assessment.is_some_and(|assessment| assessment.citation_count > 0);
-            let missing_web_sources_reviewed = web_research_expected
+                || (requires_files_not_reviewed && !unreviewed_relevant_paths.is_empty());
+            let missing_web_research = requires_external_sources && !web_research_succeeded;
+            let missing_citations = requires_citations
+                && !selected_assessment.is_some_and(|assessment| assessment.citation_count > 0);
+            let missing_web_sources_reviewed = requires_web_sources_reviewed
                 && !selected_assessment
                     .is_some_and(|assessment| assessment.web_sources_reviewed_present);
             unmet_requirements.clear();
@@ -7091,13 +7359,15 @@ fn validate_automation_artifact_output(
             if missing_citations {
                 unmet_requirements.push("citations_missing".to_string());
             }
-            if !selected_assessment.is_some_and(|assessment| assessment.files_reviewed_present) {
+            if requires_files_reviewed
+                && !selected_assessment.is_some_and(|assessment| assessment.files_reviewed_present)
+            {
                 unmet_requirements.push("files_reviewed_missing".to_string());
             }
-            if !files_reviewed_backed {
+            if requires_files_reviewed && !files_reviewed_backed {
                 unmet_requirements.push("files_reviewed_not_backed_by_read".to_string());
             }
-            if !unreviewed_relevant_paths.is_empty() {
+            if requires_files_not_reviewed && !unreviewed_relevant_paths.is_empty() {
                 unmet_requirements.push("relevant_files_not_reviewed_or_skipped".to_string());
             }
             if missing_web_sources_reviewed {
@@ -7128,10 +7398,10 @@ fn validate_automation_artifact_output(
                 });
             }
         }
-        if !is_research_brief && has_required_tools {
+        if !has_research_contract && has_required_tools {
             let missing_concrete_reads = requires_read && !executed_has_read;
             let missing_web_research =
-                requires_websearch && web_research_expected && !web_research_succeeded;
+                requires_websearch && requires_external_sources && !web_research_succeeded;
             if missing_concrete_reads {
                 unmet_requirements.push("no_concrete_reads".to_string());
             }
@@ -7207,17 +7477,59 @@ fn validate_automation_artifact_output(
                 .filter(|assessment| assessment.substantive)
                 .cloned()
             {
-                if let Ok(resolved) = resolve_automation_output_path(workspace_root, &path) {
-                    let _ = std::fs::write(&resolved, &best.text);
+                if session_text_recovery_allowed {
+                    if let Ok(resolved) = resolve_automation_output_path(workspace_root, &path) {
+                        let _ = std::fs::write(&resolved, &best.text);
+                        accepted_output = Some((path.clone(), best.text.clone()));
+                        recovered_from_session_write = best.source == "session_write";
+                        repair_succeeded = true;
+                        accepted_candidate_source = Some(best.source.clone());
+                    }
                 }
-                accepted_output = Some((path.clone(), best.text.clone()));
-                recovered_from_session_write = best.source == "session_write";
-                repair_succeeded = true;
-                accepted_candidate_source = Some(best.source.clone());
             }
         }
         if repair_attempted && semantic_block_reason.is_none() {
             repair_succeeded = true;
+        }
+        if semantic_block_reason.is_some() {
+            let output_is_substantive =
+                accepted_output.as_ref().is_some_and(|(_, accepted_text)| {
+                    let assessment = assess_artifact_candidate(
+                        node,
+                        workspace_root,
+                        "accepted_output",
+                        accepted_text,
+                        &read_paths,
+                        &discovered_relevant_paths,
+                    );
+                    assessment.substantive && !assessment.placeholder_like
+                });
+            if output_is_substantive {
+                // For research-brief nodes: only waive the semantic block once the model has
+                // actually used at least one required research tool, OR has already gone through
+                // at least one repair attempt (meaning the engine already tried to get it to
+                // improve and the waiver mechanism is legitimately kicking in).
+                // This prevents accepting a "confession document" on the very first attempt.
+                let is_brief_research_node = has_research_contract;
+                let should_clear = if is_brief_research_node {
+                    let executed_has_read = tool_telemetry
+                        .get("executed_tools")
+                        .and_then(Value::as_array)
+                        .is_some_and(|tools| tools.iter().any(|t| t.as_str() == Some("read")));
+                    let executed_has_websearch = tool_telemetry
+                        .get("executed_tools")
+                        .and_then(Value::as_array)
+                        .is_some_and(|tools| tools.iter().any(|t| t.as_str() == Some("websearch")));
+                    // Allow waiver if the model did actual research, OR already had a repair pass
+                    repair_attempted || executed_has_read || executed_has_websearch
+                } else {
+                    // Non-research nodes: always accept substantive output
+                    true
+                };
+                if should_clear {
+                    semantic_block_reason = None;
+                }
+            }
         }
     }
     if accepted_output.is_some() && accepted_candidate_source.is_none() {
@@ -7231,12 +7543,9 @@ fn validate_automation_artifact_output(
         tool_telemetry,
     );
     let validator_kind = automation_output_validator_kind(node);
-    let has_required_tools = !automation_node_required_tools(node).is_empty();
-    let validation_outcome = if ((validator_kind
-        == crate::AutomationOutputValidatorKind::ResearchBrief)
-        || has_required_tools)
-        && semantic_block_reason.is_some()
-    {
+    let has_required_tools = !enforcement.required_tools.is_empty();
+    let contract_requires_repair = !enforcement.retry_on_missing.is_empty() || has_required_tools;
+    let validation_outcome = if contract_requires_repair && semantic_block_reason.is_some() {
         if repair_exhausted {
             "blocked"
         } else {
@@ -7247,8 +7556,7 @@ fn validate_automation_artifact_output(
     } else {
         "passed"
     };
-    let should_classify =
-        validator_kind == crate::AutomationOutputValidatorKind::ResearchBrief || has_required_tools;
+    let should_classify = contract_requires_repair;
     let blocking_classification = if should_classify {
         classify_research_validation_state(
             &tool_telemetry
@@ -7261,7 +7569,7 @@ fn validate_automation_artifact_output(
                 .and_then(Value::as_array)
                 .cloned()
                 .unwrap_or_default(),
-            automation_node_web_research_expected(node),
+            enforcement_requires_external_sources(&enforcement),
             &unmet_requirements,
             repair_exhausted,
         )
@@ -7281,7 +7589,7 @@ fn validate_automation_artifact_output(
                 .and_then(Value::as_array)
                 .cloned()
                 .unwrap_or_default(),
-            automation_node_web_research_expected(node),
+            enforcement_requires_external_sources(&enforcement),
             &unmet_requirements,
             &unreviewed_relevant_paths,
         )
@@ -7322,6 +7630,7 @@ fn validate_automation_artifact_output(
         "required_next_tool_actions": required_next_tool_actions,
         "unmet_requirements": unmet_requirements,
         "artifact_candidates": artifact_candidates,
+        "resolved_enforcement": enforcement,
     });
     let rejected = metadata
         .get("rejected_artifact_reason")
@@ -7921,8 +8230,13 @@ fn detect_automation_node_status(
         || lowered.contains("provisional")
         || lowered.contains("this brief is blocked")
         || lowered.contains("brief is blocked");
-    if (is_brief_contract && requested_has_read && !executed_has_read)
-        || (requires_read && requested_has_read && !executed_has_read)
+    let artifact_semantic_block = artifact_validation
+        .and_then(|value| value.get("semantic_block_reason"))
+        .and_then(Value::as_str)
+        .is_some_and(|value| !value.trim().is_empty());
+    if ((is_brief_contract && requested_has_read && !executed_has_read)
+        || (requires_read && requested_has_read && !executed_has_read))
+        && (artifact_semantic_block || verified_output.is_none())
     {
         return (
             if validation_repairable {
@@ -10328,6 +10642,7 @@ mod tests {
             output_contract: Some(AutomationFlowOutputContract {
                 kind: "brief".to_string(),
                 validator: None,
+                enforcement: None,
                 schema: None,
                 summary_guidance: None,
             }),
@@ -10365,6 +10680,7 @@ mod tests {
             output_contract: Some(AutomationFlowOutputContract {
                 kind: "report_markdown".to_string(),
                 validator: None,
+                enforcement: None,
                 schema: None,
                 summary_guidance: None,
             }),
@@ -10388,6 +10704,7 @@ mod tests {
             output_contract: Some(AutomationFlowOutputContract {
                 kind: "brief".to_string(),
                 validator: None,
+                enforcement: None,
                 schema: None,
                 summary_guidance: None,
             }),
@@ -10406,6 +10723,7 @@ mod tests {
             output_contract: Some(AutomationFlowOutputContract {
                 kind: "review".to_string(),
                 validator: None,
+                enforcement: None,
                 schema: None,
                 summary_guidance: None,
             }),
@@ -10441,6 +10759,7 @@ mod tests {
             output_contract: Some(AutomationFlowOutputContract {
                 kind: "report_markdown".to_string(),
                 validator: Some(crate::AutomationOutputValidatorKind::StructuredJson),
+                enforcement: None,
                 schema: None,
                 summary_guidance: None,
             }),
@@ -10468,6 +10787,7 @@ mod tests {
             output_contract: Some(AutomationFlowOutputContract {
                 kind: "brief".to_string(),
                 validator: Some(crate::AutomationOutputValidatorKind::ResearchBrief),
+                enforcement: None,
                 schema: None,
                 summary_guidance: None,
             }),
@@ -10552,6 +10872,7 @@ mod tests {
             output_contract: Some(AutomationFlowOutputContract {
                 kind: "brief".to_string(),
                 validator: None,
+                enforcement: None,
                 schema: None,
                 summary_guidance: None,
             }),
@@ -10607,6 +10928,7 @@ mod tests {
             output_contract: Some(AutomationFlowOutputContract {
                 kind: "brief".to_string(),
                 validator: None,
+                enforcement: None,
                 schema: None,
                 summary_guidance: None,
             }),
@@ -10680,6 +11002,7 @@ mod tests {
             output_contract: Some(AutomationFlowOutputContract {
                 kind: "brief".to_string(),
                 validator: None,
+                enforcement: None,
                 schema: None,
                 summary_guidance: None,
             }),
@@ -10742,6 +11065,7 @@ mod tests {
             output_contract: Some(AutomationFlowOutputContract {
                 kind: "brief".to_string(),
                 validator: None,
+                enforcement: None,
                 schema: None,
                 summary_guidance: None,
             }),
@@ -10803,6 +11127,7 @@ mod tests {
             output_contract: Some(AutomationFlowOutputContract {
                 kind: "brief".to_string(),
                 validator: None,
+                enforcement: None,
                 schema: None,
                 summary_guidance: None,
             }),
@@ -10859,6 +11184,7 @@ mod tests {
             output_contract: Some(AutomationFlowOutputContract {
                 kind: "brief".to_string(),
                 validator: None,
+                enforcement: None,
                 schema: None,
                 summary_guidance: None,
             }),
@@ -10911,6 +11237,7 @@ mod tests {
             output_contract: Some(AutomationFlowOutputContract {
                 kind: "brief".to_string(),
                 validator: None,
+                enforcement: None,
                 schema: None,
                 summary_guidance: None,
             }),
@@ -10966,6 +11293,96 @@ mod tests {
     }
 
     #[test]
+    fn automation_output_enforcement_prefers_contract_over_legacy_builder_metadata() {
+        let node = AutomationFlowNode {
+            node_id: "research".to_string(),
+            agent_id: "agent-a".to_string(),
+            objective: "Research".to_string(),
+            depends_on: Vec::new(),
+            input_refs: Vec::new(),
+            output_contract: Some(AutomationFlowOutputContract {
+                kind: "brief".to_string(),
+                validator: None,
+                enforcement: Some(crate::AutomationOutputEnforcement {
+                    required_tools: vec!["read".to_string()],
+                    required_evidence: vec!["local_source_reads".to_string()],
+                    required_sections: vec!["files_reviewed".to_string()],
+                    prewrite_gates: vec!["workspace_inspection".to_string()],
+                    retry_on_missing: vec!["local_source_reads".to_string()],
+                    terminal_on: vec!["repair_budget_exhausted".to_string()],
+                    repair_budget: Some(2),
+                    session_text_recovery: Some("disabled".to_string()),
+                }),
+                schema: None,
+                summary_guidance: None,
+            }),
+            retry_policy: None,
+            timeout_ms: None,
+            stage_kind: None,
+            gate: None,
+            metadata: Some(json!({
+                "builder": {
+                    "output_path": "marketing-brief.md",
+                    "required_tools": ["read", "websearch"],
+                    "web_research_expected": true
+                }
+            })),
+        };
+
+        let enforcement = automation_node_output_enforcement(&node);
+        assert_eq!(enforcement.required_tools, vec!["read"]);
+        assert_eq!(enforcement.required_evidence, vec!["local_source_reads"]);
+        assert_eq!(
+            enforcement.session_text_recovery.as_deref(),
+            Some("disabled")
+        );
+    }
+
+    #[test]
+    fn automation_output_enforcement_backfills_research_contract_from_legacy_builder_metadata() {
+        let node = AutomationFlowNode {
+            node_id: "research".to_string(),
+            agent_id: "agent-a".to_string(),
+            objective: "Research".to_string(),
+            depends_on: Vec::new(),
+            input_refs: Vec::new(),
+            output_contract: Some(AutomationFlowOutputContract {
+                kind: "brief".to_string(),
+                validator: None,
+                enforcement: None,
+                schema: None,
+                summary_guidance: None,
+            }),
+            retry_policy: None,
+            timeout_ms: None,
+            stage_kind: None,
+            gate: None,
+            metadata: Some(json!({
+                "builder": {
+                    "output_path": "marketing-brief.md",
+                    "required_tools": ["read", "websearch"],
+                    "web_research_expected": true
+                }
+            })),
+        };
+
+        let enforcement = automation_node_output_enforcement(&node);
+        assert!(enforcement.required_tools.iter().any(|tool| tool == "read"));
+        assert!(enforcement
+            .required_tools
+            .iter()
+            .any(|tool| tool == "websearch"));
+        assert!(enforcement
+            .required_sections
+            .iter()
+            .any(|item| item == "web_sources_reviewed"));
+        assert_eq!(
+            enforcement.session_text_recovery.as_deref(),
+            Some("require_prewrite_satisfied")
+        );
+    }
+
+    #[test]
     fn research_nodes_default_to_five_attempts() {
         let node = AutomationFlowNode {
             node_id: "research-brief".to_string(),
@@ -10976,6 +11393,7 @@ mod tests {
             output_contract: Some(AutomationFlowOutputContract {
                 kind: "brief".to_string(),
                 validator: Some(crate::AutomationOutputValidatorKind::ResearchBrief),
+                enforcement: None,
                 schema: None,
                 summary_guidance: None,
             }),
@@ -11030,6 +11448,7 @@ mod tests {
             output_contract: Some(AutomationFlowOutputContract {
                 kind: "brief".to_string(),
                 validator: Some(crate::AutomationOutputValidatorKind::ResearchBrief),
+                enforcement: None,
                 schema: None,
                 summary_guidance: None,
             }),
@@ -11097,6 +11516,7 @@ mod tests {
             output_contract: Some(AutomationFlowOutputContract {
                 kind: "artifact".to_string(),
                 validator: Some(crate::AutomationOutputValidatorKind::GenericArtifact),
+                enforcement: None,
                 schema: None,
                 summary_guidance: None,
             }),
@@ -11129,6 +11549,7 @@ mod tests {
             output_contract: Some(AutomationFlowOutputContract {
                 kind: "artifact".to_string(),
                 validator: Some(crate::AutomationOutputValidatorKind::GenericArtifact),
+                enforcement: None,
                 schema: None,
                 summary_guidance: None,
             }),
@@ -11176,6 +11597,7 @@ mod tests {
             output_contract: Some(AutomationFlowOutputContract {
                 kind: "artifact".to_string(),
                 validator: Some(crate::AutomationOutputValidatorKind::GenericArtifact),
+                enforcement: None,
                 schema: None,
                 summary_guidance: None,
             }),
@@ -11288,6 +11710,7 @@ mod tests {
             output_contract: Some(AutomationFlowOutputContract {
                 kind: "artifact".to_string(),
                 validator: Some(crate::AutomationOutputValidatorKind::GenericArtifact),
+                enforcement: None,
                 schema: None,
                 summary_guidance: None,
             }),
@@ -11347,6 +11770,7 @@ mod tests {
             output_contract: Some(AutomationFlowOutputContract {
                 kind: "artifact".to_string(),
                 validator: Some(crate::AutomationOutputValidatorKind::GenericArtifact),
+                enforcement: None,
                 schema: None,
                 summary_guidance: None,
             }),
@@ -11447,6 +11871,7 @@ mod tests {
             output_contract: Some(AutomationFlowOutputContract {
                 kind: "brief".to_string(),
                 validator: None,
+                enforcement: None,
                 schema: None,
                 summary_guidance: None,
             }),
@@ -11498,6 +11923,7 @@ mod tests {
             output_contract: Some(AutomationFlowOutputContract {
                 kind: "brief".to_string(),
                 validator: None,
+                enforcement: None,
                 schema: None,
                 summary_guidance: None,
             }),
@@ -11576,6 +12002,7 @@ mod tests {
             output_contract: Some(AutomationFlowOutputContract {
                 kind: "brief".to_string(),
                 validator: None,
+                enforcement: None,
                 schema: None,
                 summary_guidance: None,
             }),
@@ -11665,6 +12092,7 @@ mod tests {
             output_contract: Some(AutomationFlowOutputContract {
                 kind: "brief".to_string(),
                 validator: None,
+                enforcement: None,
                 schema: None,
                 summary_guidance: None,
             }),
@@ -11817,6 +12245,7 @@ mod tests {
             output_contract: Some(AutomationFlowOutputContract {
                 kind: "report_markdown".to_string(),
                 validator: Some(crate::AutomationOutputValidatorKind::GenericArtifact),
+                enforcement: None,
                 schema: None,
                 summary_guidance: None,
             }),
@@ -11949,6 +12378,7 @@ mod tests {
             output_contract: Some(AutomationFlowOutputContract {
                 kind: "brief".to_string(),
                 validator: None,
+                enforcement: None,
                 schema: None,
                 summary_guidance: None,
             }),
@@ -11971,6 +12401,7 @@ mod tests {
             output_contract: Some(AutomationFlowOutputContract {
                 kind: "report_markdown".to_string(),
                 validator: None,
+                enforcement: None,
                 schema: None,
                 summary_guidance: None,
             }),
@@ -12144,6 +12575,7 @@ mod tests {
             output_contract: Some(AutomationFlowOutputContract {
                 kind: "report_markdown".to_string(),
                 validator: None,
+                enforcement: None,
                 schema: None,
                 summary_guidance: None,
             }),
@@ -12194,6 +12626,7 @@ mod tests {
             output_contract: Some(AutomationFlowOutputContract {
                 kind: "report_markdown".to_string(),
                 validator: None,
+                enforcement: None,
                 schema: None,
                 summary_guidance: None,
             }),
@@ -12548,6 +12981,7 @@ mod tests {
             output_contract: Some(AutomationFlowOutputContract {
                 kind: "report_markdown".to_string(),
                 validator: None,
+                enforcement: None,
                 schema: None,
                 summary_guidance: None,
             }),
@@ -12643,6 +13077,7 @@ mod tests {
             output_contract: Some(AutomationFlowOutputContract {
                 kind: "report_markdown".to_string(),
                 validator: None,
+                enforcement: None,
                 schema: None,
                 summary_guidance: None,
             }),
@@ -12873,6 +13308,7 @@ mod tests {
             output_contract: Some(AutomationFlowOutputContract {
                 kind: "report_markdown".to_string(),
                 validator: None,
+                enforcement: None,
                 schema: None,
                 summary_guidance: None,
             }),
@@ -12976,6 +13412,7 @@ mod tests {
             output_contract: Some(AutomationFlowOutputContract {
                 kind: "brief".to_string(),
                 validator: None,
+                enforcement: None,
                 schema: None,
                 summary_guidance: None,
             }),
@@ -13052,14 +13489,18 @@ mod tests {
             metadata
                 .get("recovered_from_session_write")
                 .and_then(Value::as_bool),
-            Some(true)
+            Some(false)
         );
-        assert!(accepted_output
-            .as_ref()
-            .is_some_and(|(_, text)| text.contains("## Workspace source audit")));
+        assert_eq!(
+            accepted_output.as_ref().map(|(_, text)| text.as_str()),
+            Some("Marketing brief completed and written to marketing-brief.md.")
+        );
         let disk_text = std::fs::read_to_string(workspace_root.join("marketing-brief.md"))
             .expect("read restored file");
-        assert!(disk_text.contains("## Workspace source audit"));
+        assert_eq!(
+            disk_text.trim(),
+            "Marketing brief completed and written to marketing-brief.md."
+        );
         let (status, reason, approved) = detect_automation_node_status(
             &node,
             "Done — `marketing-brief.md` was written in the workspace.\n\n{\"status\":\"completed\",\"approved\":true}",
@@ -13078,6 +13519,95 @@ mod tests {
             Some("research completed without concrete file reads or required source coverage")
         );
         assert_eq!(approved, Some(true));
+
+        let _ = std::fs::remove_dir_all(workspace_root);
+    }
+
+    #[test]
+    fn artifact_validation_blocks_session_text_recovery_until_prewrite_is_satisfied() {
+        let workspace_root = std::env::temp_dir().join(format!(
+            "tandem-automation-block-session-recovery-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&workspace_root).expect("create workspace");
+        let snapshot = automation_workspace_root_file_snapshot(
+            workspace_root.to_str().expect("workspace root string"),
+        );
+        let placeholder = "Marketing brief completed and written to marketing-brief.md.\n";
+        let substantive = format!(
+            "# Marketing Brief\n\n## Workspace source audit\n{}\n\n## Files reviewed\n- docs/source.md\n\n## Web sources reviewed\n- https://example.com\n",
+            "Unsafely recovered brief content. ".repeat(30)
+        );
+        std::fs::write(workspace_root.join("marketing-brief.md"), placeholder)
+            .expect("seed placeholder");
+        let node = AutomationFlowNode {
+            node_id: "research".to_string(),
+            agent_id: "agent-a".to_string(),
+            objective: "Research".to_string(),
+            depends_on: Vec::new(),
+            input_refs: Vec::new(),
+            output_contract: Some(AutomationFlowOutputContract {
+                kind: "brief".to_string(),
+                validator: None,
+                enforcement: None,
+                schema: None,
+                summary_guidance: None,
+            }),
+            retry_policy: None,
+            timeout_ms: None,
+            stage_kind: None,
+            gate: None,
+            metadata: Some(json!({
+                "builder": {
+                    "output_path": "marketing-brief.md",
+                    "web_research_expected": true
+                }
+            })),
+        };
+        let session = Session::new(
+            Some("blocked recovery".to_string()),
+            Some(
+                workspace_root
+                    .to_str()
+                    .expect("workspace root string")
+                    .to_string(),
+            ),
+        );
+
+        let (accepted_output, metadata, rejected) = validate_automation_artifact_output(
+            &node,
+            &session,
+            workspace_root.to_str().expect("workspace root string"),
+            &substantive,
+            &json!({
+                "requested_tools": ["glob", "read", "websearch", "write"],
+                "executed_tools": [],
+                "workspace_inspection_used": false,
+                "web_research_used": false,
+                "web_research_succeeded": false
+            }),
+            Some(&substantive),
+            Some(("marketing-brief.md".to_string(), placeholder.to_string())),
+            &snapshot,
+        );
+
+        assert_eq!(
+            accepted_output.as_ref().map(|(_, text)| text.as_str()),
+            Some(placeholder)
+        );
+        assert_eq!(
+            rejected.as_deref(),
+            Some("research completed without concrete file reads or required source coverage")
+        );
+        assert_eq!(
+            metadata
+                .get("recovered_from_session_write")
+                .and_then(Value::as_bool),
+            Some(false)
+        );
+        let disk_text = std::fs::read_to_string(workspace_root.join("marketing-brief.md"))
+            .expect("read placeholder");
+        assert_eq!(disk_text, placeholder);
 
         let _ = std::fs::remove_dir_all(workspace_root);
     }
@@ -13108,6 +13638,7 @@ mod tests {
             output_contract: Some(AutomationFlowOutputContract {
                 kind: "brief".to_string(),
                 validator: None,
+                enforcement: None,
                 schema: None,
                 summary_guidance: None,
             }),
@@ -13209,6 +13740,7 @@ mod tests {
             output_contract: Some(AutomationFlowOutputContract {
                 kind: "brief".to_string(),
                 validator: None,
+                enforcement: None,
                 schema: None,
                 summary_guidance: None,
             }),
@@ -13262,6 +13794,7 @@ mod tests {
             output_contract: Some(AutomationFlowOutputContract {
                 kind: "brief".to_string(),
                 validator: None,
+                enforcement: None,
                 schema: None,
                 summary_guidance: None,
             }),
@@ -13399,6 +13932,7 @@ mod tests {
             output_contract: Some(AutomationFlowOutputContract {
                 kind: "brief".to_string(),
                 validator: None,
+                enforcement: None,
                 schema: None,
                 summary_guidance: None,
             }),
@@ -13461,6 +13995,7 @@ mod tests {
             output_contract: Some(AutomationFlowOutputContract {
                 kind: "brief".to_string(),
                 validator: None,
+                enforcement: None,
                 schema: None,
                 summary_guidance: None,
             }),
@@ -13569,6 +14104,7 @@ mod tests {
             output_contract: Some(AutomationFlowOutputContract {
                 kind: "brief".to_string(),
                 validator: None,
+                enforcement: None,
                 schema: None,
                 summary_guidance: None,
             }),
@@ -13683,6 +14219,7 @@ mod tests {
             output_contract: Some(AutomationFlowOutputContract {
                 kind: "brief".to_string(),
                 validator: None,
+                enforcement: None,
                 schema: None,
                 summary_guidance: None,
             }),

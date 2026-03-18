@@ -73,6 +73,7 @@ fn workflow_execution_plan(
                 output_contract: Some(crate::AutomationFlowOutputContract {
                     kind: "generic_artifact".to_string(),
                     validator: Some(crate::AutomationOutputValidatorKind::GenericArtifact),
+                    enforcement: None,
                     schema: None,
                     summary_guidance: None,
                 }),

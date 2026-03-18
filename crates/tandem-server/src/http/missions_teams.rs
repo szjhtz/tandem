@@ -749,6 +749,7 @@ pub(super) async fn agent_standup_compose(
             output_contract: Some(crate::AutomationFlowOutputContract {
                 kind: "structured_json".to_string(),
                 validator: Some(crate::AutomationOutputValidatorKind::StructuredJson),
+                enforcement: None,
                 schema: None,
                 summary_guidance: None,
             }),
@@ -798,6 +799,7 @@ pub(super) async fn agent_standup_compose(
         output_contract: Some(crate::AutomationFlowOutputContract {
             kind: "report_markdown".to_string(),
             validator: Some(crate::AutomationOutputValidatorKind::GenericArtifact),
+            enforcement: None,
             schema: None,
             summary_guidance: None,
         }),

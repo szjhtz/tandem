@@ -1561,12 +1561,36 @@ export function WorkflowStudioPage({ client, api, toast, navigate }: AppPageProp
               agent?.toolAllowlist || [],
               normalizedNodes.filter((entry) => entry.agentId === node.agentId)
             );
+            const expectsWebResearch = !!agent?.toolAllowlist?.includes("websearch");
+            const isResearchBrief = safeString(node.outputKind) === "brief";
             const requiredTools = outputPath
               ? [
                   toolAllowlist.includes("read") ? "read" : null,
                   toolAllowlist.includes("websearch") ? "websearch" : null,
                 ].filter((value): value is string => Boolean(value))
               : [];
+            const requiredEvidence = outputPath
+              ? [
+                  requiredTools.includes("read") || isResearchBrief ? "local_source_reads" : null,
+                  expectsWebResearch ? "external_sources" : null,
+                ].filter((value): value is string => Boolean(value))
+              : [];
+            const requiredSections = isResearchBrief
+              ? [
+                  "files_reviewed",
+                  "files_not_reviewed",
+                  "citations",
+                  expectsWebResearch ? "web_sources_reviewed" : null,
+                ].filter((value): value is string => Boolean(value))
+              : [];
+            const prewriteGates = outputPath
+              ? [
+                  "workspace_inspection",
+                  requiredTools.includes("read") || isResearchBrief ? "concrete_reads" : null,
+                  expectsWebResearch ? "successful_web_research" : null,
+                ].filter((value): value is string => Boolean(value))
+              : [];
+            const retryOnMissing = [...requiredEvidence, ...requiredSections, ...prewriteGates];
             return {
               node_id: safeString(node.nodeId),
               agent_id: safeString(node.agentId),
@@ -1578,6 +1602,23 @@ export function WorkflowStudioPage({ client, api, toast, navigate }: AppPageProp
               })),
               output_contract: {
                 kind: safeString(node.outputKind) || "artifact",
+                enforcement: outputPath
+                  ? {
+                      required_tools: requiredTools,
+                      required_evidence: requiredEvidence,
+                      required_sections: requiredSections,
+                      prewrite_gates: prewriteGates,
+                      retry_on_missing: retryOnMissing,
+                      terminal_on: retryOnMissing.length
+                        ? ["tool_unavailable", "repair_budget_exhausted"]
+                        : [],
+                      repair_budget: retryOnMissing.length ? 5 : undefined,
+                      session_text_recovery:
+                        retryOnMissing.length || isResearchBrief
+                          ? "require_prewrite_satisfied"
+                          : "allow",
+                    }
+                  : undefined,
                 summary_guidance: outputPath
                   ? codeLike
                     ? `Apply the scoped repository changes, update \`${outputPath}\` in the workspace, and use patch/edit/write tools before completing this stage.`
@@ -1594,7 +1635,7 @@ export function WorkflowStudioPage({ client, api, toast, navigate }: AppPageProp
                   output_path: outputPath || undefined,
                   write_required: !!outputPath,
                   required_tools: requiredTools,
-                  web_research_expected: !!agent?.toolAllowlist?.includes("websearch"),
+                  web_research_expected: expectsWebResearch,
                   task_kind: safeString(node.taskKind) || undefined,
                   project_backlog_tasks: isBacklogProjectingNode(node) || undefined,
                   task_id: safeString(node.backlogTaskId) || undefined,

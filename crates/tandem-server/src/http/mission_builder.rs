@@ -304,13 +304,17 @@ fn compile_to_automation(
                 }
             }
         }
+        let mut output_contract = output_contract(&workstream.output_contract);
+        if output_contract.enforcement.is_none() {
+            output_contract.enforcement = mission_workstream_enforcement(workstream);
+        }
         nodes.push(crate::AutomationFlowNode {
             node_id: workstream.workstream_id.clone(),
             agent_id,
             objective: workstream.objective.clone(),
             depends_on: depends_on.clone(),
             input_refs,
-            output_contract: Some(output_contract(&workstream.output_contract)),
+            output_contract: Some(output_contract),
             retry_policy: workstream.retry_policy.clone(),
             timeout_ms: workstream.timeout_ms,
             stage_kind: Some(crate::AutomationNodeStageKind::Workstream),
@@ -599,9 +603,110 @@ fn output_contract(contract: &OutputContractBlueprint) -> crate::AutomationFlowO
             }
             _ => crate::AutomationOutputValidatorKind::GenericArtifact,
         }),
+        enforcement: None,
         schema: contract.schema.clone(),
         summary_guidance: contract.summary_guidance.clone(),
     }
+}
+
+fn mission_workstream_enforcement(
+    workstream: &WorkstreamBlueprint,
+) -> Option<crate::AutomationOutputEnforcement> {
+    let validator = output_contract(&workstream.output_contract).validator;
+    if validator != Some(crate::AutomationOutputValidatorKind::ResearchBrief) {
+        return None;
+    }
+    let expects_web_research = workstream
+        .workstream_id
+        .to_ascii_lowercase()
+        .contains("research")
+        || workstream.role.to_ascii_lowercase().contains("research")
+        || workstream.objective.to_ascii_lowercase().contains("web")
+        || workstream.objective.to_ascii_lowercase().contains("online")
+        || workstream
+            .objective
+            .to_ascii_lowercase()
+            .contains("current")
+        || workstream.objective.to_ascii_lowercase().contains("latest")
+        || workstream.prompt.to_ascii_lowercase().contains("web")
+        || workstream.prompt.to_ascii_lowercase().contains("online")
+        || workstream.prompt.to_ascii_lowercase().contains("current")
+        || workstream.prompt.to_ascii_lowercase().contains("latest");
+    Some(crate::AutomationOutputEnforcement {
+        required_tools: vec![
+            "read".to_string(),
+            if expects_web_research {
+                "websearch".to_string()
+            } else {
+                String::new()
+            },
+        ]
+        .into_iter()
+        .filter(|value| !value.is_empty())
+        .collect(),
+        required_evidence: vec!["local_source_reads".to_string()]
+            .into_iter()
+            .chain(
+                expects_web_research
+                    .then_some("external_sources".to_string())
+                    .into_iter(),
+            )
+            .collect(),
+        required_sections: vec![
+            "files_reviewed".to_string(),
+            "files_not_reviewed".to_string(),
+            "citations".to_string(),
+        ]
+        .into_iter()
+        .chain(
+            expects_web_research
+                .then_some("web_sources_reviewed".to_string())
+                .into_iter(),
+        )
+        .collect(),
+        prewrite_gates: vec![
+            "workspace_inspection".to_string(),
+            "concrete_reads".to_string(),
+        ]
+        .into_iter()
+        .chain(
+            expects_web_research
+                .then_some("successful_web_research".to_string())
+                .into_iter(),
+        )
+        .collect(),
+        retry_on_missing: vec![
+            "local_source_reads".to_string(),
+            "files_reviewed".to_string(),
+            "files_not_reviewed".to_string(),
+            "citations".to_string(),
+            "workspace_inspection".to_string(),
+            "concrete_reads".to_string(),
+        ]
+        .into_iter()
+        .chain(
+            expects_web_research
+                .then_some("external_sources".to_string())
+                .into_iter(),
+        )
+        .chain(
+            expects_web_research
+                .then_some("web_sources_reviewed".to_string())
+                .into_iter(),
+        )
+        .chain(
+            expects_web_research
+                .then_some("successful_web_research".to_string())
+                .into_iter(),
+        )
+        .collect(),
+        terminal_on: vec![
+            "tool_unavailable".to_string(),
+            "repair_budget_exhausted".to_string(),
+        ],
+        repair_budget: Some(tandem_core::prewrite_repair_retry_max_attempts() as u32),
+        session_text_recovery: Some("require_prewrite_satisfied".to_string()),
+    })
 }
 
 fn mission_workstream_builder_defaults(

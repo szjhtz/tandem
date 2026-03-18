@@ -352,6 +352,7 @@ fn build_pack_builder_automation(
                 output_contract: Some(crate::AutomationFlowOutputContract {
                     kind: "report_markdown".to_string(),
                     validator: Some(crate::AutomationOutputValidatorKind::GenericArtifact),
+                    enforcement: None,
                     schema: None,
                     summary_guidance: None,
                 }),

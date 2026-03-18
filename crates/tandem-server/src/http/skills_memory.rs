@@ -527,6 +527,7 @@ fn compile_skill_workflow_plan(
         "pack_builder_recipe" => Some(crate::AutomationFlowOutputContract {
             kind: "generic_artifact".to_string(),
             validator: Some(crate::AutomationOutputValidatorKind::GenericArtifact),
+            enforcement: None,
             schema: None,
             summary_guidance: None,
         }),

@@ -413,6 +413,7 @@ impl EngineLoop {
             let mut required_tool_retry_count = 0usize;
             let mut required_write_retry_count = 0usize;
             let mut unmet_prewrite_repair_retry_count = 0usize;
+            let mut empty_completion_retry_count = 0usize;
             let mut prewrite_gate_waived = false;
             let mut invalid_tool_args_retry_count = 0usize;
             let strict_write_retry_max_attempts = strict_write_retry_max_attempts();
@@ -639,7 +640,8 @@ impl EngineLoop {
                     && required_write_retry_count > 0
                     && (productive_write_tool_calls_total == 0 || prewrite_satisfied)
                     && !prewrite_gate_write
-                    && !requested_prewrite_requirements.repair_on_unmet_requirements;
+                    && (!requested_prewrite_requirements.repair_on_unmet_requirements
+                        || prewrite_gate_waived);
                 let allow_repair_tools = requested_write_required
                     && unmet_prewrite_repair_retry_count > 0
                     && !prewrite_satisfied
@@ -1538,34 +1540,36 @@ impl EngineLoop {
                                     ));
                                     continue;
                                 }
-                                prewrite_gate_waived = true;
-                                let repair_attempt = unmet_prewrite_repair_retry_count;
-                                let repair_attempts_remaining =
-                                    prewrite_repair_retry_max_attempts()
-                                        .saturating_sub(repair_attempt);
-                                followup_context = Some(build_prewrite_waived_write_context(
-                                    &text,
-                                    &unmet_prewrite_codes,
-                                ));
-                                self.event_bus.publish(EngineEvent::new(
-                                    "provider.call.iteration.finish",
-                                    json!({
-                                        "sessionID": session_id,
-                                        "messageID": user_message_id,
-                                        "iteration": iteration,
-                                        "finishReason": "prewrite_gate_waived",
-                                        "acceptedToolCalls": accepted_tool_calls_in_cycle,
-                                        "rejectedToolCalls": 0,
-                                        "prewriteGateWaived": true,
-                                        "repair": prewrite_repair_event_payload(
-                                            repair_attempt,
-                                            repair_attempts_remaining,
-                                            &unmet_prewrite_codes,
-                                            true,
-                                        ),
-                                    }),
-                                ));
-                                continue;
+                                if !prewrite_gate_waived {
+                                    prewrite_gate_waived = true;
+                                    let repair_attempt = unmet_prewrite_repair_retry_count;
+                                    let repair_attempts_remaining =
+                                        prewrite_repair_retry_max_attempts()
+                                            .saturating_sub(repair_attempt);
+                                    followup_context = Some(build_prewrite_waived_write_context(
+                                        &text,
+                                        &unmet_prewrite_codes,
+                                    ));
+                                    self.event_bus.publish(EngineEvent::new(
+                                        "provider.call.iteration.finish",
+                                        json!({
+                                            "sessionID": session_id,
+                                            "messageID": user_message_id,
+                                            "iteration": iteration,
+                                            "finishReason": "prewrite_gate_waived",
+                                            "acceptedToolCalls": accepted_tool_calls_in_cycle,
+                                            "rejectedToolCalls": 0,
+                                            "prewriteGateWaived": true,
+                                            "repair": prewrite_repair_event_payload(
+                                                repair_attempt,
+                                                repair_attempts_remaining,
+                                                &unmet_prewrite_codes,
+                                                true,
+                                            ),
+                                        }),
+                                    ));
+                                    continue;
+                                }
                             }
                             latest_required_tool_failure_kind =
                                 RequiredToolFailureKind::WriteRequiredNotSatisfied;
@@ -1844,6 +1848,34 @@ impl EngineLoop {
                         }),
                     ));
                 } else {
+                    if completion.trim().is_empty()
+                        && !last_tool_outputs.is_empty()
+                        && requested_write_required
+                        && empty_completion_retry_count == 0
+                    {
+                        empty_completion_retry_count += 1;
+                        followup_context = Some(build_empty_completion_retry_context(
+                            &offered_tool_preview,
+                            &text,
+                            &requested_prewrite_requirements,
+                            productive_workspace_inspection_total > 0,
+                            productive_concrete_read_total > 0,
+                            productive_web_research_total > 0,
+                            successful_web_research_total > 0,
+                        ));
+                        self.event_bus.publish(EngineEvent::new(
+                            "provider.call.iteration.finish",
+                            json!({
+                                "sessionID": session_id,
+                                "messageID": user_message_id,
+                                "iteration": iteration,
+                                "finishReason": "empty_completion_retry",
+                                "acceptedToolCalls": accepted_tool_calls_in_cycle,
+                                "rejectedToolCalls": 0,
+                            }),
+                        ));
+                        continue;
+                    }
                     if should_start_prewrite_repair_before_first_write(
                         requested_prewrite_requirements.repair_on_unmet_requirements,
                         productive_write_tool_calls_total,
@@ -1921,6 +1953,35 @@ impl EngineLoop {
                         ));
                         continue;
                     }
+                    if prewrite_gate_waived
+                        && requested_write_required
+                        && productive_write_tool_calls_total == 0
+                        && required_write_retry_count + 1 < strict_write_retry_max_attempts
+                    {
+                        required_write_retry_count += 1;
+                        followup_context = Some(build_write_required_retry_context(
+                            &offered_tool_preview,
+                            latest_required_tool_failure_kind,
+                            &text,
+                            &requested_prewrite_requirements,
+                            productive_workspace_inspection_total > 0,
+                            productive_concrete_read_total > 0,
+                            productive_web_research_total > 0,
+                            successful_web_research_total > 0,
+                        ));
+                        self.event_bus.publish(EngineEvent::new(
+                            "provider.call.iteration.finish",
+                            json!({
+                                "sessionID": session_id,
+                                "messageID": user_message_id,
+                                "iteration": iteration,
+                                "finishReason": "waived_write_retry",
+                                "acceptedToolCalls": accepted_tool_calls_in_cycle,
+                                "rejectedToolCalls": 0,
+                            }),
+                        ));
+                        continue;
+                    }
                     self.event_bus.publish(EngineEvent::new(
                         "provider.call.iteration.finish",
                         json!({
@@ -1952,18 +2013,20 @@ impl EngineLoop {
                 }
             }
             if completion.trim().is_empty() && !last_tool_outputs.is_empty() {
-                if let Some(narrative) = self
-                    .generate_final_narrative_without_tools(
-                        &session_id,
-                        &active_agent,
-                        Some(provider_id.as_str()),
-                        Some(model_id_value.as_str()),
-                        cancel.clone(),
-                        &last_tool_outputs,
-                    )
-                    .await
-                {
-                    completion = narrative;
+                if !matches!(requested_tool_mode, ToolMode::Required) {
+                    if let Some(narrative) = self
+                        .generate_final_narrative_without_tools(
+                            &session_id,
+                            &active_agent,
+                            Some(provider_id.as_str()),
+                            Some(model_id_value.as_str()),
+                            cancel.clone(),
+                            &last_tool_outputs,
+                        )
+                        .await
+                    {
+                        completion = narrative;
+                    }
                 }
             }
             if completion.trim().is_empty() && !last_tool_outputs.is_empty() {
@@ -3801,6 +3864,55 @@ fn build_prewrite_waived_write_context(
     prompt
 }
 
+fn build_empty_completion_retry_context(
+    offered_tool_preview: &str,
+    latest_user_text: &str,
+    prewrite_requirements: &PrewriteRequirements,
+    workspace_inspection_satisfied: bool,
+    concrete_read_satisfied: bool,
+    web_research_satisfied: bool,
+    successful_web_research_satisfied: bool,
+) -> String {
+    let mut prompt = String::from(
+        "You already used tools in this session, but returned no final output. Do not stop now.",
+    );
+    let unmet = describe_unmet_prewrite_requirements(
+        prewrite_requirements,
+        workspace_inspection_satisfied,
+        concrete_read_satisfied,
+        web_research_satisfied,
+        successful_web_research_satisfied,
+    );
+    if !unmet.is_empty() {
+        prompt.push(' ');
+        prompt.push_str(&format!(
+            "You still need to {} before the final write.",
+            unmet.join(" and ")
+        ));
+        prompt.push(' ');
+        prompt.push_str(&build_required_tool_retry_context(
+            offered_tool_preview,
+            RequiredToolFailureKind::WriteRequiredNotSatisfied,
+        ));
+    }
+    if let Some(path) = infer_required_output_target_path_from_text(latest_user_text) {
+        prompt.push(' ');
+        prompt.push_str(&format!("The required output target is `{path}`."));
+        if unmet.is_empty() {
+            prompt.push(' ');
+            prompt.push_str(
+                "Your next response must be a `write` tool call for that file, not a prose-only reply.",
+            );
+        } else {
+            prompt.push(' ');
+            prompt.push_str(
+                "After completing the missing requirement, immediately write that file instead of ending with prose.",
+            );
+        }
+    }
+    prompt
+}
+
 fn prewrite_requirements_satisfied(
     requirements: &PrewriteRequirements,
     workspace_inspection_satisfied: bool,
@@ -5166,23 +5278,38 @@ fn infer_workspace_root_from_text(text: &str) -> Option<String> {
 }
 
 fn infer_required_output_target_path_from_text(text: &str) -> Option<String> {
+    // Format 1: structured JSON marker used by regular sessions
+    //   "Required output target: {"path": "some-file.md"}"
     let marker = "Required output target:";
-    let idx = text.find(marker)?;
-    let tail = text[idx + marker.len()..].trim_start();
-    if let Some(start) = tail.find('{') {
-        let json_candidate = tail[start..]
-            .lines()
-            .take_while(|line| {
-                let trimmed = line.trim();
-                !(trimmed.is_empty() && !trimmed.starts_with('{'))
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
-        if let Ok(parsed) = serde_json::from_str::<Value>(&json_candidate) {
-            if let Some(path) = parsed.get("path").and_then(|v| v.as_str()) {
-                if let Some(clean) = sanitize_explicit_output_target_path(path) {
-                    return Some(clean);
+    if let Some(idx) = text.find(marker) {
+        let tail = text[idx + marker.len()..].trim_start();
+        if let Some(start) = tail.find('{') {
+            let json_candidate = tail[start..]
+                .lines()
+                .take_while(|line| {
+                    let trimmed = line.trim();
+                    !(trimmed.is_empty() && !trimmed.starts_with('{'))
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            if let Ok(parsed) = serde_json::from_str::<Value>(&json_candidate) {
+                if let Some(path) = parsed.get("path").and_then(|v| v.as_str()) {
+                    if let Some(clean) = sanitize_explicit_output_target_path(path) {
+                        return Some(clean);
+                    }
                 }
+            }
+        }
+    }
+    // Format 2: automation prompt "Required Workspace Output" section
+    //   "Create or update `some-file.md` relative to the workspace root."
+    let auto_marker = "Create or update `";
+    if let Some(idx) = text.find(auto_marker) {
+        let after = &text[idx + auto_marker.len()..];
+        if let Some(end) = after.find('`') {
+            let path = after[..end].trim();
+            if let Some(clean) = sanitize_explicit_output_target_path(path) {
+                return Some(clean);
             }
         }
     }
@@ -8522,6 +8649,54 @@ Required output target:
     }
 
     #[test]
+    fn empty_completion_retry_context_requires_write_when_prewrite_is_satisfied() {
+        let requirements = PrewriteRequirements {
+            workspace_inspection_required: true,
+            web_research_required: false,
+            concrete_read_required: true,
+            successful_web_research_required: false,
+            repair_on_unmet_requirements: true,
+            coverage_mode: PrewriteCoverageMode::ResearchCorpus,
+        };
+        let prompt = build_empty_completion_retry_context(
+            "glob, read, write",
+            "Create or update `marketing-brief.md` relative to the workspace root.",
+            &requirements,
+            true,
+            true,
+            false,
+            false,
+        );
+        assert!(prompt.contains("returned no final output"));
+        assert!(prompt.contains("marketing-brief.md"));
+        assert!(prompt.contains("must be a `write` tool call"));
+    }
+
+    #[test]
+    fn empty_completion_retry_context_mentions_missing_prewrite_work() {
+        let requirements = PrewriteRequirements {
+            workspace_inspection_required: true,
+            web_research_required: true,
+            concrete_read_required: true,
+            successful_web_research_required: true,
+            repair_on_unmet_requirements: true,
+            coverage_mode: PrewriteCoverageMode::ResearchCorpus,
+        };
+        let prompt = build_empty_completion_retry_context(
+            "glob, read, websearch, write",
+            "Create or update `marketing-brief.md` relative to the workspace root.",
+            &requirements,
+            true,
+            false,
+            false,
+            false,
+        );
+        assert!(prompt.contains("still need to use `read`"));
+        assert!(prompt.contains("use `websearch`"));
+        assert!(prompt.contains("After completing the missing requirement"));
+    }
+
+    #[test]
     fn prewrite_repair_retry_budget_allows_five_repair_attempts() {
         assert_eq!(prewrite_repair_retry_max_attempts(), 5);
     }
@@ -8678,6 +8853,46 @@ Required output target:
         assert!(
             !allow_repair_after,
             "repair tools should be disabled after waiver"
+        );
+    }
+
+    #[test]
+    fn force_write_only_enabled_after_prewrite_waiver() {
+        let requested_write_required = true;
+        let required_write_retry_count = 1usize;
+        let productive_write_tool_calls_total = 0usize;
+        let prewrite_satisfied = false;
+        let prewrite_gate_write = false;
+        let repair_on_unmet_requirements = true;
+        let prewrite_gate_waived = true;
+        let force_write_only = requested_write_required
+            && required_write_retry_count > 0
+            && (productive_write_tool_calls_total == 0 || prewrite_satisfied)
+            && !prewrite_gate_write
+            && (!repair_on_unmet_requirements || prewrite_gate_waived);
+        assert!(
+            force_write_only,
+            "force_write_only should be active after prewrite waiver + write retry"
+        );
+    }
+
+    #[test]
+    fn force_write_only_disabled_before_prewrite_waiver() {
+        let requested_write_required = true;
+        let required_write_retry_count = 1usize;
+        let productive_write_tool_calls_total = 0usize;
+        let prewrite_satisfied = false;
+        let prewrite_gate_write = false;
+        let repair_on_unmet_requirements = true;
+        let prewrite_gate_waived = false;
+        let force_write_only = requested_write_required
+            && required_write_retry_count > 0
+            && (productive_write_tool_calls_total == 0 || prewrite_satisfied)
+            && !prewrite_gate_write
+            && (!repair_on_unmet_requirements || prewrite_gate_waived);
+        assert!(
+            !force_write_only,
+            "force_write_only should be disabled before waiver for prewrite nodes"
         );
     }
 

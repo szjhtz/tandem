@@ -516,8 +516,114 @@ pub async fn run_automation_v2_executor(state: AppState) {
                                 crate::app::state::automation_output_failure_reason(&output);
                         }
                         let blocked = blocked || terminal_repair_block;
+                        // Detect a review rejection: the node blocked because an upstream
+                        // agent's output was not approved (approved: false).  When this
+                        // happens we automatically roll back and re-queue the upstream chain
+                        // so the workflow can self-heal without requiring manual intervention.
+                        let is_approval_rejected = blocked
+                            && !verify_failed
+                            && output.get("approved").and_then(serde_json::Value::as_bool)
+                                == Some(false);
                         let _ = state
                             .update_automation_v2_run(&run.run_id, |row| {
+                                // --- Auto-rollback on approval rejection ---
+                                // Find completed ancestor nodes whose output was rejected by
+                                // this reviewer.  We reset the entire subtree rooted at the
+                                // earliest such ancestor so the run re-executes from there.
+                                if is_approval_rejected {
+                                    let ancestors =
+                                        crate::app::state::collect_automation_ancestors(
+                                            &automation,
+                                            &node_id,
+                                        );
+                                    // Only reset ancestors that are currently completed and
+                                    // still have remaining attempts, so we avoid infinite loops.
+                                    let resettable_ancestors: Vec<String> = ancestors
+                                        .iter()
+                                        .filter(|anc_id| {
+                                            row.checkpoint.completed_nodes.contains(*anc_id)
+                                        })
+                                        .filter(|anc_id| {
+                                            let used = row
+                                                .checkpoint
+                                                .node_attempts
+                                                .get(*anc_id)
+                                                .copied()
+                                                .unwrap_or(0);
+                                            let anc_max = automation
+                                                .flow
+                                                .nodes
+                                                .iter()
+                                                .find(|n| n.node_id == **anc_id)
+                                                .map(crate::app::state::automation_node_max_attempts)
+                                                .unwrap_or(1);
+                                            used < anc_max
+                                        })
+                                        .cloned()
+                                        .collect();
+                                    if !resettable_ancestors.is_empty() {
+                                        // Compute the full subtree to reset: ancestors +
+                                        // all their descendants (which includes this node).
+                                        let reset_roots: std::collections::HashSet<String> =
+                                            resettable_ancestors.iter().cloned().collect();
+                                        let nodes_to_reset =
+                                            crate::app::state::collect_automation_descendants(
+                                                &automation,
+                                                &reset_roots,
+                                            );
+                                        let mut reset_list =
+                                            nodes_to_reset.iter().cloned().collect::<Vec<_>>();
+                                        reset_list.sort();
+                                        // Clear outputs; preserve attempt counts so the
+                                        // budget decrements naturally.
+                                        for reset_id in &nodes_to_reset {
+                                            row.checkpoint.node_outputs.remove(reset_id);
+                                            row.checkpoint
+                                                .completed_nodes
+                                                .retain(|id| id != reset_id);
+                                            row.checkpoint
+                                                .blocked_nodes
+                                                .retain(|id| id != reset_id);
+                                            if !row
+                                                .checkpoint
+                                                .pending_nodes
+                                                .iter()
+                                                .any(|id| id == reset_id)
+                                            {
+                                                row.checkpoint
+                                                    .pending_nodes
+                                                    .push(reset_id.clone());
+                                            }
+                                        }
+                                        row.status = AutomationRunStatus::Queued;
+                                        row.checkpoint.last_failure = None;
+                                        crate::app::state::record_automation_lifecycle_event_with_metadata(
+                                            row,
+                                            "node_approval_rollback",
+                                            Some(format!(
+                                                "node `{}` rejected upstream output; rolling back and re-queuing: {}",
+                                                node_id,
+                                                reset_list.join(", ")
+                                            )),
+                                            None,
+                                            Some(json!({
+                                                "node_id": node_id,
+                                                "attempt": attempt,
+                                                "session_id": session_id,
+                                                "reset_nodes": reset_list,
+                                                "blocked_reason": blocked_reason,
+                                            })),
+                                        );
+                                        crate::app::state::refresh_automation_runtime_state(
+                                            &automation,
+                                            row,
+                                        );
+                                        return;
+                                    }
+                                    // If all ancestors have exhausted their attempts, fall
+                                    // through to the normal blocked path below.
+                                }
+                                // --- Normal blocked / needs_repair / completed handling ---
                                 let blocked_descendants = if blocked || verify_failed {
                                     crate::app::state::collect_automation_descendants(
                                         &automation,

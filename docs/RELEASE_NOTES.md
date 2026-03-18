@@ -88,6 +88,9 @@
 - Fixed a second `AutomationsPage` runtime render regression where a stale `buildWorkflowProjectionFromRunSnapshot` reference crashed opening historical workflow tasks and runs.
 - Code workflows now support multi-step build/test/lint verification summaries, with partial verification blocking completion, failed verification emitting `verify_failed`, and fully verified code tasks finishing as `done`.
 - Added stale-lease recovery for long-running coding backlog work so expired `in_progress` context tasks automatically return to the runnable queue before the next claim.
+- Workflow runtime enforcement now resolves from a node’s explicit `output_contract.enforcement` first, then legacy builder metadata, then validator defaults, so repair behavior and output gating follow the authored workflow contract instead of one hard-coded research path.
+- Artifact session-text recovery now honors that enforcement contract before writing back to disk, which stops blocked or under-evidenced runs from silently restoring a stale “best effort” artifact over the declared output file.
+- Write-required nodes that complete tool calls but return no final provider text now get one bounded retry that points at the declared output target or the next missing evidence step, reducing empty-completion stalls during artifact workflows.
 
 ### Managed Worktree Runtime
 
@@ -108,6 +111,8 @@
 - `automation_v2` output contracts now declare validator kinds explicitly, and node outputs persist validator kind plus a typed validator summary.
 - Mission builder, workflow planner, and standup composer now emit explicit research/review/structured/generic validator intent instead of leaning on fallback inference everywhere.
 - `automation_v2` read APIs normalize older node outputs to the current validator contract so operator views converge on one interpretation.
+- Output contracts now also carry optional runtime `enforcement` metadata for required tools, evidence requirements, required sections, prewrite gates, retry/terminal policy, repair budgets, and session-text recovery behavior.
+- Workflow Studio save flows, mission-builder compilation, and workflow-planner defaults now emit or backfill that enforcement contract so authored workflow semantics survive round-trips through the engine and control panel.
 - Research brief validation now treats citation presence and `Web sources reviewed` structure as first-class source-coverage requirements, emits typed `citations_missing` / `web_sources_reviewed_missing` unmet requirements, and surfaces citation/source summary fields directly in `artifact_validation` and `automation_v2` run payloads.
 - Workflow planner and mission builder now preserve explicit `metadata.builder.web_research_expected` intent into compiled `AutomationV2Spec` research nodes, and both authoring paths backfill that metadata for research brief steps so web-source coverage expectations are declared in authoring metadata instead of only inferred at validation time.
 - `GenericArtifact` validation now blocks weak `report_markdown` and `text_summary` outputs with explicit editorial unmet requirements, typed `editorial_quality_failed` failures, `editorial_validation` phase classification, and structural summary fields like heading/paragraph counts in `artifact_validation`.

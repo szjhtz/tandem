@@ -64,11 +64,11 @@ pub use automation_v2::types::{
     AutomationApprovalGate, AutomationExecutionPolicy, AutomationFailureRecord,
     AutomationFlowInputRef, AutomationFlowNode, AutomationFlowOutputContract, AutomationFlowSpec,
     AutomationGateDecisionRecord, AutomationLifecycleRecord, AutomationNodeOutput,
-    AutomationNodeStageKind, AutomationOutputValidatorKind, AutomationPendingGate,
-    AutomationRunCheckpoint, AutomationRunStatus, AutomationStopKind, AutomationV2RunRecord,
-    AutomationV2Schedule, AutomationV2ScheduleType, AutomationV2Spec, AutomationV2Status,
-    AutomationValidatorSummary, WorkflowPlan, WorkflowPlanChatMessage, WorkflowPlanConversation,
-    WorkflowPlanDraftRecord, WorkflowPlanStep,
+    AutomationNodeStageKind, AutomationOutputEnforcement, AutomationOutputValidatorKind,
+    AutomationPendingGate, AutomationRunCheckpoint, AutomationRunStatus, AutomationStopKind,
+    AutomationV2RunRecord, AutomationV2Schedule, AutomationV2ScheduleType, AutomationV2Spec,
+    AutomationV2Status, AutomationValidatorSummary, WorkflowPlan, WorkflowPlanChatMessage,
+    WorkflowPlanConversation, WorkflowPlanDraftRecord, WorkflowPlanStep,
 };
 pub use browser::{
     install_browser_sidecar, BrowserHealthSummary, BrowserSidecarInstallResult,
