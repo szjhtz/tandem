@@ -2030,21 +2030,25 @@ impl EngineLoop {
                     prewrite_gate_waived,
                 );
             }
-            if completion.trim().is_empty() && !last_tool_outputs.is_empty() {
-                if !matches!(requested_tool_mode, ToolMode::Required) {
-                    if let Some(narrative) = self
-                        .generate_final_narrative_without_tools(
-                            &session_id,
-                            &active_agent,
-                            Some(provider_id.as_str()),
-                            Some(model_id_value.as_str()),
-                            cancel.clone(),
-                            &last_tool_outputs,
-                        )
-                        .await
-                    {
-                        completion = narrative;
-                    }
+            if completion.trim().is_empty()
+                && !last_tool_outputs.is_empty()
+                && should_generate_post_tool_final_narrative(
+                    requested_tool_mode,
+                    productive_tool_calls_total,
+                )
+            {
+                if let Some(narrative) = self
+                    .generate_final_narrative_without_tools(
+                        &session_id,
+                        &active_agent,
+                        Some(provider_id.as_str()),
+                        Some(model_id_value.as_str()),
+                        cancel.clone(),
+                        &last_tool_outputs,
+                    )
+                    .await
+                {
+                    completion = narrative;
                 }
             }
             if completion.trim().is_empty() && !last_tool_outputs.is_empty() {
@@ -2932,10 +2936,7 @@ impl EngineLoop {
         );
         messages.push(ChatMessage {
             role: "user".to_string(),
-            content: format!(
-                "Tool observations:\n{}\n\nProvide a direct final answer now. Do not call tools.",
-                summarize_tool_outputs(tool_outputs)
-            ),
+            content: build_post_tool_final_narrative_prompt(tool_outputs),
             attachments: Vec::new(),
         });
         let stream = self
@@ -3012,6 +3013,13 @@ fn truncate_text(input: &str, max_len: usize) -> String {
     let mut out = input[..max_len].to_string();
     out.push_str("...<truncated>");
     out
+}
+
+fn build_post_tool_final_narrative_prompt(tool_outputs: &[String]) -> String {
+    format!(
+        "Tool observations:\n{}\n\nUsing the tool observations and the existing conversation instructions, provide the required final answer now. Preserve any requested output contract, required JSON structure, required handoff fields, and required final status object from the original task. Do not call tools. Do not stop at a tool summary if the task requires a structured final response.",
+        summarize_tool_outputs(tool_outputs)
+    )
 }
 
 fn provider_error_code(error_text: &str) -> &'static str {
@@ -3949,6 +3957,13 @@ fn synthesize_artifact_write_completion_from_tool_state(
     }
     completion.push_str("\n\n{\"status\":\"completed\"}");
     completion
+}
+
+fn should_generate_post_tool_final_narrative(
+    requested_tool_mode: ToolMode,
+    productive_tool_calls_total: usize,
+) -> bool {
+    !matches!(requested_tool_mode, ToolMode::Required) || productive_tool_calls_total > 0
 }
 
 fn prewrite_requirements_satisfied(
@@ -8340,6 +8355,31 @@ Call: todowrite(task_id=3, status="in_progress")
         assert!(message.contains(REQUIRED_TOOL_MODE_UNSATISFIED_REASON));
         assert!(message.contains("NO_TOOL_CALL_EMITTED"));
         assert!(message.contains("tool_mode=required"));
+    }
+
+    #[test]
+    fn post_tool_final_narrative_generation_is_allowed_after_required_tools_succeed() {
+        assert!(should_generate_post_tool_final_narrative(
+            ToolMode::Required,
+            1
+        ));
+        assert!(!should_generate_post_tool_final_narrative(
+            ToolMode::Required,
+            0
+        ));
+        assert!(should_generate_post_tool_final_narrative(ToolMode::Auto, 0));
+    }
+
+    #[test]
+    fn post_tool_final_narrative_prompt_preserves_structured_response_requirements() {
+        let prompt = build_post_tool_final_narrative_prompt(&[String::from(
+            "Tool `glob` result:\n/home/evan/marketing-tandem/tandem-reference/SOURCES.md",
+        )]);
+        assert!(prompt.contains("Preserve any requested output contract"));
+        assert!(prompt.contains("required JSON structure"));
+        assert!(prompt.contains("required handoff fields"));
+        assert!(prompt.contains("required final status object"));
+        assert!(prompt.contains("Do not stop at a tool summary"));
     }
 
     #[test]

@@ -559,6 +559,9 @@ function composeNodeExecutionPrompt(node: StudioNodeDraft, agent: StudioAgentDra
     agent.toolAllowlist.includes("websearch")
       ? "- Use `websearch` to gather current external evidence before finalizing the file."
       : "",
+    node.stageKind === "research_discover"
+      ? "- After `glob` discovery, perform at least one concrete `read` on a prioritized source index or representative workspace file before completing this stage."
+      : "",
     node.stageKind && !safeString(node.outputPath)
       ? "- Do not write final workspace artifacts in this stage. Return a structured handoff in your final response instead."
       : "",
@@ -576,9 +579,11 @@ function composeNodeExecutionPrompt(node: StudioNodeDraft, agent: StudioAgentDra
     codeLike
       ? "- Do not replace an existing source file with a status note, placeholder, or preservation summary."
       : "",
-    safeString(node.outputPath)
-      ? `- Do not claim success unless \`${safeString(node.outputPath)}\` was actually written.`
-      : "- Do not claim success unless the required artifact was actually created.",
+    node.stageKind && !safeString(node.outputPath)
+      ? "- Do not claim success unless the required structured handoff was actually returned in the final response."
+      : safeString(node.outputPath)
+        ? `- Do not claim success unless \`${safeString(node.outputPath)}\` was actually written.`
+        : "- Do not claim success unless the required artifact was actually created.",
   ].filter(Boolean);
   return lines.join("\n");
 }
@@ -1596,6 +1601,7 @@ export function WorkflowStudioPage({ client, api, toast, navigate }: AppPageProp
             const codeLike = isCodeLikeNode(node);
             const researchStage = safeString(node.stageKind);
             const researchFinalize = researchStage === "research_finalize";
+            const stagedHandoff = !!researchStage && !outputPath;
             const hasExternalResearchInput = node.inputRefs.some(
               (ref) => safeString(ref.alias) === "external_research"
             );
@@ -1606,20 +1612,46 @@ export function WorkflowStudioPage({ client, api, toast, navigate }: AppPageProp
             const expectsWebResearch =
               !!agent?.toolAllowlist?.includes("websearch") && !researchFinalize;
             const isResearchBrief = safeString(node.outputKind) === "brief";
-            const requiredTools = outputPath
+            const stageRequiredTools = stagedHandoff
               ? [
-                  toolAllowlist.includes("read") && !researchFinalize ? "read" : null,
-                  toolAllowlist.includes("websearch") && !researchFinalize ? "websearch" : null,
-                ].filter((value): value is string => Boolean(value))
-              : [];
-            const requiredEvidence = outputPath
-              ? [
-                  !researchFinalize && (requiredTools.includes("read") || isResearchBrief)
-                    ? "local_source_reads"
+                  researchStage === "research_discover" ||
+                  researchStage === "research_local_sources"
+                    ? "read"
                     : null,
-                  !researchFinalize && expectsWebResearch ? "external_sources" : null,
+                  researchStage === "research_external_sources" && expectsWebResearch
+                    ? "websearch"
+                    : null,
                 ].filter((value): value is string => Boolean(value))
               : [];
+            const requiredTools =
+              outputPath || stagedHandoff
+                ? [
+                    toolAllowlist.includes("read") && !researchFinalize ? "read" : null,
+                    toolAllowlist.includes("websearch") && !researchFinalize ? "websearch" : null,
+                    ...stageRequiredTools,
+                  ]
+                    .filter((value): value is string => Boolean(value))
+                    .filter((value, index, all) => all.indexOf(value) === index)
+                : [];
+            const requiredEvidence =
+              outputPath || stagedHandoff
+                ? [
+                    stagedHandoff &&
+                    (researchStage === "research_discover" ||
+                      researchStage === "research_local_sources")
+                      ? "local_source_reads"
+                      : null,
+                    stagedHandoff &&
+                    researchStage === "research_external_sources" &&
+                    expectsWebResearch
+                      ? "external_sources"
+                      : null,
+                    !researchFinalize && (requiredTools.includes("read") || isResearchBrief)
+                      ? "local_source_reads"
+                      : null,
+                    !researchFinalize && expectsWebResearch ? "external_sources" : null,
+                  ].filter((value): value is string => Boolean(value))
+                : [];
             const requiredSections = isResearchBrief
               ? [
                   "files_reviewed",
@@ -1628,15 +1660,29 @@ export function WorkflowStudioPage({ client, api, toast, navigate }: AppPageProp
                   expectsWebResearch || hasExternalResearchInput ? "web_sources_reviewed" : null,
                 ].filter((value): value is string => Boolean(value))
               : [];
-            const prewriteGates = outputPath
-              ? [
-                  !researchFinalize ? "workspace_inspection" : null,
-                  !researchFinalize && (requiredTools.includes("read") || isResearchBrief)
-                    ? "concrete_reads"
-                    : null,
-                  !researchFinalize && expectsWebResearch ? "successful_web_research" : null,
-                ].filter((value): value is string => Boolean(value))
-              : [];
+            const prewriteGates =
+              outputPath || stagedHandoff
+                ? [
+                    stagedHandoff && researchStage === "research_discover"
+                      ? "workspace_inspection"
+                      : null,
+                    stagedHandoff &&
+                    (researchStage === "research_discover" ||
+                      researchStage === "research_local_sources")
+                      ? "concrete_reads"
+                      : null,
+                    stagedHandoff &&
+                    researchStage === "research_external_sources" &&
+                    expectsWebResearch
+                      ? "successful_web_research"
+                      : null,
+                    !researchFinalize ? "workspace_inspection" : null,
+                    !researchFinalize && (requiredTools.includes("read") || isResearchBrief)
+                      ? "concrete_reads"
+                      : null,
+                    !researchFinalize && expectsWebResearch ? "successful_web_research" : null,
+                  ].filter((value): value is string => Boolean(value))
+                : [];
             const retryOnMissing = [...requiredEvidence, ...requiredSections, ...prewriteGates];
             return {
               node_id: safeString(node.nodeId),
@@ -1671,7 +1717,9 @@ export function WorkflowStudioPage({ client, api, toast, navigate }: AppPageProp
                   ? codeLike
                     ? `Apply the scoped repository changes, update \`${outputPath}\` in the workspace, and use patch/edit/write tools before completing this stage.`
                     : `Create or update \`${outputPath}\` in the workspace and use the write tool before completing this stage.`
-                  : undefined,
+                  : stagedHandoff
+                    ? "Return a structured handoff in the final response instead of writing workspace files."
+                    : undefined,
               },
               metadata: {
                 studio: {

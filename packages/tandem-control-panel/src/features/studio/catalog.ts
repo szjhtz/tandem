@@ -84,11 +84,11 @@ export const STUDIO_TEMPLATE_CATALOG: StudioTemplateDefinition[] = [
           mission:
             "Enumerate the workspace, identify the product and marketing source corpus, and decide which files should be reviewed before synthesis begins.",
           inputs:
-            "Start at the workspace root. Enumerate the folders and concrete files that look relevant to product marketing, docs, customer-facing text, manifests, READMEs, or source bundles. Read only enough to identify the source corpus and prioritize what must be reviewed next. Treat prior generated workflow artifacts as non-authoritative.",
+            "Start at the workspace root. Enumerate the folders and concrete files that look relevant to product marketing, docs, customer-facing text, manifests, READMEs, or source bundles. If a curated source index such as `SOURCES.md` exists, read it first. Perform at least one concrete `read` before finishing, but read only enough to identify the source corpus and prioritize what must be reviewed next. Treat prior generated workflow artifacts as non-authoritative.",
           outputContract:
             "Return a structured handoff that includes `workspace_inventory_summary`, `discovered_paths`, `priority_paths`, and `skipped_paths_initial` so the next stage can perform concrete file reads.",
           guardrails:
-            "Do not write the final brief in this stage. Do not invent file contents. Prefer broad source coverage and clear prioritization over early synthesis.",
+            "Do not write the final brief in this stage. Do not invent file contents. Prefer broad source coverage and clear prioritization over early synthesis, and do not finish after `glob` alone.",
         },
       }),
       agent({
