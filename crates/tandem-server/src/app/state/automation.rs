@@ -5667,6 +5667,9 @@ pub(crate) fn research_required_next_tool_actions(
                 "Use `read` on the remaining relevant workspace files: {}.",
                 unreviewed_relevant_paths.join(", ")
             ));
+            actions.push(
+                "If any discovered file is not relevant to the brief's claims, add it to the `Files not reviewed` section with a brief reason (e.g., 'not applicable to positioning'). Use exact paths.".to_string(),
+            );
         }
     }
     if requested_has_websearch
