@@ -5652,9 +5652,16 @@ pub(crate) fn research_required_next_tool_actions(
             || has_unmet("files_reviewed_not_backed_by_read"))
     {
         if unreviewed_relevant_paths.is_empty() {
-            actions.push(
-                "Use `read` on concrete workspace files before finalizing the brief.".to_string(),
-            );
+            if has_unmet("citations_missing") || has_unmet("research_citations_missing") {
+                actions.push(
+                    "No additional unreviewed files detected. If citations are missing, either: (a) re-read upstream handoff sources with `read` to extract specific proof points, or (b) add explicit `Files not reviewed` section listing sources that could not be verified with reasons.".to_string(),
+                );
+            } else {
+                actions.push(
+                    "Use `read` on concrete workspace files before finalizing the brief."
+                        .to_string(),
+                );
+            }
         } else {
             actions.push(format!(
                 "Use `read` on the remaining relevant workspace files: {}.",
