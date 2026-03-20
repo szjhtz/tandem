@@ -3654,6 +3654,8 @@ pub(crate) struct AutomationUpstreamEvidence {
     pub(crate) discovered_relevant_paths: Vec<String>,
     pub(crate) web_research_attempted: bool,
     pub(crate) web_research_succeeded: bool,
+    pub(crate) citation_count: usize,
+    pub(crate) citations: Vec<String>,
 }
 
 async fn collect_automation_upstream_research_evidence(
@@ -3704,6 +3706,14 @@ async fn collect_automation_upstream_research_evidence(
                 .get("web_research_succeeded")
                 .and_then(Value::as_bool)
                 .unwrap_or(false);
+            if let Some(count) = validation.get("citation_count").and_then(Value::as_u64) {
+                evidence.citation_count += count as usize;
+            }
+            if let Some(rows) = validation.get("citations").and_then(Value::as_array) {
+                evidence
+                    .citations
+                    .extend(rows.iter().filter_map(Value::as_str).map(str::to_string));
+            }
         }
         if let Some(tool_telemetry) = output.get("tool_telemetry") {
             evidence.web_research_attempted |= tool_telemetry
@@ -3756,6 +3766,8 @@ async fn collect_automation_upstream_research_evidence(
     evidence.read_paths.dedup();
     evidence.discovered_relevant_paths.sort();
     evidence.discovered_relevant_paths.dedup();
+    evidence.citations.sort();
+    evidence.citations.dedup();
     evidence
 }
 
@@ -4575,11 +4587,17 @@ pub(crate) fn validate_automation_artifact_output_with_upstream(
                 || !files_reviewed_backed
                 || (requires_files_not_reviewed && !unreviewed_relevant_paths.is_empty());
             let missing_web_research = requires_external_sources && !web_research_succeeded;
+            let upstream_has_citations =
+                use_upstream_evidence && upstream_evidence.is_some_and(|e| e.citation_count > 0);
             let missing_citations = requires_citations
-                && !selected_assessment.is_some_and(|assessment| assessment.citation_count > 0);
+                && !selected_assessment.is_some_and(|assessment| assessment.citation_count > 0)
+                && !upstream_has_citations;
+            let upstream_web_sources_reviewed = use_upstream_evidence
+                && upstream_evidence.is_some_and(|e| e.web_research_succeeded);
             let missing_web_sources_reviewed = requires_web_sources_reviewed
                 && !selected_assessment
-                    .is_some_and(|assessment| assessment.web_sources_reviewed_present);
+                    .is_some_and(|assessment| assessment.web_sources_reviewed_present)
+                && !upstream_web_sources_reviewed;
             unmet_requirements.clear();
             let path_hygiene_failure = selected_assessment.and_then(|assessment| {
                 validate_path_array_hygiene(&assessment.reviewed_paths)
@@ -5009,7 +5027,18 @@ pub(crate) fn validate_automation_artifact_output_with_upstream(
         "current_node_discovered_relevant_paths": current_discovered_relevant_paths,
         "reviewed_paths_backed_by_read": reviewed_paths_backed_by_read,
         "unreviewed_relevant_paths": unreviewed_relevant_paths,
-        "citation_count": citation_count,
+        "citation_count": if use_upstream_evidence {
+            json!(citation_count.saturating_add(
+                upstream_evidence.map(|e| e.citation_count).unwrap_or(0)
+            ))
+        } else {
+            json!(citation_count)
+        },
+        "upstream_citations": if use_upstream_evidence {
+            json!(upstream_evidence.map_or(&[] as &[_], |e| e.citations.as_slice()))
+        } else {
+            json!([])
+        },
         "web_sources_reviewed_present": web_sources_reviewed_present,
         "heading_count": heading_count,
         "paragraph_count": paragraph_count,

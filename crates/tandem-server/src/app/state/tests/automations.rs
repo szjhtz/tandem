@@ -2925,6 +2925,8 @@ fn research_finalize_validation_accepts_upstream_read_evidence() {
         discovered_relevant_paths: vec!["inputs/questions.md".to_string()],
         web_research_attempted: false,
         web_research_succeeded: false,
+        citation_count: 0,
+        citations: vec![],
     };
     let (accepted_output, artifact_validation, rejected) =
             validate_automation_artifact_output_with_upstream(
