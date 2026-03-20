@@ -633,6 +633,10 @@ async fn optimizations_approve_winner_updates_campaign_baseline_without_mutating
                     blocked_node_rate: 0.0,
                     budget_within_limits: true,
                 },
+                validator_case_outcomes: std::collections::BTreeMap::from([(
+                    "node-1".to_string(),
+                    "passed".to_string(),
+                )]),
                 experiment_count_at_recording: 0,
                 recorded_at_ms: 1,
             }],
@@ -1367,6 +1371,10 @@ async fn optimizations_start_establishes_stable_phase1_baseline() {
                         blocked_node_rate: 0.0,
                         budget_within_limits: true,
                     },
+                    validator_case_outcomes: std::collections::BTreeMap::from([(
+                        "node-1".to_string(),
+                        "passed".to_string(),
+                    )]),
                     experiment_count_at_recording: 0,
                     recorded_at_ms: 1,
                 },
@@ -1379,6 +1387,10 @@ async fn optimizations_start_establishes_stable_phase1_baseline() {
                         blocked_node_rate: 0.02,
                         budget_within_limits: true,
                     },
+                    validator_case_outcomes: std::collections::BTreeMap::from([(
+                        "node-1".to_string(),
+                        "passed".to_string(),
+                    )]),
                     experiment_count_at_recording: 0,
                     recorded_at_ms: 2,
                 },
@@ -1490,6 +1502,10 @@ async fn optimizations_start_pauses_when_baseline_replay_is_unstable() {
                         blocked_node_rate: 0.0,
                         budget_within_limits: true,
                     },
+                    validator_case_outcomes: std::collections::BTreeMap::from([(
+                        "node-1".to_string(),
+                        "passed".to_string(),
+                    )]),
                     experiment_count_at_recording: 0,
                     recorded_at_ms: 1,
                 },
@@ -1502,6 +1518,10 @@ async fn optimizations_start_pauses_when_baseline_replay_is_unstable() {
                         blocked_node_rate: 0.0,
                         budget_within_limits: true,
                     },
+                    validator_case_outcomes: std::collections::BTreeMap::from([(
+                        "node-1".to_string(),
+                        "passed".to_string(),
+                    )]),
                     experiment_count_at_recording: 0,
                     recorded_at_ms: 2,
                 },
@@ -1894,6 +1914,10 @@ async fn optimization_reconciler_creates_candidate_eval_and_recommends_winner() 
                         blocked_node_rate: 0.0,
                         budget_within_limits: true,
                     },
+                    validator_case_outcomes: std::collections::BTreeMap::from([(
+                        "node-1".to_string(),
+                        "passed".to_string(),
+                    )]),
                     experiment_count_at_recording: 0,
                     recorded_at_ms: 1,
                 },
@@ -1906,6 +1930,10 @@ async fn optimization_reconciler_creates_candidate_eval_and_recommends_winner() 
                         blocked_node_rate: 0.0,
                         budget_within_limits: true,
                     },
+                    validator_case_outcomes: std::collections::BTreeMap::from([(
+                        "node-1".to_string(),
+                        "passed".to_string(),
+                    )]),
                     experiment_count_at_recording: 0,
                     recorded_at_ms: 2,
                 },
@@ -2075,6 +2103,10 @@ async fn optimization_reconciler_stops_after_max_consecutive_candidate_failures(
                         blocked_node_rate: 0.0,
                         budget_within_limits: true,
                     },
+                    validator_case_outcomes: std::collections::BTreeMap::from([(
+                        "node-1".to_string(),
+                        "passed".to_string(),
+                    )]),
                     experiment_count_at_recording: 0,
                     recorded_at_ms: 1,
                 },
@@ -2087,6 +2119,10 @@ async fn optimization_reconciler_stops_after_max_consecutive_candidate_failures(
                         blocked_node_rate: 0.0,
                         budget_within_limits: true,
                     },
+                    validator_case_outcomes: std::collections::BTreeMap::from([(
+                        "node-1".to_string(),
+                        "passed".to_string(),
+                    )]),
                     experiment_count_at_recording: 0,
                     recorded_at_ms: 2,
                 },
@@ -2290,6 +2326,13 @@ async fn optimizations_record_baseline_replay_from_run() {
     assert_eq!(
         campaign.baseline_replays[0].experiment_count_at_recording,
         0
+    );
+    assert_eq!(
+        campaign.baseline_replays[0]
+            .validator_case_outcomes
+            .get("node-1")
+            .map(String::as_str),
+        Some("passed")
     );
     assert!((metrics.artifact_validator_pass_rate - 1.0).abs() < 1e-9);
     assert!((metrics.unmet_requirement_count - 0.0).abs() < 1e-9);

@@ -59,17 +59,17 @@ pub use http::serve;
 pub use memory::types::{GovernedMemoryRecord, MemoryAuditEvent};
 pub use optimization::{
     apply_optimization_execution_override, derive_phase1_metrics_from_run,
-    establish_phase1_baseline, evaluate_phase1_promotion, freeze_optimization_artifact,
-    load_optimization_phase1_config, optimization_snapshot_hash, parse_phase1_metrics,
-    phase1_baseline_replay_due, validate_phase1_candidate_mutation,
-    validate_phase1_workflow_target, OptimizationArtifactRefs, OptimizationBaselineReplayRecord,
-    OptimizationBudgetPolicy, OptimizationCampaignRecord, OptimizationCampaignStatus,
-    OptimizationEvalSpec, OptimizationExecutionOverride, OptimizationExperimentRecord,
-    OptimizationExperimentStatus, OptimizationFrozenArtifact, OptimizationFrozenArtifacts,
-    OptimizationGuardrailKind, OptimizationMetricKind, OptimizationMutableField,
-    OptimizationMutationPolicy, OptimizationPhase1Config, OptimizationPhase1Metrics,
-    OptimizationPromotionDecision, OptimizationPromotionDecisionKind, OptimizationSafetyScope,
-    OptimizationTargetKind, OptimizationValidatedMutation,
+    derive_phase1_validator_case_outcomes_from_run, establish_phase1_baseline,
+    evaluate_phase1_promotion, freeze_optimization_artifact, load_optimization_phase1_config,
+    optimization_snapshot_hash, parse_phase1_metrics, phase1_baseline_replay_due,
+    validate_phase1_candidate_mutation, validate_phase1_workflow_target, OptimizationArtifactRefs,
+    OptimizationBaselineReplayRecord, OptimizationBudgetPolicy, OptimizationCampaignRecord,
+    OptimizationCampaignStatus, OptimizationEvalSpec, OptimizationExecutionOverride,
+    OptimizationExperimentRecord, OptimizationExperimentStatus, OptimizationFrozenArtifact,
+    OptimizationFrozenArtifacts, OptimizationGuardrailKind, OptimizationMetricKind,
+    OptimizationMutableField, OptimizationMutationPolicy, OptimizationPhase1Config,
+    OptimizationPhase1Metrics, OptimizationPromotionDecision, OptimizationPromotionDecisionKind,
+    OptimizationSafetyScope, OptimizationTargetKind, OptimizationValidatedMutation,
 };
 pub use pack_manager::PackManager;
 pub use preset_composer::PromptComposeInput;

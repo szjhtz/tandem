@@ -44,11 +44,12 @@ use crate::runtime::{
 use crate::shared_resources::types::{ResourceConflict, ResourceStoreError, SharedResourceRecord};
 use crate::util::{host::detect_host_runtime_context, time::now_ms};
 use crate::{
-    derive_phase1_metrics_from_run, establish_phase1_baseline, evaluate_phase1_promotion,
-    optimization_snapshot_hash, parse_phase1_metrics, phase1_baseline_replay_due,
-    validate_phase1_candidate_mutation, OptimizationBaselineReplayRecord,
-    OptimizationCampaignRecord, OptimizationCampaignStatus, OptimizationExperimentRecord,
-    OptimizationExperimentStatus, OptimizationMutableField, OptimizationPromotionDecisionKind,
+    derive_phase1_metrics_from_run, derive_phase1_validator_case_outcomes_from_run,
+    establish_phase1_baseline, evaluate_phase1_promotion, optimization_snapshot_hash,
+    parse_phase1_metrics, phase1_baseline_replay_due, validate_phase1_candidate_mutation,
+    OptimizationBaselineReplayRecord, OptimizationCampaignRecord, OptimizationCampaignStatus,
+    OptimizationExperimentRecord, OptimizationExperimentStatus, OptimizationMutableField,
+    OptimizationPromotionDecisionKind,
 };
 
 #[derive(Clone)]
@@ -3444,12 +3445,14 @@ impl AppState {
             }
             let metrics =
                 derive_phase1_metrics_from_run(&run, &campaign.baseline_snapshot, phase1)?;
+            let validator_case_outcomes = derive_phase1_validator_case_outcomes_from_run(&run);
             campaign
                 .baseline_replays
                 .push(OptimizationBaselineReplayRecord {
                     replay_id: format!("baseline-replay-{}", uuid::Uuid::new_v4()),
                     automation_run_id: Some(run.run_id.clone()),
                     phase1_metrics: metrics,
+                    validator_case_outcomes,
                     experiment_count_at_recording: self
                         .count_optimization_experiments(&campaign.optimization_id)
                         .await as u64,
@@ -3694,12 +3697,14 @@ impl AppState {
                 }
                 let metrics =
                     derive_phase1_metrics_from_run(&run, &campaign.baseline_snapshot, phase1)?;
+                let validator_case_outcomes = derive_phase1_validator_case_outcomes_from_run(&run);
                 campaign
                     .baseline_replays
                     .push(OptimizationBaselineReplayRecord {
                         replay_id: format!("baseline-replay-{}", uuid::Uuid::new_v4()),
                         automation_run_id: Some(run.run_id.clone()),
                         phase1_metrics: metrics,
+                        validator_case_outcomes,
                         experiment_count_at_recording: self
                             .count_optimization_experiments(&campaign.optimization_id)
                             .await as u64,

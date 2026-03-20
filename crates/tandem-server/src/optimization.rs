@@ -174,6 +174,8 @@ pub struct OptimizationBaselineReplayRecord {
     pub automation_run_id: Option<String>,
     pub phase1_metrics: OptimizationPhase1Metrics,
     #[serde(default)]
+    pub validator_case_outcomes: std::collections::BTreeMap<String, String>,
+    #[serde(default)]
     pub experiment_count_at_recording: u64,
     pub recorded_at_ms: u64,
 }
@@ -1073,6 +1075,26 @@ pub fn derive_phase1_metrics_from_run(
     })
 }
 
+pub fn derive_phase1_validator_case_outcomes_from_run(
+    run: &AutomationV2RunRecord,
+) -> std::collections::BTreeMap<String, String> {
+    run.checkpoint
+        .node_outputs
+        .iter()
+        .filter_map(|(node_id, output)| {
+            let outcome = output
+                .as_object()
+                .and_then(|row| row.get("validator_summary"))
+                .and_then(Value::as_object)
+                .and_then(|summary| summary.get("outcome"))
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())?;
+            Some((node_id.clone(), outcome.to_ascii_lowercase()))
+        })
+        .collect()
+}
+
 pub fn evaluate_phase1_promotion(
     baseline: &OptimizationPhase1Metrics,
     candidate: &OptimizationPhase1Metrics,
@@ -1155,6 +1177,28 @@ pub fn establish_phase1_baseline(
             "phase 1 baseline replay drift exceeded 5 percentage points for blocked_node_rate"
                 .to_string(),
         );
+    }
+    let mut case_outcomes =
+        std::collections::BTreeMap::<String, std::collections::BTreeSet<String>>::new();
+    for replay in relevant {
+        for (case_id, outcome) in &replay.validator_case_outcomes {
+            case_outcomes
+                .entry(case_id.clone())
+                .or_default()
+                .insert(outcome.clone());
+        }
+    }
+    let total_cases = case_outcomes.len();
+    if total_cases > 0 {
+        let flaky_cases = case_outcomes
+            .values()
+            .filter(|outcomes| outcomes.len() > 1)
+            .count();
+        if (flaky_cases as f64 / total_cases as f64) > 0.10 {
+            return Err(format!(
+                "phase 1 baseline replay flakiness exceeded 10% of validator cases ({flaky_cases}/{total_cases})"
+            ));
+        }
     }
     let count = relevant.len() as f64;
     Ok(OptimizationPhase1Metrics {
@@ -1444,6 +1488,10 @@ mod tests {
                     blocked_node_rate: 0.0,
                     budget_within_limits: true,
                 },
+                validator_case_outcomes: std::collections::BTreeMap::from([(
+                    "node-1".to_string(),
+                    "passed".to_string(),
+                )]),
                 experiment_count_at_recording: 0,
                 recorded_at_ms: 1,
             },
@@ -1456,6 +1504,10 @@ mod tests {
                     blocked_node_rate: 0.02,
                     budget_within_limits: true,
                 },
+                validator_case_outcomes: std::collections::BTreeMap::from([(
+                    "node-1".to_string(),
+                    "passed".to_string(),
+                )]),
                 experiment_count_at_recording: 0,
                 recorded_at_ms: 2,
             },
@@ -1479,6 +1531,10 @@ mod tests {
                     blocked_node_rate: 0.0,
                     budget_within_limits: true,
                 },
+                validator_case_outcomes: std::collections::BTreeMap::from([(
+                    "node-1".to_string(),
+                    "passed".to_string(),
+                )]),
                 experiment_count_at_recording: 0,
                 recorded_at_ms: 1,
             },
@@ -1491,12 +1547,69 @@ mod tests {
                     blocked_node_rate: 0.0,
                     budget_within_limits: true,
                 },
+                validator_case_outcomes: std::collections::BTreeMap::from([(
+                    "node-1".to_string(),
+                    "passed".to_string(),
+                )]),
                 experiment_count_at_recording: 0,
                 recorded_at_ms: 2,
             },
         ];
         let error = establish_phase1_baseline(&replays, &phase1).expect_err("drift");
         assert!(error.contains("artifact_validator_pass_rate"));
+    }
+
+    #[test]
+    fn establish_phase1_baseline_rejects_flaky_validator_cases() {
+        let phase1 = sample_phase1();
+        let replays = vec![
+            OptimizationBaselineReplayRecord {
+                replay_id: "replay-1".to_string(),
+                automation_run_id: None,
+                phase1_metrics: OptimizationPhase1Metrics {
+                    artifact_validator_pass_rate: 1.0,
+                    unmet_requirement_count: 0.0,
+                    blocked_node_rate: 0.0,
+                    budget_within_limits: true,
+                },
+                validator_case_outcomes: std::collections::BTreeMap::from([
+                    ("node-1".to_string(), "passed".to_string()),
+                    ("node-2".to_string(), "passed".to_string()),
+                    ("node-3".to_string(), "passed".to_string()),
+                    ("node-4".to_string(), "passed".to_string()),
+                    ("node-5".to_string(), "passed".to_string()),
+                    ("node-6".to_string(), "passed".to_string()),
+                    ("node-7".to_string(), "passed".to_string()),
+                    ("node-8".to_string(), "passed".to_string()),
+                ]),
+                experiment_count_at_recording: 0,
+                recorded_at_ms: 1,
+            },
+            OptimizationBaselineReplayRecord {
+                replay_id: "replay-2".to_string(),
+                automation_run_id: None,
+                phase1_metrics: OptimizationPhase1Metrics {
+                    artifact_validator_pass_rate: 1.0,
+                    unmet_requirement_count: 0.0,
+                    blocked_node_rate: 0.0,
+                    budget_within_limits: true,
+                },
+                validator_case_outcomes: std::collections::BTreeMap::from([
+                    ("node-1".to_string(), "blocked".to_string()),
+                    ("node-2".to_string(), "blocked".to_string()),
+                    ("node-3".to_string(), "passed".to_string()),
+                    ("node-4".to_string(), "passed".to_string()),
+                    ("node-5".to_string(), "passed".to_string()),
+                    ("node-6".to_string(), "passed".to_string()),
+                    ("node-7".to_string(), "passed".to_string()),
+                    ("node-8".to_string(), "passed".to_string()),
+                ]),
+                experiment_count_at_recording: 0,
+                recorded_at_ms: 2,
+            },
+        ];
+        let error = establish_phase1_baseline(&replays, &phase1).expect_err("flaky");
+        assert!(error.contains("flakiness"));
     }
 
     #[test]
@@ -1561,6 +1674,15 @@ mod tests {
         assert!((metrics.unmet_requirement_count - 2.0).abs() < 1e-9);
         assert!((metrics.blocked_node_rate - 1.0).abs() < 1e-9);
         assert!(metrics.budget_within_limits);
+        let case_outcomes = derive_phase1_validator_case_outcomes_from_run(&run);
+        assert_eq!(
+            case_outcomes.get("node-1").map(String::as_str),
+            Some("passed")
+        );
+        assert_eq!(
+            case_outcomes.get("node-2").map(String::as_str),
+            Some("blocked")
+        );
     }
 
     #[test]
@@ -1583,6 +1705,10 @@ mod tests {
                     blocked_node_rate: 0.0,
                     budget_within_limits: true,
                 },
+                validator_case_outcomes: std::collections::BTreeMap::from([(
+                    "node-1".to_string(),
+                    "passed".to_string(),
+                )]),
                 experiment_count_at_recording: 2,
                 recorded_at_ms: 1_000,
             },
@@ -1595,6 +1721,10 @@ mod tests {
                     blocked_node_rate: 0.0,
                     budget_within_limits: true,
                 },
+                validator_case_outcomes: std::collections::BTreeMap::from([(
+                    "node-1".to_string(),
+                    "passed".to_string(),
+                )]),
                 experiment_count_at_recording: 2,
                 recorded_at_ms: 1_500,
             },
