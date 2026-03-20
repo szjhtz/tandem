@@ -3508,8 +3508,12 @@ impl AppState {
                                 latest.baseline_metrics = Some(metrics);
                                 changed = true;
                             }
-                            if latest.status != OptimizationCampaignStatus::Running
-                                || latest.last_pause_reason.is_some()
+                            if matches!(
+                                latest.status,
+                                OptimizationCampaignStatus::Draft
+                                    | OptimizationCampaignStatus::PausedEvaluatorUnstable
+                            ) || (latest.status == OptimizationCampaignStatus::Running
+                                && latest.last_pause_reason.is_some())
                             {
                                 latest.status = OptimizationCampaignStatus::Running;
                                 latest.last_pause_reason = None;
@@ -3517,8 +3521,14 @@ impl AppState {
                             }
                         }
                         Err(error) => {
-                            if latest.status != OptimizationCampaignStatus::PausedEvaluatorUnstable
-                                || latest.last_pause_reason.as_deref() != Some(error.as_str())
+                            if matches!(
+                                latest.status,
+                                OptimizationCampaignStatus::Draft
+                                    | OptimizationCampaignStatus::Running
+                                    | OptimizationCampaignStatus::PausedEvaluatorUnstable
+                            ) && (latest.status
+                                != OptimizationCampaignStatus::PausedEvaluatorUnstable
+                                || latest.last_pause_reason.as_deref() != Some(error.as_str()))
                             {
                                 latest.status = OptimizationCampaignStatus::PausedEvaluatorUnstable;
                                 latest.last_pause_reason = Some(error);
@@ -3558,14 +3568,22 @@ impl AppState {
         let Some(phase1) = campaign.phase1.as_ref() else {
             return Ok(false);
         };
-        let required_runs = phase1.eval.campaign_start_baseline_runs.max(1) as usize;
         if !campaign.pending_baseline_run_ids.is_empty() {
             campaign.last_pause_reason =
                 Some("waiting for phase 1 baseline replay completion".into());
             campaign.updated_at_ms = now_ms();
             return Ok(true);
         }
-        if campaign.baseline_replays.len() >= required_runs {
+        let experiment_count = self
+            .count_optimization_experiments(&campaign.optimization_id)
+            .await;
+        if !phase1_baseline_replay_due(
+            &campaign.baseline_replays,
+            campaign.pending_baseline_run_ids.len(),
+            phase1,
+            experiment_count,
+            now_ms(),
+        ) {
             return Ok(false);
         }
         let replay_run = self
@@ -3586,6 +3604,20 @@ impl AppState {
         Ok(true)
     }
 
+    async fn maybe_queue_initial_phase1_baseline_replay(
+        &self,
+        campaign: &mut OptimizationCampaignRecord,
+    ) -> Result<bool, String> {
+        let Some(phase1) = campaign.phase1.as_ref() else {
+            return Ok(false);
+        };
+        let required_runs = phase1.eval.campaign_start_baseline_runs.max(1) as usize;
+        if campaign.baseline_replays.len() >= required_runs {
+            return Ok(false);
+        }
+        self.maybe_queue_phase1_baseline_replay(campaign).await
+    }
+
     pub async fn apply_optimization_action(
         &self,
         optimization_id: &str,
@@ -3603,7 +3635,7 @@ impl AppState {
             "start" => {
                 if campaign.phase1.is_some() {
                     if self
-                        .maybe_queue_phase1_baseline_replay(&mut campaign)
+                        .maybe_queue_initial_phase1_baseline_replay(&mut campaign)
                         .await?
                     {
                         campaign.status = OptimizationCampaignStatus::Draft;
@@ -3639,7 +3671,7 @@ impl AppState {
             }
             "resume" => {
                 if self
-                    .maybe_queue_phase1_baseline_replay(&mut campaign)
+                    .maybe_queue_initial_phase1_baseline_replay(&mut campaign)
                     .await?
                 {
                     campaign.status = OptimizationCampaignStatus::Draft;

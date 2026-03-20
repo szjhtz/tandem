@@ -1,5 +1,12 @@
 use super::*;
 
+fn current_test_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("system clock")
+        .as_millis() as u64
+}
+
 fn sample_automation(workspace_root: &str) -> crate::AutomationV2Spec {
     crate::AutomationV2Spec {
         automation_id: "wf-opt".to_string(),
@@ -1835,6 +1842,7 @@ async fn optimization_reconciler_ingests_completed_replays_and_establishes_basel
 #[tokio::test]
 async fn optimization_reconciler_creates_candidate_eval_and_recommends_winner() {
     let state = test_state().await;
+    let recent_replay_ms = current_test_ms();
     let workspace_root =
         std::env::temp_dir().join(format!("tandem-opt-workspace-{}", Uuid::new_v4()));
     std::fs::create_dir_all(&workspace_root).expect("create workspace");
@@ -1919,7 +1927,7 @@ async fn optimization_reconciler_creates_candidate_eval_and_recommends_winner() 
                         "passed".to_string(),
                     )]),
                     experiment_count_at_recording: 0,
-                    recorded_at_ms: 1,
+                    recorded_at_ms: recent_replay_ms.saturating_sub(1_000),
                 },
                 crate::OptimizationBaselineReplayRecord {
                     replay_id: "replay-2".to_string(),
@@ -1935,7 +1943,7 @@ async fn optimization_reconciler_creates_candidate_eval_and_recommends_winner() 
                         "passed".to_string(),
                     )]),
                     experiment_count_at_recording: 0,
-                    recorded_at_ms: 2,
+                    recorded_at_ms: recent_replay_ms,
                 },
             ],
             pending_baseline_run_ids: Vec::new(),
@@ -2023,8 +2031,167 @@ async fn optimization_reconciler_creates_candidate_eval_and_recommends_winner() 
 }
 
 #[tokio::test]
+async fn optimization_reconciler_queues_recurring_baseline_replay_after_candidate_interval() {
+    let state = test_state().await;
+    let workspace_root =
+        std::env::temp_dir().join(format!("tandem-opt-workspace-{}", Uuid::new_v4()));
+    std::fs::create_dir_all(&workspace_root).expect("create workspace");
+    write_phase1_artifacts(&workspace_root);
+    let source = sample_automation(workspace_root.to_str().expect("workspace root"));
+    let frozen_artifacts = crate::OptimizationFrozenArtifacts {
+        objective: crate::freeze_optimization_artifact(
+            workspace_root.to_str().expect("workspace root"),
+            "objective.md",
+        )
+        .expect("freeze objective"),
+        eval: crate::freeze_optimization_artifact(
+            workspace_root.to_str().expect("workspace root"),
+            "eval.yaml",
+        )
+        .expect("freeze eval"),
+        mutation_policy: crate::freeze_optimization_artifact(
+            workspace_root.to_str().expect("workspace root"),
+            "mutation_policy.yaml",
+        )
+        .expect("freeze mutation"),
+        scope: crate::freeze_optimization_artifact(
+            workspace_root.to_str().expect("workspace root"),
+            "scope.yaml",
+        )
+        .expect("freeze scope"),
+        budget: crate::freeze_optimization_artifact(
+            workspace_root.to_str().expect("workspace root"),
+            "budget.yaml",
+        )
+        .expect("freeze budget"),
+    };
+    let phase1 = crate::load_optimization_phase1_config(&frozen_artifacts).expect("phase1");
+    state
+        .put_automation_v2(source.clone())
+        .await
+        .expect("seed automation");
+    state
+        .put_optimization_campaign(crate::OptimizationCampaignRecord {
+            optimization_id: "opt-recurring-replay".to_string(),
+            name: "Optimize Workflow".to_string(),
+            target_kind: crate::OptimizationTargetKind::WorkflowV2PromptObjectiveOptimization,
+            status: crate::OptimizationCampaignStatus::Running,
+            source_workflow_id: source.automation_id.clone(),
+            source_workflow_name: source.name.clone(),
+            source_workflow_snapshot: source.clone(),
+            source_workflow_snapshot_hash: crate::optimization_snapshot_hash(&source),
+            baseline_snapshot: source.clone(),
+            baseline_snapshot_hash: crate::optimization_snapshot_hash(&source),
+            execution_override: None,
+            artifacts: crate::OptimizationArtifactRefs {
+                objective_ref: "objective.md".to_string(),
+                eval_ref: "eval.yaml".to_string(),
+                mutation_policy_ref: "mutation_policy.yaml".to_string(),
+                scope_ref: "scope.yaml".to_string(),
+                budget_ref: "budget.yaml".to_string(),
+                research_log_ref: None,
+                summary_ref: None,
+            },
+            frozen_artifacts: frozen_artifacts.clone(),
+            phase1: Some(phase1),
+            baseline_metrics: Some(crate::OptimizationPhase1Metrics {
+                artifact_validator_pass_rate: 1.0,
+                unmet_requirement_count: 0.0,
+                blocked_node_rate: 0.0,
+                budget_within_limits: true,
+            }),
+            baseline_replays: vec![
+                crate::OptimizationBaselineReplayRecord {
+                    replay_id: "replay-1".to_string(),
+                    automation_run_id: Some("run-1".to_string()),
+                    phase1_metrics: crate::OptimizationPhase1Metrics {
+                        artifact_validator_pass_rate: 1.0,
+                        unmet_requirement_count: 0.0,
+                        blocked_node_rate: 0.0,
+                        budget_within_limits: true,
+                    },
+                    validator_case_outcomes: std::collections::BTreeMap::from([(
+                        "node-1".to_string(),
+                        "passed".to_string(),
+                    )]),
+                    experiment_count_at_recording: 0,
+                    recorded_at_ms: 1,
+                },
+                crate::OptimizationBaselineReplayRecord {
+                    replay_id: "replay-2".to_string(),
+                    automation_run_id: Some("run-2".to_string()),
+                    phase1_metrics: crate::OptimizationPhase1Metrics {
+                        artifact_validator_pass_rate: 1.0,
+                        unmet_requirement_count: 0.0,
+                        blocked_node_rate: 0.0,
+                        budget_within_limits: true,
+                    },
+                    validator_case_outcomes: std::collections::BTreeMap::from([(
+                        "node-1".to_string(),
+                        "passed".to_string(),
+                    )]),
+                    experiment_count_at_recording: 0,
+                    recorded_at_ms: 2,
+                },
+            ],
+            pending_baseline_run_ids: Vec::new(),
+            pending_promotion_experiment_id: None,
+            last_pause_reason: None,
+            created_at_ms: 1,
+            updated_at_ms: 1,
+            metadata: None,
+        })
+        .await
+        .expect("seed campaign");
+    for idx in 0..5 {
+        let mut candidate = source.clone();
+        candidate.flow.nodes[0].objective = format!("Variant {idx}");
+        state
+            .put_optimization_experiment(crate::OptimizationExperimentRecord {
+                experiment_id: format!("exp-{idx}"),
+                optimization_id: "opt-recurring-replay".to_string(),
+                status: crate::OptimizationExperimentStatus::Discarded,
+                candidate_snapshot: candidate.clone(),
+                candidate_snapshot_hash: crate::optimization_snapshot_hash(&candidate),
+                baseline_snapshot_hash: crate::optimization_snapshot_hash(&source),
+                mutation_summary: Some("objective delta".to_string()),
+                metrics: None,
+                phase1_metrics: None,
+                promotion_recommendation: Some("discard".to_string()),
+                promotion_decision: None,
+                created_at_ms: idx + 1,
+                updated_at_ms: idx + 1,
+                metadata: None,
+            })
+            .await
+            .expect("seed experiment");
+    }
+    state
+        .reconcile_optimization_campaigns()
+        .await
+        .expect("reconcile recurring replay");
+    let campaign = state
+        .get_optimization_campaign("opt-recurring-replay")
+        .await
+        .expect("campaign");
+    assert_eq!(campaign.pending_baseline_run_ids.len(), 1);
+    assert_eq!(campaign.status, crate::OptimizationCampaignStatus::Draft);
+    assert_eq!(
+        campaign.last_pause_reason.as_deref(),
+        Some("waiting for phase 1 baseline replay completion")
+    );
+    let replay_run = state
+        .get_automation_v2_run(&campaign.pending_baseline_run_ids[0])
+        .await
+        .expect("replay run");
+    assert_eq!(replay_run.trigger_type, "optimization_baseline_replay");
+    let _ = std::fs::remove_dir_all(workspace_root);
+}
+
+#[tokio::test]
 async fn optimization_reconciler_stops_after_max_consecutive_candidate_failures() {
     let state = test_state().await;
+    let recent_replay_ms = current_test_ms();
     let workspace_root =
         std::env::temp_dir().join(format!("tandem-opt-workspace-{}", Uuid::new_v4()));
     std::fs::create_dir_all(&workspace_root).expect("create workspace");
@@ -2108,7 +2275,7 @@ async fn optimization_reconciler_stops_after_max_consecutive_candidate_failures(
                         "passed".to_string(),
                     )]),
                     experiment_count_at_recording: 0,
-                    recorded_at_ms: 1,
+                    recorded_at_ms: recent_replay_ms.saturating_sub(1_000),
                 },
                 crate::OptimizationBaselineReplayRecord {
                     replay_id: "replay-2".to_string(),
@@ -2124,7 +2291,7 @@ async fn optimization_reconciler_stops_after_max_consecutive_candidate_failures(
                         "passed".to_string(),
                     )]),
                     experiment_count_at_recording: 0,
-                    recorded_at_ms: 2,
+                    recorded_at_ms: recent_replay_ms,
                 },
             ],
             pending_baseline_run_ids: Vec::new(),
