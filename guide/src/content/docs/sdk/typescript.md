@@ -244,7 +244,7 @@ The TypeScript SDK also exposes the newer engine surfaces used across the Tandem
 - `client.resources` for key-value resources
 - `client.skills` for validation, routing, evals, compile, and generate flows in addition to list/get/import
 - `client.packs` and `client.capabilities` for pack lifecycle and capability resolution
-- `client.automationsV2`, `client.bugMonitor`, `client.coder`, `client.agentTeams`, and `client.missions` for newer orchestration APIs
+- `client.automationsV2`, `client.bugMonitor`, `client.coder`, `client.agentTeams`, `client.missions`, and `client.optimizations` for newer orchestration APIs
 
 ```typescript
 const browser = await client.browser.status();
@@ -442,3 +442,56 @@ await client.missions.applyEvent(mission!.id!, {
   work_item_id: "...",
 });
 ```
+
+### `client.optimizations`
+
+Use optimizations to create and manage AutoResearch workflow optimization campaigns. Campaigns generate candidate workflow prompts, evaluate them against baseline runs, and apply approved winners back to the live workflow.
+
+```typescript
+// List all optimization campaigns
+const { optimizations, count } = await client.optimizations.list();
+
+// Create a new optimization campaign
+const { optimization } = await client.optimizations.create({
+  name: "Improve research quality",
+  source_workflow_id: "workflow-abc123",
+  artifacts: {
+    objective_ref: "objective.yaml",
+    eval_ref: "eval.yaml",
+    mutation_policy_ref: "mutation_policy.yaml",
+    scope_ref: "scope.yaml",
+    budget_ref: "budget.yaml",
+  },
+});
+
+// Get campaign details with experiment count
+const details = await client.optimizations.get(optimization.optimization_id!);
+
+// Trigger actions on a campaign (e.g., queue baseline replay, generate candidates)
+await client.optimizations.action(optimization.optimization_id!, {
+  action: "queue_replay",
+  run_id: "run-xyz",
+});
+
+// List experiments for a campaign
+const { experiments } = await client.optimizations.listExperiments(optimization.optimization_id!);
+
+// Get a specific experiment
+const experiment = await client.optimizations.getExperiment(
+  optimization.optimization_id!,
+  experiments[0].experiment_id!
+);
+
+// Apply an approved winner back to the live workflow
+const { automation } = await client.optimizations.applyWinner(
+  optimization.optimization_id!,
+  experiments[0].experiment_id!
+);
+```
+
+Available campaign actions via `action()`:
+
+- `queue_replay` — Queue a baseline replay run to re-establish metrics
+- `generate_candidate` — Generate the next bounded candidate for evaluation
+- `approve` / `reject` — Mark an experiment as approved or rejected
+- `apply` — Apply an approved winner to the live workflow

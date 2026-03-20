@@ -257,7 +257,7 @@ The Python SDK also exposes the newer engine surfaces used across the Tandem rep
 - `client.resources` for key-value resources
 - `client.skills` for validation, routing, evals, compile, and generate flows in addition to list/get/import
 - `client.packs` and `client.capabilities` for pack lifecycle and capability resolution
-- `client.automations_v2`, `client.bug_monitor`, `client.coder`, `client.agent_teams`, and `client.missions` for newer orchestration APIs
+- `client.automations_v2`, `client.bug_monitor`, `client.coder`, `client.agent_teams`, `client.missions`, and `client.optimizations` for newer orchestration APIs
 
 ```python
 browser = await client.browser.status()
@@ -440,3 +440,58 @@ resp = await client.missions.create(
 full = await client.missions.get(resp.mission.id)
 await client.missions.apply_event(resp.mission.id, {"type": "work_item.completed"})
 ```
+
+### `client.optimizations`
+
+Use optimizations to create and manage AutoResearch workflow optimization campaigns. Campaigns generate candidate workflow prompts, evaluate them against baseline runs, and apply approved winners back to the live workflow.
+
+```python
+# List all optimization campaigns
+result = await client.optimizations.list()
+
+# Create a new optimization campaign
+resp = await client.optimizations.create({
+    "name": "Improve research quality",
+    "source_workflow_id": "workflow-abc123",
+    "artifacts": {
+        "objective_ref": "objective.yaml",
+        "eval_ref": "eval.yaml",
+        "mutation_policy_ref": "mutation_policy.yaml",
+        "scope_ref": "scope.yaml",
+        "budget_ref": "budget.yaml",
+    },
+})
+
+# Get campaign details with experiment count
+details = await client.optimizations.get(resp["optimization"]["optimization_id"])
+
+# Trigger actions on a campaign (e.g., queue baseline replay, generate candidates)
+await client.optimizations.action(
+    resp["optimization"]["optimization_id"],
+    {"action": "queue_replay", "run_id": "run-xyz"},
+)
+
+# List experiments for a campaign
+exp_result = await client.optimizations.list_experiments(
+    resp["optimization"]["optimization_id"]
+)
+
+# Get a specific experiment
+experiment = await client.optimizations.get_experiment(
+    resp["optimization"]["optimization_id"],
+    exp_result["experiments"][0]["experiment_id"],
+)
+
+# Apply an approved winner back to the live workflow
+apply_result = await client.optimizations.apply_winner(
+    resp["optimization"]["optimization_id"],
+    exp_result["experiments"][0]["experiment_id"],
+)
+```
+
+Available campaign actions via `action()`:
+
+- `queue_replay` — Queue a baseline replay run to re-establish metrics
+- `generate_candidate` — Generate the next bounded candidate for evaluation
+- `approve` / `reject` — Mark an experiment as approved or rejected
+- `apply` — Apply an approved winner to the live workflow

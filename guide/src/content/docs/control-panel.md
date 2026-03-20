@@ -115,6 +115,7 @@ The left nav `Automations` page (`#/automations`) now uses task-focused tabs:
 - `Automations`
 - `Templates`
 - `Runs & Approvals`
+- `Optimize`
 
 A built-in walkthrough wizard can be launched from the page header and also auto-opens for first-time empty workspaces.
 
@@ -126,6 +127,46 @@ Deep-link query state is supported on `#/automations`:
 - `wizard`
 - `flow` (`routine` or `advanced`)
 - `step`
+
+## Studio Workflow Builder
+
+The **Studio** page (`#/studio`) provides a template-first workflow builder for creating multi-agent workflows.
+
+Key features:
+
+- **Starter templates** with editable per-agent role prompts, stage/dependency editing
+- **Saved Studio workflow cards** with latest run status and stability snapshots
+- **Shared workspace browser** for selecting workflow root folders
+- **Direct save/run flows** into `automation_v2`
+
+Studio templates compile research-heavy workflows into explicit stages:
+
+- `discover` — File/content discovery
+- `local-source` — Local file research
+- `external-research` — Web research
+- `finalize` — Artifact writing
+
+Saved workflows auto-migrate to `workflow_structure_version = 2` while preserving automation IDs and original research node IDs used by downstream nodes.
+
+## Optimize Tab (AutoResearch)
+
+The **Optimize** tab (`#/automations?tab=optimize`) provides a UI for workflow prompt/objective optimization campaigns.
+
+Features:
+
+- **Campaign creation** with workflow selection and artifact references
+- **Campaign detail** view with experiment listing and status
+- **Experiment inspection** for reviewing candidate evaluation results
+- **Approve/Reject/Apply controls** for promotion workflow
+
+Campaigns generate bounded candidate prompts, evaluate them against baseline runs, and apply approved winners back to the live workflow.
+
+Available campaign actions:
+
+- `queue_replay` — Queue a baseline replay run to re-establish metrics
+- `generate_candidate` — Generate the next bounded candidate for evaluation
+- `approve` / `reject` — Mark an experiment as approved or rejected
+- `apply` — Apply an approved winner to the live workflow with drift checks and audit metadata
 
 ## Workflow Operations (Packs)
 
