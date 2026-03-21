@@ -8,6 +8,26 @@ Full web control center for Tandem Engine (non-desktop entry point).
 npm i -g @frumu/tandem-panel
 ```
 
+## Docker
+
+If you want a containerized install, there is a ready-to-run compose setup in [`DOCKER.md`](./DOCKER.md).
+
+It installs the engine from npm and the panel from the checked-in package source, runs them on the same Docker network, and keeps the engine token in `./secrets/tandem_api_token` so the browser can log in with the same key the engine uses.
+
+By default the Docker panel listens on `39734` so it can sit next to the host engine and any older panel instance.
+
+From this folder, the one-command start is:
+
+```bash
+npm run docker:up
+```
+
+To print the current engine token after the first boot:
+
+```bash
+npm run docker:token
+```
+
 ## Editable App Scaffold
 
 ```bash
@@ -64,6 +84,7 @@ Legacy flag mode is still supported for compatibility:
 
 - Token-gated web portal
 - Dashboard + health overview
+- Coding workflows dashboard for multi-project run visibility
 - Chat + session management
 - Routines/automations
 - Channels (Telegram/Discord/Slack)
@@ -160,6 +181,8 @@ npm install
 npm run dev
 npm run build
 ```
+
+See [`CODING_WORKFLOWS_PLAN.md`](./CODING_WORKFLOWS_PLAN.md) for the current roadmap behind the coding-workflows section.
 
 ### Repo Source Workflow (No Global npm Install)
 

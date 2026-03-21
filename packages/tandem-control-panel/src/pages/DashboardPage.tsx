@@ -181,6 +181,10 @@ export function DashboardPage(props: AppPageProps) {
                 <i data-lucide="bot"></i>
                 Automations
               </button>
+              <button className="tcp-btn w-full sm:w-auto" onClick={() => navigate("coding")}>
+                <i data-lucide="code"></i>
+                Coding workflows
+              </button>
               <button className="tcp-btn w-full sm:w-auto" onClick={() => navigate("settings")}>
                 <i data-lucide="settings"></i>
                 Configure runtime

@@ -5,7 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.4.9] - Unreleased
+## [0.4.10] - Unreleased
+
+### Added
+
+- **Initial coding workflows section in the control panel**:
+  - added a new `Coding` navigation entry and an initial Coding Workflows page for internal run visibility
+  - added an early dashboard surface for coding-run summaries, board-oriented workflow views, manual-task scaffolding, and integration visibility
+- **GitHub Projects MCP bootstrap improvements**:
+  - documented and wired the Tandem-native GitHub MCP path so GitHub Projects can auto-bootstrap from PAT-backed auth without relying on a separate `gh` adapter
+  - clarified the engine-first guidance for GitHub Projects so client work stays on top of the built-in MCP integration instead of inventing a second adapter layer
+
+### Fixed
+
+- **Control-panel package runtime completeness**:
+  - the published control-panel package now includes the runtime `lib/` and `server/` files its CLI expects, avoiding broken installs where the app bootstraps without its own server helpers
+
+## [0.4.9] - 2026-03-21
 
 ### Added
 

@@ -7179,6 +7179,8 @@ impl<'a> GithubProjectsAdapter<'a> {
         workflow_id: &str,
         required_capabilities: &[&str],
     ) -> Result<(String, Vec<McpRemoteTool>, Vec<(String, String)>), StatusCode> {
+        let _ = ensure_builtin_github_mcp_server(self.state).await;
+
         let mut server_candidates = if let Some(server_name) = preferred_server
             .map(str::trim)
             .filter(|value| !value.is_empty())
@@ -7358,7 +7360,7 @@ impl<'a> GithubProjectsAdapter<'a> {
             owner: request.owner.clone(),
             project_number: request.project_number,
             repo_slug: request.repo_slug.clone(),
-            mcp_server: request.mcp_server.clone(),
+            mcp_server: Some(server_name.clone()),
             schema_snapshot,
             schema_fingerprint,
             status_mapping,

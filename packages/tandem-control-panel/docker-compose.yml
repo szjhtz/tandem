@@ -1,0 +1,58 @@
+services:
+  tandem-engine:
+    build:
+      context: .
+      dockerfile: docker/engine.Dockerfile
+      args:
+        ENGINE_VERSION: ${TANDEM_ENGINE_VERSION:-latest}
+    environment:
+      TANDEM_ENGINE_HOST: 0.0.0.0
+      TANDEM_ENGINE_PORT: ${TANDEM_ENGINE_PORT:-39731}
+      TANDEM_STATE_DIR: /var/lib/tandem/engine
+      TANDEM_API_TOKEN_FILE: /run/secrets/tandem_api_token
+    volumes:
+      - tandem-engine-state:/var/lib/tandem/engine
+      - ./secrets:/run/secrets
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "curl -sf http://127.0.0.1:${TANDEM_ENGINE_PORT:-39731}/global/health >/dev/null",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 10s
+
+  tandem-control-panel:
+    build:
+      context: .
+      dockerfile: docker/control-panel.Dockerfile
+    environment:
+      TANDEM_CONTROL_PANEL_HOST: 0.0.0.0
+      TANDEM_CONTROL_PANEL_PORT: ${TANDEM_DOCKER_PANEL_PORT:-39734}
+      TANDEM_ENGINE_URL: http://tandem-engine:${TANDEM_ENGINE_PORT:-39731}
+      TANDEM_CONTROL_PANEL_AUTO_START_ENGINE: "0"
+      TANDEM_STATE_DIR: /var/lib/tandem/panel
+      TANDEM_CONTROL_PANEL_STATE_DIR: /var/lib/tandem/panel/control-panel
+    volumes:
+      - tandem-panel-state:/var/lib/tandem/panel
+    ports:
+      - "${TANDEM_DOCKER_PANEL_PORT:-39734}:${TANDEM_DOCKER_PANEL_PORT:-39734}"
+    depends_on:
+      tandem-engine:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "curl -sf http://127.0.0.1:${TANDEM_DOCKER_PANEL_PORT:-39734}/api/system/health >/dev/null",
+        ]
+      interval: 10s
+      timeout: 3s
+      retries: 20
+      start_period: 15s
+
+volumes:
+  tandem-engine-state:
+  tandem-panel-state:

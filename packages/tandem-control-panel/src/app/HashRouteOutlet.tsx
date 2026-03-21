@@ -2,6 +2,7 @@ import { DashboardPage } from "../pages/DashboardPage";
 import { ChatPage } from "../pages/ChatPage";
 import { WorkflowStudioPage } from "../pages/WorkflowStudioPage";
 import { AutomationsPage } from "../pages/AutomationsPage";
+import { CodingWorkflowsPage } from "../pages/CodingWorkflowsPage";
 import { ChannelsPage } from "../pages/ChannelsPage";
 import { PacksPage } from "../pages/PacksPage";
 import { OrchestratorPage } from "../pages/OrchestratorPage";
@@ -24,6 +25,8 @@ export function HashRouteOutlet({ routeId, pageProps }: { routeId: string; pageP
     case "packs":
     case "teams":
       return <AutomationsPage {...pageProps} />;
+    case "coding":
+      return <CodingWorkflowsPage {...pageProps} />;
     case "agents":
       return <TeamsPage {...pageProps} />;
     case "channels":

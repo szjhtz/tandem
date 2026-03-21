@@ -1,5 +1,8 @@
 use super::*;
 
+const BUILTIN_GITHUB_MCP_SERVER_NAME: &str = "github";
+const BUILTIN_GITHUB_MCP_TRANSPORT_URL: &str = "https://api.githubcopilot.com/mcp/";
+
 pub(super) async fn bootstrap_mcp_servers_when_ready(state: AppState) {
     if state.wait_until_ready_or_failed(120, 250).await {
         bootstrap_mcp_servers(&state).await;
@@ -9,6 +12,8 @@ pub(super) async fn bootstrap_mcp_servers_when_ready(state: AppState) {
 }
 
 pub(super) async fn bootstrap_mcp_servers(state: &AppState) {
+    let _ = ensure_builtin_github_mcp_server(state).await;
+
     let mut enabled_servers = state
         .mcp
         .list()
@@ -47,6 +52,110 @@ pub(super) async fn bootstrap_mcp_servers(state: &AppState) {
             count
         );
     }
+}
+
+fn github_mcp_headers_from_auth() -> Option<HashMap<String, String>> {
+    let token = std::env::var("GITHUB_PERSONAL_ACCESS_TOKEN")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .or_else(|| {
+            std::env::var("GITHUB_TOKEN")
+                .ok()
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+        })
+        .or_else(|| {
+            tandem_core::load_provider_auth()
+                .get("github")
+                .cloned()
+                .filter(|value| !value.trim().is_empty())
+        })
+        .or_else(|| {
+            tandem_core::load_provider_auth()
+                .get("copilot")
+                .cloned()
+                .filter(|value| !value.trim().is_empty())
+        })?;
+
+    let mut headers = HashMap::new();
+    headers.insert("Authorization".to_string(), format!("Bearer {token}"));
+    Some(headers)
+}
+
+pub(super) async fn ensure_remote_mcp_server(
+    state: &AppState,
+    name: &str,
+    transport_url: &str,
+    headers: HashMap<String, String>,
+) -> bool {
+    let existing = state.mcp.list().await.get(name).cloned();
+    if let Some(server) = existing {
+        if !server.enabled {
+            return false;
+        }
+        if server.transport.trim() == transport_url.trim() && !headers.is_empty() {
+            if server.headers != headers {
+                state
+                    .mcp
+                    .add_or_update(
+                        name.to_string(),
+                        transport_url.to_string(),
+                        headers,
+                        server.enabled,
+                    )
+                    .await;
+            }
+        }
+        let connected = state.mcp.connect(name).await;
+        if connected {
+            let _ = sync_mcp_tools_for_server(state, name).await;
+        }
+        return connected;
+    }
+
+    state
+        .mcp
+        .add_or_update(name.to_string(), transport_url.to_string(), headers, true)
+        .await;
+    let connected = state.mcp.connect(name).await;
+    if connected {
+        let _ = sync_mcp_tools_for_server(state, name).await;
+    }
+    connected
+}
+
+pub(super) async fn ensure_builtin_github_mcp_server(state: &AppState) -> bool {
+    let Some(headers) = github_mcp_headers_from_auth() else {
+        let existing = state
+            .mcp
+            .list()
+            .await
+            .get(BUILTIN_GITHUB_MCP_SERVER_NAME)
+            .cloned();
+        if let Some(server) = existing {
+            if !server.enabled {
+                return false;
+            }
+            let connected = state.mcp.connect(BUILTIN_GITHUB_MCP_SERVER_NAME).await;
+            if connected {
+                let _ = sync_mcp_tools_for_server(state, BUILTIN_GITHUB_MCP_SERVER_NAME).await;
+            }
+            return connected;
+        }
+        tracing::info!(
+            "mcp bootstrap: GitHub PAT not available, skipping builtin GitHub MCP server"
+        );
+        return false;
+    };
+
+    ensure_remote_mcp_server(
+        state,
+        BUILTIN_GITHUB_MCP_SERVER_NAME,
+        BUILTIN_GITHUB_MCP_TRANSPORT_URL,
+        headers,
+    )
+    .await
 }
 
 #[derive(Debug, Deserialize, Default)]

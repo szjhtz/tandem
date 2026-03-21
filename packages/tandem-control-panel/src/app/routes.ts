@@ -8,6 +8,7 @@ export type RouteId =
   | "chat"
   | "studio"
   | "automations"
+  | "coding"
   | "orchestrator"
   | "agents"
   | "channels"

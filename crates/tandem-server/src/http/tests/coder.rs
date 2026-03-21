@@ -6714,6 +6714,68 @@ async fn coder_project_binding_get_put_and_project_list_prefers_explicit_binding
 }
 
 #[tokio::test]
+async fn coder_project_binding_put_bootstraps_github_mcp_server_from_auth() {
+    let (endpoint, server) = spawn_fake_github_mcp_server().await;
+    let state = test_state().await;
+    assert!(state.mcp.remove("github").await);
+    state
+        .capability_resolver
+        .refresh_builtin_bindings()
+        .await
+        .expect("refresh builtin bindings");
+    assert!(
+        super::super::ensure_remote_mcp_server(
+            &state,
+            "github",
+            &endpoint,
+            std::collections::HashMap::from([(
+                "Authorization".to_string(),
+                "Bearer test-token".to_string(),
+            )]),
+        )
+        .await
+    );
+    let app = app_router(state.clone());
+
+    let put_req = Request::builder()
+        .method("PUT")
+        .uri("/coder/projects/proj-engine/bindings")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "repo_binding": {
+                    "workspace_id": "ws-explicit",
+                    "workspace_root": "/tmp/explicit-repo",
+                    "repo_slug": "user123/tandem-explicit"
+                },
+                "github_project_binding": {
+                    "owner": "user123",
+                    "project_number": 42
+                }
+            })
+            .to_string(),
+        ))
+        .expect("put request");
+    let put_resp = app.clone().oneshot(put_req).await.expect("put response");
+    server.abort();
+    assert_eq!(put_resp.status(), StatusCode::OK);
+    let put_payload: Value = serde_json::from_slice(
+        &to_bytes(put_resp.into_body(), usize::MAX)
+            .await
+            .expect("put body"),
+    )
+    .expect("put json");
+    assert_eq!(
+        put_payload
+            .get("binding")
+            .and_then(|row| row.get("github_project_binding"))
+            .and_then(|row| row.get("mcp_server"))
+            .and_then(Value::as_str),
+        Some("github")
+    );
+}
+
+#[tokio::test]
 async fn coder_project_binding_put_discovers_github_project_schema() {
     let (endpoint, server) = spawn_fake_github_mcp_server().await;
     let state = test_state().await;

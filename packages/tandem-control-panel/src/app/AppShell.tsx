@@ -21,6 +21,10 @@ const ROUTE_META: Record<string, { title: string; subtitle: string }> = {
     title: "Automations",
     subtitle: "Templates, routines, approvals, and execution history.",
   },
+  coding: {
+    title: "Coding Workflows",
+    subtitle: "Internal Kanban, manual task launchers, and MCP-aware coding runs.",
+  },
   agents: {
     title: "Agents",
     subtitle:

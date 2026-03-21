@@ -2,7 +2,20 @@
 
 Canonical release notes live in `docs/RELEASE_NOTES.md`.
 
-## v0.4.9 (Unreleased)
+## v0.4.10 (Unreleased)
+
+- Initial Coding Workflows view in the control panel
+  - added a new `Coding` section in the navigation
+  - added an early Coding Workflows dashboard for internal run visibility, board-style workflow summaries, manual-task scaffolding, and integrations visibility
+
+- GitHub Projects MCP bootstrap polish
+  - documented the Tandem-native GitHub MCP path more clearly so GitHub Projects can connect through PAT-backed MCP bootstrap instead of relying on a separate `gh` login flow
+  - tightened the engine-first guidance around GitHub Projects so future client work layers on top of Tandem’s built-in MCP path
+
+- Control-panel package install fix
+  - the control-panel package now ships the runtime `lib/` and `server/` files its CLI depends on, avoiding incomplete installs
+
+## v0.4.9 (Released 2026-03-21)
 
 - GitHub Projects can now feed Tandem Coder directly as an engine-owned intake path
   - added project-scoped coder binding APIs so one Tandem coder project can be connected to one GitHub Project with discovered schema, saved status mapping, and schema fingerprint tracking

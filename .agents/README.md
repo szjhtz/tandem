@@ -6,11 +6,14 @@ Local agent instructions for this repo live here.
 
 - Read `architecture/engine-first-boundary.md` before implementing cross-client features.
 - Tandem is engine-first: shared logic belongs in the engine, and clients should stay thin.
+- For GitHub Projects work, use the Tandem-native MCP flow described in `docs/MCP_IMPROVEMENTS.md`; do not add a new `gh`-based adapter unless you are maintaining a legacy compatibility path.
 
 ## Architecture
 
 - `architecture/engine-first-boundary.md`
   Rules for keeping business logic, state transitions, policy, orchestration, dedupe, and cross-client behavior in the engine instead of the GUI/TUI clients.
+- `docs/MCP_IMPROVEMENTS.md`
+  MCP connector guidance, including GitHub Projects auto-bootstrap via Tandem's built-in GitHub MCP server.
 
 ## Workflows
 
@@ -26,5 +29,6 @@ Before adding logic to a client, ask:
 
 - Does this need to behave the same in control panel, desktop, TUI, SDK, or automation?
 - Does this need durable state, canonical events, or engine enforcement?
+- Does this depend on GitHub Projects or other MCP-backed integrations that Tandem already exposes in the engine?
 
 If yes, put it in the engine first and have the client consume that contract.
