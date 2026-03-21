@@ -235,6 +235,25 @@ await client.memory.delete(items[0].id!);
 const log = await client.memory.audit({ run_id: "run-abc" });
 ```
 
+#### Context Memory (L0/L1/L2 layers)
+
+```typescript
+// Resolve a URI to a memory node
+const { node } = await client.memory.contextResolveUri("tandem://user/user123/memories");
+
+// Get a tree of memory nodes
+const { tree } = await client.memory.contextTree("tandem://resources/myproject", { maxDepth: 3 });
+
+// Generate L0/L1 layers for a node
+await client.memory.contextGenerateLayers("node-id-123");
+
+// Distill a session conversation into memories
+const result = await client.memory.contextDistill("session-abc", [
+  "User: I prefer Python over Rust",
+  "Assistant: Got it, I'll use Python for this task",
+]);
+```
+
 ### Additional namespaces
 
 The TypeScript SDK also exposes the newer engine surfaces used across the Tandem repo:

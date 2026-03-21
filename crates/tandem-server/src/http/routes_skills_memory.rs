@@ -30,4 +30,11 @@ pub(super) fn apply(router: Router<AppState>) -> Router<AppState> {
         .route("/memory/audit", get(memory_audit))
         .route("/memory", get(memory_list))
         .route("/memory/{id}", axum::routing::delete(memory_delete))
+        .route("/memory/context/resolve", post(context_resolve_uri))
+        .route("/memory/context/tree", get(context_tree))
+        .route(
+            "/memory/context/layers/generate",
+            post(context_generate_layers),
+        )
+        .route("/memory/context/distill", post(context_distill))
 }

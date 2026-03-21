@@ -248,6 +248,25 @@ await client.memory.delete(listing.items[0].id)
 log = await client.memory.audit(run_id="run-abc")
 ```
 
+#### Context Memory (L0/L1/L2 layers)
+
+```python
+# Resolve a URI to a memory node
+node = await client.memory.context_resolve_uri("tandem://user/user123/memories")
+
+# Get a tree of memory nodes
+tree = await client.memory.context_tree("tandem://resources/myproject", max_depth=3)
+
+# Generate L0/L1 layers for a node
+await client.memory.context_generate_layers("node-id-123")
+
+# Distill a session conversation into memories
+result = await client.memory.context_distill("session-abc", [
+    "User: I prefer Python over Rust",
+    "Assistant: Got it, I'll use Python for this task"
+])
+```
+
 ### Additional namespaces
 
 The Python SDK also exposes the newer engine surfaces used across the Tandem repo:

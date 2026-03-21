@@ -1797,6 +1797,16 @@ pub(super) async fn open_global_memory_db() -> Option<MemoryDatabase> {
     MemoryDatabase::new(&paths.memory_db_path).await.ok()
 }
 
+pub(super) async fn open_memory_manager() -> Option<tandem_memory::MemoryManager> {
+    let paths = tandem_core::resolve_shared_paths().ok()?;
+    if let Some(parent) = paths.memory_db_path.parent() {
+        let _ = tokio::fs::create_dir_all(parent).await;
+    }
+    tandem_memory::MemoryManager::new(&paths.memory_db_path)
+        .await
+        .ok()
+}
+
 pub(super) fn event_run_id(event: &EngineEvent) -> Option<String> {
     event
         .properties
@@ -2960,6 +2970,109 @@ pub(super) async fn memory_demote(
     Ok(Json(json!({
         "ok": true,
         "audit_id": audit_id,
+    })))
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct ContextResolveUriRequest {
+    uri: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct ContextTreeQuery {
+    uri: String,
+    max_depth: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct ContextGenerateLayersRequest {
+    node_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct ContextDistillRequest {
+    session_id: String,
+    conversation: Vec<String>,
+}
+
+pub(super) async fn context_resolve_uri(
+    State(_state): State<AppState>,
+    Json(input): Json<ContextResolveUriRequest>,
+) -> Result<Json<Value>, StatusCode> {
+    let manager = open_memory_manager()
+        .await
+        .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let node = manager
+        .resolve_uri(&input.uri)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    Ok(Json(json!({ "node": node })))
+}
+
+pub(super) async fn context_tree(
+    State(_state): State<AppState>,
+    Query(query): Query<ContextTreeQuery>,
+) -> Result<Json<Value>, StatusCode> {
+    let manager = open_memory_manager()
+        .await
+        .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let max_depth = query.max_depth.unwrap_or(3);
+    let tree = manager
+        .tree(&query.uri, max_depth)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    Ok(Json(json!({ "tree": tree })))
+}
+
+pub(super) async fn context_generate_layers(
+    State(state): State<AppState>,
+    Json(input): Json<ContextGenerateLayersRequest>,
+) -> Result<Json<Value>, StatusCode> {
+    let runtime_state = state.runtime.wait();
+    let providers = runtime_state.providers.clone();
+
+    let manager = open_memory_manager()
+        .await
+        .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    manager
+        .generate_layers_for_node(&input.node_id, &providers)
+        .await
+        .map_err(|e| {
+            tracing::warn!("Failed to generate layers: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+
+    Ok(Json(json!({ "ok": true })))
+}
+
+pub(super) async fn context_distill(
+    State(state): State<AppState>,
+    Json(input): Json<ContextDistillRequest>,
+) -> Result<Json<Value>, StatusCode> {
+    use tandem_memory::SessionDistiller;
+
+    let runtime_state = state.runtime.wait();
+    let providers = runtime_state.providers.clone();
+
+    let distiller = SessionDistiller::new(Arc::new(providers));
+    let report = distiller
+        .distill(&input.session_id, &input.conversation)
+        .await
+        .map_err(|e| {
+            tracing::warn!("Failed to distill session: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+
+    Ok(Json(json!({
+        "ok": true,
+        "distillation_id": report.distillation_id,
+        "session_id": report.session_id,
+        "facts_extracted": report.facts_extracted,
     })))
 }
 

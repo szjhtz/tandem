@@ -416,3 +416,207 @@ pub struct GlobalMemorySearchHit {
     pub record: GlobalMemoryRecord,
     pub score: f64,
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum NodeType {
+    Directory,
+    File,
+}
+
+impl std::fmt::Display for NodeType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            NodeType::Directory => write!(f, "directory"),
+            NodeType::File => write!(f, "file"),
+        }
+    }
+}
+
+impl std::str::FromStr for NodeType {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "directory" => Ok(NodeType::Directory),
+            "file" => Ok(NodeType::File),
+            _ => Err(format!("unknown node type: {}", s)),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "UPPERCASE")]
+pub enum LayerType {
+    L0,
+    L1,
+    L2,
+}
+
+impl std::fmt::Display for LayerType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            LayerType::L0 => write!(f, "L0"),
+            LayerType::L1 => write!(f, "L1"),
+            LayerType::L2 => write!(f, "L2"),
+        }
+    }
+}
+
+impl std::str::FromStr for LayerType {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_uppercase().as_str() {
+            "L0" | "L0_ABSTRACT" => Ok(LayerType::L0),
+            "L1" | "L1_OVERVIEW" => Ok(LayerType::L1),
+            "L2" | "L2_DETAIL" => Ok(LayerType::L2),
+            _ => Err(format!("unknown layer type: {}", s)),
+        }
+    }
+}
+
+impl LayerType {
+    pub fn default_tokens(&self) -> usize {
+        match self {
+            LayerType::L0 => 100,
+            LayerType::L1 => 2000,
+            LayerType::L2 => 4000,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RetrievalStep {
+    pub step_type: String,
+    pub description: String,
+    pub layer_accessed: Option<LayerType>,
+    pub nodes_evaluated: usize,
+    pub scores: std::collections::HashMap<String, f64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NodeVisit {
+    pub uri: String,
+    pub node_type: NodeType,
+    pub score: f64,
+    pub depth: usize,
+    pub layer_loaded: Option<LayerType>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RetrievalTrajectory {
+    pub id: String,
+    pub query: String,
+    pub root_uri: String,
+    pub steps: Vec<RetrievalStep>,
+    pub visited_nodes: Vec<NodeVisit>,
+    pub total_duration_ms: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RetrievalResult {
+    pub node_id: String,
+    pub uri: String,
+    pub content: String,
+    pub layer_type: LayerType,
+    pub score: f64,
+    pub trajectory: RetrievalTrajectory,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoryNode {
+    pub id: String,
+    pub uri: String,
+    pub parent_uri: Option<String>,
+    pub node_type: NodeType,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub metadata: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoryLayer {
+    pub id: String,
+    pub node_id: String,
+    pub layer_type: LayerType,
+    pub content: String,
+    pub token_count: i64,
+    pub embedding_id: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub source_chunk_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TreeNode {
+    pub node: MemoryNode,
+    pub children: Vec<TreeNode>,
+    pub layer_summary: Option<LayerSummary>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LayerSummary {
+    pub l0_preview: Option<String>,
+    pub l1_preview: Option<String>,
+    pub has_l2: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DirectoryListing {
+    pub uri: String,
+    pub nodes: Vec<MemoryNode>,
+    pub total_children: usize,
+    pub directories: Vec<MemoryNode>,
+    pub files: Vec<MemoryNode>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DistilledFact {
+    pub id: String,
+    pub distillation_id: String,
+    pub content: String,
+    pub category: FactCategory,
+    pub importance_score: f64,
+    pub source_message_ids: Vec<String>,
+    pub contradicts_fact_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FactCategory {
+    UserPreference,
+    TaskOutcome,
+    Learning,
+    Fact,
+}
+
+impl std::fmt::Display for FactCategory {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            FactCategory::UserPreference => write!(f, "user_preference"),
+            FactCategory::TaskOutcome => write!(f, "task_outcome"),
+            FactCategory::Learning => write!(f, "learning"),
+            FactCategory::Fact => write!(f, "fact"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DistillationReport {
+    pub distillation_id: String,
+    pub session_id: String,
+    pub distilled_at: DateTime<Utc>,
+    pub facts_extracted: usize,
+    pub importance_threshold: f64,
+    pub user_memory_updated: bool,
+    pub agent_memory_updated: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionDistillation {
+    pub id: String,
+    pub session_id: String,
+    pub distilled_at: DateTime<Utc>,
+    pub input_token_count: i64,
+    pub output_memory_count: usize,
+    pub key_facts_extracted: usize,
+    pub importance_threshold: f64,
+}

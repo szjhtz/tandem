@@ -147,6 +147,9 @@ import {
   MemoryItemSchema,
   MemoryListResponseSchema,
   MemorySearchResponseSchema,
+  ContextResolveResponseSchema,
+  ContextTreeResponseSchema,
+  ContextDistillResponseSchema,
   EngineEventSchema,
   parseResponse,
   idNormalizer,
@@ -1328,6 +1331,50 @@ class Memory {
     const raw = await this.req<unknown>(`/memory/audit${qs}`);
     if (Array.isArray(raw)) return { entries: raw as JsonObject[], count: raw.length };
     return raw as MemoryAuditResponse;
+  }
+
+  /** Resolve a context URI to a memory node. */
+  async contextResolveUri(uri: string): Promise<{ node?: JsonObject }> {
+    const raw = await this.req<unknown>("/memory/context/resolve", {
+      method: "POST",
+      body: JSON.stringify({ uri }),
+    });
+    return parseResponse(ContextResolveResponseSchema, raw, "/memory/context/resolve", 200);
+  }
+
+  /** Get a tree of memory nodes starting from a URI. */
+  async contextTree(uri: string, maxDepth?: number): Promise<{ tree: JsonObject[] }> {
+    const params = new URLSearchParams();
+    params.set("uri", uri);
+    if (maxDepth !== undefined) params.set("max_depth", String(maxDepth));
+    const qs = params.toString() ? `?${params.toString()}` : "";
+    const raw = await this.req<unknown>(`/memory/context/tree${qs}`);
+    return parseResponse(ContextTreeResponseSchema, raw, "/memory/context/tree", 200);
+  }
+
+  /** Generate L0/L1 layers for a memory node. */
+  async contextGenerateLayers(nodeId: string): Promise<{ ok: boolean }> {
+    return this.req<{ ok: boolean }>("/memory/context/layers/generate", {
+      method: "POST",
+      body: JSON.stringify({ node_id: nodeId }),
+    });
+  }
+
+  /** Distill a session's conversation into memories. */
+  async contextDistill(
+    sessionId: string,
+    conversation: string[]
+  ): Promise<{
+    ok: boolean;
+    distillation_id?: string;
+    session_id?: string;
+    facts_extracted?: number;
+  }> {
+    const raw = await this.req<unknown>("/memory/context/distill", {
+      method: "POST",
+      body: JSON.stringify({ session_id: sessionId, conversation }),
+    });
+    return parseResponse(ContextDistillResponseSchema, raw, "/memory/context/distill", 200);
   }
 }
 

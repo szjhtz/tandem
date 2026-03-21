@@ -292,6 +292,19 @@
 - Added deterministic `project_id` binding for workspace-backed sessions to improve recall across prior conversations in the same workspace.
 - Updated standup workflows to combine memory recall with workspace inspection through `glob`, `grep`, and `read`.
 
+### Context Memory with Tiered L0/L1/L2 Layers
+
+- Added OpenViking-inspired context memory system with filesystem-style URI organization (`tandem://user/{user_id}/memories`, `tandem://session/{session_id}`, etc.).
+- Added `memory_nodes` and `memory_layers` database tables for hierarchical context storage with full trajectory observability.
+- Added L0/L1/L2 tiered context loading: L0 (~100 tokens) for fast semantic filtering, L1 (~2000 tokens) for decision-making, L2 for full content on demand.
+- Added `ContextLayerGenerator` for automatic LLM-based layer generation from raw content.
+- Added directory recursive retrieval with LLM-powered intent analysis for smarter, hierarchical context retrieval.
+- Added `RetrievalTrajectory` tracking full retrieval operations: nodes visited, scores calculated, paths explored.
+- Added `SessionDistiller` for automatic extraction of user preferences, task outcomes, and learnings from session conversations.
+- Added new HTTP routes: `/memory/context/resolve`, `/memory/context/tree`, `/memory/context/layers/generate`, `/memory/context/distill`.
+- Added TypeScript SDK methods: `client.memory.contextResolveUri()`, `client.memory.contextTree()`, `client.memory.contextGenerateLayers()`, `client.memory.contextDistill()`.
+- Added Python SDK methods: `client.memory.context_resolve_uri()`, `client.memory.context_tree()`, `client.memory.context_generate_layers()`, `client.memory.context_distill()`.
+
 ### Control Panel Runtime and Docs
 
 - Made `tandem-setup init` the documented headless bootstrap path while keeping legacy `tandem-control-panel --init` compatibility.

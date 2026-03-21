@@ -1004,6 +1004,31 @@ class _Memory:
             return MemoryAuditResponse(entries=[MemoryAuditEntry.model_validate(e) for e in raw], count=len(raw))
         return MemoryAuditResponse.model_validate(raw)
 
+    async def context_resolve_uri(self, uri: str) -> dict[str, Any]:
+        res = await self._http.post("/memory/context/resolve", json={"uri": uri})
+        res.raise_for_status()
+        return res.json()
+
+    async def context_tree(self, uri: str, *, max_depth: Optional[int] = None) -> dict[str, Any]:
+        params: dict[str, Any] = {"uri": uri}
+        if max_depth is not None: params["max_depth"] = max_depth
+        res = await self._http.get("/memory/context/tree", params=params)
+        res.raise_for_status()
+        return res.json()
+
+    async def context_generate_layers(self, node_id: str) -> dict[str, Any]:
+        res = await self._http.post("/memory/context/layers/generate", json={"node_id": node_id})
+        res.raise_for_status()
+        return res.json()
+
+    async def context_distill(self, session_id: str, conversation: list[str]) -> dict[str, Any]:
+        res = await self._http.post("/memory/context/distill", json={
+            "session_id": session_id,
+            "conversation": conversation
+        })
+        res.raise_for_status()
+        return res.json()
+
 
 # ─── Skills ───────────────────────────────────────────────────────────────────
 

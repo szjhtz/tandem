@@ -273,6 +273,57 @@ export const MemorySearchResponseSchema = z
   })
   .passthrough();
 
+// ─── Context Memory Schemas ─────────────────────────────────────────────────────
+
+export const MemoryNodeSchema = z
+  .object({
+    id: z.string(),
+    uri: z.string(),
+    parent_uri: z.string().optional(),
+    node_type: z.string(),
+    created_at: z.string(),
+    updated_at: z.string(),
+    metadata: z.record(z.any()).optional(),
+  })
+  .passthrough();
+
+export const LayerSummarySchema = z
+  .object({
+    l0_preview: z.string().optional(),
+    l1_preview: z.string().optional(),
+    has_l2: z.boolean(),
+  })
+  .passthrough();
+
+export const TreeNodeSchema = z
+  .object({
+    node: MemoryNodeSchema,
+    children: z.array(z.any()).optional().default([]),
+    layer_summary: LayerSummarySchema.optional(),
+  })
+  .passthrough();
+
+export const ContextResolveResponseSchema = z
+  .object({
+    node: MemoryNodeSchema.optional(),
+  })
+  .passthrough();
+
+export const ContextTreeResponseSchema = z
+  .object({
+    tree: z.array(TreeNodeSchema).optional().default([]),
+  })
+  .passthrough();
+
+export const ContextDistillResponseSchema = z
+  .object({
+    ok: z.boolean(),
+    distillation_id: z.string().optional(),
+    session_id: z.string().optional(),
+    facts_extracted: z.number().optional(),
+  })
+  .passthrough();
+
 // ─── SSE Schema ───────────────────────────────────────────────────────────────
 
 export const EngineEventSchema = z

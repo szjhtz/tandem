@@ -1,13 +1,21 @@
 pub mod chunking;
+pub mod context_layers;
+pub mod context_uri;
 pub mod db;
+pub mod distillation;
 pub mod embeddings;
 pub mod governance;
 pub mod importer;
 pub mod manager;
+pub mod recursive_retrieval;
 pub mod response_cache;
 pub mod types;
 
+pub use context_layers::*;
+pub use context_uri::*;
+pub use distillation::*;
 pub use governance::*;
 pub use importer::import_files;
 pub use manager::MemoryManager;
+pub use recursive_retrieval::*;
 pub use response_cache::ResponseCache;

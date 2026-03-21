@@ -3,8 +3,8 @@
 
 use crate::types::{
     ClearFileIndexResult, GlobalMemoryRecord, GlobalMemorySearchHit, GlobalMemoryWriteResult,
-    MemoryChunk, MemoryConfig, MemoryResult, MemoryStats, MemoryTier, ProjectMemoryStats,
-    DEFAULT_EMBEDDING_DIMENSION,
+    MemoryChunk, MemoryConfig, MemoryError, MemoryResult, MemoryStats, MemoryTier,
+    ProjectMemoryStats, DEFAULT_EMBEDDING_DIMENSION,
 };
 use chrono::{DateTime, Utc};
 use rusqlite::{ffi::sqlite3_auto_extension, params, Connection, OptionalExtension, Row};
@@ -476,6 +476,61 @@ impl MemoryDatabase {
                 DELETE FROM memory_records_fts WHERE id = old.id;
                 INSERT INTO memory_records_fts(id, user_id, content) VALUES (new.id, new.user_id, new.content);
             END",
+            [],
+        )?;
+
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS memory_nodes (
+                id TEXT PRIMARY KEY,
+                uri TEXT NOT NULL UNIQUE,
+                parent_uri TEXT,
+                node_type TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                metadata TEXT
+            )",
+            [],
+        )?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_memory_nodes_uri ON memory_nodes(uri)",
+            [],
+        )?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_memory_nodes_parent ON memory_nodes(parent_uri)",
+            [],
+        )?;
+
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS memory_layers (
+                id TEXT PRIMARY KEY,
+                node_id TEXT NOT NULL,
+                layer_type TEXT NOT NULL,
+                content TEXT NOT NULL,
+                token_count INTEGER NOT NULL,
+                embedding_id TEXT,
+                created_at TEXT NOT NULL,
+                source_chunk_id TEXT,
+                FOREIGN KEY (node_id) REFERENCES memory_nodes(id)
+            )",
+            [],
+        )?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_memory_layers_node ON memory_layers(node_id)",
+            [],
+        )?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_memory_layers_type ON memory_layers(layer_type)",
+            [],
+        )?;
+
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS memory_retrieval_state (
+                node_id TEXT PRIMARY KEY,
+                active_layer TEXT NOT NULL DEFAULT 'L0',
+                last_accessed TEXT,
+                access_count INTEGER DEFAULT 0,
+                FOREIGN KEY (node_id) REFERENCES memory_nodes(id)
+            )",
             [],
         )?;
 
@@ -2327,6 +2382,218 @@ fn row_to_global_record(row: &Row) -> Result<GlobalMemoryRecord, rusqlite::Error
         updated_at_ms: row.get::<_, i64>(20)? as u64,
         expires_at_ms: row.get::<_, Option<i64>>(21)?.map(|v| v as u64),
     })
+}
+
+impl MemoryDatabase {
+    pub async fn get_node_by_uri(
+        &self,
+        uri: &str,
+    ) -> MemoryResult<Option<crate::types::MemoryNode>> {
+        let conn = self.conn.lock().await;
+        let mut stmt = conn.prepare(
+            "SELECT id, uri, parent_uri, node_type, created_at, updated_at, metadata
+             FROM memory_nodes WHERE uri = ?1",
+        )?;
+
+        let result = stmt.query_row(params![uri], |row| {
+            let node_type_str: String = row.get(3)?;
+            let node_type = node_type_str
+                .parse()
+                .unwrap_or(crate::types::NodeType::File);
+            let metadata_str: Option<String> = row.get(6)?;
+            Ok(crate::types::MemoryNode {
+                id: row.get(0)?,
+                uri: row.get(1)?,
+                parent_uri: row.get(2)?,
+                node_type,
+                created_at: row.get::<_, String>(4)?.parse().unwrap_or_default(),
+                updated_at: row.get::<_, String>(5)?.parse().unwrap_or_default(),
+                metadata: metadata_str.and_then(|s| serde_json::from_str(&s).ok()),
+            })
+        });
+
+        match result {
+            Ok(node) => Ok(Some(node)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(MemoryError::Database(e)),
+        }
+    }
+
+    pub async fn create_node(
+        &self,
+        uri: &str,
+        parent_uri: Option<&str>,
+        node_type: crate::types::NodeType,
+        metadata: Option<&serde_json::Value>,
+    ) -> MemoryResult<String> {
+        let id = uuid::Uuid::new_v4().to_string();
+        let now = Utc::now().to_rfc3339();
+        let metadata_str = metadata.map(|m| serde_json::to_string(m)).transpose()?;
+
+        let conn = self.conn.lock().await;
+        conn.execute(
+            "INSERT INTO memory_nodes (id, uri, parent_uri, node_type, created_at, updated_at, metadata)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![id, uri, parent_uri, node_type.to_string(), now, now, metadata_str],
+        )?;
+
+        Ok(id)
+    }
+
+    pub async fn list_directory(&self, uri: &str) -> MemoryResult<Vec<crate::types::MemoryNode>> {
+        let conn = self.conn.lock().await;
+        let mut stmt = conn.prepare(
+            "SELECT id, uri, parent_uri, node_type, created_at, updated_at, metadata
+             FROM memory_nodes WHERE parent_uri = ?1 ORDER BY node_type DESC, uri ASC",
+        )?;
+
+        let rows = stmt.query_map(params![uri], |row| {
+            let node_type_str: String = row.get(3)?;
+            let node_type = node_type_str
+                .parse()
+                .unwrap_or(crate::types::NodeType::File);
+            let metadata_str: Option<String> = row.get(6)?;
+            Ok(crate::types::MemoryNode {
+                id: row.get(0)?,
+                uri: row.get(1)?,
+                parent_uri: row.get(2)?,
+                node_type,
+                created_at: row.get::<_, String>(4)?.parse().unwrap_or_default(),
+                updated_at: row.get::<_, String>(5)?.parse().unwrap_or_default(),
+                metadata: metadata_str.and_then(|s| serde_json::from_str(&s).ok()),
+            })
+        })?;
+
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(MemoryError::Database)
+    }
+
+    pub async fn get_layer(
+        &self,
+        node_id: &str,
+        layer_type: crate::types::LayerType,
+    ) -> MemoryResult<Option<crate::types::MemoryLayer>> {
+        let conn = self.conn.lock().await;
+        let mut stmt = conn.prepare(
+            "SELECT id, node_id, layer_type, content, token_count, embedding_id, created_at, source_chunk_id
+             FROM memory_layers WHERE node_id = ?1 AND layer_type = ?2"
+        )?;
+
+        let result = stmt.query_row(params![node_id, layer_type.to_string()], |row| {
+            let layer_type_str: String = row.get(2)?;
+            let layer_type = layer_type_str
+                .parse()
+                .unwrap_or(crate::types::LayerType::L2);
+            Ok(crate::types::MemoryLayer {
+                id: row.get(0)?,
+                node_id: row.get(1)?,
+                layer_type,
+                content: row.get(3)?,
+                token_count: row.get(4)?,
+                embedding_id: row.get(5)?,
+                created_at: row.get::<_, String>(6)?.parse().unwrap_or_default(),
+                source_chunk_id: row.get(7)?,
+            })
+        });
+
+        match result {
+            Ok(layer) => Ok(Some(layer)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(MemoryError::Database(e)),
+        }
+    }
+
+    pub async fn create_layer(
+        &self,
+        node_id: &str,
+        layer_type: crate::types::LayerType,
+        content: &str,
+        token_count: i64,
+        source_chunk_id: Option<&str>,
+    ) -> MemoryResult<String> {
+        let id = uuid::Uuid::new_v4().to_string();
+        let now = Utc::now().to_rfc3339();
+
+        let conn = self.conn.lock().await;
+        conn.execute(
+            "INSERT INTO memory_layers (id, node_id, layer_type, content, token_count, created_at, source_chunk_id)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![id, node_id, layer_type.to_string(), content, token_count, now, source_chunk_id],
+        )?;
+
+        Ok(id)
+    }
+
+    pub async fn get_children_tree(
+        &self,
+        parent_uri: &str,
+        max_depth: usize,
+    ) -> MemoryResult<Vec<crate::types::TreeNode>> {
+        if max_depth == 0 {
+            return Ok(Vec::new());
+        }
+
+        let children = self.list_directory(parent_uri).await?;
+        let mut tree_nodes = Vec::new();
+
+        for child in children {
+            let layer_summary = self.get_layer_summary(&child.id).await?;
+
+            let grandchildren = if child.node_type == crate::types::NodeType::Directory {
+                Box::pin(self.get_children_tree(&child.uri, max_depth.saturating_sub(1))).await?
+            } else {
+                Vec::new()
+            };
+
+            tree_nodes.push(crate::types::TreeNode {
+                node: child,
+                children: grandchildren,
+                layer_summary,
+            });
+        }
+
+        Ok(tree_nodes)
+    }
+
+    async fn get_layer_summary(
+        &self,
+        node_id: &str,
+    ) -> MemoryResult<Option<crate::types::LayerSummary>> {
+        let l0 = self.get_layer(node_id, crate::types::LayerType::L0).await?;
+        let l1 = self.get_layer(node_id, crate::types::LayerType::L1).await?;
+        let has_l2 = self
+            .get_layer(node_id, crate::types::LayerType::L2)
+            .await?
+            .is_some();
+
+        if l0.is_none() && l1.is_none() && !has_l2 {
+            return Ok(None);
+        }
+
+        Ok(Some(crate::types::LayerSummary {
+            l0_preview: l0.map(|l| truncate_string(&l.content, 100)),
+            l1_preview: l1.map(|l| truncate_string(&l.content, 200)),
+            has_l2,
+        }))
+    }
+
+    pub async fn node_exists(&self, uri: &str) -> MemoryResult<bool> {
+        let conn = self.conn.lock().await;
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM memory_nodes WHERE uri = ?1",
+            params![uri],
+            |row| row.get(0),
+        )?;
+        Ok(count > 0)
+    }
+}
+
+fn truncate_string(s: &str, max_len: usize) -> String {
+    if s.len() <= max_len {
+        s.to_string()
+    } else {
+        format!("{}...", &s[..max_len.saturating_sub(3)])
+    }
 }
 
 fn build_fts_query(query: &str) -> String {

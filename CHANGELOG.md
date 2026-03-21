@@ -40,6 +40,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - publish-style `automation_v2` nodes now emit shared external-action receipts for successful bound outbound tool calls, linked to the canonical automation context run and surfaced in node outputs
   - scheduled `automation_v2` runs now create their canonical context runs before outbound receipts are recorded, so `/external-actions` links are immediately dereferenceable even for scheduler-owned runs
   - `automation_v2` outbound receipt identity is now attempt-aware, so retried publish nodes preserve distinct receipt history instead of overwriting an earlier attempt
+- **Context memory with tiered L0/L1/L2 layers** (inspired by OpenViking):
+  - added `ContextUri` module with virtual filesystem-style URI scheme (`tandem://user/{user_id}/memories`, `tandem://session/{session_id}`, etc.)
+  - added `memory_nodes` and `memory_layers` database tables for hierarchical context storage
+  - added L0/L1/L2 tiered context loading: L0 (~100 tokens) for fast filtering, L1 (~2000 tokens) for decision-making, L2 for full content
+  - added `ContextLayerGenerator` for LLM-based automatic layer generation from content
+  - added directory recursive retrieval with intent analysis for smarter context retrieval
+  - added `RetrievalTrajectory` for full observability of retrieval operations (which nodes visited, scores calculated, paths chosen)
+  - added `SessionDistiller` for automatic extraction of facts, preferences, and learnings from session conversations
+  - added new HTTP routes: `/memory/context/resolve`, `/memory/context/tree`, `/memory/context/layers/generate`, `/memory/context/distill`
+  - added TypeScript and Python SDK methods for context memory: `contextResolveUri()`, `contextTree()`, `contextGenerateLayers()`, `contextDistill()`
 
 ### Changed
 

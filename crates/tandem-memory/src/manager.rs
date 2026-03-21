@@ -2,11 +2,14 @@
 // High-level memory operations (store, retrieve, cleanup)
 
 use crate::chunking::{chunk_text_semantic, ChunkingConfig, Tokenizer};
+use crate::context_layers::ContextLayerGenerator;
+use crate::context_uri::ContextUri;
 use crate::db::MemoryDatabase;
 use crate::embeddings::EmbeddingService;
 use crate::types::{
-    CleanupLogEntry, EmbeddingHealth, MemoryChunk, MemoryConfig, MemoryContext, MemoryResult,
-    MemoryRetrievalMeta, MemorySearchResult, MemoryStats, MemoryTier, StoreMessageRequest,
+    CleanupLogEntry, DirectoryListing, EmbeddingHealth, LayerType, MemoryChunk, MemoryConfig,
+    MemoryContext, MemoryError, MemoryLayer, MemoryNode, MemoryResult, MemoryRetrievalMeta,
+    MemorySearchResult, MemoryStats, MemoryTier, NodeType, StoreMessageRequest, TreeNode,
 };
 use chrono::Utc;
 use std::path::Path;
@@ -451,6 +454,152 @@ impl MemoryManager {
     /// Update memory configuration for a project
     pub async fn set_config(&self, project_id: &str, config: &MemoryConfig) -> MemoryResult<()> {
         self.db.update_config(project_id, config).await
+    }
+
+    pub async fn resolve_uri(&self, uri: &str) -> MemoryResult<Option<MemoryNode>> {
+        self.db.get_node_by_uri(uri).await
+    }
+
+    pub async fn list_directory(&self, uri: &str) -> MemoryResult<DirectoryListing> {
+        let nodes = self.db.list_directory(uri).await?;
+        let directories: Vec<MemoryNode> = nodes
+            .iter()
+            .filter(|n| n.node_type == NodeType::Directory)
+            .cloned()
+            .collect();
+        let files: Vec<MemoryNode> = nodes
+            .iter()
+            .filter(|n| n.node_type == NodeType::File)
+            .cloned()
+            .collect();
+
+        Ok(DirectoryListing {
+            uri: uri.to_string(),
+            nodes,
+            total_children: directories.len() + files.len(),
+            directories,
+            files,
+        })
+    }
+
+    pub async fn tree(&self, uri: &str, max_depth: usize) -> MemoryResult<Vec<TreeNode>> {
+        self.db.get_children_tree(uri, max_depth).await
+    }
+
+    pub async fn create_context_node(
+        &self,
+        uri: &str,
+        node_type: NodeType,
+        metadata: Option<serde_json::Value>,
+    ) -> MemoryResult<String> {
+        let parsed_uri =
+            ContextUri::parse(uri).map_err(|e| MemoryError::InvalidConfig(e.message))?;
+        let parent_uri = parsed_uri.parent().map(|p| p.to_string());
+        self.db
+            .create_node(uri, parent_uri.as_deref(), node_type, metadata.as_ref())
+            .await
+    }
+
+    pub async fn get_context_layer(
+        &self,
+        node_id: &str,
+        layer_type: LayerType,
+    ) -> MemoryResult<Option<MemoryLayer>> {
+        self.db.get_layer(node_id, layer_type).await
+    }
+
+    pub async fn store_content_with_layers(
+        &self,
+        uri: &str,
+        content: &str,
+        metadata: Option<serde_json::Value>,
+    ) -> MemoryResult<String> {
+        let parsed_uri =
+            ContextUri::parse(uri).map_err(|e| MemoryError::InvalidConfig(e.message))?;
+        let node_type = if parsed_uri
+            .last_segment()
+            .map(|s| s.ends_with(".md") || s.ends_with(".txt") || s.contains("."))
+            .unwrap_or(false)
+        {
+            NodeType::File
+        } else {
+            NodeType::Directory
+        };
+
+        let parent_uri = parsed_uri.parent().map(|p| p.to_string());
+        let node_id = self
+            .db
+            .create_node(uri, parent_uri.as_deref(), node_type, metadata.as_ref())
+            .await?;
+
+        let token_count = self.tokenizer.count_tokens(content) as i64;
+        self.db
+            .create_layer(&node_id, LayerType::L2, content, token_count, None)
+            .await?;
+
+        Ok(node_id)
+    }
+
+    pub async fn generate_layers_for_node(
+        &self,
+        node_id: &str,
+        providers: &ProviderRegistry,
+    ) -> MemoryResult<()> {
+        let l2_layer = self.db.get_layer(node_id, LayerType::L2).await?;
+        let l2_content = match l2_layer {
+            Some(layer) => layer.content,
+            None => return Ok(()),
+        };
+
+        let generator = ContextLayerGenerator::new(Arc::new(providers.clone()));
+
+        let (l0_content, l1_content) = generator.generate_layers(&l2_content).await?;
+
+        let l0_tokens = self.tokenizer.count_tokens(&l0_content) as i64;
+        let l1_tokens = self.tokenizer.count_tokens(&l1_content) as i64;
+
+        if self.db.get_layer(node_id, LayerType::L0).await?.is_none() {
+            self.db
+                .create_layer(node_id, LayerType::L0, &l0_content, l0_tokens, None)
+                .await?;
+        }
+
+        if self.db.get_layer(node_id, LayerType::L1).await?.is_none() {
+            self.db
+                .create_layer(node_id, LayerType::L1, &l1_content, l1_tokens, None)
+                .await?;
+        }
+
+        Ok(())
+    }
+
+    pub async fn get_layer_content(
+        &self,
+        node_id: &str,
+        layer_type: LayerType,
+    ) -> MemoryResult<Option<String>> {
+        let layer = self.db.get_layer(node_id, layer_type).await?;
+        Ok(layer.map(|l| l.content))
+    }
+
+    pub async fn store_content_with_layers_auto(
+        &self,
+        uri: &str,
+        content: &str,
+        metadata: Option<serde_json::Value>,
+        providers: Option<&ProviderRegistry>,
+    ) -> MemoryResult<String> {
+        let node_id = self
+            .store_content_with_layers(uri, content, metadata)
+            .await?;
+
+        if let Some(p) = providers {
+            if let Err(e) = self.generate_layers_for_node(&node_id, p).await {
+                tracing::warn!("Failed to generate layers for node {}: {}", node_id, e);
+            }
+        }
+
+        Ok(node_id)
     }
 
     /// Run cleanup based on retention policies
