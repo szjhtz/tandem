@@ -315,10 +315,13 @@ export interface IdentityConfigResponse {
 
 export interface ChannelConfigEntry {
   hasToken?: boolean;
+  tokenMasked?: string | null;
   allowedUsers?: string[];
   mentionOnly?: boolean;
+  styleProfile?: string;
   guildId?: string;
   channelId?: string;
+  securityProfile?: string;
 }
 
 export interface ChannelsConfigResponse {

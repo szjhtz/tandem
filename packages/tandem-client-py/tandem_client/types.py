@@ -307,10 +307,13 @@ class IdentityConfigResponse(BaseModel):
 class ChannelConfigEntry(BaseModel):
     model_config = ConfigDict(extra="ignore")
     has_token: Optional[bool] = Field(None, validation_alias=AliasChoices("hasToken", "has_token"))
+    token_masked: Optional[str] = Field(None, validation_alias=AliasChoices("tokenMasked", "token_masked"))
     allowed_users: Optional[list[str]] = Field(None, validation_alias=AliasChoices("allowedUsers", "allowed_users"))
     mention_only: Optional[bool] = Field(None, validation_alias=AliasChoices("mentionOnly", "mention_only"))
+    style_profile: Optional[str] = Field(None, validation_alias=AliasChoices("styleProfile", "style_profile"))
     guild_id: Optional[str] = Field(None, validation_alias=AliasChoices("guildId", "guild_id"))
     channel_id: Optional[str] = Field(None, validation_alias=AliasChoices("channelId", "channel_id"))
+    security_profile: Optional[str] = Field(None, validation_alias=AliasChoices("securityProfile", "security_profile"))
 
 
 class ChannelsConfigResponse(BaseModel):
@@ -333,6 +336,27 @@ class ChannelsStatusResponse(BaseModel):
     telegram: ChannelStatusEntry = Field(default_factory=ChannelStatusEntry)
     discord: ChannelStatusEntry = Field(default_factory=ChannelStatusEntry)
     slack: ChannelStatusEntry = Field(default_factory=ChannelStatusEntry)
+
+
+class ChannelVerifyResponse(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    ok: bool
+    channel: ChannelName
+    checks: Optional[dict[str, Optional[bool]]] = None
+    status_codes: Optional[dict[str, Optional[int]]] = Field(
+        None, validation_alias=AliasChoices("statusCodes", "status_codes")
+    )
+    hints: Optional[list[str]] = None
+    details: Optional[dict[str, Any]] = None
+
+
+class ChannelToolPreferences(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    enabled_tools: list[str] = Field(default_factory=list)
+    disabled_tools: list[str] = Field(default_factory=list)
+    enabled_mcp_servers: list[str] = Field(
+        default_factory=list, validation_alias=AliasChoices("enabledMcpServers", "enabled_mcp_servers")
+    )
 
 
 # ─── Memory ───────────────────────────────────────────────────────────────────

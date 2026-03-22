@@ -42,6 +42,8 @@ from .types import (
     CoderProjectBindingPutResponse,
     CoderRunGetResponse,
     CoderRunsListResponse,
+    ChannelToolPreferences,
+    ChannelVerifyResponse,
     ChannelsConfigResponse,
     ChannelsStatusResponse,
     DefinitionCreateResponse,
@@ -845,6 +847,23 @@ class _Channels:
         res = await self._http.delete(f"/channels/{channel}")
         res.raise_for_status()
         return res.json()  # type: ignore[no-any-return]
+
+    async def verify(self, channel: str, payload: Optional[dict[str, Any]] = None) -> ChannelVerifyResponse:
+        res = await self._http.post(f"/channels/{channel}/verify", json=payload or {})
+        res.raise_for_status()
+        return ChannelVerifyResponse.model_validate(res.json())
+
+    async def tool_preferences(self, channel: str) -> ChannelToolPreferences:
+        res = await self._http.get(f"/channels/{channel}/tool-preferences")
+        res.raise_for_status()
+        return ChannelToolPreferences.model_validate(res.json())
+
+    async def set_tool_preferences(
+        self, channel: str, payload: dict[str, Any]
+    ) -> ChannelToolPreferences:
+        res = await self._http.put(f"/channels/{channel}/tool-preferences", json=payload)
+        res.raise_for_status()
+        return ChannelToolPreferences.model_validate(res.json())
 
 
 # ─── MCP ──────────────────────────────────────────────────────────────────────

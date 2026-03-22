@@ -192,12 +192,23 @@ Built-in presets include: `balanced`, `concise`, `friendly`, `mentor`, `critical
 ### `client.channels`
 
 ```typescript
-await client.channels.put("telegram", {
-  token: "bot:xxx",
-  allowed_users: ["@yourhandle"],
+await client.channels.put("discord", {
+  bot_token: "bot:xxx",
+  guild_id: "1234567890",
+  security_profile: "public_demo",
 });
 const status = await client.channels.status();
-console.log(status.telegram.connected);
+const config = await client.channels.config();
+const prefs = await client.channels.toolPreferences("discord");
+await client.channels.setToolPreferences("discord", {
+  disabled_tools: ["webfetch_html"],
+});
+const verification = await client.channels.verify("discord");
+
+console.log(status.discord.connected);
+console.log(config.discord.securityProfile);
+console.log(prefs.enabled_tools);
+console.log(verification.ok);
 ```
 
 ### `client.mcp`

@@ -79,6 +79,8 @@ from .types import (
     CoderRunsListResponse,
     ChannelConfigEntry,
     ChannelStatusEntry,
+    ChannelToolPreferences,
+    ChannelVerifyResponse,
     ChannelsConfigResponse,
     ChannelsStatusResponse,
     DefinitionCreateResponse,
@@ -195,6 +197,8 @@ __all__ = [
     # Channels
     "ChannelConfigEntry",
     "ChannelStatusEntry",
+    "ChannelToolPreferences",
+    "ChannelVerifyResponse",
     "ChannelsConfigResponse",
     "ChannelsStatusResponse",
     # Memory

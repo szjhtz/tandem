@@ -201,12 +201,15 @@ const tools = await client.mcp.listTools();
 
 ### `client.channels`
 
-| Method                  | Description                    |
-| ----------------------- | ------------------------------ |
-| `config()`              | Get channel configuration      |
-| `status()`              | Get live connection status     |
-| `put(channel, payload)` | Configure a channel            |
-| `delete(channel)`       | Remove a channel configuration |
+| Method                                 | Description                                           |
+| -------------------------------------- | ----------------------------------------------------- |
+| `config()`                             | Get channel configuration, including security profile |
+| `status()`                             | Get live connection status                            |
+| `put(channel, payload)`                | Configure a channel                                   |
+| `delete(channel)`                      | Remove a channel configuration                        |
+| `verify(channel, payload?)`            | Verify connectivity and channel prerequisites         |
+| `toolPreferences(channel)`             | Read per-channel tool preferences                     |
+| `setToolPreferences(channel, payload)` | Update per-channel tool preferences                   |
 
 ### `client.packs`
 

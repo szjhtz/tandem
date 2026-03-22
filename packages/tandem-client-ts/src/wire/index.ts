@@ -297,10 +297,13 @@ export type ChannelName = "telegram" | "discord" | "slack";
 
 export interface ChannelConfigEntry {
   has_token?: boolean;
+  token_masked?: string | null;
   allowed_users?: string[];
   mention_only?: boolean;
+  style_profile?: string;
   guild_id?: string;
   channel_id?: string;
+  security_profile?: string;
 }
 
 export interface ChannelsConfigResponse {
@@ -321,6 +324,28 @@ export interface ChannelsStatusResponse {
   telegram: ChannelStatusEntry;
   discord: ChannelStatusEntry;
   slack: ChannelStatusEntry;
+}
+
+export interface ChannelVerifyResponse {
+  ok: boolean;
+  channel: ChannelName;
+  checks?: Record<string, boolean | null>;
+  statusCodes?: Record<string, number | null>;
+  hints?: string[];
+  details?: JsonObject;
+}
+
+export interface ChannelToolPreferences {
+  enabled_tools: string[];
+  disabled_tools: string[];
+  enabled_mcp_servers: string[];
+}
+
+export interface ChannelToolPreferencesInput {
+  enabled_tools?: string[];
+  disabled_tools?: string[];
+  enabled_mcp_servers?: string[];
+  reset?: boolean;
 }
 
 // ─── MCP ─────────────────────────────────────────────────────────────────────

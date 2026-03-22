@@ -206,12 +206,23 @@ Built-in presets include: `balanced`, `concise`, `friendly`, `mentor`, `critical
 ### `client.channels`
 
 ```python
-await client.channels.put("telegram", {
-    "token": "bot:xxx",
-    "allowed_users": ["@yourhandle"],
+await client.channels.put("discord", {
+    "bot_token": "bot:xxx",
+    "guild_id": "1234567890",
+    "security_profile": "public_demo",
 })
 status = await client.channels.status()
-print(status.telegram.connected)
+config = await client.channels.config()
+prefs = await client.channels.tool_preferences("discord")
+await client.channels.set_tool_preferences("discord", {
+    "disabled_tools": ["webfetch_html"],
+})
+verification = await client.channels.verify("discord")
+
+print(status.discord.connected)
+print(config.discord.security_profile)
+print(prefs.enabled_tools)
+print(verification.ok)
 ```
 
 ### `client.mcp`
