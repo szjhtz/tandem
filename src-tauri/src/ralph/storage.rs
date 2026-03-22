@@ -174,7 +174,7 @@ impl RalphStorage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ralph::types::{RalphConfig, RalphRunStatus};
+    use crate::ralph::types::RalphConfig;
 
     fn create_test_storage() -> (RalphStorage, tempfile::TempDir) {
         let temp_dir = tempfile::tempdir().unwrap();

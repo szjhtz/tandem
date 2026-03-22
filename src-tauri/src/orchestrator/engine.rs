@@ -1924,6 +1924,7 @@ impl OrchestratorEngine {
             workspace_root: Self::existing_dir_string(&self.workspace_path).or_else(|| {
                 Self::existing_dir_string_from_opt(base_session.workspace_root.as_deref())
             }),
+            project_id: base_session.project_id.clone(),
         };
 
         let session = self.sidecar.create_session(request).await?;
@@ -2124,6 +2125,7 @@ When calling `read`/`write`/`edit`, ALWAYS include a non-empty `path` string.\n\
             permission: Some(Self::orchestrator_permission_rules(AgentRole::Orchestrator)),
             directory: Self::existing_dir_string(&self.workspace_path),
             workspace_root: Self::existing_dir_string(&self.workspace_path),
+            project_id: None,
         };
 
         let session = self.sidecar.create_session(request).await?;
