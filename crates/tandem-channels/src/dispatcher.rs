@@ -99,7 +99,14 @@ pub type SessionMap = Arc<Mutex<HashMap<String, SessionRecord>>>;
 type SetupClarifierMap = Arc<Mutex<HashMap<String, PendingSetupClarifier>>>;
 type ChannelSecurityMap = Arc<HashMap<String, ChannelSecurityProfile>>;
 
-const PUBLIC_DEMO_ALLOWED_TOOLS: &[&str] = &["websearch", "webfetch", "webfetch_html"];
+const PUBLIC_DEMO_ALLOWED_TOOLS: &[&str] = &[
+    "websearch",
+    "webfetch",
+    "webfetch_html",
+    "memory_search",
+    "memory_store",
+    "memory_list",
+];
 
 #[derive(Debug, Clone)]
 struct PendingSetupClarifier {
@@ -226,6 +233,16 @@ fn session_map_key(msg: &ChannelMessage) -> String {
 
 fn legacy_session_map_key(msg: &ChannelMessage) -> String {
     format!("{}:{}", msg.channel, msg.sender)
+}
+
+fn public_channel_memory_scope_key(msg: &ChannelMessage) -> String {
+    let scope = msg
+        .scope
+        .id
+        .chars()
+        .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '-' })
+        .collect::<String>();
+    format!("channel-public::{}::{}", msg.channel, scope)
 }
 
 fn session_title_prefix(msg: &ChannelMessage) -> String {
@@ -2472,6 +2489,9 @@ fn build_channel_session_permissions(
 ) -> Vec<serde_json::Value> {
     match security_profile {
         ChannelSecurityProfile::PublicDemo => vec![
+            serde_json::json!({ "permission": "memory_search", "pattern": "*", "action": "allow" }),
+            serde_json::json!({ "permission": "memory_store", "pattern": "*", "action": "allow" }),
+            serde_json::json!({ "permission": "memory_list", "pattern": "*", "action": "allow" }),
             serde_json::json!({ "permission": "websearch", "pattern": "*", "action": "allow" }),
             serde_json::json!({ "permission": "webfetch", "pattern": "*", "action": "allow" }),
             serde_json::json!({ "permission": "webfetch_html", "pattern": "*", "action": "allow" }),
@@ -2510,11 +2530,15 @@ fn build_channel_session_permissions(
 fn build_channel_session_create_body(
     title: &str,
     security_profile: ChannelSecurityProfile,
+    project_id: Option<&str>,
 ) -> serde_json::Value {
     let mut payload = serde_json::json!({
         "title": title,
         "permission": build_channel_session_permissions(security_profile),
     });
+    if let Some(project_id) = project_id {
+        payload["project_id"] = serde_json::json!(project_id);
+    }
     if security_profile != ChannelSecurityProfile::PublicDemo {
         payload["directory"] = serde_json::json!(".");
     }
@@ -2559,7 +2583,16 @@ async fn get_or_create_session(
 
     let client = reqwest::Client::new();
     let title = session_title_prefix(msg);
-    let body = build_channel_session_create_body(&title, security_profile);
+    let public_memory_project_id = if security_profile == ChannelSecurityProfile::PublicDemo {
+        Some(public_channel_memory_scope_key(msg))
+    } else {
+        None
+    };
+    let body = build_channel_session_create_body(
+        &title,
+        security_profile,
+        public_memory_project_id.as_deref(),
+    );
 
     let resp = add_auth(client.post(format!("{base_url}/session")), api_token)
         .json(&body)
@@ -3090,7 +3123,15 @@ async fn handle_slash_command(
         }
         SlashCommand::Runs { action } => runs_command_text(action, base_url, api_token).await,
         SlashCommand::Memory { action } => {
-            memory_command_text(action, msg, base_url, api_token, session_map).await
+            memory_command_text(
+                action,
+                msg,
+                base_url,
+                api_token,
+                session_map,
+                security_profile,
+            )
+            .await
         }
         SlashCommand::Workspace { action } => {
             workspace_command_text(action, msg, base_url, api_token, session_map).await
@@ -3119,7 +3160,6 @@ fn blocked_command_reason(
         | SlashCommand::Automations { .. }
         | SlashCommand::Runs { .. }
         | SlashCommand::Workspace { .. }
-        | SlashCommand::Memory { .. }
         | SlashCommand::Mcp { .. }
         | SlashCommand::Packs { .. }
         | SlashCommand::Config { .. }
@@ -3174,10 +3214,7 @@ fn help_text(topic: Option<&str>, security_profile: ChannelSecurityProfile) -> S
         }
         Some(topic) if topic == "memory" => {
             if security_profile == ChannelSecurityProfile::PublicDemo {
-                disabled_help_text(
-                    "memory",
-                    "Memory commands are disabled in this public channel until public memory is fully quarantined from trusted and operator memory scopes.",
-                )
+                public_demo_memory_help_text()
             } else {
                 memory_help_text()
             }
@@ -3278,11 +3315,11 @@ Available here:\n\
 /status — show current session info\n\
 /run — show active run state\n\
 /cancel — cancel the active run\n\
+/memory — search and store channel-scoped public memory\n\
 /help — show this message\n\
 \n\
 Disabled in this public channel for security:\n\
 /providers, /models, /model — runtime and model reconfiguration\n\
-/memory — memory access is disabled until public memory is quarantined\n\
 /workspace — file and repo access\n\
 /mcp — external connector access\n\
 /tools — tool-scope override controls\n\
@@ -3343,6 +3380,19 @@ fn memory_help_text() -> String {
 /memory save <text> — store a global note\n\
 /memory scopes — show the current session/project/global scope binding\n\
 /memory delete <id> --yes — delete a memory entry"
+        .to_string()
+}
+
+fn public_demo_memory_help_text() -> String {
+    "🧠 *Public Channel Memory Commands*\n\
+/memory — list recent memory entries for this channel scope\n\
+/memory search <query> — search channel-scoped public memory\n\
+/memory recent [limit] — list recent channel-scoped entries\n\
+/memory save <text> — store a note in this channel's public memory namespace\n\
+/memory scopes — show the quarantined public memory scope for this channel\n\
+/memory delete <id> --yes — delete a memory entry from this channel scope\n\
+\n\
+This memory is quarantined to the current public channel scope and does not read from Tandem's normal trusted project/global memory."
         .to_string()
 }
 
@@ -3712,17 +3762,66 @@ async fn memory_command_text(
     base_url: &str,
     api_token: &str,
     session_map: &SessionMap,
+    security_profile: ChannelSecurityProfile,
 ) -> String {
     match action {
-        MemoryCommand::Help => memory_help_text(),
-        MemoryCommand::Search { query } => memory_search_text(query, base_url, api_token).await,
-        MemoryCommand::Recent { limit } => memory_recent_text(limit, base_url, api_token).await,
-        MemoryCommand::Save { text } => memory_save_text(text, base_url, api_token).await,
-        MemoryCommand::Scopes => memory_scopes_text(msg, base_url, api_token, session_map).await,
+        MemoryCommand::Help => {
+            if security_profile == ChannelSecurityProfile::PublicDemo {
+                public_demo_memory_help_text()
+            } else {
+                memory_help_text()
+            }
+        }
+        MemoryCommand::Search { query } => {
+            memory_search_text(
+                query,
+                msg,
+                base_url,
+                api_token,
+                session_map,
+                security_profile,
+            )
+            .await
+        }
+        MemoryCommand::Recent { limit } => {
+            memory_recent_text(
+                limit,
+                msg,
+                base_url,
+                api_token,
+                session_map,
+                security_profile,
+            )
+            .await
+        }
+        MemoryCommand::Save { text } => {
+            memory_save_text(
+                text,
+                msg,
+                base_url,
+                api_token,
+                session_map,
+                security_profile,
+            )
+            .await
+        }
+        MemoryCommand::Scopes => {
+            memory_scopes_text(msg, base_url, api_token, session_map, security_profile).await
+        }
         MemoryCommand::Delete {
             memory_id,
             confirmed,
-        } => memory_delete_text(memory_id, confirmed, base_url, api_token).await,
+        } => {
+            memory_delete_text(
+                memory_id,
+                confirmed,
+                msg,
+                base_url,
+                api_token,
+                security_profile,
+            )
+            .await
+        }
     }
 }
 
@@ -4157,7 +4256,44 @@ async fn run_artifacts_text(run_id: String, base_url: &str, api_token: &str) -> 
     }
 }
 
-async fn memory_search_text(query: String, base_url: &str, api_token: &str) -> String {
+async fn memory_search_text(
+    query: String,
+    msg: &ChannelMessage,
+    base_url: &str,
+    api_token: &str,
+    session_map: &SessionMap,
+    security_profile: ChannelSecurityProfile,
+) -> String {
+    if security_profile == ChannelSecurityProfile::PublicDemo {
+        let mut args = public_channel_memory_tool_args(msg, session_map).await;
+        args["query"] = serde_json::json!(query);
+        args["limit"] = serde_json::json!(5);
+        args["tier"] = serde_json::json!("project");
+        return match tool_execute("memory_search", args, base_url, api_token).await {
+            Ok(json) => {
+                let results = parse_tool_output_rows(&json);
+                if results.is_empty() {
+                    return "ℹ️ No matching memory entries found.".to_string();
+                }
+                let lines = results
+                    .iter()
+                    .take(5)
+                    .map(|item| {
+                        let id = value_string(item, &["id", "chunk_id"]).unwrap_or("unknown");
+                        let content = value_string(item, &["content", "text"]).unwrap_or("");
+                        format!(
+                            "• `{}` {}",
+                            short_id(id),
+                            truncate_for_channel(content, 120)
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                format!("🧠 Memory search results:\n{}", lines.join("\n"))
+            }
+            Err(error) => format!("⚠️ Could not search memory: {error}"),
+        };
+    }
+
     match json_request(
         reqwest::Method::POST,
         "/memory/search",
@@ -4195,7 +4331,60 @@ async fn memory_search_text(query: String, base_url: &str, api_token: &str) -> S
     }
 }
 
-async fn memory_recent_text(limit: usize, base_url: &str, api_token: &str) -> String {
+async fn public_channel_memory_tool_args(
+    msg: &ChannelMessage,
+    session_map: &SessionMap,
+) -> serde_json::Value {
+    let mut args = serde_json::json!({
+        "__project_id": public_channel_memory_scope_key(msg),
+        "__memory_max_visible_scope": "project"
+    });
+    if let Some(session_id) = active_session_id(msg, session_map).await {
+        args["__session_id"] = serde_json::json!(session_id);
+    }
+    args
+}
+
+fn parse_tool_output_rows(json: &serde_json::Value) -> Vec<serde_json::Value> {
+    serde_json::from_str::<serde_json::Value>(&extract_tool_output(json))
+        .ok()
+        .and_then(|value| value.as_array().cloned())
+        .unwrap_or_default()
+}
+
+async fn memory_recent_text(
+    limit: usize,
+    msg: &ChannelMessage,
+    base_url: &str,
+    api_token: &str,
+    session_map: &SessionMap,
+    security_profile: ChannelSecurityProfile,
+) -> String {
+    if security_profile == ChannelSecurityProfile::PublicDemo {
+        let mut args = public_channel_memory_tool_args(msg, session_map).await;
+        args["limit"] = serde_json::json!(limit);
+        args["tier"] = serde_json::json!("project");
+        return match tool_execute("memory_list", args, base_url, api_token).await {
+            Ok(json) => {
+                let items = parse_tool_output_rows(&json);
+                if items.is_empty() {
+                    return "ℹ️ No memory entries found.".to_string();
+                }
+                let lines = items
+                    .iter()
+                    .take(limit)
+                    .map(|item| {
+                        let id = value_string(item, &["id", "chunk_id"]).unwrap_or("unknown");
+                        let text = value_string(item, &["content", "text"]).unwrap_or("");
+                        format!("• `{}` {}", short_id(id), truncate_for_channel(text, 120))
+                    })
+                    .collect::<Vec<_>>();
+                format!("🧠 Recent memory:\n{}", lines.join("\n"))
+            }
+            Err(error) => format!("⚠️ Could not list memory: {error}"),
+        };
+    }
+
     match json_request(
         reqwest::Method::GET,
         &format!("/memory?limit={limit}"),
@@ -4229,7 +4418,43 @@ async fn memory_recent_text(limit: usize, base_url: &str, api_token: &str) -> St
     }
 }
 
-async fn memory_save_text(text: String, base_url: &str, api_token: &str) -> String {
+async fn memory_save_text(
+    text: String,
+    msg: &ChannelMessage,
+    base_url: &str,
+    api_token: &str,
+    session_map: &SessionMap,
+    security_profile: ChannelSecurityProfile,
+) -> String {
+    if security_profile == ChannelSecurityProfile::PublicDemo {
+        let mut args = public_channel_memory_tool_args(msg, session_map).await;
+        let session_id = active_session_id(msg, session_map).await;
+        args["content"] = serde_json::json!(text);
+        args["tier"] = serde_json::json!("project");
+        args["source"] = serde_json::json!("public_channel_memory");
+        args["metadata"] = serde_json::json!({
+            "security_profile": "public_demo",
+            "channel": msg.channel,
+            "scope_id": msg.scope.id,
+            "scope_kind": format!("{:?}", msg.scope.kind).to_ascii_lowercase(),
+            "sender": msg.sender,
+            "active_session_id": session_id,
+        });
+        return match tool_execute("memory_store", args, base_url, api_token).await {
+            Ok(json) => {
+                let id = json
+                    .get("metadata")
+                    .and_then(|v| v.get("chunk_ids"))
+                    .and_then(|v| v.as_array())
+                    .and_then(|v| v.first())
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown");
+                format!("💾 Saved memory entry `{}`.", short_id(id))
+            }
+            Err(error) => format!("⚠️ Could not save memory: {error}"),
+        };
+    }
+
     match json_request(
         reqwest::Method::POST,
         "/memory/put",
@@ -4252,8 +4477,17 @@ async fn memory_scopes_text(
     base_url: &str,
     api_token: &str,
     session_map: &SessionMap,
+    security_profile: ChannelSecurityProfile,
 ) -> String {
     let sid = active_session_id(msg, session_map).await;
+    if security_profile == ChannelSecurityProfile::PublicDemo {
+        let project_id = public_channel_memory_scope_key(msg);
+        return format!(
+            "🧠 Memory scopes\nSession: {}\nPublic channel scope: {}\nWorkspace: disabled\nGlobal: disabled\n\nThis public memory is quarantined to the current channel scope.",
+            sid.as_deref().unwrap_or("-"),
+            project_id,
+        );
+    }
     let details = active_session_details(msg, base_url, api_token, session_map).await;
     let project_id = details
         .as_ref()
@@ -4276,8 +4510,10 @@ async fn memory_scopes_text(
 async fn memory_delete_text(
     memory_id: String,
     confirmed: bool,
+    msg: &ChannelMessage,
     base_url: &str,
     api_token: &str,
+    security_profile: ChannelSecurityProfile,
 ) -> String {
     if !confirmed {
         return yes_required_text(
@@ -4286,6 +4522,31 @@ async fn memory_delete_text(
             &format!("/memory delete {memory_id}"),
         );
     }
+    if security_profile == ChannelSecurityProfile::PublicDemo {
+        let args = serde_json::json!({
+            "chunk_id": memory_id,
+            "tier": "project",
+            "__project_id": public_channel_memory_scope_key(msg),
+            "__memory_max_visible_scope": "project"
+        });
+        return match tool_execute("memory_delete", args, base_url, api_token).await {
+            Ok(json) => {
+                let deleted = json
+                    .get("metadata")
+                    .and_then(|v| v.get("deleted"))
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                if deleted {
+                    format!("🗑️ Deleted memory `{memory_id}`.")
+                } else {
+                    let detail = extract_tool_output(&json);
+                    format!("⚠️ Could not delete memory `{memory_id}`: {detail}")
+                }
+            }
+            Err(error) => format!("⚠️ Could not delete memory `{memory_id}`: {error}"),
+        };
+    }
+
     match json_request(
         reqwest::Method::DELETE,
         &format!("/memory/{}", sanitize_resource_segment(&memory_id)),
@@ -5179,7 +5440,16 @@ async fn new_session_text(
     let map_key = session_map_key(msg);
     let display_name = name.clone().unwrap_or_else(|| session_title_prefix(msg));
     let client = reqwest::Client::new();
-    let body = build_channel_session_create_body(&display_name, security_profile);
+    let public_memory_project_id = if security_profile == ChannelSecurityProfile::PublicDemo {
+        Some(public_channel_memory_scope_key(msg))
+    } else {
+        None
+    };
+    let body = build_channel_session_create_body(
+        &display_name,
+        security_profile,
+        public_memory_project_id.as_deref(),
+    );
 
     let Ok(resp) = add_auth(client.post(format!("{base_url}/session")), api_token)
         .json(&body)
@@ -6266,8 +6536,11 @@ mod tests {
 
     #[test]
     fn channel_session_create_body_allows_memory_and_browser_tools() {
-        let body =
-            build_channel_session_create_body("Channel Session", ChannelSecurityProfile::Operator);
+        let body = build_channel_session_create_body(
+            "Channel Session",
+            ChannelSecurityProfile::Operator,
+            None,
+        );
         let permissions = body
             .get("permission")
             .and_then(|value| value.as_array())
@@ -6310,6 +6583,7 @@ mod tests {
         let body = build_channel_session_create_body(
             "Public Demo Session",
             ChannelSecurityProfile::PublicDemo,
+            Some("channel-public::discord::room-a"),
         );
         let permissions = body
             .get("permission")
@@ -6317,22 +6591,22 @@ mod tests {
             .expect("permission array");
 
         assert!(body.get("directory").is_none());
+        assert_eq!(
+            body.get("project_id").and_then(|value| value.as_str()),
+            Some("channel-public::discord::room-a")
+        );
         assert!(permissions.iter().any(|value| {
             value.get("permission").and_then(|row| row.as_str()) == Some("websearch")
+                && value.get("action").and_then(|row| row.as_str()) == Some("allow")
+        }));
+        assert!(permissions.iter().any(|value| {
+            value.get("permission").and_then(|row| row.as_str()) == Some("memory_search")
                 && value.get("action").and_then(|row| row.as_str()) == Some("allow")
         }));
         assert!(!permissions.iter().any(|value| {
             matches!(
                 value.get("permission").and_then(|row| row.as_str()),
-                Some(
-                    "read"
-                        | "bash"
-                        | "browser_open"
-                        | "mcp*"
-                        | "memory_search"
-                        | "memory_store"
-                        | "memory_list"
-                )
+                Some("read" | "bash" | "browser_open" | "mcp*")
             )
         }));
     }
@@ -6349,8 +6623,19 @@ mod tests {
     #[test]
     fn public_demo_memory_help_is_disabled() {
         let help = help_text(Some("memory"), ChannelSecurityProfile::PublicDemo);
-        assert!(help.contains("memory commands are disabled"));
+        assert!(help.contains("Public Channel Memory Commands"));
         assert!(help.contains("quarantined"));
+    }
+
+    #[test]
+    fn public_demo_allows_memory_commands() {
+        let reason = blocked_command_reason(
+            &SlashCommand::Memory {
+                action: MemoryCommand::Help,
+            },
+            ChannelSecurityProfile::PublicDemo,
+        );
+        assert!(reason.is_none());
     }
 
     #[test]

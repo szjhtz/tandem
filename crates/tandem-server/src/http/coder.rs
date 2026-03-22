@@ -2374,7 +2374,10 @@ pub(crate) async fn find_failure_pattern_duplicates(
             fingerprint.map(str::trim).filter(|value| !value.is_empty())
         {
             for subject in subjects {
-                let Ok(records) = db.list_global_memory(subject, None, 200, 0).await else {
+                let Ok(records) = db
+                    .list_global_memory(subject, None, None, None, 200, 0)
+                    .await
+                else {
                     continue;
                 };
                 for record in records {

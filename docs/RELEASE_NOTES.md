@@ -23,7 +23,8 @@
 - Added per-channel `security_profile` support across Telegram, Discord, and Slack configuration, runtime API surfaces, desktop settings, and panel settings.
 - Added a hardened `public_demo` mode for public-facing channel integrations that blocks file/workspace access, shell access, MCP access, model/config/operator commands, and tool-scope widening.
 - Updated `/help` for `public_demo` channels so disabled commands still appear in a dedicated security section, making Tandem’s broader capabilities visible without exposing them in an untrusted channel.
-- Kept `public_demo` web-only for v0.4.10 while public memory access stays disabled pending a proper quarantine path.
+- Added quarantined public memory for `public_demo`, scoped to a channel-specific public namespace instead of trusted project/global memory.
+- Moved public `/memory` commands onto the same semantic-memory backend used by engine memory tools so public reads, writes, and deletes stay inside the same quarantine boundary.
 
 ### Control-Panel Package Runtime Completeness
 

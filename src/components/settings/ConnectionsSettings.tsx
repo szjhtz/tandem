@@ -48,6 +48,14 @@ const BUILTIN_TOOL_GROUPS = [
   { label: "Memory", tools: ["memory_search", "memory_store", "memory_list"] },
   { label: "Other", tools: ["skill", "task", "question", "pack_builder"] },
 ] as const;
+const PUBLIC_DEMO_ALLOWED_TOOLS = [
+  "websearch",
+  "webfetch",
+  "webfetch_html",
+  "memory_search",
+  "memory_store",
+  "memory_list",
+] as const;
 
 function defaultToolPreferences(): ChannelToolPreferencesView {
   return {
@@ -103,6 +111,19 @@ function nextMcpServerPreferences(
     ...prefs,
     enabled_mcp_servers: enabled ? unique([...servers, server]) : servers,
   };
+}
+
+function toolAllowedForSecurityProfile(securityProfile: string, tool: string): boolean {
+  if (securityProfile !== "public_demo") return true;
+  return PUBLIC_DEMO_ALLOWED_TOOLS.includes(tool as (typeof PUBLIC_DEMO_ALLOWED_TOOLS)[number]);
+}
+
+function toolEnabledForSecurityProfile(
+  prefs: ChannelToolPreferencesView,
+  tool: string,
+  securityProfile: string
+): boolean {
+  return toolAllowedForSecurityProfile(securityProfile, tool) && toolIsEnabled(prefs, tool);
 }
 
 function toCsv(users: string[]): string {
@@ -596,6 +617,8 @@ export function ConnectionsSettings() {
               {(() => {
                 const prefs = toolPreferences[channel] ?? defaultToolPreferences();
                 const explicitScope = prefs.enabled_tools.length > 0;
+                const securityProfile = drafts[channel]?.securityProfile ?? "operator";
+                const publicDemo = securityProfile === "public_demo";
 
                 return (
                   <div className="rounded-lg border border-border bg-surface-elevated/30 p-3">
@@ -609,6 +632,13 @@ export function ConnectionsSettings() {
                         {explicitScope ? (
                           <p className="mt-1 text-xs text-warning">
                             Explicit built-in allowlist is active for this channel.
+                          </p>
+                        ) : null}
+                        {publicDemo ? (
+                          <p className="mt-1 text-xs text-text-subtle">
+                            Public demo profile can only expose web and quarantined public-memory
+                            tools here. File, shell, MCP, and operator-facing tools stay disabled
+                            even if saved in channel preferences.
                           </p>
                         ) : null}
                       </div>
@@ -630,13 +660,25 @@ export function ConnectionsSettings() {
                           </p>
                           <div className="grid gap-2 md:grid-cols-2">
                             {group.tools.map((tool) => {
-                              const enabled = toolIsEnabled(prefs, tool);
+                              const allowed = toolAllowedForSecurityProfile(securityProfile, tool);
+                              const enabled = toolEnabledForSecurityProfile(
+                                prefs,
+                                tool,
+                                securityProfile
+                              );
                               return (
                                 <div
                                   key={tool}
                                   className="flex items-center justify-between rounded-lg border border-border bg-background/60 px-3 py-2"
                                 >
-                                  <span className="font-mono text-xs text-text">{tool}</span>
+                                  <div className="flex flex-col">
+                                    <span className="font-mono text-xs text-text">{tool}</span>
+                                    {!allowed ? (
+                                      <span className="text-[11px] text-text-subtle">
+                                        Disabled by security profile
+                                      </span>
+                                    ) : null}
+                                  </div>
                                   <Switch
                                     checked={enabled}
                                     onChange={(event) =>
@@ -645,7 +687,7 @@ export function ConnectionsSettings() {
                                         nextToolPreferences(prefs, tool, event.target.checked)
                                       )
                                     }
-                                    disabled={isBusy}
+                                    disabled={isBusy || !allowed}
                                   />
                                 </div>
                               );
@@ -661,13 +703,21 @@ export function ConnectionsSettings() {
                         {mcpServers.length ? (
                           <div className="grid gap-2 md:grid-cols-2">
                             {mcpServers.map((server) => {
-                              const enabled = prefs.enabled_mcp_servers.includes(server);
+                              const enabled =
+                                !publicDemo && prefs.enabled_mcp_servers.includes(server);
                               return (
                                 <div
                                   key={server}
                                   className="flex items-center justify-between rounded-lg border border-border bg-background/60 px-3 py-2"
                                 >
-                                  <span className="font-mono text-xs text-text">{server}</span>
+                                  <div className="flex flex-col">
+                                    <span className="font-mono text-xs text-text">{server}</span>
+                                    {publicDemo ? (
+                                      <span className="text-[11px] text-text-subtle">
+                                        Disabled by security profile
+                                      </span>
+                                    ) : null}
+                                  </div>
                                   <Switch
                                     checked={enabled}
                                     onChange={(event) =>
@@ -680,7 +730,7 @@ export function ConnectionsSettings() {
                                         )
                                       )
                                     }
-                                    disabled={isBusy}
+                                    disabled={isBusy || publicDemo}
                                   />
                                 </div>
                               );
@@ -688,7 +738,9 @@ export function ConnectionsSettings() {
                           </div>
                         ) : (
                           <p className="text-xs text-text-subtle">
-                            No MCP servers are registered yet.
+                            {publicDemo
+                              ? "MCP servers stay disabled in public demo mode."
+                              : "No MCP servers are registered yet."}
                           </p>
                         )}
                       </div>
@@ -751,9 +803,9 @@ export function ConnectionsSettings() {
                 </select>
                 {draft.securityProfile === "public_demo" ? (
                   <p className="text-xs text-warning">
-                    Public demo mode disables operator commands, memory access, workspace access,
-                    MCP, file tools, and shell access. `/help` will still show those capabilities as
-                    disabled for security.
+                    Public demo mode disables operator commands, workspace access, MCP, file tools,
+                    and shell access. Memory stays confined to this channel&apos;s quarantined
+                    public namespace, and `/help` shows what remains restricted.
                   </p>
                 ) : null}
               </div>

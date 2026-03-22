@@ -2488,6 +2488,25 @@ impl EngineLoop {
         }
 
         let mut args = self.plugins.inject_tool_args(&tool, effective_args).await;
+        let session = self.storage.get_session(session_id).await;
+        if let (Some(obj), Some(session)) = (args.as_object_mut(), session.as_ref()) {
+            obj.insert(
+                "__session_id".to_string(),
+                Value::String(session_id.to_string()),
+            );
+            if let Some(project_id) = session.project_id.clone() {
+                obj.insert(
+                    "__project_id".to_string(),
+                    Value::String(project_id.clone()),
+                );
+                if project_id.starts_with("channel-public::") {
+                    obj.insert(
+                        "__memory_max_visible_scope".to_string(),
+                        Value::String("project".to_string()),
+                    );
+                }
+            }
+        }
         let tool_context = self.resolve_tool_execution_context(session_id).await;
         if let Some((workspace_root, effective_cwd, project_id)) = tool_context.as_ref() {
             args = rewrite_workspace_alias_tool_args(&tool, args, workspace_root);

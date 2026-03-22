@@ -1170,6 +1170,7 @@ impl EngineClient {
             workspace_root: std::env::current_dir()
                 .ok()
                 .and_then(|p| normalize_workspace_path(&p)),
+            project_id: None,
             model: None,
             provider: None,
             permission: Some(default_tui_permission_rules()),

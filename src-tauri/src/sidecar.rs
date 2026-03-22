@@ -321,6 +321,8 @@ pub struct CreateSessionRequest {
     pub directory: Option<String>,
     #[serde(rename = "workspace_root", skip_serializing_if = "Option::is_none")]
     pub workspace_root: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
 }
 
 #[derive(Debug, Serialize)]

@@ -23,7 +23,8 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
   - added per-channel `security_profile` support across channel config, server/API responses, desktop settings, and panel settings
   - added a hardened `public_demo` profile for public-facing integrations that blocks file/workspace access, shell access, MCP access, model/config/operator commands, and tool-scope widening
   - `/help` in `public_demo` channels now includes a disabled-for-security section so users can see Tandem supports richer capabilities in trusted channels
-  - kept `public_demo` web-only for v0.4.10 while memory access stays disabled until public memory can be safely quarantined
+  - added quarantined public memory for `public_demo`, scoped to a channel-specific public namespace instead of trusted project/global memory
+  - moved public `/memory` commands onto the same semantic-memory backend used by engine memory tools so public reads, writes, and deletes stay inside the same quarantine boundary
 
 - Control-panel package install fix
   - the control-panel package now ships the runtime `lib/` and `server/` files its CLI depends on, avoiding incomplete installs

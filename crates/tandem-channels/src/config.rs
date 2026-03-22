@@ -318,4 +318,33 @@ mod tests {
         assert_eq!(config.slack.as_ref().map(|s| s.mention_only), Some(true));
         std::env::remove_var("TANDEM_SLACK_MENTION_ONLY");
     }
+
+    #[test]
+    fn security_profiles_parse_from_env() {
+        std::env::set_var("TANDEM_TELEGRAM_BOT_TOKEN", "test");
+        std::env::set_var("TANDEM_DISCORD_BOT_TOKEN", "test");
+        std::env::set_var("TANDEM_SLACK_BOT_TOKEN", "test");
+        std::env::set_var("TANDEM_SLACK_CHANNEL_ID", "C123");
+        std::env::set_var("TANDEM_TELEGRAM_SECURITY_PROFILE", "public_demo");
+        std::env::set_var("TANDEM_DISCORD_SECURITY_PROFILE", "trusted-team");
+        std::env::set_var("TANDEM_SLACK_SECURITY_PROFILE", "unknown");
+
+        let config = ChannelsConfig::from_env().expect("channels");
+        assert_eq!(
+            config.telegram.as_ref().map(|row| row.security_profile),
+            Some(ChannelSecurityProfile::PublicDemo)
+        );
+        assert_eq!(
+            config.discord.as_ref().map(|row| row.security_profile),
+            Some(ChannelSecurityProfile::TrustedTeam)
+        );
+        assert_eq!(
+            config.slack.as_ref().map(|row| row.security_profile),
+            Some(ChannelSecurityProfile::Operator)
+        );
+
+        std::env::remove_var("TANDEM_TELEGRAM_SECURITY_PROFILE");
+        std::env::remove_var("TANDEM_DISCORD_SECURITY_PROFILE");
+        std::env::remove_var("TANDEM_SLACK_SECURITY_PROFILE");
+    }
 }

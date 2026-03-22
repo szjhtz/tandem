@@ -1140,6 +1140,65 @@ impl MemoryDatabase {
         Ok(count as u64)
     }
 
+    /// Delete a single memory chunk by id within the requested scope.
+    pub async fn delete_chunk(
+        &self,
+        tier: MemoryTier,
+        chunk_id: &str,
+        project_id: Option<&str>,
+        session_id: Option<&str>,
+    ) -> MemoryResult<u64> {
+        let conn = self.conn.lock().await;
+
+        let deleted = match tier {
+            MemoryTier::Session => {
+                let Some(session_id) = session_id else {
+                    return Err(MemoryError::InvalidConfig(
+                        "session_id is required to delete session memory chunks".to_string(),
+                    ));
+                };
+                conn.execute(
+                    "DELETE FROM session_memory_vectors WHERE chunk_id IN
+                     (SELECT id FROM session_memory_chunks WHERE id = ?1 AND session_id = ?2)",
+                    params![chunk_id, session_id],
+                )?;
+                conn.execute(
+                    "DELETE FROM session_memory_chunks WHERE id = ?1 AND session_id = ?2",
+                    params![chunk_id, session_id],
+                )?
+            }
+            MemoryTier::Project => {
+                let Some(project_id) = project_id else {
+                    return Err(MemoryError::InvalidConfig(
+                        "project_id is required to delete project memory chunks".to_string(),
+                    ));
+                };
+                conn.execute(
+                    "DELETE FROM project_memory_vectors WHERE chunk_id IN
+                     (SELECT id FROM project_memory_chunks WHERE id = ?1 AND project_id = ?2)",
+                    params![chunk_id, project_id],
+                )?;
+                conn.execute(
+                    "DELETE FROM project_memory_chunks WHERE id = ?1 AND project_id = ?2",
+                    params![chunk_id, project_id],
+                )?
+            }
+            MemoryTier::Global => {
+                conn.execute(
+                    "DELETE FROM global_memory_vectors WHERE chunk_id IN
+                     (SELECT id FROM global_memory_chunks WHERE id = ?1)",
+                    params![chunk_id],
+                )?;
+                conn.execute(
+                    "DELETE FROM global_memory_chunks WHERE id = ?1",
+                    params![chunk_id],
+                )?
+            }
+        };
+
+        Ok(deleted as u64)
+    }
+
     /// Clear old session memory based on retention policy
     pub async fn cleanup_old_sessions(&self, retention_days: i64) -> MemoryResult<u64> {
         let conn = self.conn.lock().await;
@@ -2178,6 +2237,8 @@ impl MemoryDatabase {
         &self,
         user_id: &str,
         q: Option<&str>,
+        project_tag: Option<&str>,
+        channel_tag: Option<&str>,
         limit: i64,
         offset: i64,
     ) -> MemoryResult<Vec<GlobalMemoryRecord>> {
@@ -2193,11 +2254,21 @@ impl MemoryDatabase {
              FROM memory_records
              WHERE user_id = ?1
                AND (?2 = '' OR content LIKE ?3 OR source_type LIKE ?3 OR run_id LIKE ?3)
+               AND (?4 IS NULL OR project_tag = ?4)
+               AND (?5 IS NULL OR channel_tag = ?5)
              ORDER BY created_at_ms DESC
-             LIMIT ?4 OFFSET ?5",
+             LIMIT ?6 OFFSET ?7",
         )?;
         let rows = stmt.query_map(
-            params![user_id, query, like, limit.clamp(1, 1000), offset.max(0)],
+            params![
+                user_id,
+                query,
+                like,
+                project_tag,
+                channel_tag,
+                limit.clamp(1, 1000),
+                offset.max(0)
+            ],
             row_to_global_record,
         )?;
         let mut out = Vec::new();

@@ -24,7 +24,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - added per-channel `security_profile` support across Telegram, Discord, and Slack config, API, desktop settings, and panel settings
   - added a hardened `public_demo` mode that blocks workspace/file access, shell access, MCP access, model/config/operator commands, and tool-scope widening for public-facing channels
   - updated `/help` in `public_demo` channels so disabled commands are still shown in a dedicated security section, making Tandem’s broader capabilities visible without exposing them
-  - kept `public_demo` web-only for v0.4.10 while public memory access remains disabled pending a proper quarantine path
+  - added quarantined public memory for `public_demo`, scoped to a channel-specific public project namespace instead of trusted project/global memory
+  - unified public `/memory` commands with the same semantic-memory backend used by engine memory tools so public channel memory reads, writes, and deletes stay inside the same quarantine boundary
 
 ### Fixed
 

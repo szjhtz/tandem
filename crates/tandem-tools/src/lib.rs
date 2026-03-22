@@ -88,6 +88,7 @@ impl ToolRegistry {
         map.insert("memory_store".to_string(), Arc::new(MemoryStoreTool));
         map.insert("memory_list".to_string(), Arc::new(MemoryListTool));
         map.insert("memory_search".to_string(), Arc::new(MemorySearchTool));
+        map.insert("memory_delete".to_string(), Arc::new(MemoryDeleteTool));
         map.insert("apply_patch".to_string(), Arc::new(ApplyPatchTool));
         map.insert("batch".to_string(), Arc::new(BatchTool));
         map.insert("lsp".to_string(), Arc::new(LspTool));
@@ -4747,6 +4748,136 @@ impl Tool for MemoryListTool {
     }
 }
 
+struct MemoryDeleteTool;
+#[async_trait]
+impl Tool for MemoryDeleteTool {
+    fn schema(&self) -> ToolSchema {
+        ToolSchema {
+            name: "memory_delete".to_string(),
+            description: "Delete a stored memory chunk from session/project/global memory within the current allowed scope.".to_string(),
+            input_schema: json!({
+                "type":"object",
+                "properties":{
+                    "chunk_id":{"type":"string"},
+                    "id":{"type":"string"},
+                    "tier":{"type":"string","enum":["session","project","global"]},
+                    "session_id":{"type":"string"},
+                    "project_id":{"type":"string"},
+                    "allow_global":{"type":"boolean"}
+                },
+                "required":["chunk_id"]
+            }),
+        }
+    }
+
+    async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
+        let chunk_id = args
+            .get("chunk_id")
+            .or_else(|| args.get("id"))
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .unwrap_or("");
+        if chunk_id.is_empty() {
+            return Ok(ToolResult {
+                output: "memory_delete requires chunk_id".to_string(),
+                metadata: json!({"ok": false, "reason": "missing_chunk_id"}),
+            });
+        }
+
+        let session_id = memory_session_id(&args);
+        let project_id = memory_project_id(&args);
+        let allow_global = global_memory_enabled(&args);
+
+        let tier = match args
+            .get("tier")
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim().to_ascii_lowercase())
+        {
+            Some(t) if t == "session" => MemoryTier::Session,
+            Some(t) if t == "project" => MemoryTier::Project,
+            Some(t) if t == "global" => MemoryTier::Global,
+            Some(_) => {
+                return Ok(ToolResult {
+                    output: "memory_delete tier must be one of: session, project, global"
+                        .to_string(),
+                    metadata: json!({"ok": false, "reason": "invalid_tier"}),
+                });
+            }
+            None => {
+                if project_id.is_some() {
+                    MemoryTier::Project
+                } else if session_id.is_some() {
+                    MemoryTier::Session
+                } else if allow_global {
+                    MemoryTier::Global
+                } else {
+                    return Ok(ToolResult {
+                        output: "memory_delete requires a current session/project context or global memory enabled by policy".to_string(),
+                        metadata: json!({"ok": false, "reason": "missing_scope"}),
+                    });
+                }
+            }
+        };
+
+        if matches!(tier, MemoryTier::Session) && session_id.is_none() {
+            return Ok(ToolResult {
+                output: "tier=session requires session_id".to_string(),
+                metadata: json!({"ok": false, "reason": "missing_session_scope"}),
+            });
+        }
+        if matches!(tier, MemoryTier::Project) && project_id.is_none() {
+            return Ok(ToolResult {
+                output: "tier=project requires project_id".to_string(),
+                metadata: json!({"ok": false, "reason": "missing_project_scope"}),
+            });
+        }
+        if matches!(tier, MemoryTier::Global) && !allow_global {
+            return Ok(ToolResult {
+                output: "tier=global requires allow_global=true".to_string(),
+                metadata: json!({"ok": false, "reason": "global_scope_disabled"}),
+            });
+        }
+
+        let db_path = resolve_memory_db_path(&args);
+        let manager = MemoryManager::new(&db_path).await?;
+        let deleted = manager
+            .db()
+            .delete_chunk(tier, chunk_id, project_id.as_deref(), session_id.as_deref())
+            .await?;
+
+        if deleted == 0 {
+            return Ok(ToolResult {
+                output: format!("memory chunk `{chunk_id}` not found in {tier} memory"),
+                metadata: json!({
+                    "ok": false,
+                    "reason": "not_found",
+                    "chunk_id": chunk_id,
+                    "tier": tier.to_string(),
+                    "session_id": session_id,
+                    "project_id": project_id,
+                    "allow_global": allow_global,
+                    "db_path": db_path,
+                }),
+            });
+        }
+
+        Ok(ToolResult {
+            output: format!("deleted memory chunk `{chunk_id}` from {tier} memory"),
+            metadata: json!({
+                "ok": true,
+                "deleted": true,
+                "chunk_id": chunk_id,
+                "count": deleted,
+                "tier": tier.to_string(),
+                "session_id": session_id,
+                "project_id": project_id,
+                "allow_global": allow_global,
+                "db_path": db_path,
+            }),
+        })
+    }
+}
+
 fn resolve_memory_db_path(args: &Value) -> PathBuf {
     if let Some(path) = args
         .get("__memory_db_path")
@@ -5861,6 +5992,30 @@ mod tests {
         assert!(matches!(
             reason,
             "embeddings_unavailable" | "memory_db_missing"
+        ));
+    }
+
+    #[tokio::test]
+    async fn memory_delete_uses_hidden_project_scope_by_default() {
+        let tool = MemoryDeleteTool;
+        let result = tool
+            .execute(json!({
+                "chunk_id": "chunk-123",
+                "__session_id": "session-123",
+                "__project_id": "workspace-abc",
+                "__memory_db_path": "/tmp/tandem-memory-delete-test.sqlite"
+            }))
+            .await
+            .expect("memory_delete should return ToolResult");
+        assert_eq!(result.metadata["tier"], json!("project"));
+        assert_eq!(result.metadata["project_id"], json!("workspace-abc"));
+        assert!(matches!(
+            result
+                .metadata
+                .get("reason")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default(),
+            "not_found"
         ));
     }
 

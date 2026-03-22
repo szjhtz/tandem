@@ -130,6 +130,14 @@ pub(super) struct MemoryListQuery {
     limit: Option<usize>,
     offset: Option<usize>,
     user_id: Option<String>,
+    project_id: Option<String>,
+    channel_tag: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub(super) struct MemoryDeleteQuery {
+    project_id: Option<String>,
+    channel_tag: Option<String>,
 }
 
 pub(super) fn skills_service() -> SkillService {
@@ -3102,31 +3110,38 @@ pub(super) async fn memory_list(
     let offset = query.offset.unwrap_or(0);
     let user_id = query.user_id.unwrap_or_else(|| "default".to_string());
     let page = if let Some(db) = open_global_memory_db().await {
-        db.list_global_memory(&user_id, Some(&q), limit as i64, offset as i64)
-            .await
-            .unwrap_or_default()
-            .into_iter()
-            .map(|row| {
-                json!({
-                    "id": row.id,
-                    "user_id": row.user_id,
-                    "run_id": row.run_id,
-                    "tier": memory_tier_for_visibility(&row.visibility),
-                    "classification": memory_classification_label(row.metadata.as_ref()),
-                    "kind": memory_kind_label(&row.source_type),
-                    "source_type": row.source_type,
-                    "content": row.content,
-                    "artifact_refs": memory_artifact_refs(row.metadata.as_ref()),
-                    "linkage": memory_linkage(&row),
-                    "metadata": row.metadata,
-                    "provenance": row.provenance,
-                    "created_at_ms": row.created_at_ms,
-                    "updated_at_ms": row.updated_at_ms,
-                    "visibility": row.visibility,
-                    "demoted": row.demoted,
-                })
+        db.list_global_memory(
+            &user_id,
+            Some(&q),
+            query.project_id.as_deref(),
+            query.channel_tag.as_deref(),
+            limit as i64,
+            offset as i64,
+        )
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .map(|row| {
+            json!({
+                "id": row.id,
+                "user_id": row.user_id,
+                "run_id": row.run_id,
+                "tier": memory_tier_for_visibility(&row.visibility),
+                "classification": memory_classification_label(row.metadata.as_ref()),
+                "kind": memory_kind_label(&row.source_type),
+                "source_type": row.source_type,
+                "content": row.content,
+                "artifact_refs": memory_artifact_refs(row.metadata.as_ref()),
+                "linkage": memory_linkage(&row),
+                "metadata": row.metadata,
+                "provenance": row.provenance,
+                "created_at_ms": row.created_at_ms,
+                "updated_at_ms": row.updated_at_ms,
+                "visibility": row.visibility,
+                "demoted": row.demoted,
             })
-            .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>()
     } else {
         Vec::new()
     };
@@ -3142,6 +3157,7 @@ pub(super) async fn memory_list(
 pub(super) async fn memory_delete(
     State(state): State<AppState>,
     Path(id): Path<String>,
+    Query(query): Query<MemoryDeleteQuery>,
 ) -> Result<Json<Value>, StatusCode> {
     let db = open_global_memory_db()
         .await
@@ -3154,6 +3170,22 @@ pub(super) async fn memory_delete(
         emit_missing_memory_delete_audit(&state, &id, "memory not found").await?;
         return Err(StatusCode::NOT_FOUND);
     };
+    if query
+        .project_id
+        .as_deref()
+        .is_some_and(|project_id| record.project_tag.as_deref() != Some(project_id))
+    {
+        emit_missing_memory_delete_audit(&state, &id, "memory not found").await?;
+        return Err(StatusCode::NOT_FOUND);
+    }
+    if query
+        .channel_tag
+        .as_deref()
+        .is_some_and(|channel_tag| record.channel_tag.as_deref() != Some(channel_tag))
+    {
+        emit_missing_memory_delete_audit(&state, &id, "memory not found").await?;
+        return Err(StatusCode::NOT_FOUND);
+    }
     let deleted = db
         .delete_global_memory(&id)
         .await

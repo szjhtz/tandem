@@ -211,6 +211,14 @@ const CHANNEL_TOOL_GROUPS = [
   { label: "Memory", tools: ["memory_search", "memory_store", "memory_list"] },
   { label: "Other", tools: ["skill", "task", "question", "pack_builder"] },
 ] as const;
+const PUBLIC_DEMO_ALLOWED_TOOLS = [
+  "websearch",
+  "webfetch",
+  "webfetch_html",
+  "memory_search",
+  "memory_store",
+  "memory_list",
+] as const;
 
 type McpServerRow = {
   name: string;
@@ -492,6 +500,19 @@ function nextChannelMcpPreferences(
     ...prefs,
     enabled_mcp_servers: enabled ? uniqueChannelValues([...servers, server]) : servers,
   };
+}
+
+function toolAllowedForSecurityProfile(securityProfile: string, tool: string) {
+  if (securityProfile !== "public_demo") return true;
+  return PUBLIC_DEMO_ALLOWED_TOOLS.includes(tool as (typeof PUBLIC_DEMO_ALLOWED_TOOLS)[number]);
+}
+
+function toolEnabledForSecurityProfile(
+  prefs: ChannelToolPreferencesRow,
+  tool: string,
+  securityProfile: string
+) {
+  return toolAllowedForSecurityProfile(securityProfile, tool) && channelToolEnabled(prefs, tool);
 }
 
 function parseAllowedUsers(input: string) {
@@ -1792,6 +1813,7 @@ export function SettingsPage({
                             | undefined
                         )?.[channel] || defaultChannelToolPreferences()
                       );
+                      const publicDemo = draft.securityProfile === "public_demo";
                       const hasSavedConfig =
                         !!config?.has_token ||
                         !!(Array.isArray(config?.allowed_users) && config.allowed_users.length) ||
@@ -1953,10 +1975,10 @@ export function SettingsPage({
 
                           {draft.securityProfile === "public_demo" ? (
                             <div className="tcp-subtle text-xs">
-                              Public demo mode blocks operator commands, memory access,
-                              file/workspace access, MCP access, shell access, and tool-scope
-                              widening. `/help` still advertises those capabilities as disabled for
-                              security.
+                              Public demo mode blocks operator commands, file/workspace access, MCP
+                              access, shell access, and tool-scope widening. Memory stays confined
+                              to this channel&apos;s quarantined public namespace, and `/help` still
+                              advertises restricted capabilities for security.
                             </div>
                           ) : null}
 
@@ -1990,6 +2012,13 @@ export function SettingsPage({
                                     Explicit built-in allowlist is active for this channel.
                                   </div>
                                 ) : null}
+                                {publicDemo ? (
+                                  <div className="mt-1 text-xs text-slate-400">
+                                    Public demo profile can only expose web and quarantined
+                                    public-memory tools here. File, shell, MCP, and operator-facing
+                                    tools stay disabled even if saved in channel preferences.
+                                  </div>
+                                ) : null}
                               </div>
                               <button
                                 className="tcp-btn"
@@ -2013,17 +2042,35 @@ export function SettingsPage({
                                   </div>
                                   <div className="grid gap-2 md:grid-cols-2">
                                     {group.tools.map((tool) => {
-                                      const enabled = channelToolEnabled(toolPrefs, tool);
+                                      const allowed = toolAllowedForSecurityProfile(
+                                        draft.securityProfile,
+                                        tool
+                                      );
+                                      const enabled = toolEnabledForSecurityProfile(
+                                        toolPrefs,
+                                        tool,
+                                        draft.securityProfile
+                                      );
                                       return (
                                         <label
                                           key={`${channel}-${tool}`}
                                           className="flex items-center justify-between rounded-xl border border-slate-700/60 bg-slate-950/30 px-3 py-2 text-sm"
                                         >
-                                          <span className="font-mono text-xs">{tool}</span>
+                                          <div className="flex flex-col">
+                                            <span className="font-mono text-xs">{tool}</span>
+                                            {!allowed ? (
+                                              <span className="tcp-subtle text-[11px]">
+                                                Disabled by security profile
+                                              </span>
+                                            ) : null}
+                                          </div>
                                           <input
                                             type="checkbox"
                                             checked={enabled}
-                                            disabled={saveChannelToolPreferencesMutation.isPending}
+                                            disabled={
+                                              saveChannelToolPreferencesMutation.isPending ||
+                                              !allowed
+                                            }
                                             onChange={(e) =>
                                               saveChannelToolPreferencesMutation.mutate({
                                                 channel,
@@ -2049,19 +2096,29 @@ export function SettingsPage({
                                 {mcpServers.length ? (
                                   <div className="grid gap-2 md:grid-cols-2">
                                     {mcpServers.map((server) => {
-                                      const enabled = toolPrefs.enabled_mcp_servers.includes(
-                                        server.name
-                                      );
+                                      const enabled =
+                                        !publicDemo &&
+                                        toolPrefs.enabled_mcp_servers.includes(server.name);
                                       return (
                                         <label
                                           key={`${channel}-mcp-${server.name}`}
                                           className="flex items-center justify-between rounded-xl border border-slate-700/60 bg-slate-950/30 px-3 py-2 text-sm"
                                         >
-                                          <span className="font-mono text-xs">{server.name}</span>
+                                          <div className="flex flex-col">
+                                            <span className="font-mono text-xs">{server.name}</span>
+                                            {publicDemo ? (
+                                              <span className="tcp-subtle text-[11px]">
+                                                Disabled by security profile
+                                              </span>
+                                            ) : null}
+                                          </div>
                                           <input
                                             type="checkbox"
                                             checked={enabled}
-                                            disabled={saveChannelToolPreferencesMutation.isPending}
+                                            disabled={
+                                              saveChannelToolPreferencesMutation.isPending ||
+                                              publicDemo
+                                            }
                                             onChange={(e) =>
                                               saveChannelToolPreferencesMutation.mutate({
                                                 channel,
@@ -2079,7 +2136,9 @@ export function SettingsPage({
                                   </div>
                                 ) : (
                                   <div className="tcp-subtle text-xs">
-                                    No MCP servers configured yet.
+                                    {publicDemo
+                                      ? "MCP servers stay disabled in public demo mode."
+                                      : "No MCP servers configured yet."}
                                   </div>
                                 )}
                               </div>

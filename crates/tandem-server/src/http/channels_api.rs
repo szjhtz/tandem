@@ -468,7 +468,7 @@ pub(super) async fn admin_reload_config(
     Ok(Json(json!({"ok": true})))
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, Default)]
 pub struct ChannelToolPreferences {
     #[serde(default)]
     pub enabled_tools: Vec<String>,
@@ -476,6 +476,83 @@ pub struct ChannelToolPreferences {
     pub disabled_tools: Vec<String>,
     #[serde(default)]
     pub enabled_mcp_servers: Vec<String>,
+}
+
+const PUBLIC_DEMO_ALLOWED_TOOLS: &[&str] = &[
+    "websearch",
+    "webfetch",
+    "webfetch_html",
+    "memory_search",
+    "memory_store",
+    "memory_list",
+];
+
+fn unique_strings(values: Vec<String>) -> Vec<String> {
+    let mut seen = std::collections::BTreeSet::new();
+    values
+        .into_iter()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .filter(|value| seen.insert(value.clone()))
+        .collect()
+}
+
+fn parse_channel_security_profile(
+    raw: Option<&str>,
+) -> tandem_channels::config::ChannelSecurityProfile {
+    match raw.map(|value| value.trim().to_ascii_lowercase()) {
+        Some(value) if value == "trusted_team" || value == "trusted-team" => {
+            tandem_channels::config::ChannelSecurityProfile::TrustedTeam
+        }
+        Some(value) if value == "public_demo" || value == "public-demo" => {
+            tandem_channels::config::ChannelSecurityProfile::PublicDemo
+        }
+        _ => tandem_channels::config::ChannelSecurityProfile::Operator,
+    }
+}
+
+fn channel_security_profile_from_config(
+    effective: &Value,
+    channel: &str,
+) -> tandem_channels::config::ChannelSecurityProfile {
+    let raw = effective
+        .get("channels")
+        .and_then(Value::as_object)
+        .and_then(|channels| channels.get(channel))
+        .and_then(Value::as_object)
+        .and_then(|cfg| cfg.get("security_profile"))
+        .and_then(Value::as_str);
+    parse_channel_security_profile(raw)
+}
+
+fn sanitize_tool_preferences_for_security_profile(
+    prefs: ChannelToolPreferences,
+    security_profile: tandem_channels::config::ChannelSecurityProfile,
+) -> ChannelToolPreferences {
+    let enabled_tools = unique_strings(prefs.enabled_tools);
+    let disabled_tools = unique_strings(prefs.disabled_tools);
+    let enabled_mcp_servers = unique_strings(prefs.enabled_mcp_servers);
+
+    if security_profile != tandem_channels::config::ChannelSecurityProfile::PublicDemo {
+        return ChannelToolPreferences {
+            enabled_tools,
+            disabled_tools,
+            enabled_mcp_servers,
+        };
+    }
+
+    ChannelToolPreferences {
+        enabled_tools: enabled_tools
+            .into_iter()
+            .filter(|tool| {
+                PUBLIC_DEMO_ALLOWED_TOOLS
+                    .iter()
+                    .any(|allowed| allowed == tool)
+            })
+            .collect(),
+        disabled_tools,
+        enabled_mcp_servers: Vec::new(),
+    }
 }
 
 fn tool_preferences_path() -> PathBuf {
@@ -513,11 +590,20 @@ async fn save_tool_preferences_map(map: &ToolPreferencesMap) {
 }
 
 pub(super) async fn channel_tool_preferences_get(
+    State(state): State<AppState>,
     Path(channel): Path<String>,
 ) -> Result<Json<ChannelToolPreferences>, StatusCode> {
-    let map = load_tool_preferences_map().await;
-    let prefs = map.get(&channel).cloned().unwrap_or_default();
-    Ok(Json(prefs))
+    let key = channel.to_string();
+    let mut map = load_tool_preferences_map().await;
+    let prefs = map.get(&key).cloned().unwrap_or_default();
+    let effective = state.config.get_effective_value().await;
+    let security_profile = channel_security_profile_from_config(&effective, &key);
+    let sanitized = sanitize_tool_preferences_for_security_profile(prefs.clone(), security_profile);
+    if sanitized != prefs {
+        map.insert(key, sanitized.clone());
+        save_tool_preferences_map(&map).await;
+    }
+    Ok(Json(sanitized))
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -529,11 +615,14 @@ pub struct ChannelToolPreferencesInput {
 }
 
 pub(super) async fn channel_tool_preferences_put(
+    State(state): State<AppState>,
     Path(channel): Path<String>,
     Json(input): Json<ChannelToolPreferencesInput>,
 ) -> Result<Json<ChannelToolPreferences>, StatusCode> {
     let mut map = load_tool_preferences_map().await;
     let key = channel.to_string();
+    let effective = state.config.get_effective_value().await;
+    let security_profile = channel_security_profile_from_config(&effective, &key);
 
     let new_prefs = if input.reset.unwrap_or(false) {
         ChannelToolPreferences::default()
@@ -547,8 +636,58 @@ pub(super) async fn channel_tool_preferences_put(
                 .unwrap_or(existing.enabled_mcp_servers),
         }
     };
+    let new_prefs = sanitize_tool_preferences_for_security_profile(new_prefs, security_profile);
 
     map.insert(key, new_prefs.clone());
     save_tool_preferences_map(&map).await;
     Ok(Json(new_prefs))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn public_demo_sanitizes_enabled_tools_and_mcp_servers() {
+        let prefs = ChannelToolPreferences {
+            enabled_tools: vec![
+                "websearch".to_string(),
+                "bash".to_string(),
+                "webfetch_html".to_string(),
+                "bash".to_string(),
+            ],
+            disabled_tools: vec!["read".to_string(), "read".to_string()],
+            enabled_mcp_servers: vec!["github".to_string(), "slack".to_string()],
+        };
+
+        let sanitized = sanitize_tool_preferences_for_security_profile(
+            prefs,
+            tandem_channels::config::ChannelSecurityProfile::PublicDemo,
+        );
+
+        assert_eq!(
+            sanitized.enabled_tools,
+            vec!["websearch".to_string(), "webfetch_html".to_string()]
+        );
+        assert_eq!(sanitized.disabled_tools, vec!["read".to_string()]);
+        assert!(sanitized.enabled_mcp_servers.is_empty());
+    }
+
+    #[test]
+    fn operator_keeps_existing_tool_preferences() {
+        let prefs = ChannelToolPreferences {
+            enabled_tools: vec!["bash".to_string(), "bash".to_string()],
+            disabled_tools: vec!["read".to_string(), "".to_string()],
+            enabled_mcp_servers: vec!["github".to_string(), "github".to_string()],
+        };
+
+        let sanitized = sanitize_tool_preferences_for_security_profile(
+            prefs,
+            tandem_channels::config::ChannelSecurityProfile::Operator,
+        );
+
+        assert_eq!(sanitized.enabled_tools, vec!["bash".to_string()]);
+        assert_eq!(sanitized.disabled_tools, vec!["read".to_string()]);
+        assert_eq!(sanitized.enabled_mcp_servers, vec!["github".to_string()]);
+    }
 }

@@ -73,6 +73,7 @@ pub struct CreateSessionRequest {
     pub title: Option<String>,
     pub directory: Option<String>,
     pub workspace_root: Option<String>,
+    pub project_id: Option<String>,
     pub model: Option<ModelSpec>,
     pub provider: Option<String>,
     pub permission: Option<Vec<serde_json::Value>>,

@@ -17,6 +17,7 @@ pub(super) async fn create_session(
 ) -> Result<Json<WireSession>, StatusCode> {
     let requested_permission_rules = req.permission.clone();
     let mut session = Session::new(req.title, req.directory);
+    session.project_id = req.project_id.clone();
     let workspace_from_runtime = {
         let snapshot = state.workspace_index.snapshot().await;
         tandem_core::normalize_workspace_path(&snapshot.root)

@@ -4111,6 +4111,7 @@ pub async fn create_session(
         workspace_root: state
             .get_workspace_path()
             .map(|p| p.to_string_lossy().to_string()),
+        project_id: None,
     };
 
     let session = state.sidecar.create_session(request).await?;
@@ -5881,6 +5882,7 @@ pub async fn rewind_to_message(
             workspace_root: state
                 .get_workspace_path()
                 .map(|p| p.to_string_lossy().to_string()),
+            project_id: None,
         })
         .await?;
     set_session_mode(
@@ -9850,6 +9852,7 @@ pub async fn start_plan_session(
             permission: sidecar_permissions_for_mode(&mode_resolution.mode),
             directory: Some(workspace_path.to_string_lossy().to_string()),
             workspace_root: Some(workspace_path.to_string_lossy().to_string()),
+            project_id: None,
         })
         .await?;
     set_session_mode(&state, &session.id, mode_resolution.mode);
@@ -10859,6 +10862,7 @@ pub async fn orchestrator_create_run(
         permission: Some(orchestrator_permission_rules()),
         directory: Some(workspace_dir.clone()),
         workspace_root: Some(workspace_dir.clone()),
+        project_id: None,
     };
 
     let session = state
@@ -11323,6 +11327,7 @@ pub async fn orchestrator_set_resume_model(
         workspace_root: state
             .get_workspace_path()
             .map(|p| p.to_string_lossy().to_string()),
+        project_id: None,
     };
 
     let session = state.sidecar.create_session(request).await?;
