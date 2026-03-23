@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.13] - 2026-03-23
+
+### Added
+
+- **Safer secret handling for remote MCP servers and channel integrations**:
+  - remote MCP server configs now support persisted non-secret headers plus secret-backed headers, including store-backed and env-backed secret references
+  - Tandem now keeps channel bot tokens off persisted config JSON and rehydrates them from the secure auth store at runtime
+  - existing plaintext MCP auth headers and channel bot tokens are migrated off disk automatically the next time config/state is loaded
+
+### Fixed
+
+- **Control-panel MCP configuration ergonomics**:
+  - fixed the MCP built-in pack catalog layout so server rows no longer get vertically squashed inside the modal
+  - added arbitrary extra MCP header rows in the control panel and panel template so remote MCP servers can send more than one header
+  - added GitHub MCP toolset controls in the built-in GitHub pack, defaulting `X-MCP-Toolsets` to `default` while allowing operators to add values like `projects`
+- **Provider defaults support for custom OpenAI-compatible providers**:
+  - added control-panel and panel-template controls for configuring custom provider IDs, base URLs, default models, and optional API keys directly from Settings
+- **Secret persistence bugs for MCP and channel auth**:
+  - remote MCP bearer tokens and similar auth headers are no longer written back to persisted JSON state in plaintext
+  - channel bot tokens for Telegram, Discord, and Slack are no longer persisted in plaintext config files
+  - internal secret IDs used for MCP and channel auth are filtered out of normal provider-auth listings so they do not leak into general provider settings UIs
+
 ## [0.4.12] - 2026-03-22
 
 ### Fixed

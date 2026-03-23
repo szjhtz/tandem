@@ -1,5 +1,25 @@
 # Tandem Upcoming Release Notes
 
+## Tandem v0.4.13 Release Notes (Released 2026-03-23)
+
+### Secret-Safe Remote MCP And Channel Auth
+
+- Remote MCP server configs now support non-secret persisted headers plus secret-backed header references, including secure-store and env-backed variants.
+- Tandem now keeps Telegram, Discord, and Slack bot tokens out of persisted config JSON and rehydrates them from the secure auth store at runtime.
+- Existing plaintext MCP auth headers and channel bot tokens are migrated off disk automatically when the corresponding state/config is loaded.
+- Internal secret IDs used for MCP and channel auth are filtered out of the normal provider-auth listing so they do not show up as ordinary provider credentials.
+
+### Control-Panel MCP Configuration Improvements
+
+- Fixed the Add MCP Server modal layout so built-in MCP server rows have enough height and the catalog area scrolls cleanly instead of getting squashed.
+- Added arbitrary extra header rows for manual MCP server configuration in both the control panel and the panel template.
+- The built-in GitHub MCP pack now exposes a toolsets field and defaults `X-MCP-Toolsets` to `default`, so operators can extend it to values like `default,projects` directly from Settings.
+
+### Custom Providers In Provider Defaults
+
+- Added control-panel and panel-template Settings support for custom OpenAI-compatible providers.
+- Operators can now define a custom provider ID, base URL, default model, optional API key, and optionally make that provider the default without leaving the Settings UI.
+
 ## Tandem v0.4.12 Release Notes (Released 2026-03-22)
 
 ### Custom Provider CLI Support

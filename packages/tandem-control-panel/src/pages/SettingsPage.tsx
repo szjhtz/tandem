@@ -223,6 +223,21 @@ type ChannelToolPreferencesRow = {
   enabled_mcp_servers: string[];
 };
 
+const BUILTIN_PROVIDER_IDS = new Set([
+  "openai",
+  "openrouter",
+  "anthropic",
+  "ollama",
+  "groq",
+  "mistral",
+  "together",
+  "azure",
+  "bedrock",
+  "vertex",
+  "copilot",
+  "cohere",
+]);
+
 const CHANNEL_TOOL_GROUPS = [
   { label: "File", tools: ["read", "glob", "ls", "list", "grep", "codesearch", "search"] },
   { label: "Web", tools: ["websearch", "webfetch", "webfetch_html"] },
@@ -305,6 +320,32 @@ function isComposioTransport(transport: string) {
   return String(url.hostname || "")
     .toLowerCase()
     .endsWith("composio.dev");
+}
+
+function isGithubCopilotMcpTransport(transport: string) {
+  const url = parseUrl(transport);
+  if (!url) return false;
+  const host = String(url.hostname || "").toLowerCase();
+  return host === "api.githubcopilot.com" || host.endsWith(".githubcopilot.com");
+}
+
+function normalizeMcpHeaderRows(rows: Array<{ key: string; value: string }>) {
+  return rows.map((row) => ({
+    key: String(row?.key || "").trim(),
+    value: String(row?.value || "").trim(),
+  }));
+}
+
+function mergeMcpHeaders(
+  base: Record<string, string>,
+  extraRows: Array<{ key: string; value: string }>
+) {
+  const merged: Record<string, string> = { ...base };
+  for (const row of normalizeMcpHeaderRows(extraRows)) {
+    if (!row.key || !row.value) continue;
+    merged[row.key] = row.value;
+  }
+  return merged;
 }
 
 function buildMcpHeaders({
@@ -590,6 +631,11 @@ export function SettingsPage({
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
   const [githubMcpGuideOpen, setGithubMcpGuideOpen] = useState(false);
   const [providerDefaultsOpen, setProviderDefaultsOpen] = useState(false);
+  const [customProviderId, setCustomProviderId] = useState("custom");
+  const [customProviderUrl, setCustomProviderUrl] = useState("");
+  const [customProviderModel, setCustomProviderModel] = useState("");
+  const [customProviderApiKey, setCustomProviderApiKey] = useState("");
+  const [customProviderMakeDefault, setCustomProviderMakeDefault] = useState(true);
   const [channelDrafts, setChannelDrafts] = useState<Record<string, ChannelDraft>>({});
   const [channelVerifyResult, setChannelVerifyResult] = useState<Record<string, any>>({});
   const [mcpModalOpen, setMcpModalOpen] = useState(false);
@@ -598,6 +644,8 @@ export function SettingsPage({
   const [mcpAuthMode, setMcpAuthMode] = useState("none");
   const [mcpToken, setMcpToken] = useState("");
   const [mcpCustomHeader, setMcpCustomHeader] = useState("");
+  const [mcpGithubToolsets, setMcpGithubToolsets] = useState("");
+  const [mcpExtraHeaders, setMcpExtraHeaders] = useState<Array<{ key: string; value: string }>>([]);
   const [mcpConnectAfterAdd, setMcpConnectAfterAdd] = useState(true);
   const [mcpEditingName, setMcpEditingName] = useState("");
   const [mcpModalTab, setMcpModalTab] = useState<"manual" | "catalog">("manual");
@@ -666,6 +714,32 @@ export function SettingsPage({
     queryKey: ["settings", "providers", "config"],
     queryFn: () => client.providers.config().catch(() => ({ default: "", providers: {} })),
   });
+  const configuredProviders = useMemo(
+    () =>
+      ((providersConfig.data?.providers as Record<string, any> | undefined) || {}) as Record<
+        string,
+        any
+      >,
+    [providersConfig.data?.providers]
+  );
+  const customConfiguredProviders = useMemo(
+    () =>
+      Object.entries(configuredProviders)
+        .filter(([providerId]) => {
+          const normalized = providerId.trim().toLowerCase();
+          return normalized && !BUILTIN_PROVIDER_IDS.has(normalized);
+        })
+        .map(([providerId, value]) => ({
+          id: providerId,
+          url: String(value?.url || "").trim(),
+          model: String(value?.default_model || value?.defaultModel || "").trim(),
+          isDefault:
+            String(providersConfig.data?.default || "")
+              .trim()
+              .toLowerCase() === providerId.trim().toLowerCase(),
+        })),
+    [configuredProviders, providersConfig.data?.default]
+  );
   const searchSettingsQuery = useQuery<SearchSettingsResponse | null>({
     queryKey: ["settings", "search", "config"],
     queryFn: () => api("/api/system/search-settings", { method: "GET" }).catch(() => null),
@@ -810,6 +884,53 @@ export function SettingsPage({
       client.providers.setDefaults(providerId, modelId),
     onSuccess: async () => {
       toast("ok", "Updated provider defaults.");
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["settings", "providers"] }),
+        refreshProviderStatus(),
+      ]);
+    },
+    onError: (error) => toast("err", error instanceof Error ? error.message : String(error)),
+  });
+  const saveCustomProviderMutation = useMutation({
+    mutationFn: async ({
+      providerId,
+      url,
+      modelId,
+      apiKey,
+      makeDefault,
+    }: {
+      providerId: string;
+      url: string;
+      modelId: string;
+      apiKey: string;
+      makeDefault: boolean;
+    }) => {
+      const normalizedProviderId = providerId.trim().toLowerCase();
+      const normalizedUrl = url.trim();
+      const normalizedModelId = modelId.trim();
+      if (!normalizedProviderId) throw new Error("Custom provider ID is required.");
+      if (!normalizedUrl) throw new Error("Custom provider URL is required.");
+
+      await api("/api/engine/config", {
+        method: "PATCH",
+        body: JSON.stringify({
+          ...(makeDefault ? { default_provider: normalizedProviderId } : {}),
+          providers: {
+            [normalizedProviderId]: {
+              url: normalizedUrl,
+              ...(normalizedModelId ? { default_model: normalizedModelId } : {}),
+            },
+          },
+        }),
+      });
+
+      if (apiKey.trim()) {
+        await client.providers.setApiKey(normalizedProviderId, apiKey.trim());
+      }
+    },
+    onSuccess: async () => {
+      toast("ok", "Custom provider saved.");
+      setCustomProviderApiKey("");
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["settings", "providers"] }),
         refreshProviderStatus(),
@@ -1201,12 +1322,17 @@ export function SettingsPage({
         customHeader: mcpCustomHeader,
         transport: transportValue,
       });
+      const mergedHeaders = mergeMcpHeaders(headers, mcpExtraHeaders);
+      const githubToolsets = String(mcpGithubToolsets || "").trim();
+      if (isGithubCopilotMcpTransport(transportValue) && githubToolsets) {
+        mergedHeaders["X-MCP-Toolsets"] = githubToolsets;
+      }
       const payload: any = {
         name: normalizedName,
         transport: transportValue,
         enabled: true,
       };
-      if (Object.keys(headers).length) payload.headers = headers;
+      if (Object.keys(mergedHeaders).length) payload.headers = mergedHeaders;
 
       const editing = String(mcpEditingName || "").trim();
       if (editing && editing !== normalizedName) {
@@ -1230,6 +1356,8 @@ export function SettingsPage({
       setMcpAuthMode("none");
       setMcpToken("");
       setMcpCustomHeader("");
+      setMcpGithubToolsets("");
+      setMcpExtraHeaders([]);
       setMcpConnectAfterAdd(true);
       setMcpEditingName("");
       toast("ok", `Saved MCP "${serverName}".`);
@@ -1257,6 +1385,23 @@ export function SettingsPage({
   };
 
   const providers = Array.isArray(providersCatalog.data?.all) ? providersCatalog.data.all : [];
+
+  useEffect(() => {
+    const preferred =
+      customConfiguredProviders.find((provider) => provider.isDefault) ||
+      customConfiguredProviders[0];
+    if (!preferred) return;
+    setCustomProviderId((current) =>
+      current.trim() && current.trim().toLowerCase() !== "custom" ? current : preferred.id
+    );
+    setCustomProviderUrl((current) => (current.trim() ? current : preferred.url));
+    setCustomProviderModel((current) => (current.trim() ? current : preferred.model));
+    setCustomProviderMakeDefault(
+      String(providersConfig.data?.default || "")
+        .trim()
+        .toLowerCase() === preferred.id.trim().toLowerCase()
+    );
+  }, [customConfiguredProviders, providersConfig.data?.default]);
   const mcpServers = useMemo(
     () => normalizeMcpServers(mcpServersQuery.data),
     [mcpServersQuery.data]
@@ -1424,31 +1569,57 @@ export function SettingsPage({
       const keys = Object.keys(headers);
       const authKey = keys.find((key) => String(key).toLowerCase() === "authorization");
       const apiKey = keys.find((key) => String(key).toLowerCase() === "x-api-key");
+      const toolsetsKey = keys.find((key) => String(key).toLowerCase() === "x-mcp-toolsets");
+      const customKeys = keys.filter(
+        (key) =>
+          ![authKey, apiKey, toolsetsKey]
+            .filter(Boolean)
+            .map((value) => String(value).toLowerCase())
+            .includes(String(key).toLowerCase())
+      );
+      let nextAuthMode = "none";
+      let nextCustomHeader = "";
+      let nextToken = "";
+      if (apiKey) {
+        nextAuthMode = "x-api-key";
+        nextToken = String(headers[apiKey] || "").trim();
+      } else if (authKey) {
+        nextAuthMode = "bearer";
+        nextToken = String(headers[authKey] || "")
+          .replace(/^bearer\s+/i, "")
+          .trim();
+      } else if (customKeys.length === 1) {
+        nextAuthMode = "custom";
+        nextCustomHeader = customKeys[0];
+        nextToken = String(headers[customKeys[0]] || "").trim();
+      }
       setMcpEditingName(server.name);
       setMcpName(server.name);
       setMcpTransport(server.transport || "");
       setMcpConnectAfterAdd(server.connected || false);
-      if (apiKey) {
-        setMcpAuthMode("x-api-key");
-        setMcpCustomHeader("");
-        setMcpToken(String(headers[apiKey] || "").trim());
-      } else if (authKey) {
-        setMcpAuthMode("bearer");
-        setMcpCustomHeader("");
-        setMcpToken(
-          String(headers[authKey] || "")
-            .replace(/^bearer\s+/i, "")
-            .trim()
-        );
-      } else if (keys.length === 1) {
-        setMcpAuthMode("custom");
-        setMcpCustomHeader(keys[0]);
-        setMcpToken(String(headers[keys[0]] || "").trim());
-      } else {
-        setMcpAuthMode("none");
-        setMcpCustomHeader("");
-        setMcpToken("");
-      }
+      setMcpGithubToolsets(
+        toolsetsKey
+          ? String(headers[toolsetsKey] || "").trim()
+          : isGithubCopilotMcpTransport(server.transport || "")
+            ? "default"
+            : ""
+      );
+      setMcpAuthMode(nextAuthMode);
+      setMcpCustomHeader(nextCustomHeader);
+      setMcpToken(nextToken);
+      const reservedHeaderKeys = new Set(
+        [authKey, apiKey, toolsetsKey, nextAuthMode === "custom" ? nextCustomHeader : ""]
+          .filter(Boolean)
+          .map((value) => String(value).toLowerCase())
+      );
+      setMcpExtraHeaders(
+        keys
+          .filter((key) => !reservedHeaderKeys.has(String(key).toLowerCase()))
+          .map((key) => ({
+            key,
+            value: String(headers[key] || "").trim(),
+          }))
+      );
     } else {
       setMcpModalTab("catalog");
       setMcpEditingName("");
@@ -1457,6 +1628,8 @@ export function SettingsPage({
       setMcpAuthMode("none");
       setMcpCustomHeader("");
       setMcpToken("");
+      setMcpGithubToolsets("");
+      setMcpExtraHeaders([]);
       setMcpConnectAfterAdd(true);
     }
     setMcpModalOpen(true);
@@ -1481,6 +1654,10 @@ export function SettingsPage({
   const mcpAuthPreviewText = useMemo(
     () => mcpAuthPreview(mcpAuthMode, mcpToken, mcpCustomHeader, mcpTransport),
     [mcpAuthMode, mcpCustomHeader, mcpToken, mcpTransport]
+  );
+  const mcpIsGithubTransport = useMemo(
+    () => isGithubCopilotMcpTransport(mcpTransport),
+    [mcpTransport]
   );
 
   useEffect(() => {
@@ -1561,6 +1738,140 @@ export function SettingsPage({
                   }
                 >
                   <div className="grid gap-3">
+                    <div className="tcp-list-item grid gap-3">
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div>
+                          <div className="font-medium">Custom OpenAI-compatible provider</div>
+                          <div className="tcp-subtle mt-1 text-xs">
+                            Add providers like MiniMax by ID, base URL, default model, and API key.
+                          </div>
+                        </div>
+                        <Badge tone={customConfiguredProviders.length ? "ok" : "info"}>
+                          {customConfiguredProviders.length} configured
+                        </Badge>
+                      </div>
+                      <form
+                        className="grid gap-3"
+                        onSubmit={(event) => {
+                          event.preventDefault();
+                          saveCustomProviderMutation.mutate({
+                            providerId: customProviderId,
+                            url: customProviderUrl,
+                            modelId: customProviderModel,
+                            apiKey: customProviderApiKey,
+                            makeDefault: customProviderMakeDefault,
+                          });
+                        }}
+                      >
+                        <div className="grid gap-3 md:grid-cols-2">
+                          <div className="grid gap-2">
+                            <label className="text-sm font-medium">Provider ID</label>
+                            <input
+                              className="tcp-input"
+                              value={customProviderId}
+                              onInput={(event) =>
+                                setCustomProviderId((event.target as HTMLInputElement).value)
+                              }
+                              placeholder="custom"
+                            />
+                          </div>
+                          <div className="grid gap-2">
+                            <label className="text-sm font-medium">Default model</label>
+                            <input
+                              className="tcp-input"
+                              value={customProviderModel}
+                              onInput={(event) =>
+                                setCustomProviderModel((event.target as HTMLInputElement).value)
+                              }
+                              placeholder="MiniMax-M2"
+                            />
+                          </div>
+                        </div>
+                        <div className="grid gap-2">
+                          <label className="text-sm font-medium">Base URL</label>
+                          <input
+                            className="tcp-input"
+                            value={customProviderUrl}
+                            onInput={(event) =>
+                              setCustomProviderUrl((event.target as HTMLInputElement).value)
+                            }
+                            placeholder="https://api.minimax.io/v1"
+                          />
+                        </div>
+                        <div className="grid gap-2">
+                          <label className="text-sm font-medium">API key</label>
+                          <input
+                            className="tcp-input"
+                            type="password"
+                            value={customProviderApiKey}
+                            onInput={(event) =>
+                              setCustomProviderApiKey((event.target as HTMLInputElement).value)
+                            }
+                            placeholder="Optional. Leave blank to keep the existing key."
+                          />
+                        </div>
+                        <label className="inline-flex items-center gap-2 text-sm text-slate-200">
+                          <input
+                            type="checkbox"
+                            className="accent-slate-400"
+                            checked={customProviderMakeDefault}
+                            onChange={(event) =>
+                              setCustomProviderMakeDefault(
+                                (event.target as HTMLInputElement).checked
+                              )
+                            }
+                          />
+                          Make this the default provider
+                        </label>
+                        <div className="flex flex-wrap justify-end gap-2">
+                          <button
+                            className="tcp-btn-primary"
+                            type="submit"
+                            disabled={saveCustomProviderMutation.isPending}
+                          >
+                            <i data-lucide="plus"></i>
+                            Save custom provider
+                          </button>
+                        </div>
+                      </form>
+                      {customConfiguredProviders.length ? (
+                        <div className="grid gap-2">
+                          {customConfiguredProviders.map((provider) => (
+                            <div
+                              key={provider.id}
+                              className="flex flex-wrap items-start justify-between gap-2 rounded-xl border border-slate-700/60 bg-slate-900/20 px-3 py-2"
+                            >
+                              <div className="min-w-0">
+                                <div className="font-medium">{provider.id}</div>
+                                <div className="tcp-subtle break-all text-xs">
+                                  {provider.url || "No URL configured"}
+                                </div>
+                                <div className="tcp-subtle text-xs">
+                                  Model: {provider.model || "not set"}
+                                </div>
+                              </div>
+                              <div className="flex flex-wrap gap-2">
+                                {provider.isDefault ? <Badge tone="ok">default</Badge> : null}
+                                <button
+                                  type="button"
+                                  className="tcp-btn h-8 px-3 text-xs"
+                                  onClick={() => {
+                                    setCustomProviderId(provider.id);
+                                    setCustomProviderUrl(provider.url);
+                                    setCustomProviderModel(provider.model);
+                                    setCustomProviderMakeDefault(provider.isDefault);
+                                    setProviderDefaultsOpen(true);
+                                  }}
+                                >
+                                  <i data-lucide="square-pen"></i>
+                                  Edit
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
                     <button
                       type="button"
                       className="tcp-list-item text-left"
@@ -4084,7 +4395,7 @@ export function SettingsPage({
                 </div>
 
                 <form
-                  className="grid gap-3"
+                  className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden"
                   onSubmit={(event) => {
                     event.preventDefault();
                     mcpSaveMutation.mutate();
@@ -4114,7 +4425,7 @@ export function SettingsPage({
                   </div>
 
                   {mcpModalTab === "catalog" ? (
-                    <div className="grid gap-3">
+                    <div className="grid min-h-0 flex-1 content-start gap-3 overflow-hidden">
                       <div className="flex items-center justify-between gap-3">
                         <div className="tcp-subtle text-sm">
                           {mcpCatalog.generatedAt
@@ -4138,14 +4449,17 @@ export function SettingsPage({
                         }
                         placeholder="Search built-in MCP packs"
                       />
-                      <div className="grid max-h-[26rem] gap-2 overflow-auto pr-1 md:grid-cols-2">
+                      <div className="grid min-h-0 flex-1 auto-rows-max content-start gap-2 overflow-y-auto pr-1 md:grid-cols-2">
                         {filteredMcpCatalog.length ? (
                           filteredMcpCatalog.map((row) => {
                             const alreadyConfigured = configuredMcpServerNames.has(
                               String(row.serverConfigName || row.slug || "").toLowerCase()
                             );
                             return (
-                              <div key={row.slug} className="tcp-list-item grid gap-2">
+                              <div
+                                key={row.slug}
+                                className="tcp-list-item grid h-full min-h-[8.5rem] content-start gap-2"
+                              >
                                 <div className="flex flex-wrap items-start justify-between gap-2">
                                   <div>
                                     <div className="font-semibold">{row.name}</div>
@@ -4172,12 +4486,25 @@ export function SettingsPage({
                                     type="button"
                                     className="tcp-btn h-8 px-3 text-xs"
                                     onClick={() => {
-                                      setMcpName(
-                                        normalizeMcpName(
-                                          row.serverConfigName || row.slug || row.name
-                                        )
+                                      const nextTransport = row.transportUrl;
+                                      const nextName = normalizeMcpName(
+                                        row.serverConfigName || row.slug || row.name
                                       );
-                                      setMcpTransport(row.transportUrl);
+                                      setMcpName(nextName);
+                                      setMcpTransport(nextTransport);
+                                      setMcpAuthMode(
+                                        nextName === "github" ||
+                                          isGithubCopilotMcpTransport(nextTransport)
+                                          ? "bearer"
+                                          : "none"
+                                      );
+                                      setMcpGithubToolsets(
+                                        nextName === "github" ||
+                                          isGithubCopilotMcpTransport(nextTransport)
+                                          ? "default"
+                                          : ""
+                                      );
+                                      setMcpExtraHeaders([]);
                                       setMcpModalTab("manual");
                                       toast(
                                         "ok",
@@ -4248,6 +4575,12 @@ export function SettingsPage({
                           onInput={(event) => {
                             const value = (event.target as HTMLInputElement).value;
                             setMcpTransport(value);
+                            if (
+                              isGithubCopilotMcpTransport(value) &&
+                              !String(mcpGithubToolsets || "").trim()
+                            ) {
+                              setMcpGithubToolsets("default");
+                            }
                             if (!String(mcpName || "").trim() || mcpName === "mcp-server") {
                               const inferred = inferMcpNameFromTransport(value);
                               if (inferred) setMcpName(inferred);
@@ -4281,6 +4614,101 @@ export function SettingsPage({
                           placeholder="token"
                         />
                         <div className="tcp-subtle text-xs">{mcpAuthPreviewText}</div>
+                      </div>
+
+                      {mcpIsGithubTransport ? (
+                        <div className="grid gap-2">
+                          <label className="text-sm font-medium">GitHub toolsets</label>
+                          <input
+                            className="tcp-input"
+                            value={mcpGithubToolsets}
+                            onInput={(event) =>
+                              setMcpGithubToolsets((event.target as HTMLInputElement).value)
+                            }
+                            placeholder="default,projects"
+                          />
+                          <div className="tcp-subtle text-xs">
+                            Sent as `X-MCP-Toolsets`. Built-in GitHub starts with `default`; add
+                            values like `projects`, `issues`, or `pull_requests`.
+                          </div>
+                        </div>
+                      ) : null}
+
+                      <div className="grid gap-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <label className="text-sm font-medium">Additional headers</label>
+                          <button
+                            type="button"
+                            className="tcp-btn h-8 px-3 text-xs"
+                            onClick={() =>
+                              setMcpExtraHeaders((prev) => [...prev, { key: "", value: "" }])
+                            }
+                          >
+                            <i data-lucide="plus"></i>
+                            Add header
+                          </button>
+                        </div>
+                        {mcpExtraHeaders.length ? (
+                          <div className="grid gap-2">
+                            {mcpExtraHeaders.map((row, index) => (
+                              <div
+                                key={`mcp-header-${index}`}
+                                className="grid gap-2 md:grid-cols-[1fr_1fr_auto]"
+                              >
+                                <input
+                                  className="tcp-input"
+                                  value={row.key}
+                                  onInput={(event) =>
+                                    setMcpExtraHeaders((prev) =>
+                                      prev.map((entry, entryIndex) =>
+                                        entryIndex === index
+                                          ? {
+                                              ...entry,
+                                              key: (event.target as HTMLInputElement).value,
+                                            }
+                                          : entry
+                                      )
+                                    )
+                                  }
+                                  placeholder="Header name"
+                                />
+                                <input
+                                  className="tcp-input"
+                                  value={row.value}
+                                  onInput={(event) =>
+                                    setMcpExtraHeaders((prev) =>
+                                      prev.map((entry, entryIndex) =>
+                                        entryIndex === index
+                                          ? {
+                                              ...entry,
+                                              value: (event.target as HTMLInputElement).value,
+                                            }
+                                          : entry
+                                      )
+                                    )
+                                  }
+                                  placeholder="Header value"
+                                />
+                                <button
+                                  type="button"
+                                  className="tcp-btn"
+                                  onClick={() =>
+                                    setMcpExtraHeaders((prev) =>
+                                      prev.filter((_, entryIndex) => entryIndex !== index)
+                                    )
+                                  }
+                                >
+                                  Remove
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="tcp-subtle text-xs">
+                            Add arbitrary request headers such as `X-MCP-Insiders` or vendor feature
+                            flags.
+                          </div>
+                        )}
                       </div>
 
                       <label className="inline-flex items-center gap-2 text-sm text-slate-200">

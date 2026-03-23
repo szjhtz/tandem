@@ -15,6 +15,7 @@ const MCP_PROTOCOL_VERSION: &str = "2025-11-25";
 const MCP_CLIENT_NAME: &str = "tandem";
 const MCP_CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 const MCP_AUTH_REPROBE_COOLDOWN_MS: u64 = 15_000;
+const MCP_SECRET_PLACEHOLDER: &str = "";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct McpToolCacheEntry {
@@ -43,12 +44,24 @@ pub struct McpServer {
     pub mcp_session_id: Option<String>,
     #[serde(default)]
     pub headers: HashMap<String, String>,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub secret_headers: HashMap<String, McpSecretRef>,
     #[serde(default)]
     pub tool_cache: Vec<McpToolCacheEntry>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tools_fetched_at_ms: Option<u64>,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub pending_auth_by_tool: HashMap<String, PendingMcpAuth>,
+    #[serde(default, skip)]
+    pub secret_header_values: HashMap<String, String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum McpSecretRef {
+    Store { secret_id: String },
+    Env { env: String },
+    BearerEnv { env: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -96,7 +109,8 @@ impl McpRegistry {
     }
 
     pub fn new_with_state_file(state_file: PathBuf) -> Self {
-        let loaded = load_state(&state_file)
+        let (loaded_state, migrated) = load_state(&state_file);
+        let loaded = loaded_state
             .into_iter()
             .map(|(k, mut v)| {
                 v.connected = false;
@@ -107,9 +121,16 @@ impl McpRegistry {
                 if v.headers.is_empty() {
                     v.headers = HashMap::new();
                 }
+                if v.secret_headers.is_empty() {
+                    v.secret_headers = HashMap::new();
+                }
+                v.secret_header_values = resolve_secret_header_values(&v.secret_headers);
                 (k, v)
             })
             .collect::<HashMap<_, _>>();
+        if migrated {
+            persist_state_blocking(&state_file, &loaded);
+        }
         Self {
             servers: Arc::new(RwLock::new(loaded)),
             processes: Arc::new(Mutex::new(HashMap::new())),
@@ -119,6 +140,15 @@ impl McpRegistry {
 
     pub async fn list(&self) -> HashMap<String, McpServer> {
         self.servers.read().await.clone()
+    }
+
+    pub async fn list_public(&self) -> HashMap<String, McpServer> {
+        self.servers
+            .read()
+            .await
+            .iter()
+            .map(|(name, server)| (name.clone(), redacted_server_view(server)))
+            .collect()
     }
 
     pub async fn add(&self, name: String, transport: String) {
@@ -133,11 +163,28 @@ impl McpRegistry {
         headers: HashMap<String, String>,
         enabled: bool,
     ) {
+        self.add_or_update_with_secret_refs(name, transport, headers, HashMap::new(), enabled)
+            .await;
+    }
+
+    pub async fn add_or_update_with_secret_refs(
+        &self,
+        name: String,
+        transport: String,
+        headers: HashMap<String, String>,
+        secret_headers: HashMap<String, McpSecretRef>,
+        enabled: bool,
+    ) {
+        let normalized_name = name.trim().to_string();
+        let (persisted_headers, persisted_secret_headers, secret_header_values) =
+            split_headers_for_storage(&normalized_name, headers, secret_headers);
         let mut servers = self.servers.write().await;
-        let existing = servers.get(&name).cloned();
-        let preserve_cache = existing
-            .as_ref()
-            .is_some_and(|row| row.transport == transport && row.headers == headers);
+        let existing = servers.get(&normalized_name).cloned();
+        let preserve_cache = existing.as_ref().is_some_and(|row| {
+            row.transport == transport
+                && effective_headers(row)
+                    == combine_headers(&persisted_headers, &secret_header_values)
+        });
         let existing_tool_cache = if preserve_cache {
             existing
                 .as_ref()
@@ -152,7 +199,7 @@ impl McpRegistry {
             None
         };
         let server = McpServer {
-            name: name.clone(),
+            name: normalized_name.clone(),
             transport,
             enabled,
             connected: false,
@@ -160,12 +207,14 @@ impl McpRegistry {
             last_error: None,
             last_auth_challenge: None,
             mcp_session_id: None,
-            headers,
+            headers: persisted_headers,
+            secret_headers: persisted_secret_headers,
             tool_cache: existing_tool_cache,
             tools_fetched_at_ms: existing_fetched_at,
             pending_auth_by_tool: HashMap::new(),
+            secret_header_values,
         };
-        servers.insert(name, server);
+        servers.insert(normalized_name, server);
         drop(servers);
         self.persist_state().await;
     }
@@ -195,13 +244,14 @@ impl McpRegistry {
     }
 
     pub async fn remove(&self, name: &str) -> bool {
-        let removed = {
+        let removed_server = {
             let mut servers = self.servers.write().await;
-            servers.remove(name).is_some()
+            servers.remove(name)
         };
-        if !removed {
+        let Some(server) = removed_server else {
             return false;
-        }
+        };
+        delete_secret_header_refs(&server.secret_headers);
 
         if let Some(mut child) = self.processes.lock().await.remove(name) {
             let _ = child.kill().await;
@@ -273,7 +323,10 @@ impl McpRegistry {
         let endpoint = parse_remote_endpoint(&server.transport)
             .ok_or_else(|| "MCP refresh currently supports HTTP/S transports only".to_string())?;
 
-        let (tools, session_id) = match self.discover_remote_tools(&endpoint, &server.headers).await
+        let request_headers = effective_headers(&server);
+        let (tools, session_id) = match self
+            .discover_remote_tools(&endpoint, &request_headers)
+            .await
         {
             Ok(result) => result,
             Err(err) => {
@@ -428,7 +481,7 @@ impl McpRegistry {
         });
         let (response, session_id) = post_json_rpc_with_session(
             &endpoint,
-            &server.headers,
+            &effective_headers(&server),
             request,
             server.mcp_session_id.as_deref(),
         )
@@ -657,12 +710,7 @@ impl McpRegistry {
 
     async fn persist_state(&self) {
         let snapshot = self.servers.read().await.clone();
-        if let Some(parent) = self.state_file.parent() {
-            let _ = tokio::fs::create_dir_all(parent).await;
-        }
-        if let Ok(payload) = serde_json::to_string_pretty(&snapshot) {
-            let _ = tokio::fs::write(self.state_file.as_path(), payload).await;
-        }
+        persist_state_blocking(self.state_file.as_path(), &snapshot);
     }
 }
 
@@ -674,6 +722,15 @@ impl Default for McpRegistry {
 
 fn default_enabled() -> bool {
     true
+}
+
+fn persist_state_blocking(path: &Path, snapshot: &HashMap<String, McpServer>) {
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if let Ok(payload) = serde_json::to_string_pretty(snapshot) {
+        let _ = std::fs::write(path, payload);
+    }
 }
 
 fn resolve_state_file() -> PathBuf {
@@ -697,11 +754,269 @@ fn resolve_state_file() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("mcp_servers.json"))
 }
 
-fn load_state(path: &Path) -> HashMap<String, McpServer> {
+fn load_state(path: &Path) -> (HashMap<String, McpServer>, bool) {
     let Ok(raw) = std::fs::read_to_string(path) else {
-        return HashMap::new();
+        return (HashMap::new(), false);
     };
-    serde_json::from_str::<HashMap<String, McpServer>>(&raw).unwrap_or_default()
+    let mut migrated = false;
+    let mut parsed = serde_json::from_str::<HashMap<String, McpServer>>(&raw).unwrap_or_default();
+    for (name, server) in parsed.iter_mut() {
+        let (headers, secret_headers, secret_header_values, server_migrated) =
+            migrate_server_headers(name, server);
+        migrated = migrated || server_migrated;
+        server.headers = headers;
+        server.secret_headers = secret_headers;
+        server.secret_header_values = secret_header_values;
+    }
+    (parsed, migrated)
+}
+
+fn migrate_server_headers(
+    server_name: &str,
+    server: &McpServer,
+) -> (
+    HashMap<String, String>,
+    HashMap<String, McpSecretRef>,
+    HashMap<String, String>,
+    bool,
+) {
+    let original_effective = effective_headers(server);
+    let mut persisted_secret_headers = server.secret_headers.clone();
+    let mut secret_header_values = resolve_secret_header_values(&persisted_secret_headers);
+    let mut persisted_headers = server.headers.clone();
+    let mut migrated = false;
+
+    let header_keys = persisted_headers.keys().cloned().collect::<Vec<_>>();
+    for header_name in header_keys {
+        let Some(value) = persisted_headers.get(&header_name).cloned() else {
+            continue;
+        };
+        if persisted_secret_headers.contains_key(&header_name) {
+            continue;
+        }
+        if let Some(secret_ref) = parse_secret_header_reference(value.trim()) {
+            persisted_headers.remove(&header_name);
+            let resolved = resolve_secret_ref_value(&secret_ref).unwrap_or_default();
+            persisted_secret_headers.insert(header_name.clone(), secret_ref);
+            if !resolved.is_empty() {
+                secret_header_values.insert(header_name.clone(), resolved);
+            }
+            migrated = true;
+            continue;
+        }
+        if header_name_is_sensitive(&header_name) && !value.trim().is_empty() {
+            let secret_id = mcp_header_secret_id(server_name, &header_name);
+            if tandem_core::set_provider_auth(&secret_id, &value).is_ok() {
+                persisted_headers.remove(&header_name);
+                persisted_secret_headers.insert(
+                    header_name.clone(),
+                    McpSecretRef::Store {
+                        secret_id: secret_id.clone(),
+                    },
+                );
+                secret_header_values.insert(header_name.clone(), value);
+                migrated = true;
+            }
+        }
+    }
+
+    if !migrated {
+        let effective = combine_headers(&persisted_headers, &secret_header_values);
+        migrated = effective != original_effective;
+    }
+
+    (
+        persisted_headers,
+        persisted_secret_headers,
+        secret_header_values,
+        migrated,
+    )
+}
+
+fn split_headers_for_storage(
+    server_name: &str,
+    headers: HashMap<String, String>,
+    explicit_secret_headers: HashMap<String, McpSecretRef>,
+) -> (
+    HashMap<String, String>,
+    HashMap<String, McpSecretRef>,
+    HashMap<String, String>,
+) {
+    let mut persisted_headers = HashMap::new();
+    let mut persisted_secret_headers = HashMap::new();
+    let mut secret_header_values = HashMap::new();
+
+    for (header_name, raw_value) in headers {
+        let value = raw_value.trim().to_string();
+        if value.is_empty() {
+            continue;
+        }
+        if let Some(secret_ref) = parse_secret_header_reference(&value) {
+            if let Some(resolved) = resolve_secret_ref_value(&secret_ref) {
+                secret_header_values.insert(header_name.clone(), resolved);
+            }
+            persisted_secret_headers.insert(header_name, secret_ref);
+            continue;
+        }
+        if header_name_is_sensitive(&header_name) {
+            let secret_id = mcp_header_secret_id(server_name, &header_name);
+            if tandem_core::set_provider_auth(&secret_id, &value).is_ok() {
+                persisted_secret_headers.insert(
+                    header_name.clone(),
+                    McpSecretRef::Store {
+                        secret_id: secret_id.clone(),
+                    },
+                );
+                secret_header_values.insert(header_name, value);
+                continue;
+            }
+        }
+        persisted_headers.insert(header_name, value);
+    }
+
+    for (header_name, secret_ref) in explicit_secret_headers {
+        if let Some(resolved) = resolve_secret_ref_value(&secret_ref) {
+            secret_header_values.insert(header_name.clone(), resolved);
+        }
+        persisted_headers.remove(&header_name);
+        persisted_secret_headers.insert(header_name, secret_ref);
+    }
+
+    (
+        persisted_headers,
+        persisted_secret_headers,
+        secret_header_values,
+    )
+}
+
+fn combine_headers(
+    headers: &HashMap<String, String>,
+    secret_header_values: &HashMap<String, String>,
+) -> HashMap<String, String> {
+    let mut combined = headers.clone();
+    for (key, value) in secret_header_values {
+        if !value.trim().is_empty() {
+            combined.insert(key.clone(), value.clone());
+        }
+    }
+    combined
+}
+
+fn effective_headers(server: &McpServer) -> HashMap<String, String> {
+    combine_headers(&server.headers, &server.secret_header_values)
+}
+
+fn redacted_server_view(server: &McpServer) -> McpServer {
+    let mut clone = server.clone();
+    for (header_name, secret_ref) in &clone.secret_headers {
+        clone.headers.insert(
+            header_name.clone(),
+            redacted_secret_header_value(secret_ref),
+        );
+    }
+    clone.secret_header_values.clear();
+    clone
+}
+
+fn redacted_secret_header_value(secret_ref: &McpSecretRef) -> String {
+    match secret_ref {
+        McpSecretRef::BearerEnv { .. } => "Bearer ".to_string(),
+        McpSecretRef::Env { .. } | McpSecretRef::Store { .. } => MCP_SECRET_PLACEHOLDER.to_string(),
+    }
+}
+
+fn resolve_secret_header_values(
+    secret_headers: &HashMap<String, McpSecretRef>,
+) -> HashMap<String, String> {
+    let mut out = HashMap::new();
+    for (header_name, secret_ref) in secret_headers {
+        if let Some(value) = resolve_secret_ref_value(secret_ref) {
+            if !value.trim().is_empty() {
+                out.insert(header_name.clone(), value);
+            }
+        }
+    }
+    out
+}
+
+fn delete_secret_header_refs(secret_headers: &HashMap<String, McpSecretRef>) {
+    for secret_ref in secret_headers.values() {
+        if let McpSecretRef::Store { secret_id } = secret_ref {
+            let _ = tandem_core::delete_provider_auth(secret_id);
+        }
+    }
+}
+
+fn resolve_secret_ref_value(secret_ref: &McpSecretRef) -> Option<String> {
+    match secret_ref {
+        McpSecretRef::Store { secret_id } => tandem_core::load_provider_auth()
+            .get(&secret_id.trim().to_ascii_lowercase())
+            .cloned()
+            .filter(|value| !value.trim().is_empty()),
+        McpSecretRef::Env { env } => std::env::var(env)
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty()),
+        McpSecretRef::BearerEnv { env } => std::env::var(env)
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .map(|value| format!("Bearer {value}")),
+    }
+}
+
+fn parse_secret_header_reference(raw: &str) -> Option<McpSecretRef> {
+    let trimmed = raw.trim();
+    if let Some(env) = trimmed
+        .strip_prefix("${env:")
+        .and_then(|rest| rest.strip_suffix('}'))
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        return Some(McpSecretRef::Env {
+            env: env.to_string(),
+        });
+    }
+    if let Some(env) = trimmed
+        .strip_prefix("${bearer_env:")
+        .and_then(|rest| rest.strip_suffix('}'))
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        return Some(McpSecretRef::BearerEnv {
+            env: env.to_string(),
+        });
+    }
+    if let Some(env) = trimmed
+        .strip_prefix("Bearer ${env:")
+        .and_then(|rest| rest.strip_suffix("}"))
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        return Some(McpSecretRef::BearerEnv {
+            env: env.to_string(),
+        });
+    }
+    None
+}
+
+fn header_name_is_sensitive(header_name: &str) -> bool {
+    let normalized = header_name.trim().to_ascii_lowercase();
+    normalized == "authorization"
+        || normalized == "proxy-authorization"
+        || normalized == "x-api-key"
+        || normalized.contains("token")
+        || normalized.contains("secret")
+        || normalized.ends_with("api-key")
+        || normalized.ends_with("api_key")
+}
+
+fn mcp_header_secret_id(server_name: &str, header_name: &str) -> String {
+    format!(
+        "mcp_header::{}::{}",
+        sanitize_namespace_segment(server_name),
+        sanitize_namespace_segment(header_name)
+    )
 }
 
 fn parse_stdio_transport(transport: &str) -> Option<&str> {
@@ -1435,6 +1750,7 @@ mod tests {
             last_auth_challenge: None,
             mcp_session_id: None,
             headers: HashMap::new(),
+            secret_headers: HashMap::new(),
             tool_cache: vec![McpToolCacheEntry {
                 tool_name: "Clickup_CreateTask".to_string(),
                 description: "Create task".to_string(),
@@ -1451,6 +1767,7 @@ mod tests {
             }],
             tools_fetched_at_ms: None,
             pending_auth_by_tool: HashMap::new(),
+            secret_header_values: HashMap::new(),
         };
 
         let normalized = normalize_mcp_tool_args(
@@ -1490,9 +1807,11 @@ mod tests {
             last_auth_challenge: None,
             mcp_session_id: None,
             headers: HashMap::new(),
+            secret_headers: HashMap::new(),
             tool_cache: Vec::new(),
             tools_fetched_at_ms: None,
             pending_auth_by_tool: HashMap::new(),
+            secret_header_values: HashMap::new(),
         };
         server.pending_auth_by_tool.insert(
             "clickup_whoami".to_string(),
@@ -1528,9 +1847,11 @@ mod tests {
             last_auth_challenge: None,
             mcp_session_id: None,
             headers: HashMap::new(),
+            secret_headers: HashMap::new(),
             tool_cache: Vec::new(),
             tools_fetched_at_ms: None,
             pending_auth_by_tool: HashMap::new(),
+            secret_header_values: HashMap::new(),
         };
         server.pending_auth_by_tool.insert(
             "clickup_whoami".to_string(),
@@ -1562,9 +1883,11 @@ mod tests {
             last_auth_challenge: None,
             mcp_session_id: None,
             headers: HashMap::new(),
+            secret_headers: HashMap::new(),
             tool_cache: Vec::new(),
             tools_fetched_at_ms: None,
             pending_auth_by_tool: HashMap::new(),
+            secret_header_values: HashMap::new(),
         };
         server.pending_auth_by_tool.insert(
             "gmail_sendemail".to_string(),

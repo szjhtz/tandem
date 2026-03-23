@@ -2,6 +2,21 @@
 
 Canonical release notes live in `docs/RELEASE_NOTES.md`.
 
+## v0.4.13 (Released 2026-03-23)
+
+- Remote MCP and channel secrets are now kept off persisted JSON config/state
+  - remote MCP servers now support secret-backed headers alongside persisted non-secret headers, so bearer tokens and API keys can be materialized only at runtime
+  - Telegram, Discord, and Slack bot tokens are now hoisted into Tandem's secure auth store instead of being left in plaintext config files
+  - existing plaintext MCP auth headers and channel tokens are migrated off disk automatically on load
+
+- The control panel can now configure real remote MCP header combinations
+  - MCP settings now support arbitrary extra headers instead of forcing a single auth header shape
+  - the built-in GitHub MCP pack now exposes a toolsets field and defaults `X-MCP-Toolsets` to `default`, making it possible to add `projects` and similar GitHub tool families from the UI
+  - the built-in MCP catalog modal layout was fixed so server rows no longer get vertically squashed
+
+- Provider Defaults now supports custom OpenAI-compatible providers in Settings
+  - added control-panel and panel-template UI for custom provider IDs, base URLs, default models, optional API keys, and default-provider selection
+
 ## v0.4.12 (Released 2026-03-22)
 
 - Custom provider support in the `tandem-engine` CLI is now practical for OpenAI-compatible endpoints

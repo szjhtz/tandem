@@ -889,10 +889,20 @@ class _Mcp:
         raw = res.json()
         return raw if isinstance(raw, list) else []
 
-    async def add(self, name: str, transport: str, *, headers: Optional[dict[str, str]] = None, enabled: bool = True) -> dict[str, Any]:
+    async def add(
+        self,
+        name: str,
+        transport: str,
+        *,
+        headers: Optional[dict[str, str]] = None,
+        secret_headers: Optional[dict[str, Any]] = None,
+        enabled: bool = True,
+    ) -> dict[str, Any]:
         payload: dict[str, Any] = {"name": name, "transport": transport, "enabled": enabled}
         if headers:
             payload["headers"] = headers
+        if secret_headers:
+            payload["secret_headers"] = secret_headers
         res = await self._http.post("/mcp", json=payload)
         res.raise_for_status()
         return res.json()  # type: ignore[no-any-return]

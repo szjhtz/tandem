@@ -431,6 +431,9 @@ pub(super) async fn channels_delete(
     State(state): State<AppState>,
     Path(name): Path<String>,
 ) -> Result<Json<Value>, StatusCode> {
+    if let Some(secret_id) = tandem_core::channel_secret_store_id(&name) {
+        let _ = tandem_core::delete_provider_auth(&secret_id);
+    }
     let mut project = state.config.get_project_value().await;
     let Some(root) = project.as_object_mut() else {
         return Err(StatusCode::INTERNAL_SERVER_ERROR);

@@ -95,7 +95,11 @@ pub(super) async fn ensure_remote_mcp_server(
             return false;
         }
         if server.transport.trim() == transport_url.trim() && !headers.is_empty() {
-            if server.headers != headers {
+            let mut effective_headers = server.headers.clone();
+            for (key, value) in server.secret_header_values {
+                effective_headers.insert(key, value);
+            }
+            if effective_headers != headers {
                 state
                     .mcp
                     .add_or_update(
@@ -163,6 +167,7 @@ pub(super) struct McpAddInput {
     pub name: Option<String>,
     pub transport: Option<String>,
     pub headers: Option<HashMap<String, String>>,
+    pub secret_headers: Option<HashMap<String, tandem_runtime::McpSecretRef>>,
     pub enabled: Option<bool>,
 }
 
@@ -194,7 +199,7 @@ impl Tool for McpBridgeTool {
 }
 
 pub(super) async fn list_mcp(State(state): State<AppState>) -> Json<Value> {
-    Json(json!(state.mcp.list().await))
+    Json(json!(state.mcp.list_public().await))
 }
 
 pub(super) async fn add_mcp(
@@ -205,10 +210,11 @@ pub(super) async fn add_mcp(
     let transport = input.transport.unwrap_or_else(|| "stdio".to_string());
     state
         .mcp
-        .add_or_update(
+        .add_or_update_with_secret_refs(
             name.clone(),
             transport,
             input.headers.unwrap_or_default(),
+            input.secret_headers.unwrap_or_default(),
             input.enabled.unwrap_or(true),
         )
         .await;

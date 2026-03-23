@@ -36,6 +36,11 @@ pub(super) struct LegacyProviderInfo {
     pub configured: bool,
 }
 
+fn is_internal_secret_id(raw: &str) -> bool {
+    let normalized = raw.trim().to_ascii_lowercase();
+    normalized.starts_with("mcp_header::") || normalized.starts_with("channel::")
+}
+
 pub(super) async fn get_config(State(state): State<AppState>) -> Json<Value> {
     let effective = normalize_effective_config_with_identity(redacted(
         state.config.get_effective_value().await,
@@ -304,6 +309,7 @@ pub(super) async fn provider_auth(State(state): State<AppState>) -> Json<Value> 
     let persisted = tandem_core::load_provider_auth();
     let persisted_ids = persisted
         .keys()
+        .filter(|id| !is_internal_secret_id(id))
         .map(|id| id.to_ascii_lowercase())
         .collect::<std::collections::HashSet<_>>();
     let runtime_auth = state.auth.read().await.clone();

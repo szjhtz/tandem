@@ -27,6 +27,7 @@ const jsonFiles = [
   "packages/tandem-ai/package.json",
   "packages/tandem-client-ts/package.json",
   "packages/tandem-control-panel/package.json",
+  "packages/create-tandem-panel/package.json",
   "packages/tandem-engine/package.json",
   "packages/tandem-tui/package.json",
 ];

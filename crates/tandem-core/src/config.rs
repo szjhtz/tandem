@@ -204,6 +204,8 @@ impl ConfigStore {
         deep_merge(&mut merged, &layers.env);
         deep_merge(&mut merged, &layers.runtime);
         deep_merge(&mut merged, &layers.cli);
+        inject_stored_provider_auth(&mut merged);
+        inject_stored_channel_secrets(&mut merged);
         merged
     }
 
@@ -327,6 +329,7 @@ async fn write_json_file(path: &Path, value: &Value) -> anyhow::Result<()> {
     }
     let mut to_write = value.clone();
     if !is_legacy_opencode_path(path) {
+        hoist_persisted_secrets(&mut to_write)?;
         strip_persisted_secrets(&mut to_write);
     }
     let raw = serde_json::to_string_pretty(&to_write)?;
@@ -339,10 +342,8 @@ fn strip_persisted_secrets(value: &mut Value) {
         if let Some(channels) = root.get_mut("channels").and_then(|v| v.as_object_mut()) {
             for channel in ["telegram", "discord", "slack"] {
                 if let Some(cfg) = channels.get_mut(channel).and_then(|v| v.as_object_mut()) {
-                    if channel_has_runtime_secret(channel) {
-                        cfg.remove("bot_token");
-                        cfg.remove("botToken");
-                    }
+                    cfg.remove("bot_token");
+                    cfg.remove("botToken");
                 }
             }
         }
@@ -350,19 +351,62 @@ fn strip_persisted_secrets(value: &mut Value) {
         let Some(providers) = root.get_mut("providers").and_then(|v| v.as_object_mut()) else {
             return;
         };
+        for (_provider_id, provider_cfg) in providers.iter_mut() {
+            let Value::Object(cfg) = provider_cfg else {
+                continue;
+            };
+            cfg.remove("api_key");
+            cfg.remove("apiKey");
+        }
+    }
+}
+
+fn hoist_persisted_secrets(value: &mut Value) -> anyhow::Result<()> {
+    let Value::Object(root) = value else {
+        return Ok(());
+    };
+
+    if let Some(channels) = root.get_mut("channels").and_then(|v| v.as_object_mut()) {
+        for channel in ["telegram", "discord", "slack"] {
+            let Some(cfg) = channels.get_mut(channel).and_then(|v| v.as_object_mut()) else {
+                continue;
+            };
+            let token = cfg
+                .get("bot_token")
+                .or_else(|| cfg.get("botToken"))
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .unwrap_or_default()
+                .to_string();
+            if token.is_empty() || channel_has_runtime_secret(channel) {
+                continue;
+            }
+            if let Some(secret_id) = channel_secret_store_id(channel) {
+                crate::set_provider_auth(&secret_id, &token)?;
+            }
+        }
+    }
+
+    if let Some(providers) = root.get_mut("providers").and_then(|v| v.as_object_mut()) {
         for (provider_id, provider_cfg) in providers.iter_mut() {
             let Value::Object(cfg) = provider_cfg else {
                 continue;
             };
-            if !cfg.contains_key("api_key") && !cfg.contains_key("apiKey") {
+            let token = cfg
+                .get("api_key")
+                .or_else(|| cfg.get("apiKey"))
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .unwrap_or_default()
+                .to_string();
+            if token.is_empty() || provider_has_runtime_secret(provider_id) {
                 continue;
             }
-            if provider_has_runtime_secret(provider_id) {
-                cfg.remove("api_key");
-                cfg.remove("apiKey");
-            }
+            crate::set_provider_auth(provider_id, &token)?;
         }
     }
+
+    Ok(())
 }
 
 fn channel_has_runtime_secret(channel_id: &str) -> bool {
@@ -377,6 +421,14 @@ fn channel_has_runtime_secret(channel_id: &str) -> bool {
         .unwrap_or(false)
 }
 
+pub fn channel_secret_store_id(channel_id: &str) -> Option<String> {
+    let normalized = channel_id.trim().to_ascii_lowercase();
+    match normalized.as_str() {
+        "telegram" | "discord" | "slack" => Some(format!("channel::{normalized}::bot_token")),
+        _ => None,
+    }
+}
+
 async fn scrub_persisted_secrets(value: &mut Value, path: Option<&Path>) -> anyhow::Result<()> {
     if let Some(target) = path {
         if is_legacy_opencode_path(target) {
@@ -384,6 +436,7 @@ async fn scrub_persisted_secrets(value: &mut Value, path: Option<&Path>) -> anyh
         }
     }
     let before = value.clone();
+    hoist_persisted_secrets(value)?;
     strip_persisted_secrets(value);
     if *value != before {
         if let Some(target) = path {
@@ -435,6 +488,70 @@ fn provider_env_candidates(provider_id: &str) -> Vec<String> {
     out.sort();
     out.dedup();
     out
+}
+
+fn inject_stored_channel_secrets(value: &mut Value) {
+    let Value::Object(root) = value else {
+        return;
+    };
+    let Some(channels) = root.get_mut("channels").and_then(|v| v.as_object_mut()) else {
+        return;
+    };
+    let secrets = crate::load_provider_auth();
+    for channel in ["telegram", "discord", "slack"] {
+        if channel_has_runtime_secret(channel) {
+            continue;
+        }
+        let Some(cfg) = channels.get_mut(channel).and_then(|v| v.as_object_mut()) else {
+            continue;
+        };
+        let already_present = cfg
+            .get("bot_token")
+            .or_else(|| cfg.get("botToken"))
+            .and_then(Value::as_str)
+            .is_some_and(|value| !value.trim().is_empty());
+        if already_present {
+            continue;
+        }
+        let Some(secret_id) = channel_secret_store_id(channel) else {
+            continue;
+        };
+        let Some(token) = secrets.get(&secret_id) else {
+            continue;
+        };
+        if !token.trim().is_empty() {
+            cfg.insert("bot_token".to_string(), Value::String(token.clone()));
+        }
+    }
+}
+
+fn inject_stored_provider_auth(value: &mut Value) {
+    let Value::Object(root) = value else {
+        return;
+    };
+    let Some(providers) = root.get_mut("providers").and_then(|v| v.as_object_mut()) else {
+        return;
+    };
+    let secrets = crate::load_provider_auth();
+    for (provider_id, provider_cfg) in providers.iter_mut() {
+        let Value::Object(cfg) = provider_cfg else {
+            continue;
+        };
+        let already_present = cfg
+            .get("api_key")
+            .or_else(|| cfg.get("apiKey"))
+            .and_then(Value::as_str)
+            .is_some_and(|value| !value.trim().is_empty());
+        if already_present || provider_has_runtime_secret(provider_id) {
+            continue;
+        }
+        let Some(token) = secrets.get(&provider_id.to_ascii_lowercase()) else {
+            continue;
+        };
+        if !token.trim().is_empty() {
+            cfg.insert("api_key".to_string(), Value::String(token.clone()));
+        }
+    }
 }
 
 async fn read_json_file(path: &Path) -> anyhow::Result<Value> {
@@ -817,6 +934,7 @@ impl From<AppConfig> for tandem_providers::AppConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Mutex, OnceLock};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn unique_temp_file(name: &str) -> PathBuf {
@@ -829,8 +947,16 @@ mod tests {
         path
     }
 
+    fn env_test_lock() -> std::sync::MutexGuard<'static, ()> {
+        static ENV_TEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        ENV_TEST_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("env test lock")
+    }
+
     #[test]
-    fn strip_persisted_secrets_keeps_channel_bot_tokens_without_runtime_env() {
+    fn strip_persisted_secrets_removes_channel_bot_tokens_without_runtime_env() {
         let mut value = json!({
             "channels": {
                 "telegram": {
@@ -856,21 +982,21 @@ mod tests {
             .get("channels")
             .and_then(|v| v.get("telegram"))
             .and_then(Value::as_object)
-            .is_some_and(|obj| obj.contains_key("bot_token")));
+            .is_some_and(|obj| !obj.contains_key("bot_token")));
         assert!(value
             .get("channels")
             .and_then(|v| v.get("discord"))
             .and_then(Value::as_object)
-            .is_some_and(|obj| obj.contains_key("botToken")));
+            .is_some_and(|obj| !obj.contains_key("botToken")));
         assert!(value
             .get("channels")
             .and_then(|v| v.get("slack"))
             .and_then(Value::as_object)
-            .is_some_and(|obj| obj.contains_key("bot_token")));
+            .is_some_and(|obj| !obj.contains_key("bot_token")));
     }
 
     #[tokio::test]
-    async fn scrub_persisted_secrets_keeps_channel_tokens_on_disk_without_runtime_env() {
+    async fn scrub_persisted_secrets_moves_channel_tokens_off_disk_without_runtime_env() {
         let path = unique_temp_file("scrub");
         let original = json!({
             "channels": {
@@ -899,13 +1025,64 @@ mod tests {
             .get("channels")
             .and_then(|v| v.get("telegram"))
             .and_then(Value::as_object)
-            .is_some_and(|obj| obj.contains_key("bot_token")));
+            .is_some_and(|obj| !obj.contains_key("bot_token")));
+        let stored = crate::load_provider_auth();
+        assert_eq!(
+            stored
+                .get("channel::telegram::bot_token")
+                .map(|v| v.as_str()),
+            Some("tg-secret")
+        );
+        let _ = crate::delete_provider_auth("channel::telegram::bot_token");
 
+        let _ = fs::remove_file(&path).await;
+    }
+
+    #[tokio::test]
+    async fn config_store_rehydrates_channel_token_from_secure_store() {
+        let path = unique_temp_file("rehydrate-channel");
+        let original = json!({
+            "channels": {
+                "telegram": {
+                    "bot_token": "tg-secret",
+                    "allowed_users": ["@alice"]
+                }
+            }
+        });
+        fs::write(
+            &path,
+            serde_json::to_string_pretty(&original).expect("serialize"),
+        )
+        .await
+        .expect("write");
+
+        let store = ConfigStore::new(&path, None).await.expect("config store");
+        let effective = store.get_effective_value().await;
+        assert_eq!(
+            effective
+                .get("channels")
+                .and_then(|v| v.get("telegram"))
+                .and_then(|v| v.get("bot_token"))
+                .and_then(Value::as_str),
+            Some("tg-secret")
+        );
+
+        let persisted =
+            serde_json::from_str::<Value>(&fs::read_to_string(&path).await.expect("read after"))
+                .expect("parse persisted");
+        assert!(persisted
+            .get("channels")
+            .and_then(|v| v.get("telegram"))
+            .and_then(Value::as_object)
+            .is_some_and(|obj| !obj.contains_key("bot_token")));
+
+        let _ = crate::delete_provider_auth("channel::telegram::bot_token");
         let _ = fs::remove_file(&path).await;
     }
 
     #[test]
     fn strip_persisted_secrets_removes_channel_bot_tokens_with_runtime_env() {
+        let _guard = env_test_lock();
         std::env::set_var("TANDEM_TELEGRAM_BOT_TOKEN", "runtime-secret");
         std::env::set_var("TANDEM_DISCORD_BOT_TOKEN", "runtime-secret");
         std::env::set_var("TANDEM_SLACK_BOT_TOKEN", "runtime-secret");
@@ -949,6 +1126,7 @@ mod tests {
 
     #[test]
     fn openrouter_api_key_env_does_not_override_default_model_without_model_env() {
+        let _guard = env_test_lock();
         std::env::set_var("OPENROUTER_API_KEY", "sk-test");
         std::env::remove_var("OPENROUTER_MODEL");
         std::env::remove_var("OPENROUTER_DEFAULT_MODEL");
@@ -965,6 +1143,7 @@ mod tests {
 
     #[test]
     fn openrouter_model_env_overrides_default_model_when_explicitly_set() {
+        let _guard = env_test_lock();
         std::env::set_var("OPENROUTER_API_KEY", "sk-test");
         std::env::set_var("OPENROUTER_MODEL", "z-ai/glm-5");
 
@@ -982,6 +1161,7 @@ mod tests {
 
     #[test]
     fn openai_api_key_env_does_not_override_explicit_openai_compatible_url() {
+        let _guard = env_test_lock();
         std::env::set_var("OPENAI_API_KEY", "sk-test");
 
         let mut merged = json!({
@@ -1009,6 +1189,7 @@ mod tests {
 
     #[test]
     fn browser_env_layer_maps_browser_settings() {
+        let _guard = env_test_lock();
         std::env::set_var("TANDEM_BROWSER_ENABLED", "true");
         std::env::set_var("TANDEM_BROWSER_SIDECAR", "/tmp/tandem-browser");
         std::env::set_var("TANDEM_BROWSER_EXECUTABLE", "/tmp/chromium");

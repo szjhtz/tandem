@@ -354,6 +354,7 @@ export interface AddMcpServerOptions {
   name: string;
   transport: string;
   headers?: Record<string, string>;
+  secret_headers?: Record<string, unknown>;
   enabled?: boolean;
 }
 
