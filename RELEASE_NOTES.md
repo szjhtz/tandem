@@ -2,6 +2,14 @@
 
 Canonical release notes live in `docs/RELEASE_NOTES.md`.
 
+## v0.4.14 (Released 2026-03-23)
+
+- Windows desktop startup hotfix for Tauri installs
+  - fixed a Windows-specific storage flush path where startup metadata compaction could fail with `Access is denied. (os error 5)`
+  - this failure surfaced as `ENGINE_STARTUP_FAILED` during `phase=runtime_init` and left the sidecar API in a startup-failed state for desktop clients
+  - `tandem-core` now uses a Windows-safe file replacement fallback for storage JSON flushes when direct rename replacement is denied
+  - added regression coverage for temp-file replacement over existing storage files
+
 ## v0.4.13 (Released 2026-03-23)
 
 - Remote MCP and channel secrets are now kept off persisted JSON config/state

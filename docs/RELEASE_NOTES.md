@@ -1,5 +1,14 @@
 # Tandem Upcoming Release Notes
 
+## Tandem v0.4.14 Release Notes (Released 2026-03-23)
+
+### Windows Tauri Desktop Startup Hotfix
+
+- Fixed a Windows-specific storage flush edge where startup metadata compaction could fail with `Access is denied. (os error 5)` while replacing storage JSON files.
+- This failure surfaced as `ENGINE_STARTUP_FAILED` during `phase=runtime_init`, which kept the desktop sidecar API in a startup-failed state.
+- `tandem-core` now uses a Windows-safe file replacement fallback for storage flushes when direct rename replacement is denied.
+- Added regression coverage for temp-file replacement over existing storage files.
+
 ## Tandem v0.4.13 Release Notes (Released 2026-03-23)
 
 ### Secret-Safe Remote MCP And Channel Auth

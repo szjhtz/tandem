@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.14] - 2026-03-23
+
+### Fixed
+
+- **Windows desktop startup hotfix for Tauri installs (`ENGINE_STARTUP_FAILED`, `os error 5`)**:
+  - fixed a Windows-specific storage flush edge where atomic temp-file replacement could fail with `Access is denied. (os error 5)` during startup metadata compaction
+  - `tandem-core` storage flush now uses a Windows-safe replace fallback (`remove existing destination` then `rename temp`) when direct rename replacement is denied
+  - added a regression test covering temp-file replacement over an existing storage JSON target to prevent startup regressions on Windows desktop/Tauri flows
+
 ## [0.4.13] - 2026-03-23
 
 ### Added

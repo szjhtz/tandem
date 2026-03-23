@@ -895,7 +895,9 @@ impl Storage {
         let path = self.base.join(filename);
         let temp_path = self.base.join(format!("{}.tmp", filename));
         let payload = serde_json::to_string_pretty(data)?;
-        fs::write(&temp_path, payload).await?;
+        fs::write(&temp_path, payload).await.with_context(|| {
+            format!("failed to write temp storage file {}", temp_path.display())
+        })?;
         let std_temp_path: std::path::PathBuf = temp_path.clone().try_into()?;
         tokio::task::spawn_blocking(move || {
             let file = std::fs::File::open(&std_temp_path)?;
@@ -903,7 +905,13 @@ impl Storage {
             Ok::<(), std::io::Error>(())
         })
         .await??;
-        tokio::fs::rename(&temp_path, &path).await?;
+        commit_temp_file(&temp_path, &path).await.with_context(|| {
+            format!(
+                "failed to atomically replace storage file {} with {}",
+                path.display(),
+                temp_path.display()
+            )
+        })?;
         Ok(())
     }
 
@@ -911,6 +919,32 @@ impl Storage {
         let payload = serde_json::to_string_pretty(marker)?;
         fs::write(self.base.join(LEGACY_IMPORT_MARKER_FILE), payload).await?;
         Ok(())
+    }
+}
+
+async fn commit_temp_file(temp_path: &Path, path: &Path) -> std::io::Result<()> {
+    match tokio::fs::rename(temp_path, path).await {
+        Ok(()) => Ok(()),
+        Err(err) => {
+            #[cfg(windows)]
+            {
+                // Windows `rename` can return PermissionDenied when replacing an existing file.
+                // Fall back to delete-then-rename for this case.
+                use std::io::ErrorKind;
+                if matches!(
+                    err.kind(),
+                    ErrorKind::PermissionDenied | ErrorKind::AlreadyExists
+                ) {
+                    match tokio::fs::remove_file(path).await {
+                        Ok(()) => {}
+                        Err(remove_err) if remove_err.kind() == ErrorKind::NotFound => {}
+                        Err(remove_err) => return Err(remove_err),
+                    }
+                    return tokio::fs::rename(temp_path, path).await;
+                }
+            }
+            Err(err)
+        }
     }
 }
 
@@ -2153,6 +2187,25 @@ mod tests {
             }
             other => panic!("expected tool part, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn commit_temp_file_replaces_existing_destination() {
+        let base =
+            std::env::temp_dir().join(format!("tandem-core-commit-temp-file-{}", Uuid::new_v4()));
+        stdfs::create_dir_all(&base).expect("base dir");
+        let destination = base.join("sessions.json");
+        let temp = base.join("sessions.json.tmp");
+        stdfs::write(&destination, "{\"version\":\"old\"}").expect("write destination");
+        stdfs::write(&temp, "{\"version\":\"new\"}").expect("write temp");
+
+        commit_temp_file(&temp, &destination)
+            .await
+            .expect("replace destination");
+
+        let raw = stdfs::read_to_string(&destination).expect("read destination");
+        assert_eq!(raw, "{\"version\":\"new\"}");
+        assert!(!temp.exists());
     }
 
     #[tokio::test]
