@@ -9,6 +9,12 @@
 - `tandem-core` now uses a Windows-safe file replacement fallback for storage flushes when direct rename replacement is denied.
 - Added regression coverage for temp-file replacement over existing storage files.
 
+### Tauri Orchestration Active Count Hotfix
+
+- Fixed context run listing so only recognized orchestration run types are returned (`interactive`, `scheduled`, `cron`) instead of defaulting unknown types to orchestrator.
+- Fixed the chat header orchestration badge (`ORCH`) to count only active runs from the `orchestrator` source.
+- Prevents inflated run counts (such as showing `20 ORCH`) immediately after app startup when no orchestration is running.
+
 ## Tandem v0.4.13 Release Notes (Released 2026-03-23)
 
 ### Secret-Safe Remote MCP And Channel Auth

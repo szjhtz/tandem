@@ -10431,11 +10431,20 @@ fn context_run_to_run(run: &ContextRunState) -> Run {
     out
 }
 
-fn context_run_source(run_type: &str) -> RunSource {
-    if run_type.eq_ignore_ascii_case("scheduled") || run_type.eq_ignore_ascii_case("cron") {
-        RunSource::CommandCenter
+fn context_run_source(run_type: &str) -> Option<RunSource> {
+    let normalized = run_type.trim();
+    if normalized.eq_ignore_ascii_case("interactive")
+        || normalized.eq_ignore_ascii_case("orchestrator")
+    {
+        Some(RunSource::Orchestrator)
+    } else if normalized.eq_ignore_ascii_case("scheduled")
+        || normalized.eq_ignore_ascii_case("cron")
+        || normalized.eq_ignore_ascii_case("command_center")
+        || normalized.eq_ignore_ascii_case("command-center")
+    {
+        Some(RunSource::CommandCenter)
     } else {
-        RunSource::Orchestrator
+        None
     }
 }
 
@@ -10664,18 +10673,21 @@ pub async fn orchestrator_engine_list_runs(state: State<'_, AppState>) -> Result
     let rows = state.sidecar.context_run_list().await?;
     Ok(rows
         .into_iter()
-        .map(|run| RunSummary {
-            run_id: run.run_id.clone(),
-            session_id: format!("context-{}", run.run_id),
-            workspace_root: Some(run.workspace.canonical_path),
-            source: context_run_source(&run.run_type),
-            objective: run.objective,
-            status: context_status_to_run_status(run.status),
-            created_at: ms_to_datetime(run.created_at_ms),
-            updated_at: ms_to_datetime(run.updated_at_ms),
-            started_at: ms_to_datetime(run.created_at_ms),
-            ended_at: None,
-            last_error: None,
+        .filter_map(|run| {
+            let source = context_run_source(&run.run_type)?;
+            Some(RunSummary {
+                run_id: run.run_id.clone(),
+                session_id: format!("context-{}", run.run_id),
+                workspace_root: Some(run.workspace.canonical_path),
+                source,
+                objective: run.objective,
+                status: context_status_to_run_status(run.status),
+                created_at: ms_to_datetime(run.created_at_ms),
+                updated_at: ms_to_datetime(run.updated_at_ms),
+                started_at: ms_to_datetime(run.created_at_ms),
+                ended_at: None,
+                last_error: None,
+            })
         })
         .collect::<Vec<_>>())
 }
@@ -11458,18 +11470,21 @@ pub async fn orchestrator_list_runs(state: State<'_, AppState>) -> Result<Vec<Ru
     // orchestrator sessions created through the desktop legacy path don't disappear.
     let mut summaries = if let Ok(rows) = state.sidecar.context_run_list().await {
         rows.into_iter()
-            .map(|run| RunSummary {
-                run_id: run.run_id.clone(),
-                session_id: format!("context-{}", run.run_id),
-                workspace_root: Some(run.workspace.canonical_path),
-                source: context_run_source(&run.run_type),
-                objective: run.objective,
-                status: context_status_to_run_status(run.status),
-                created_at: ms_to_datetime(run.created_at_ms),
-                updated_at: ms_to_datetime(run.updated_at_ms),
-                started_at: ms_to_datetime(run.created_at_ms),
-                ended_at: None,
-                last_error: None,
+            .filter_map(|run| {
+                let source = context_run_source(&run.run_type)?;
+                Some(RunSummary {
+                    run_id: run.run_id.clone(),
+                    session_id: format!("context-{}", run.run_id),
+                    workspace_root: Some(run.workspace.canonical_path),
+                    source,
+                    objective: run.objective,
+                    status: context_status_to_run_status(run.status),
+                    created_at: ms_to_datetime(run.created_at_ms),
+                    updated_at: ms_to_datetime(run.updated_at_ms),
+                    started_at: ms_to_datetime(run.created_at_ms),
+                    ended_at: None,
+                    last_error: None,
+                })
             })
             .collect::<Vec<_>>()
     } else {

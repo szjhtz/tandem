@@ -13,6 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - fixed a Windows-specific storage flush edge where atomic temp-file replacement could fail with `Access is denied. (os error 5)` during startup metadata compaction
   - `tandem-core` storage flush now uses a Windows-safe replace fallback (`remove existing destination` then `rename temp`) when direct rename replacement is denied
   - added a regression test covering temp-file replacement over an existing storage JSON target to prevent startup regressions on Windows desktop/Tauri flows
+- **Tauri orchestration run list filtering and active-count correctness**:
+  - fixed context-run listing to include only known orchestration run types (`interactive`, `scheduled`, `cron`) instead of coercing unknown run types into orchestrator runs
+  - fixed chat header active orchestration badge (`ORCH`) to count only active runs sourced from `orchestrator`, preventing inflated counts immediately after app startup
 
 ## [0.4.13] - 2026-03-23
 

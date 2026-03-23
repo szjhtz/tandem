@@ -9,6 +9,10 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
   - this failure surfaced as `ENGINE_STARTUP_FAILED` during `phase=runtime_init` and left the sidecar API in a startup-failed state for desktop clients
   - `tandem-core` now uses a Windows-safe file replacement fallback for storage JSON flushes when direct rename replacement is denied
   - added regression coverage for temp-file replacement over existing storage files
+- Tauri orchestration list/count hotfix
+  - context run listing now ignores unknown run types instead of treating them as orchestrator runs
+  - the chat `ORCH` badge now counts only active `orchestrator` runs (`queued`/`planning`/`running`)
+  - fixes inflated orchestration counts (for example showing `20 ORCH`) right after startup when no orchestrator run is active
 
 ## v0.4.13 (Released 2026-03-23)
 

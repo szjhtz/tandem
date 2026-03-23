@@ -12,7 +12,7 @@ local-embeddings = ["dep:fastembed"]
 
 [dependencies]
 rusqlite = { version = "0.32", features = ["bundled", "uuid", "blob"] }
-sqlite-vec = "0.1"
+sqlite-vec = "0.1.7"
 uuid = { version = "1", features = ["v4", "serde"] }
 fastembed = { version = "4", default-features = false, features = ["ort-download-binaries", "hf-hub"], optional = true }
 serde = { version = "1", features = ["derive"] }
@@ -31,7 +31,6 @@ tandem-providers = { path = "../tandem-providers", version = "0.4.13" }
 
 [dev-dependencies]
 tempfile = "3"
-
 
 
 

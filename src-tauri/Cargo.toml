@@ -62,7 +62,7 @@ tandem-memory = { path = "../crates/tandem-memory", features = ["local-embedding
 
 # Memory context dependencies
 rusqlite = { version = "0.32", features = ["bundled", "chrono", "uuid"] }
-sqlite-vec = "0.1.6"
+sqlite-vec = "0.1.7"
 sha2 = "0.10"
 once_cell = "1.20"
 
@@ -85,7 +85,6 @@ debug = 1
 
 [profile.dev.package."*"]
 debug = 0
-
 
 
 

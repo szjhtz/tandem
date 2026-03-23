@@ -1478,7 +1478,9 @@ function App() {
   const activeOrchestrationCount = useMemo(
     () =>
       orchestratorRuns.filter(
-        (run) => run.status === "queued" || run.status === "planning" || run.status === "running"
+        (run) =>
+          run.source === "orchestrator" &&
+          (run.status === "queued" || run.status === "planning" || run.status === "running")
       ).length,
     [orchestratorRuns]
   );
