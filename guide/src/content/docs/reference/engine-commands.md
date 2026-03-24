@@ -115,6 +115,16 @@ The browser command group pairs with runtime HTTP endpoints:
 - `POST /browser/install`
 - `POST /browser/smoke-test`
 
+These endpoints are for browser readiness and install flows. Actual browser automation is exposed through engine tools such as `browser_open`, `browser_click`, `browser_type`, `browser_extract`, and `browser_screenshot`.
+
+Use one of these paths for browser automation:
+
+- `tandem-engine tool --json ...`
+- `POST /tool/execute`
+- session-based agent runs with the browser tools included in the run allowlist
+
+For `browser_wait`, the canonical tool args use `condition: { kind, value }`, but the engine also accepts `wait_for` / `waitFor`, camelCase fields like `sessionId`, and short forms like top-level `selector`, `text`, or `url`.
+
 ### Headless Hosts
 
 Browser automation does not require a visible desktop session. On Linux VPS hosts the engine only needs:
@@ -211,6 +221,17 @@ tandem-engine tool --json '<JSON_PAYLOAD>'
   "tool": "read",
   "args": {
     "path": "README.md"
+  }
+}
+```
+
+Browser automation uses this same tool execution surface. Example:
+
+```json
+{
+  "tool": "browser_open",
+  "args": {
+    "url": "https://example.com"
   }
 }
 ```

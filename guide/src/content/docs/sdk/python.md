@@ -282,7 +282,7 @@ result = await client.memory.context_distill("session-abc", [
 
 The Python SDK also exposes the newer engine surfaces used across the Tandem repo:
 
-- `client.browser` for `status()`, `install()`, and `smoke_test()`
+- `client.browser` for `status()`, `install()`, and `smoke_test()` host flows
 - `client.workflows` for workflow registry, runs, hooks, simulation, and live events
 - `client.resources` for key-value resources
 - `client.skills` for validation, routing, evals, compile, and generate flows in addition to list/get/import
@@ -295,6 +295,8 @@ workflows = await client.workflows.list()
 resources = await client.resources.list(prefix="agent-config/")
 catalog = await client.skills.templates()
 ```
+
+For actual browser automation, use `client.execute_tool(...)` with tools like `browser_open`, `browser_click`, `browser_type`, `browser_extract`, and `browser_screenshot`, or run a session with those tools in the allowlist. The `client.browser` namespace does not wrap those actions directly.
 
 ### `client.coder`
 

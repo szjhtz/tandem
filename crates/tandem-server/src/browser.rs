@@ -17,8 +17,8 @@ use tandem_browser::{
     BrowserExtractParams, BrowserExtractResult, BrowserNavigateParams, BrowserNavigateResult,
     BrowserOpenRequest, BrowserOpenResult, BrowserPressParams, BrowserRpcRequest,
     BrowserRpcResponse, BrowserScreenshotParams, BrowserScreenshotResult, BrowserSnapshotParams,
-    BrowserSnapshotResult, BrowserStatus, BrowserTypeParams, BrowserViewport, BrowserWaitParams,
-    BROWSER_PROTOCOL_VERSION,
+    BrowserSnapshotResult, BrowserStatus, BrowserTypeParams, BrowserViewport, BrowserWaitCondition,
+    BrowserWaitParams, BROWSER_PROTOCOL_VERSION,
 };
 use tandem_core::{resolve_shared_paths, BrowserConfig};
 use tandem_tools::{Tool, ToolRegistry};
@@ -155,6 +155,40 @@ struct BrowserTypeToolArgs {
     submit: bool,
     #[serde(default)]
     timeout_ms: Option<u64>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct BrowserWaitConditionArgs {
+    #[serde(default, alias = "type")]
+    kind: Option<String>,
+    #[serde(default)]
+    value: Option<String>,
+    #[serde(default)]
+    selector: Option<String>,
+    #[serde(default)]
+    text: Option<String>,
+    #[serde(default)]
+    url: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct BrowserWaitToolArgs {
+    #[serde(alias = "sessionId")]
+    session_id: String,
+    #[serde(default, alias = "wait_for", alias = "waitFor")]
+    condition: Option<BrowserWaitConditionArgs>,
+    #[serde(default, alias = "timeoutMs")]
+    timeout_ms: Option<u64>,
+    #[serde(default, alias = "type")]
+    kind: Option<String>,
+    #[serde(default)]
+    value: Option<String>,
+    #[serde(default)]
+    selector: Option<String>,
+    #[serde(default)]
+    text: Option<String>,
+    #[serde(default)]
+    url: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -900,8 +934,7 @@ impl BrowserTool {
 
     async fn execute_wait(&self, args: Value) -> anyhow::Result<ToolResult> {
         let ctx = parse_tool_context(&args);
-        let params: BrowserWaitParams =
-            serde_json::from_value(args.clone()).context("invalid browser_wait arguments")?;
+        let params = parse_browser_wait_args(&args).context("invalid browser_wait arguments")?;
         let session = self
             .load_session(&params.session_id, ctx.model_session_id.as_deref())
             .await?;
@@ -1752,6 +1785,58 @@ fn normalize_browser_open_request(request: &mut BrowserOpenRequest) {
         .filter(|value| !value.is_empty());
 }
 
+fn parse_browser_wait_condition(
+    input: BrowserWaitConditionArgs,
+) -> anyhow::Result<BrowserWaitCondition> {
+    let BrowserWaitConditionArgs {
+        kind,
+        value,
+        selector,
+        text,
+        url,
+    } = input;
+
+    let kind = kind
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .or_else(|| selector.as_ref().map(|_| "selector".to_string()))
+        .or_else(|| text.as_ref().map(|_| "text".to_string()))
+        .or_else(|| url.as_ref().map(|_| "url".to_string()))
+        .ok_or_else(|| anyhow!("browser_wait requires condition.kind"))?;
+
+    let value = value
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| match kind.as_str() {
+            "selector" => selector,
+            "text" => text,
+            "url" => url,
+            _ => None,
+        });
+
+    Ok(BrowserWaitCondition { kind, value })
+}
+
+fn parse_browser_wait_args(args: &Value) -> anyhow::Result<BrowserWaitParams> {
+    let raw: BrowserWaitToolArgs = serde_json::from_value(args.clone())?;
+    let condition = if let Some(condition) = raw.condition {
+        parse_browser_wait_condition(condition)?
+    } else {
+        parse_browser_wait_condition(BrowserWaitConditionArgs {
+            kind: raw.kind,
+            value: raw.value,
+            selector: raw.selector,
+            text: raw.text,
+            url: raw.url,
+        })?
+    };
+
+    Ok(BrowserWaitParams {
+        session_id: raw.session_id,
+        condition,
+        timeout_ms: raw.timeout_ms,
+    })
+}
+
 fn is_local_or_private_host(host: &str) -> bool {
     if host.eq_ignore_ascii_case("localhost") {
         return true;
@@ -1937,9 +2022,34 @@ fn tool_schema(kind: BrowserToolKind) -> ToolSchema {
                 "properties": {
                     "session_id": { "type": "string" },
                     "condition": wait_condition_schema(),
-                    "timeout_ms": { "type": "integer", "minimum": 250, "maximum": 120000 }
+                    "wait_for": wait_condition_schema(),
+                    "waitFor": wait_condition_schema(),
+                    "kind": {
+                        "type": "string",
+                        "enum": ["selector", "text", "url", "network_idle", "navigation"]
+                    },
+                    "type": {
+                        "type": "string",
+                        "enum": ["selector", "text", "url", "network_idle", "navigation"]
+                    },
+                    "value": { "type": "string" },
+                    "selector": { "type": "string" },
+                    "text": { "type": "string" },
+                    "url": { "type": "string" },
+                    "timeout_ms": { "type": "integer", "minimum": 250, "maximum": 120000 },
+                    "timeoutMs": { "type": "integer", "minimum": 250, "maximum": 120000 }
                 },
-                "required": ["session_id", "condition"]
+                "required": ["session_id"],
+                "anyOf": [
+                    { "required": ["condition"] },
+                    { "required": ["wait_for"] },
+                    { "required": ["waitFor"] },
+                    { "required": ["kind"] },
+                    { "required": ["type"] },
+                    { "required": ["selector"] },
+                    { "required": ["text"] },
+                    { "required": ["url"] }
+                ]
             }),
         },
         BrowserToolKind::Extract => ToolSchema {
@@ -2067,6 +2177,64 @@ mod tests {
         normalize_browser_open_request(&mut request);
 
         assert_eq!(request.profile_id, None);
+    }
+
+    #[test]
+    fn parse_browser_wait_args_accepts_canonical_condition_shape() {
+        let parsed = parse_browser_wait_args(&json!({
+            "session_id": "browser-1",
+            "condition": { "kind": "selector", "value": "#login" },
+            "timeout_ms": 5000
+        }))
+        .expect("canonical browser_wait args");
+
+        assert_eq!(parsed.session_id, "browser-1");
+        assert_eq!(parsed.condition.kind, "selector");
+        assert_eq!(parsed.condition.value.as_deref(), Some("#login"));
+        assert_eq!(parsed.timeout_ms, Some(5000));
+    }
+
+    #[test]
+    fn parse_browser_wait_args_accepts_wait_for_alias_and_camel_case() {
+        let parsed = parse_browser_wait_args(&json!({
+            "sessionId": "browser-1",
+            "waitFor": { "type": "text", "value": "Dashboard" },
+            "timeoutMs": 1500
+        }))
+        .expect("aliased browser_wait args");
+
+        assert_eq!(parsed.session_id, "browser-1");
+        assert_eq!(parsed.condition.kind, "text");
+        assert_eq!(parsed.condition.value.as_deref(), Some("Dashboard"));
+        assert_eq!(parsed.timeout_ms, Some(1500));
+    }
+
+    #[test]
+    fn parse_browser_wait_args_accepts_top_level_condition_fields() {
+        let parsed = parse_browser_wait_args(&json!({
+            "session_id": "browser-1",
+            "kind": "url",
+            "value": "/settings"
+        }))
+        .expect("top-level browser_wait args");
+
+        assert_eq!(parsed.condition.kind, "url");
+        assert_eq!(parsed.condition.value.as_deref(), Some("/settings"));
+    }
+
+    #[test]
+    fn parse_browser_wait_args_infers_selector_alias_without_explicit_kind() {
+        let parsed = parse_browser_wait_args(&json!({
+            "session_id": "browser-1",
+            "condition": { "selector": "[data-testid='save']" }
+        }))
+        .expect("selector alias browser_wait args");
+
+        assert_eq!(parsed.condition.kind, "selector");
+        assert_eq!(
+            parsed.condition.value.as_deref(),
+            Some("[data-testid='save']")
+        );
     }
 
     #[tokio::test]

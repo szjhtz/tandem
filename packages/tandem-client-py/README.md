@@ -67,6 +67,8 @@ Use as an async context manager or call `await client.aclose()` manually.
 | `client.stream(session_id, run_id?)` | Async generator of `EngineEvent` |
 | `client.global_stream()`             | Stream all engine events         |
 | `await client.list_tool_ids()`       | List all registered tool IDs     |
+| `await client.list_tools()`          | List tool schemas                |
+| `await client.execute_tool(...)`     | Execute a specific engine tool   |
 
 ---
 
@@ -99,6 +101,63 @@ run = await client.sessions.prompt_async_parts(
     ],
 )
 ```
+
+**Prompt with browser tools enabled for QA:**
+
+```python
+run = await client.sessions.prompt_async(
+    session_id,
+    "Run QA on the target web app. Capture screenshots for failures.",
+    tool_mode="required",
+    tool_allowlist=[
+        "browser_status",
+        "browser_open",
+        "browser_navigate",
+        "browser_snapshot",
+        "browser_click",
+        "browser_type",
+        "browser_press",
+        "browser_wait",
+        "browser_extract",
+        "browser_screenshot",
+        "browser_close",
+    ],
+)
+```
+
+### Browser automation via tools
+
+The SDK exposes two different browser paths:
+
+- `client.browser` for readiness, install, and smoke-test flows
+- `client.execute_tool(...)` or session runs for actual browser automation
+
+The browser namespace does not currently wrap `open`, `click`, `type`, `extract`, or `screenshot`. Those actions are exposed as standard engine tools.
+
+```python
+status = await client.execute_tool("browser_status", {})
+
+opened = await client.execute_tool("browser_open", {
+    "url": "https://example.com",
+})
+session_id = opened.output["session_id"]
+
+snapshot = await client.execute_tool("browser_snapshot", {
+    "session_id": session_id,
+    "include_screenshot": True,
+})
+
+html = await client.execute_tool("browser_extract", {
+    "session_id": session_id,
+    "format": "html",
+})
+
+await client.execute_tool("browser_close", {
+    "session_id": session_id,
+})
+```
+
+Use this pattern for agents that need to open pages, click elements, enter text, wait for content, extract page HTML or text, and capture screenshots through the engine.
 
 ### `client.routines`
 

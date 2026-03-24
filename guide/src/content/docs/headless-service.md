@@ -61,6 +61,8 @@ tandem-engine serve --hostname 127.0.0.1 --port 39731
 - `POST /memory/demote`
 - `DELETE /memory/{id}`
 
+These browser endpoints are for readiness, installation, and smoke testing. Actual browser automation in headless deployments goes through engine tools such as `browser_open`, `browser_click`, and `browser_screenshot` via `POST /tool/execute` or session-based runs with explicit tool allowlists.
+
 ## Example: Check Health
 
 ```bash
@@ -86,6 +88,15 @@ curl -s -X POST http://127.0.0.1:39731/browser/install \
 
 curl -s -X POST http://127.0.0.1:39731/browser/smoke-test \
   -H "X-Agent-Token: tk_your_token"
+```
+
+## Example: Browser Automation via Tool Execution
+
+```bash
+curl -s -X POST http://127.0.0.1:39731/tool/execute \
+  -H "X-Agent-Token: tk_your_token" \
+  -H "content-type: application/json" \
+  -d '{"tool":"browser_open","args":{"url":"https://example.com"}}'
 ```
 
 ## Channel Uploads and Media

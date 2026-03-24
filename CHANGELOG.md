@@ -40,6 +40,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `scripts/loadtest/run_fanout.mjs` — multi-mission multi-worker fan-out via agent-team/mission APIs
   - Both scripts moved from `tools/loadtest/` to `scripts/loadtest/`
 
+- **Browser automation docs clarified for SDK and agent usage**:
+  - documented that browser control is exposed through engine tools like `browser_open` and `browser_click`, not dedicated `/browser/open`-style HTTP endpoints
+  - added guidance for Python SDK users to call browser automation via `execute_tool(...)` or session runs with browser tool allowlists
+  - added QA-agent guidance for passing browser tools through the engine tool allowlist after checking `browser_status`
+
+### Fixed
+
+- **`browser_wait` tool argument parsing and docs alignment**:
+  - fixed the engine-side `browser_wait` parser so it accepts the canonical `condition: { kind, value }` payload plus common agent-generated variants like `wait_for`, `waitFor`, camelCase fields, and top-level `selector`, `text`, or `url`
+  - aligned the registered `browser_wait` tool schema with the accepted argument shapes so agents see the same contract the engine enforces
+  - added guide examples showing copy-paste-safe `browser_wait` payloads for CLI, SDK, and QA-agent usage
+
 ## [0.4.14] - 2026-03-23
 
 ### Fixed

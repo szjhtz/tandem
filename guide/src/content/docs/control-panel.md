@@ -210,6 +210,8 @@ You can use it to:
 - trigger sidecar install with `POST /browser/install`
 - run an end-to-end browser check with `POST /browser/smoke-test`
 
+This panel is for browser host diagnostics. Actual browser automation still runs through the engine tool system using tools such as `browser_open`, `browser_click`, and `browser_screenshot`.
+
 ## Verify Engine + Panel
 
 ```bash

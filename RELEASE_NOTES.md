@@ -33,6 +33,11 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
   - `scripts/loadtest/run_concurrency.mjs` — concurrent run concurrency test via session → run → SSE stream
   - `scripts/loadtest/run_fanout.mjs` — multi-mission multi-worker fan-out via agent-team/mission APIs
 
+- Browser automation wait-contract fix and guide updates
+  - fixed `browser_wait` so the engine accepts the documented nested `condition` shape plus common compatibility forms like `wait_for`, `waitFor`, camelCase fields, and top-level `selector`, `text`, or `url`
+  - aligned the registered tool schema so agents and SDK callers see the same argument contract the engine accepts
+  - added a dedicated guide section with copy-paste `browser_wait` examples for CLI and agent-driven QA flows
+
 ## v0.4.14 (Released 2026-03-23)
 
 - Windows desktop startup hotfix for Tauri installs

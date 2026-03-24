@@ -1,5 +1,20 @@
 # Tandem Upcoming Release Notes
 
+## Tandem v0.4.15 Release Notes (Released 2026-03-24)
+
+### Control Panel ACA/Hal900 Optional Integration
+
+- Added `/api/capabilities` endpoint with 45-second in-memory cache for ACA and engine capability detection.
+- Added `ACA_BASE_URL`, `ACA_HEALTH_PATH`, `ACA_PROBE_TIMEOUT_MS`, and `ACA_CAPABILITY_CACHE_TTL_MS` environment variables to configure ACA integration.
+- ACA capability transitions are logged with ISO timestamps, and ACA probe failures are tracked by reason.
+
+### Browser Automation Docs And `browser_wait` Contract Fix
+
+- Clarified that browser automation is exposed through engine tools like `browser_open`, `browser_click`, `browser_wait`, and `browser_screenshot`, not dedicated `/browser/open`-style runtime endpoints.
+- Fixed the engine-side `browser_wait` parser so it accepts the canonical nested `condition` shape plus compatibility forms that agents commonly generate, including `wait_for`, `waitFor`, camelCase fields, and top-level `selector`, `text`, or `url`.
+- Aligned the registered `browser_wait` tool schema with the accepted argument shapes so tool discovery matches runtime behavior.
+- Added browser QA and SDK guidance showing how to pass browser tools through the engine allowlist and how to call `browser_wait` with copy-paste-safe payloads.
+
 ## Tandem v0.4.14 Release Notes (Released 2026-03-23)
 
 ### Windows Tauri Desktop Startup Hotfix

@@ -63,7 +63,7 @@ All namespaces exist on both the TypeScript and Python clients.
 | `providers`                        | Catalog, config, set API keys and defaults                         |
 | `channels`                         | Telegram, Discord, Slack integration config                        |
 | `mcp`                              | Register, connect, refresh MCP servers and tools                   |
-| `browser`                          | Browser sidecar status, install, and smoke testing                 |
+| `browser`                          | Browser sidecar status, install, and smoke testing only            |
 | `memory`                           | Global memory: put, search, list, promote, demote, delete, audit   |
 | `skills`                           | Agent skill packs: list, import, preview, install templates        |
 | `resources`                        | Key-value resource store (shared agent state)                      |
@@ -76,3 +76,5 @@ All namespaces exist on both the TypeScript and Python clients.
 | `coder`                            | Coder runs, artifacts, review summaries, and memory candidates     |
 | `agentTeams`                       | Spawn and manage multi-agent teams                                 |
 | `missions`                         | Multi-agent goals and work item tracking                           |
+
+For browser automation itself, use standard engine tools such as `browser_open`, `browser_click`, and `browser_screenshot` through `execute_tool(...)` or session-based runs with those tools in the allowlist. The `browser` namespace is for diagnostics and install flows.

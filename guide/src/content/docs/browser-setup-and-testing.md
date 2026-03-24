@@ -144,7 +144,58 @@ tandem-engine browser status --hostname 127.0.0.1 --port 39731
 curl -s http://127.0.0.1:39731/browser/status | jq .
 ```
 
-### 4. Tool-level smoke test
+### 4. How browser automation is exposed
+
+Browser automation is exposed through the engine tool registry, not through dedicated runtime endpoints like `/browser/open` or `/browser/click`.
+
+Use the browser HTTP endpoints for host diagnostics and installation:
+
+- `GET /browser/status`
+- `POST /browser/install`
+- `POST /browser/smoke-test`
+
+Use engine tools for actual automation:
+
+- `browser_status`
+- `browser_open`
+- `browser_navigate`
+- `browser_snapshot`
+- `browser_click`
+- `browser_type`
+- `browser_press`
+- `browser_wait`
+- `browser_extract`
+- `browser_screenshot`
+- `browser_close`
+
+That means an SDK or agent has two valid ways to drive browser automation through the engine:
+
+- call `POST /tool/execute` directly with one of the browser tool names
+- start a session run with tool use enabled and include the browser tools in the run allowlist for a QA or browser-debugging agent
+
+The browser namespace in the SDK is intentionally narrower. It is for readiness and install flows, while the actual browser actions are ordinary tools.
+
+For `browser_wait`, the canonical payload shape is:
+
+```json
+{
+  "session_id": "browser-123",
+  "condition": {
+    "kind": "selector",
+    "value": "#login"
+  },
+  "timeout_ms": 5000
+}
+```
+
+The engine also accepts compatibility aliases that agents commonly generate:
+
+- `wait_for` or `waitFor` instead of `condition`
+- `sessionId` and `timeoutMs` camelCase fields
+- top-level `kind` plus `value`
+- top-level `selector`, `text`, or `url`, which infer the wait kind automatically
+
+### 5. Tool-level smoke test
 
 Once status is runnable, validate real browser actions through the engine runtime:
 
@@ -155,7 +206,7 @@ Once status is runnable, validate real browser actions through the engine runtim
 
 If `browser_status` says blocked, do not debug the model flow first. Fix host readiness first.
 
-### 5. Exact smoke-test commands
+### 6. Exact smoke-test commands
 
 After Chromium is installed, run this sequence.
 
@@ -221,6 +272,60 @@ Expected result:
 - `browser_open` returns a new `session_id`
 - `browser_snapshot` returns page metadata and elements
 - `browser_close` succeeds without leaking the session
+
+### 7. `browser_wait` argument guide
+
+If an agent needs to wait explicitly, use one of these shapes.
+
+Wait for a selector:
+
+```bash
+cat <<'JSON' | tandem-engine tool --json -
+{"tool":"browser_wait","args":{"session_id":"PASTE_SESSION_ID_HERE","condition":{"kind":"selector","value":"#login"},"timeout_ms":5000}}
+JSON
+```
+
+Wait for visible text with the compatibility alias:
+
+```bash
+cat <<'JSON' | tandem-engine tool --json -
+{"tool":"browser_wait","args":{"sessionId":"PASTE_SESSION_ID_HERE","waitFor":{"type":"text","value":"Dashboard"},"timeoutMs":5000}}
+JSON
+```
+
+Wait for a URL fragment with the short top-level form:
+
+```bash
+cat <<'JSON' | tandem-engine tool --json -
+{"tool":"browser_wait","args":{"session_id":"PASTE_SESSION_ID_HERE","url":"/settings","timeout_ms":5000}}
+JSON
+```
+
+Use `browser_wait` when you need an explicit synchronization step. For click and keypress flows, prefer the built-in `wait_for` field on `browser_click` and `browser_press` so the action and follow-up wait happen together.
+
+### 8. Agent-driven QA usage
+
+For browser-based QA agents, pass the browser tools through as allowed engine tools instead of inventing a second browser API layer.
+
+A recommended allowlist is:
+
+- `browser_status`
+- `browser_open`
+- `browser_navigate`
+- `browser_snapshot`
+- `browser_click`
+- `browser_type`
+- `browser_press`
+- `browser_wait`
+- `browser_extract`
+- `browser_screenshot`
+- `browser_close`
+
+Recommended run pattern:
+
+1. Call `browser_status` first.
+2. If the browser is blocked, report the blocking issue instead of attempting QA.
+3. If the browser is runnable, use the browser tools to navigate, interact, extract page content, and capture screenshots.
 
 ## Desktop and Control Panel
 
