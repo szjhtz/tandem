@@ -59,9 +59,42 @@ function normalizeProjects(raw: any) {
       slug: String(row?.slug || "").trim(),
       repoUrl: String(row?.repo_url || row?.repoUrl || "").trim(),
       taskSource: row?.task_source || row?.taskSource || {},
+      implicit: row?.implicit === true,
     }))
     .filter((row: any) => row.slug)
     .sort((a: any, b: any) => a.slug.localeCompare(b.slug));
+
+  const bySignature = new Map<string, any>();
+  for (const row of rows) {
+    const taskSource = row?.taskSource || {};
+    const taskType = String(taskSource?.type || "").trim();
+    const signature =
+      taskType === "github_project" &&
+      String(taskSource?.owner || "").trim() &&
+      String(taskSource?.repo || "").trim() &&
+      String(taskSource?.project || "").trim()
+        ? `github:${String(taskSource.owner).trim().toLowerCase()}/${String(taskSource.repo)
+            .trim()
+            .toLowerCase()}#${String(taskSource.project).trim()}`
+        : row.repoUrl
+          ? `repo:${row.repoUrl.toLowerCase()}`
+          : `slug:${row.slug}`;
+    const current = bySignature.get(signature);
+    if (!current) {
+      bySignature.set(signature, row);
+      continue;
+    }
+    const currentScore = (current.implicit ? 0 : 10) + (current.repoUrl ? 1 : 0);
+    const nextScore = (row.implicit ? 0 : 10) + (row.repoUrl ? 1 : 0);
+    if (nextScore > currentScore) {
+      bySignature.set(signature, row);
+    }
+  }
+
+  return Array.from(bySignature.values()).sort((a: any, b: any) => {
+    if (a.implicit !== b.implicit) return a.implicit ? 1 : -1;
+    return a.slug.localeCompare(b.slug);
+  });
 }
 
 function normalizeGithubBoard(raw: any) {
@@ -598,6 +631,14 @@ export function CodingWorkflowsPage({
       setLastGlobalEvent(eventType);
       void queryClient.invalidateQueries({ queryKey: ["coding-workflows", "aca-runs"] });
       void queryClient.invalidateQueries({ queryKey: ["coding-workflows", "aca-projects"] });
+      if (selectedProjectSlug) {
+        void queryClient.invalidateQueries({
+          queryKey: ["coding-workflows", "aca-project-board", selectedProjectSlug],
+        });
+        void queryClient.invalidateQueries({
+          queryKey: ["coding-workflows", "aca-project-tasks", selectedProjectSlug],
+        });
+      }
       const runIdFromPayload = String(
         envelope?.payload?.run_id || envelope?.payload?.event?.run_id || ""
       ).trim();
