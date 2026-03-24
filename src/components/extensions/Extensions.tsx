@@ -4,12 +4,13 @@ import { Blocks } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/Button";
+import { AgentCatalogTab } from "./AgentCatalogTab";
 import { SkillsTab } from "./SkillsTab";
 import { PluginsTab } from "./PluginsTab";
 import { IntegrationsTab } from "./IntegrationsTab";
 import { ModesTab } from "./ModesTab";
 
-export type ExtensionsTabId = "skills" | "plugins" | "mcp" | "modes";
+export type ExtensionsTabId = "skills" | "agents" | "plugins" | "mcp" | "modes";
 
 interface ExtensionsProps {
   workspacePath?: string | null;
@@ -77,6 +78,18 @@ export function Extensions({
             </button>
             <button
               type="button"
+              onClick={() => setActiveTab("agents")}
+              className={cn(
+                "flex-1 px-4 py-3 text-sm font-medium transition-colors flex items-center justify-center",
+                activeTab === "agents"
+                  ? "border-b-2 border-primary text-primary"
+                  : "text-text-muted hover:text-text hover:bg-surface-elevated"
+              )}
+            >
+              Agents
+            </button>
+            <button
+              type="button"
               onClick={() => setActiveTab("plugins")}
               className={cn(
                 "flex-1 px-4 py-3 text-sm font-medium transition-colors flex items-center justify-center",
@@ -116,6 +129,8 @@ export function Extensions({
           <div className="p-6">
             {activeTab === "skills" ? (
               <SkillsTab workspacePath={workspacePath ?? null} />
+            ) : activeTab === "agents" ? (
+              <AgentCatalogTab />
             ) : activeTab === "plugins" ? (
               <PluginsTab workspacePath={workspacePath ?? null} />
             ) : activeTab === "mcp" ? (

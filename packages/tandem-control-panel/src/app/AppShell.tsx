@@ -27,8 +27,7 @@ const ROUTE_META: Record<string, { title: string; subtitle: string }> = {
   },
   agents: {
     title: "Agents",
-    subtitle:
-      "Persistent personalities, default models, and prompts reused across automation workflows.",
+    subtitle: "Search reusable roles, inspect routines, and manage workflow-ready agent drafts.",
   },
   orchestrator: {
     title: "Orchestrator",

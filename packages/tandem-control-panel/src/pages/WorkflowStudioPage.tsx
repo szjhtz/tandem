@@ -15,7 +15,11 @@ import type {
   StudioRole,
   StudioWorkflowDraft,
 } from "../features/studio/schema";
-import { createEmptyAgentDraft, createEmptyNodeDraft } from "../features/studio/schema";
+import {
+  createEmptyAgentDraft,
+  createEmptyNodeDraft,
+  emptyPromptSections,
+} from "../features/studio/schema";
 import { EmptyState, PageCard } from "./ui";
 import type { AppPageProps } from "./pageTypes";
 
@@ -43,6 +47,21 @@ type ProviderOption = {
 };
 
 const AUTOMATIONS_STUDIO_HANDOFF_KEY = "tandem.automations.studioHandoff";
+const AGENT_CATALOG_HANDOFF_KEY = "tandem.studio.agentCatalogHandoff";
+
+type AgentCatalogHandoff = {
+  agentId: string;
+  displayName: string;
+  categoryId: string;
+  categoryTitle: string;
+  summary: string;
+  sourcePath: string;
+  sandboxMode: string;
+  role: StudioRole;
+  tags: string[];
+  requires: string[];
+  instructions: string;
+};
 
 function toArray(input: any, key: string) {
   if (Array.isArray(input)) return input;
@@ -52,6 +71,34 @@ function toArray(input: any, key: string) {
 
 function safeString(value: unknown) {
   return String(value || "").trim();
+}
+
+function normalizeStudioRole(value: unknown): StudioRole {
+  const role = safeString(value) as StudioRole;
+  return ROLE_OPTIONS.includes(role) ? role : "worker";
+}
+
+function createAgentDraftFromCatalog(entry: AgentCatalogHandoff): StudioAgentDraft {
+  return createEmptyAgentDraft(entry.agentId, entry.displayName, {
+    role: normalizeStudioRole(entry.role),
+    prompt: emptyPromptSections({
+      role: `${entry.displayName} (${entry.categoryTitle})`,
+      mission: entry.instructions,
+      inputs: [
+        `Source path: ${entry.sourcePath}`,
+        `Category: ${entry.categoryTitle}`,
+        `Sandbox: ${entry.sandboxMode}`,
+        entry.tags.length ? `Tags: ${entry.tags.join(", ")}` : "",
+        entry.requires.length ? `Requires: ${entry.requires.join(", ")}` : "",
+      ]
+        .filter(Boolean)
+        .join("\n"),
+      outputContract:
+        "Use this catalog specialization to complete the selected workflow stage clearly and concretely.",
+      guardrails:
+        "Keep the stage scoped to the imported catalog instructions and preserve the workflow's existing conventions.",
+    }),
+  });
 }
 
 function isCodeLikeOutputPath(value: string) {
@@ -1094,6 +1141,7 @@ export function WorkflowStudioPage({ client, api, toast, navigate }: AppPageProp
     title: string;
   } | null>(null);
   const [repairState, setRepairState] = useState<StudioRepairState | null>(null);
+  const [catalogAgentHandoff, setCatalogAgentHandoff] = useState<AgentCatalogHandoff | null>(null);
 
   useEffect(() => {
     if (!defaultWorkspaceRoot) return;
@@ -1103,6 +1151,36 @@ export function WorkflowStudioPage({ client, api, toast, navigate }: AppPageProp
         : { ...current, workspaceRoot: defaultWorkspaceRoot }
     );
   }, [defaultWorkspaceRoot]);
+
+  useEffect(() => {
+    const raw = sessionStorage.getItem(AGENT_CATALOG_HANDOFF_KEY);
+    if (!raw) return;
+    sessionStorage.removeItem(AGENT_CATALOG_HANDOFF_KEY);
+    try {
+      const parsed = JSON.parse(raw) as Partial<AgentCatalogHandoff>;
+      const agentId = safeString(parsed.agentId);
+      if (!agentId) return;
+      setCatalogAgentHandoff({
+        agentId,
+        displayName: safeString(parsed.displayName) || agentId,
+        categoryId: safeString(parsed.categoryId),
+        categoryTitle: safeString(parsed.categoryTitle),
+        summary: safeString(parsed.summary),
+        sourcePath: safeString(parsed.sourcePath),
+        sandboxMode: safeString(parsed.sandboxMode),
+        role: normalizeStudioRole(parsed.role),
+        tags: Array.isArray(parsed.tags)
+          ? parsed.tags.map((tag) => safeString(tag)).filter(Boolean)
+          : [],
+        requires: Array.isArray(parsed.requires)
+          ? parsed.requires.map((req) => safeString(req)).filter(Boolean)
+          : [],
+        instructions: safeString(parsed.instructions),
+      });
+    } catch (error) {
+      console.warn("Failed to parse catalog agent handoff:", error);
+    }
+  }, []);
 
   useEffect(() => {
     if (!studioDefaultModel.provider || !studioDefaultModel.model) return;
@@ -1149,6 +1227,50 @@ export function WorkflowStudioPage({ client, api, toast, navigate }: AppPageProp
       setSelectedAgentId(draft.agents[0]?.agentId || "");
     }
   }, [draft.agents, selectedAgentId]);
+
+  useEffect(() => {
+    if (!catalogAgentHandoff) return;
+    const agentId = safeString(catalogAgentHandoff.agentId);
+    if (!agentId) {
+      setCatalogAgentHandoff(null);
+      return;
+    }
+
+    const targetNodeId =
+      draft.nodes.find((node) => node.nodeId === selectedNodeId)?.nodeId ||
+      draft.nodes.find((node) => node.agentId === agentId)?.nodeId ||
+      draft.nodes[0]?.nodeId ||
+      "";
+
+    setDraft((current) => {
+      const existingAgent = current.agents.find((agent) => agent.agentId === agentId);
+      const nextAgents = existingAgent
+        ? current.agents.map((agent) =>
+            agent.agentId === agentId
+              ? { ...agent, role: normalizeStudioRole(catalogAgentHandoff.role) }
+              : agent
+          )
+        : [...current.agents, createAgentDraftFromCatalog(catalogAgentHandoff)];
+
+      const nextNodes = targetNodeId
+        ? current.nodes.map((node) => (node.nodeId === targetNodeId ? { ...node, agentId } : node))
+        : current.nodes;
+
+      return {
+        ...current,
+        agents: nextAgents,
+        nodes: nextNodes,
+      };
+    });
+    if (targetNodeId) setSelectedNodeId(targetNodeId);
+    setSelectedAgentId(agentId);
+    setRepairState(null);
+    toast(
+      "ok",
+      `Seeded ${catalogAgentHandoff.displayName} into Studio and bound it to a workflow stage.`
+    );
+    setCatalogAgentHandoff(null);
+  }, [catalogAgentHandoff, draft.nodes, selectedNodeId, toast]);
 
   useEffect(() => {
     try {

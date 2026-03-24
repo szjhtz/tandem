@@ -1,5 +1,14 @@
 # Tandem Upcoming Release Notes
 
+## Tandem v0.4.16 Release Notes (Released 2026-03-24)
+
+### Shared Agent Catalog For Tandem Desktop And Control Panel
+
+- Added a generated agent catalog sourced from `docs/internal/awesome-codex-subagents` so Tandem has one canonical registry for specialist roles.
+- Added searchable browsing by name, category, tag, filename, and source path across both the desktop Tauri app and the control panel.
+- Added Tandem-native manifest shaping that keeps instructions and lightweight metadata while dropping per-agent model fields by default.
+- Added desktop and control-panel entry points for discovering agents and reusing them from workflow and automation surfaces.
+
 ## Tandem v0.4.15 Release Notes (Released 2026-03-24)
 
 ### Control Panel ACA/Hal900 Optional Integration

@@ -145,7 +145,7 @@ function App() {
     "providers" | "projects" | "identity" | null
   >(null);
   const [extensionsInitialTab, setExtensionsInitialTab] = useState<
-    "skills" | "plugins" | "mcp" | "modes" | null
+    "skills" | "agents" | "plugins" | "mcp" | "modes" | null
   >(null);
   const [postAddProjectView, setPostAddProjectView] = useState<View | null>(null);
   // Initialize currentSessionId from localStorage to persist state across reloads/rebuilds

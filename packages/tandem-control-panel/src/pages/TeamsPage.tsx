@@ -5,6 +5,42 @@ import { AgentStandupBuilder } from "./AgentStandupBuilder";
 import { PageCard, EmptyState } from "./ui";
 import { useCapabilities } from "../features/system/queries.ts";
 import type { AppPageProps } from "./pageTypes";
+import agentCatalog from "../generated/agent-catalog.json";
+
+type AgentCatalogCategory = {
+  id: string;
+  title: string;
+  summary: string;
+  source_path: string;
+  count: number;
+};
+
+type AgentCatalogEntry = {
+  id: string;
+  name: string;
+  summary: string;
+  category_id: string;
+  category_title: string;
+  category_summary: string;
+  source_path: string;
+  source_file: string;
+  sandbox_mode: string;
+  target_surfaces: string[];
+  instructions: string;
+  tags: string[];
+  requires: string[];
+  role: string;
+};
+
+type AgentCatalogIndex = {
+  generated_at: string;
+  source_root: string;
+  categories: AgentCatalogCategory[];
+  agents: AgentCatalogEntry[];
+};
+
+const CATALOG = agentCatalog as AgentCatalogIndex;
+const AGENT_CATALOG_HANDOFF_KEY = "tandem.studio.agentCatalogHandoff";
 
 const ROLE_OPTIONS = [
   "worker",
@@ -91,12 +127,30 @@ function buildTemplatePayload(form: TemplateFormState) {
   return template;
 }
 
-export function TeamsPage({ client, toast }: AppPageProps) {
+function normalizeQuery(value: string) {
+  return String(value || "")
+    .trim()
+    .toLowerCase();
+}
+
+function previewInstructions(entry: AgentCatalogEntry) {
+  const block = String(entry.instructions || "")
+    .trim()
+    .split(/\n\s*\n/)
+    .find(Boolean)
+    ?.trim();
+  return block || entry.summary;
+}
+
+export function TeamsPage({ client, toast, navigate }: AppPageProps) {
   const queryClient = useQueryClient();
   const agentTeams = (client as any)?.agentTeams;
   const rootRef = useRef<HTMLDivElement | null>(null);
   const [form, setForm] = useState<TemplateFormState>(EMPTY_FORM);
   const [editingTemplateId, setEditingTemplateId] = useState<string | null>(null);
+  const [catalogQuery, setCatalogQuery] = useState("");
+  const [catalogCategory, setCatalogCategory] = useState("all");
+  const [catalogStatus, setCatalogStatus] = useState("");
   const avatarInputRef = useRef<HTMLInputElement | null>(null);
   const caps = useCapabilities();
   const acaAvailable = caps.data?.aca_integration === true;
@@ -199,6 +253,45 @@ export function TeamsPage({ client, toast }: AppPageProps) {
   const personalityInitial = personalityName.slice(0, 1).toUpperCase() || "A";
   const selectedRoleHint = ROLE_HINTS[form.role];
   const avatarUrl = form.avatarUrl.trim();
+  const filteredCatalogAgents = useMemo(() => {
+    const query = normalizeQuery(catalogQuery);
+    return CATALOG.agents.filter((entry) => {
+      if (catalogCategory !== "all" && entry.category_id !== catalogCategory) {
+        return false;
+      }
+      if (!query) return true;
+      const haystack = [
+        entry.name,
+        entry.summary,
+        entry.category_title,
+        entry.category_id,
+        entry.source_path,
+        entry.source_file,
+        entry.sandbox_mode,
+        entry.role,
+        ...(entry.tags || []),
+        ...(entry.requires || []),
+      ]
+        .join(" ")
+        .toLowerCase();
+      return haystack.includes(query);
+    });
+  }, [catalogCategory, catalogQuery]);
+
+  const filteredCatalogCategories = useMemo(() => {
+    const map = new Map<string, AgentCatalogEntry[]>();
+    for (const entry of filteredCatalogAgents) {
+      const current = map.get(entry.category_id) || [];
+      current.push(entry);
+      map.set(entry.category_id, current);
+    }
+    return CATALOG.categories
+      .map((category) => ({
+        ...category,
+        agents: map.get(category.id) || [],
+      }))
+      .filter((category) => category.agents.length > 0);
+  }, [filteredCatalogAgents]);
 
   useEffect(() => {
     const root = rootRef.current;
@@ -220,6 +313,40 @@ export function TeamsPage({ client, toast }: AppPageProps) {
     deleteMutation.isPending,
     replyMutation.isPending,
   ]);
+
+  const copyCatalogPath = async (path: string) => {
+    try {
+      await navigator.clipboard.writeText(path);
+      setCatalogStatus(`Copied ${path}`);
+    } catch (error) {
+      setCatalogStatus(error instanceof Error ? error.message : String(error));
+    }
+  };
+
+  const seedStudioFromCatalog = async (entry: AgentCatalogEntry) => {
+    try {
+      sessionStorage.setItem(
+        AGENT_CATALOG_HANDOFF_KEY,
+        JSON.stringify({
+          agentId: entry.id,
+          displayName: entry.name,
+          categoryId: entry.category_id,
+          categoryTitle: entry.category_title,
+          summary: entry.summary,
+          sourcePath: entry.source_path,
+          sandboxMode: entry.sandbox_mode,
+          role: entry.role,
+          tags: entry.tags,
+          requires: entry.requires,
+          instructions: entry.instructions,
+        })
+      );
+      toast("ok", `Seeded ${entry.name} into Studio.`);
+      navigate("studio");
+    } catch (error) {
+      toast("err", error instanceof Error ? error.message : String(error));
+    }
+  };
 
   const handleAvatarUpload = (file: File | null) => {
     if (!file) return;
@@ -253,6 +380,120 @@ export function TeamsPage({ client, toast }: AppPageProps) {
           <AgentStandupBuilder client={client} toast={toast} />
         </PageCard>
       )}
+
+      <PageCard
+        title="Agent Catalog"
+        subtitle="Search the canonical Codex subagent set by name, category, tag, or source path."
+      >
+        <div className="grid gap-3">
+          <div className="grid gap-2 md:grid-cols-[1fr_auto]">
+            <input
+              className="tcp-input"
+              placeholder="Search agent name, category, tag, or path"
+              value={catalogQuery}
+              onInput={(event) => setCatalogQuery((event.target as HTMLInputElement).value)}
+            />
+            <button
+              className="tcp-btn"
+              onClick={() => {
+                setCatalogQuery("");
+                setCatalogCategory("all");
+              }}
+              disabled={!catalogQuery && catalogCategory === "all"}
+            >
+              Clear
+            </button>
+          </div>
+
+          <div className="flex flex-wrap gap-2">
+            <button
+              className={`tcp-btn h-8 px-3 text-xs ${catalogCategory === "all" ? "border-amber-400/60 bg-amber-400/10" : ""}`}
+              onClick={() => setCatalogCategory("all")}
+            >
+              All
+            </button>
+            {CATALOG.categories.map((category) => (
+              <button
+                key={category.id}
+                className={`tcp-btn h-8 px-3 text-xs ${catalogCategory === category.id ? "border-amber-400/60 bg-amber-400/10" : ""}`}
+                onClick={() => setCatalogCategory(category.id)}
+              >
+                {category.title} ({category.count})
+              </button>
+            ))}
+          </div>
+
+          {catalogStatus ? <div className="text-xs text-slate-400">{catalogStatus}</div> : null}
+
+          {filteredCatalogCategories.length ? (
+            filteredCatalogCategories.map((category) => (
+              <div key={category.id} className="grid gap-2">
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <div className="font-medium text-slate-100">{category.title}</div>
+                    <div className="text-xs text-slate-400">{category.summary}</div>
+                  </div>
+                  <div className="tcp-badge-info">{category.agents.length} agents</div>
+                </div>
+                <div className="grid gap-2 md:grid-cols-2">
+                  {category.agents.map((entry) => (
+                    <div key={entry.source_path} className="tcp-list-item grid gap-2">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <div className="truncate font-semibold text-slate-100">{entry.name}</div>
+                          <div className="text-xs text-slate-400">{entry.summary}</div>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          <span className="tcp-badge-info">{entry.role}</span>
+                          <span
+                            className={
+                              entry.sandbox_mode === "read-only" ? "tcp-badge-warn" : "tcp-badge-ok"
+                            }
+                          >
+                            {entry.sandbox_mode}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="font-mono text-xs text-slate-400">{entry.source_path}</div>
+                      <div className="line-clamp-3 text-xs text-slate-200">
+                        {previewInstructions(entry)}
+                      </div>
+                      <div className="flex flex-wrap gap-1">
+                        {entry.tags.slice(0, 4).map((tag) => (
+                          <span key={`${entry.id}-${tag}`} className="tcp-badge-muted">
+                            {tag}
+                          </span>
+                        ))}
+                        {entry.requires.slice(0, 3).map((req) => (
+                          <span key={`${entry.id}-${req}`} className="tcp-badge-info">
+                            {req}
+                          </span>
+                        ))}
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          className="tcp-btn h-8 px-3 text-xs"
+                          onClick={() => void copyCatalogPath(entry.source_path)}
+                        >
+                          Copy path
+                        </button>
+                        <button
+                          className="tcp-btn h-8 px-3 text-xs"
+                          onClick={() => void seedStudioFromCatalog(entry)}
+                        >
+                          Use in Studio
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))
+          ) : (
+            <EmptyState text="No agents match your search." />
+          )}
+        </div>
+      </PageCard>
 
       <div className="grid gap-4 xl:grid-cols-2">
         <PageCard

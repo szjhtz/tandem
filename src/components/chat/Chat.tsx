@@ -101,7 +101,7 @@ interface ChatProps {
   onOpenSettings?: () => void;
   onProviderChange?: () => void;
   onOpenPacks?: () => void;
-  onOpenExtensions?: (tab?: "skills" | "plugins" | "mcp" | "modes") => void;
+  onOpenExtensions?: (tab?: "skills" | "agents" | "plugins" | "mcp" | "modes") => void;
   draftMessage?: string;
   onDraftMessageConsumed?: () => void;
   activeOrchestrationCount?: number;
@@ -4333,7 +4333,7 @@ interface EmptyStateProps {
   hasConfiguredProvider: boolean;
   onOpenSettings?: () => void;
   onOpenPacks?: () => void;
-  onOpenExtensions?: (tab?: "skills" | "plugins" | "mcp" | "modes") => void;
+  onOpenExtensions?: (tab?: "skills" | "agents" | "plugins" | "mcp" | "modes") => void;
 }
 
 type SuggestionPrompt = {

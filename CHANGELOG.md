@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.16] - 2026-03-24
+
+### Added
+
+- **Shared agent catalog for Tandem desktop and control panel**:
+  - Added a generated catalog built from `docs/internal/awesome-codex-subagents` so Tandem uses one canonical source for role metadata.
+  - Added searchable category/group browsing across both desktop Tauri and the control panel, including name, category, tag, filename, and source-path lookup.
+  - Added Tandem-native agent manifests that omit per-agent model fields by default and keep only the runtime instructions plus lightweight metadata.
+  - Added desktop and control-panel entry points for browsing the catalog and reusing agent roles from workflow authoring surfaces.
+
 ## [0.4.15] - 2026-03-24
 
 ### Added
