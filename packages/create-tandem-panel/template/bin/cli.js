@@ -57,7 +57,9 @@ async function main() {
   }
 
   if (first.startsWith("--")) {
-    console.warn("[Tandem Setup] Legacy flag mode is deprecated. Use `tandem-setup init|service|doctor`.");
+    console.warn(
+      "[Tandem Setup] Legacy flag mode is deprecated. Use `tandem panel init|service|doctor`."
+    );
     process.exit(await runLegacy(argv));
   }
 

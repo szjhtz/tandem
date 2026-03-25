@@ -1,20 +1,26 @@
 # Tandem Engine CLI Guide
 
-This guide documents `tandem-engine` using bash commands (macOS/Linux/WSL).
+This guide documents the master `tandem` CLI and the direct `tandem-engine`
+runtime using bash commands (macOS/Linux/WSL).
 
 ## Quick Start
 
 ```bash
-tandem-engine --help
+tandem --help
+tandem doctor
+tandem status
+tandem service install
+tandem install panel
 tandem-engine serve --hostname 127.0.0.1 --port 39731
-tandem-engine run "Summarize this repository"
+tandem run "Summarize this repository"
 ```
 
-For the official headless bootstrap path, use:
+For the official headless bootstrap path, use the master CLI:
 
 ```bash
-npm i -g @frumu/tandem-panel
-tandem-setup init
+npm i -g @frumu/tandem
+tandem install panel
+tandem panel init
 ```
 
 ## Command Overview
@@ -39,6 +45,9 @@ Useful options:
 - `TANDEM_ENGINE_HOST` (env override)
 - `TANDEM_ENGINE_PORT` (env override)
 - `TANDEM_API_TOKEN` (optional API auth token requirement)
+
+The master CLI also understands `tandem service status`, `tandem update`,
+`tandem addon list`, and `tandem panel open` for the add-on flow.
 
 ### `status`
 

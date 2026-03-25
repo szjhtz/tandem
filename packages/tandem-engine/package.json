@@ -1,9 +1,10 @@
 {
   "name": "@frumu/tandem",
   "version": "0.4.16",
-  "description": "Tandem Engine binary distribution",
+  "description": "Tandem master CLI and engine binary distribution",
   "homepage": "https://tandem.frumu.ai",
   "bin": {
+    "tandem": "bin/tandem.js",
     "tandem-engine": "bin/tandem-engine.js"
   },
   "scripts": {

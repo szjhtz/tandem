@@ -45,10 +45,13 @@ It provides durable coordination primitives—blackboards, workboards, explicit 
 ### Headless (server/VPS)
 
 **Option 1: Quick Start (Run instantly)**
-Run the official pre-built control panel directly:
+Install the master CLI and then add the web control panel when you want it:
 
 ```bash
-npx @frumu/tandem-panel
+npm i -g @frumu/tandem
+tandem install panel
+tandem panel init
+tandem panel open
 ```
 
 **Option 2: Editable App Scaffold**
@@ -73,6 +76,12 @@ sudo bash setup-agent.sh
 ```
 
 Open the printed URL and sign in with the generated key!
+
+If you only want the engine runtime, you can keep it foreground-only:
+
+```bash
+tandem-engine serve --hostname 127.0.0.1 --port 39731
+```
 
 ## Architecture
 

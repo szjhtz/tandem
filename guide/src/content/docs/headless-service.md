@@ -2,7 +2,19 @@
 title: Headless Service
 ---
 
-Run Tandem as a standalone headless service with optional embedded web admin.
+Run Tandem as a standalone headless service with the master `tandem` CLI and optional embedded web admin.
+
+## Managed install
+
+```bash
+npm i -g @frumu/tandem
+tandem doctor
+tandem service install
+tandem install panel
+tandem panel init
+```
+
+Use `tandem status` and `tandem service status` to confirm the engine service is running.
 
 ## Start the Engine (Headless)
 
@@ -18,6 +30,8 @@ This starts the HTTP/SSE engine runtime without desktop UI requirements.
 ## Enable Embedded Web Admin
 
 ```bash
+tandem panel status
+tandem panel open
 tandem-engine serve \
   --hostname 127.0.0.1 \
   --port 39731 \
@@ -40,6 +54,7 @@ The admin page expects a valid API token and keeps it in memory for the current 
 TANDEM_API_TOKEN=tk_your_token
 TANDEM_WEB_UI=true
 TANDEM_WEB_UI_PREFIX=/admin
+tandem status
 tandem-engine serve --hostname 127.0.0.1 --port 39731
 ```
 

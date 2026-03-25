@@ -1295,7 +1295,7 @@ async function ensureEngineRunning() {
     engineEntrypoint = require.resolve("@frumu/tandem/bin/tandem-engine.js");
   } catch (e) {
     err("Could not resolve @frumu/tandem binary entrypoint.");
-    err("Reinstall with: npm i -g @frumu/tandem-panel");
+    err("Reinstall with: npm i -g @frumu/tandem");
     throw e;
   }
 

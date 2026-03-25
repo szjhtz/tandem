@@ -139,4 +139,4 @@ Desktop/TUI map these into their request-center UI flows.
 - Use `TANDEM_ENGINE_PORT` when running multiple isolated dev stacks.
 - Use `TANDEM_ENGINE_URL` in TUI for explicit remote/forwarded test setups.
 - Avoid `3000` for engine defaults to reduce collisions with frontend dev servers.
-- For headless installs, prefer `tandem-setup init` from `@frumu/tandem-panel` so clients connect through the control-panel gateway layer instead of exposing the raw engine directly.
+- For headless installs, prefer `npm i -g @frumu/tandem` followed by `tandem install panel` and `tandem panel init` when you want the control-panel gateway layer. Use `tandem-engine serve` directly when you want the raw engine exposed only on localhost.

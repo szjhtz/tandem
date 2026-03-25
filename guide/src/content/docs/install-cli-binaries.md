@@ -2,7 +2,8 @@
 title: Install CLI Binaries
 ---
 
-Install prebuilt `tandem-engine` and `tandem-tui` binaries without compiling.
+Install the master `tandem` CLI, direct `tandem-engine` runtime, and `tandem-tui`
+without compiling.
 
 ## 1. Install from npm (recommended)
 
@@ -14,6 +15,7 @@ npm install -g @frumu/tandem @frumu/tandem-tui
 
 Commands provided:
 
+- `tandem` (master CLI)
 - `tandem-engine` (from `@frumu/tandem`)
 - `tandem-tui` (from `@frumu/tandem-tui`)
 
@@ -40,13 +42,16 @@ Add the extracted directory to your `PATH` so both commands are globally availab
 ## 4. Verify
 
 ```bash
-tandem-engine --help
+tandem --help
+tandem doctor
+tandem engine status
 tandem-tui --help
 ```
 
 ## 5. Start Engine + TUI
 
 ```bash
+tandem serve --hostname 127.0.0.1 --port 39731
 tandem-engine serve --hostname 127.0.0.1 --port 39731
 ```
 

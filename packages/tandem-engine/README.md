@@ -1,4 +1,4 @@
-# Tandem Engine CLI (npm Wrapper)
+# Tandem Master CLI and Engine Wrapper
 
 ```text
 TTTTT   A   N   N DDDD  EEEEE M   M
@@ -10,8 +10,10 @@ TTTTT   A   N   N DDDD  EEEEE M   M
 
 ## What This Is
 
-Prebuilt npm distribution of the Tandem engine for macOS, Linux, and Windows.  
-Installing this package gives you the `tandem-engine` CLI binary without compiling Rust locally.
+Prebuilt npm distribution of Tandem for macOS, Linux, and Windows.
+
+Installing this package gives you the master `tandem` CLI plus the direct
+`tandem-engine` runtime binary without compiling Rust locally.
 
 If you want to build from Rust source instead, use the crate docs in `engine/README.md`.
 
@@ -21,17 +23,56 @@ If you want to build from Rust source instead, use the crate docs in `engine/REA
 npm install -g @frumu/tandem
 ```
 
-The installer downloads the release asset that matches this package version. Tags and package versions are expected to match (for example, `v0.3.3`).
+The installer downloads the release asset that matches this package version. Tags and package versions are expected to match (for example, `v0.4.16`).
 
 ## Quick Start
 
-Start the engine server:
+Inspect the installation:
+
+```bash
+tandem doctor
+```
+
+Install the optional web control panel add-on:
+
+```bash
+tandem install panel
+tandem panel init
+```
+
+Open the panel once it is installed:
+
+```bash
+tandem panel open
+```
+
+Start the engine server directly when you want a foreground runtime:
 
 ```bash
 tandem-engine serve --hostname 127.0.0.1 --port 39731
 ```
 
 ## Commands
+
+### Master CLI
+
+```bash
+tandem doctor
+tandem status
+tandem service install
+tandem service status
+tandem service restart
+tandem update
+```
+
+Panel and add-on management:
+
+```bash
+tandem install panel
+tandem panel status
+tandem panel open
+tandem addon list
+```
 
 ### Serve
 

@@ -5,6 +5,9 @@ description: Run the official Tandem web control panel or scaffold an editable a
 
 Use the control panel when you want a browser UI for chat, orchestrator, automations, memory, live feed, packs, and runtime ops.
 
+The canonical operator flow now starts from `@frumu/tandem` and its master
+`tandem` CLI. The panel is an add-on that you install when you want the web UI.
+
 ## Choose a path
 
 ### Official ready-to-run package
@@ -12,7 +15,9 @@ Use the control panel when you want a browser UI for chat, orchestrator, automat
 Use this when you want the supported packaged control panel with bootstrap and service helpers.
 
 ```bash
-npm i -g @frumu/tandem-panel
+npm i -g @frumu/tandem
+tandem install panel
+tandem panel init
 ```
 
 ### Editable app scaffold
@@ -31,7 +36,7 @@ The generated app includes editable `src/`, `server/`, local runtime scripts, an
 ## Official package: initialize environment
 
 ```bash
-tandem-control-panel --init
+tandem panel init
 ```
 
 This creates/updates `.env` and ensures an engine token is available.
@@ -39,7 +44,7 @@ This creates/updates `.env` and ensures an engine token is available.
 ## Official package: run
 
 ```bash
-tandem-control-panel
+tandem panel open
 ```
 
 Open:
@@ -48,13 +53,15 @@ Open:
 
 Aliases:
 
+- `tandem`
 - `tandem-setup`
+- `tandem-control-panel`
 - `tandem-control-panel-init` (init only)
 
 ## Official package: optional service install (Linux)
 
 ```bash
-sudo tandem-setup service install
+sudo tandem service install
 ```
 
 Useful options:

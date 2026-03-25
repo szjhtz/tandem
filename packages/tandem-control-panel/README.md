@@ -2,6 +2,10 @@
 
 Full web control center for Tandem Engine (non-desktop entry point).
 
+This package remains the control-panel add-on during migration. The canonical
+master CLI now lives in `@frumu/tandem` as `tandem`, and this package keeps
+`tandem-setup` / `tandem-control-panel` as compatibility shims.
+
 ## Install
 
 ```bash
@@ -41,7 +45,9 @@ Use the scaffold when you want the actual app source in your own folder so you c
 ## Official Bootstrap
 
 ```bash
-tandem-setup init
+npm i -g @frumu/tandem
+tandem install panel
+tandem panel init
 ```
 
 This creates a canonical env file, bootstraps engine state, and installs services on Linux/macOS when run with the privileges needed for service registration.
@@ -49,10 +55,12 @@ This creates a canonical env file, bootstraps engine state, and installs service
 Useful follow-up commands:
 
 ```bash
-tandem-setup doctor
-tandem-setup service status
-tandem-setup service restart
-tandem-setup pair mobile
+tandem doctor
+tandem status
+tandem service status
+tandem service restart
+tandem panel doctor
+tandem panel open
 ```
 
 ## Run Foreground
@@ -76,7 +84,8 @@ tandem-setup service restart
 tandem-setup service logs
 ```
 
-Legacy flag mode is still supported for compatibility:
+Legacy flag mode is still supported for compatibility, but new installs should
+prefer `tandem` and the panel add-on commands:
 
 `tandem-control-panel --init`, `--install-services`, and `--service-op=...`
 
@@ -168,8 +177,8 @@ Notes:
 
 ## Setup Flow
 
-1. Run `tandem-setup init`.
-2. Verify with `tandem-setup doctor`.
+1. Run `tandem panel init` or `tandem-setup init`.
+2. Verify with `tandem panel doctor` or `tandem-setup doctor`.
 3. If running foreground, start `tandem-control-panel`.
 4. Sign in with the printed `TANDEM_CONTROL_PANEL_ENGINE_TOKEN`.
 

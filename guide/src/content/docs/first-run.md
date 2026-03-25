@@ -6,9 +6,15 @@ Use this checklist after CLI binary install or source build.
 
 ## 1. Verify engine connectivity
 
-Run engine first, then open TUI.
+Run the master CLI first, then open TUI or the direct engine runtime.
 
 ```bash
+tandem doctor
+tandem status
+tandem service status
+tandem engine status
+tandem panel init   # optional if the control-panel add-on is installed
+tandem panel open   # optional if the control-panel add-on is installed
 tandem-engine serve --hostname 127.0.0.1 --port 39731
 ```
 
