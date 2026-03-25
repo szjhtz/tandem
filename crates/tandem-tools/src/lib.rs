@@ -509,6 +509,7 @@ fn search_backend_from_searxng_env(timeout_ms: u64) -> Option<SearchBackend> {
 fn search_backend_from_exa_env(timeout_ms: u64) -> Option<SearchBackend> {
     let api_key = std::env::var("TANDEM_EXA_API_KEY")
         .ok()
+        .or_else(|| std::env::var("TANDEM_EXA_SEARCH_API_KEY").ok())
         .or_else(|| std::env::var("EXA_API_KEY").ok())?;
     let api_key = api_key.trim().to_string();
     if api_key.is_empty() {
@@ -5537,6 +5538,7 @@ mod tests {
         std::env::remove_var("TANDEM_SEARXNG_ENGINES");
         std::env::remove_var("TANDEM_SEARCH_TIMEOUT_MS");
         std::env::remove_var("TANDEM_EXA_API_KEY");
+        std::env::remove_var("TANDEM_EXA_SEARCH_API_KEY");
         std::env::remove_var("EXA_API_KEY");
         std::env::remove_var("TANDEM_BRAVE_SEARCH_API_KEY");
         std::env::remove_var("BRAVE_SEARCH_API_KEY");
@@ -5780,6 +5782,25 @@ mod tests {
                 assert!(matches!(backends[1], SearchBackend::Exa { .. }));
             }
             other => panic!("expected auto backend, got {other:?}"),
+        }
+
+        clear_search_env();
+    }
+
+    #[test]
+    fn search_backend_supports_legacy_exa_env_key() {
+        let _guard = search_env_lock().lock().expect("env lock");
+        clear_search_env();
+        std::env::set_var("TANDEM_SEARCH_BACKEND", "exa");
+        std::env::set_var("TANDEM_EXA_SEARCH_API_KEY", "legacy-exa-test-key");
+
+        let backend = SearchBackend::from_env();
+
+        match backend {
+            SearchBackend::Exa { api_key, .. } => {
+                assert_eq!(api_key, "legacy-exa-test-key");
+            }
+            other => panic!("expected exa backend, got {other:?}"),
         }
 
         clear_search_env();

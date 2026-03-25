@@ -153,3 +153,55 @@ async fn setup_understand_passes_through_normal_chat() {
         Some("pass_through")
     );
 }
+
+#[tokio::test]
+async fn setup_understand_passes_through_plain_github_url() {
+    let state = test_state().await;
+    let app = app_router(state);
+    let req = Request::builder()
+        .method("POST")
+        .uri("/setup/understand")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "surface": "control_panel_chat",
+                "text": "https://github.com/frumu-ai/tandem/issues/42"
+            })
+            .to_string(),
+        ))
+        .expect("request");
+    let resp = app.oneshot(req).await.expect("response");
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = to_bytes(resp.into_body(), usize::MAX).await.expect("body");
+    let payload: Value = serde_json::from_slice(&body).expect("json");
+    assert_eq!(
+        payload.get("decision").and_then(Value::as_str),
+        Some("pass_through")
+    );
+}
+
+#[tokio::test]
+async fn setup_understand_passes_through_read_this_github_url() {
+    let state = test_state().await;
+    let app = app_router(state);
+    let req = Request::builder()
+        .method("POST")
+        .uri("/setup/understand")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "surface": "control_panel_chat",
+                "text": "read this https://github.com/frumu-ai/tandem/pull/123"
+            })
+            .to_string(),
+        ))
+        .expect("request");
+    let resp = app.oneshot(req).await.expect("response");
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = to_bytes(resp.into_body(), usize::MAX).await.expect("body");
+    let payload: Value = serde_json::from_slice(&body).expect("json");
+    assert_eq!(
+        payload.get("decision").and_then(Value::as_str),
+        Some("pass_through")
+    );
+}

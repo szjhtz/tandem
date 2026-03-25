@@ -1084,7 +1084,9 @@ function readManagedSearchSettings() {
       has_brave_key: !!String(
         env.TANDEM_BRAVE_SEARCH_API_KEY || env.BRAVE_SEARCH_API_KEY || ""
       ).trim(),
-      has_exa_key: !!String(env.TANDEM_EXA_API_KEY || env.EXA_API_KEY || "").trim(),
+      has_exa_key: !!String(
+        env.TANDEM_EXA_API_KEY || env.TANDEM_EXA_SEARCH_API_KEY || env.EXA_API_KEY || ""
+      ).trim(),
     },
     reason: localEngine
       ? ""
@@ -1125,9 +1127,13 @@ async function writeManagedSearchSettings(payload = {}) {
   }
 
   const exaKey = String(payload.exa_api_key || payload.exaApiKey || "").trim();
-  if (exaKey) nextEnv.TANDEM_EXA_API_KEY = exaKey;
+  if (exaKey) {
+    nextEnv.TANDEM_EXA_API_KEY = exaKey;
+    delete nextEnv.TANDEM_EXA_SEARCH_API_KEY;
+  }
   else if (payload.clear_exa_key || payload.clearExaKey) {
     delete nextEnv.TANDEM_EXA_API_KEY;
+    delete nextEnv.TANDEM_EXA_SEARCH_API_KEY;
     delete nextEnv.EXA_API_KEY;
   }
 
@@ -1256,6 +1262,73 @@ async function engineHealth(token = "") {
   } catch {
     return null;
   }
+}
+
+async function executeEngineTool(token, tool, args = {}) {
+  const response = await fetch(`${ENGINE_URL}/tool/execute`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${token}`,
+      "x-tandem-token": token,
+    },
+    body: JSON.stringify({ tool, args }),
+    signal: AbortSignal.timeout(15000),
+  });
+  const text = await response.text().catch(() => "");
+  let parsed = null;
+  try {
+    parsed = text ? JSON.parse(text) : {};
+  } catch {
+    parsed = null;
+  }
+  if (!response.ok) {
+    const message =
+      parsed?.error || parsed?.detail || text || `${tool} failed (${response.status})`;
+    const error = new Error(message);
+    error.statusCode = response.status;
+    error.payload = parsed;
+    throw error;
+  }
+  return parsed || {};
+}
+
+function buildSearchTestMarkdown(payload) {
+  const query = String(payload?.query || "").trim();
+  const backend = String(payload?.backend || "unknown").trim();
+  const configuredBackend = String(payload?.configured_backend || backend || "unknown").trim();
+  const attemptedBackends = Array.isArray(payload?.attempted_backends)
+    ? payload.attempted_backends.filter(Boolean)
+    : [];
+  const resultCount = Number(payload?.result_count || 0) || 0;
+  const partial = payload?.partial === true;
+  const results = Array.isArray(payload?.results) ? payload.results : [];
+
+  const lines = [
+    "# Websearch test",
+    "",
+    `- Query: \`${query || "n/a"}\``,
+    `- Backend used: \`${backend || "unknown"}\``,
+    `- Configured backend: \`${configuredBackend || "unknown"}\``,
+    `- Attempted backends: ${attemptedBackends.length ? attemptedBackends.map((name) => `\`${name}\``).join(", ") : "none"}`,
+    `- Results: ${resultCount}${partial ? " (partial)" : ""}`,
+    "",
+  ];
+
+  if (!results.length) {
+    lines.push("No search results were returned.");
+    return lines.join("\n");
+  }
+
+  lines.push("## Top results", "");
+  for (const [index, row] of results.entries()) {
+    const title = String(row?.title || row?.url || `Result ${index + 1}`).trim();
+    const url = String(row?.url || "").trim();
+    const snippet = String(row?.snippet || "").trim();
+    lines.push(`${index + 1}. [${title}](${url || "#"})`);
+    if (snippet) lines.push(`   ${snippet}`);
+  }
+  return lines.join("\n");
 }
 
 async function validateEngineToken(token) {
@@ -4671,6 +4744,49 @@ async function handleApi(req, res) {
       const payload = await readJsonBody(req);
       const saved = await writeManagedSearchSettings(payload);
       sendJson(res, 200, saved);
+    } catch (error) {
+      sendJson(res, Number(error?.statusCode || 500), {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+    return true;
+  }
+
+  if (pathname === "/api/system/search-settings/test" && req.method === "POST") {
+    const session = requireSession(req, res);
+    if (!session) return true;
+    try {
+      const payload = await readJsonBody(req);
+      const query = String(payload?.query || "").trim();
+      const limitRaw = Number.parseInt(String(payload?.limit || "5"), 10);
+      const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 10) : 5;
+      if (!query) {
+        sendJson(res, 400, { ok: false, error: "Search query is required." });
+        return true;
+      }
+      const result = await executeEngineTool(session.token, "websearch", {
+        query,
+        limit,
+      });
+      const output = String(result?.output || "");
+      let parsedOutput = null;
+      try {
+        parsedOutput = output ? JSON.parse(output) : null;
+      } catch {
+        parsedOutput = null;
+      }
+      const markdown = parsedOutput
+        ? buildSearchTestMarkdown(parsedOutput)
+        : `# Websearch test\n\n## Output\n\n\`\`\`\n${output || "No output returned."}\n\`\`\``;
+      sendJson(res, 200, {
+        ok: true,
+        query,
+        markdown,
+        output,
+        parsed_output: parsedOutput,
+        metadata: result?.metadata || {},
+      });
     } catch (error) {
       sendJson(res, Number(error?.statusCode || 500), {
         ok: false,

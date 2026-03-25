@@ -613,11 +613,19 @@ struct WorkflowPlanBuildOutput {
     planner_diagnostics: Option<Value>,
 }
 
+#[derive(Debug, Deserialize, Serialize)]
+struct PlannerClarifierOption {
+    id: String,
+    label: String,
+}
+
 #[derive(Debug, Deserialize)]
 struct PlannerClarifier {
     #[serde(default)]
     field: Option<String>,
     question: String,
+    #[serde(default)]
+    options: Vec<PlannerClarifierOption>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -857,6 +865,7 @@ async fn build_workflow_plan(
                             clarifier: json!({
                                 "field": field,
                                 "question": question,
+                                "options": <Vec<PlannerClarifierOption>>::new(),
                             }),
                             planner_diagnostics: planner_diagnostics(
                                 "clarification_needed",
@@ -914,6 +923,7 @@ async fn build_workflow_plan(
                 clarifier: json!({
                     "field": "general",
                     "question": question,
+                    "options": <Vec<PlannerClarifierOption>>::new(),
                 }),
                 planner_diagnostics: planner_diagnostics("provider_unconfigured", None),
             });
@@ -958,6 +968,7 @@ async fn revise_workflow_plan_with_planner_loop(
             json!({
                 "field": "general",
                 "question": question,
+                "options": <Vec<PlannerClarifierOption>>::new(),
             }),
         );
     };
@@ -970,6 +981,7 @@ async fn revise_workflow_plan_with_planner_loop(
             json!({
                 "field": "general",
                 "question": question,
+                "options": <Vec<PlannerClarifierOption>>::new(),
             }),
         );
     }
@@ -996,6 +1008,7 @@ async fn revise_workflow_plan_with_planner_loop(
                     json!({
                         "field": "general",
                         "question": question,
+                        "options": <Vec<PlannerClarifierOption>>::new(),
                     }),
                 )
             }),
@@ -1011,6 +1024,7 @@ async fn revise_workflow_plan_with_planner_loop(
                 json!({
                     "field": "general",
                     "question": question,
+                    "options": <Vec<PlannerClarifierOption>>::new(),
                 }),
             )
         }
@@ -1954,6 +1968,7 @@ fn parse_llm_revision_payload(
                 json!({
                     "field": clarifier.field.unwrap_or_else(|| "general".to_string()),
                     "question": question,
+                    "options": clarifier.options,
                 }),
             ))
         }

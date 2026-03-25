@@ -22,6 +22,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - added a weekly calendar view for workflow automations with FullCalendar-based overlap handling and click-through editing
   - added drag/reschedule support for simple cron-backed automation slots plus UTC occurrence expansion for recurring runs
   - added a shared provider/model selector component reused across automation and mission-builder editing surfaces
+- **Operator search diagnostics in control-panel settings**:
+  - added a `Test search` action in Web Search settings that runs the live engine `websearch` tool and renders a markdown result preview below the form
+  - clarified hosted Tandem search versus self-hosted SearXNG URL fields directly in the settings UI
 
 ### Changed
 
@@ -32,6 +35,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - moved the custom OpenAI-compatible provider form into the provider catalog so it behaves like the rest of the provider list instead of rendering as a separate default card
   - updated the coding board layout to use the full page width, with run detail and live logs moved below the board and collapsed by default
   - improved planner UX in Coding Workflows with visible in-flight status, disabled regenerate/revise controls during active requests, and a longer client timeout for planner chat requests
+  - improved Web Search settings handling of legacy Exa key env names so older installs do not silently lose builtin `websearch`
 
 ### Fixed
 
@@ -39,6 +43,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - fixed automation-node prompt rendering so inline `metadata.inputs` are surfaced directly to the executing agent instead of forcing input discovery through undeclared temp files
   - added workspace-local default artifact paths for standard automation handoff nodes, preventing `/tmp/...` read/write attempts from tripping the workspace sandbox
   - added regression coverage for prompt rendering with inline inputs and for default artifact-path assignment on standard workflow nodes
+- **Chat GitHub URL misclassification**:
+  - fixed control-panel chat setup-intent interception so pasted GitHub URLs pass through normal chat instead of incorrectly prompting operators to install GitHub MCP
+  - added regression coverage for plain GitHub URL and `read this <url>` chat prompts while preserving the real integration-setup intercept path
 
 ## [0.4.15] - 2026-03-24
 

@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AnimatePresence, motion } from "motion/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { renderIcons } from "../app/icons.js";
+import { renderMarkdownSafe } from "../lib/markdown";
 import {
   AnimatedPage,
   Badge,
@@ -81,6 +82,34 @@ type SearchSettingsResponse = {
     timeout_ms?: number | null;
     has_brave_key?: boolean;
     has_exa_key?: boolean;
+  } | null;
+};
+
+type SearchTestResponse = {
+  ok?: boolean;
+  query?: string;
+  markdown?: string;
+  output?: string;
+  parsed_output?: {
+    query?: string;
+    backend?: string;
+    configured_backend?: string;
+    attempted_backends?: string[];
+    result_count?: number;
+    partial?: boolean;
+    results?: Array<{
+      title?: string;
+      url?: string;
+      snippet?: string;
+      source?: string;
+    }>;
+  } | null;
+  metadata?: {
+    backend?: string;
+    configured_backend?: string;
+    attempted_backends?: string[];
+    count?: number;
+    error?: string;
   } | null;
 };
 
@@ -651,6 +680,8 @@ export function SettingsPage({
   const [searchTimeoutMs, setSearchTimeoutMs] = useState("10000");
   const [searchBraveKey, setSearchBraveKey] = useState("");
   const [searchExaKey, setSearchExaKey] = useState("");
+  const [searchTestQuery, setSearchTestQuery] = useState("autonomous AI agentic workflows");
+  const [searchTestResult, setSearchTestResult] = useState<SearchTestResponse | null>(null);
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
   const [githubMcpGuideOpen, setGithubMcpGuideOpen] = useState(false);
   const [providerDefaultsOpen, setProviderDefaultsOpen] = useState(false);
@@ -1205,6 +1236,21 @@ export function SettingsPage({
       );
     },
     onError: (error) => toast("err", error instanceof Error ? error.message : String(error)),
+  });
+  const testSearchMutation = useMutation({
+    mutationFn: async ({ query }: { query: string }) =>
+      api("/api/system/search-settings/test", {
+        method: "POST",
+        body: JSON.stringify({ query, limit: 5 }),
+      }) as Promise<SearchTestResponse>,
+    onSuccess: (result) => {
+      setSearchTestResult(result);
+      toast("ok", "Websearch test completed.");
+    },
+    onError: (error) => {
+      setSearchTestResult(null);
+      toast("err", error instanceof Error ? error.message : String(error));
+    },
   });
 
   const saveInstallConfigMutation = useMutation({
@@ -2497,6 +2543,24 @@ export function SettingsPage({
                         {searchSettingsQuery.data?.settings?.has_exa_key ? "configured" : "missing"}
                       </Badge>
                       <button
+                        className="tcp-btn"
+                        onClick={() =>
+                          testSearchMutation.mutate({
+                            query: searchTestQuery.trim(),
+                          })
+                        }
+                        disabled={
+                          !searchSettingsQuery.data?.available ||
+                          !searchTestQuery.trim() ||
+                          testSearchMutation.isPending
+                        }
+                      >
+                        <i
+                          data-lucide={testSearchMutation.isPending ? "loader-circle" : "search"}
+                        ></i>
+                        {testSearchMutation.isPending ? "Testing..." : "Test search"}
+                      </button>
+                      <button
                         className="tcp-btn-primary"
                         onClick={() =>
                           saveSearchSettingsMutation.mutate({
@@ -2589,6 +2653,10 @@ export function SettingsPage({
                               setSearchTandemUrl((e.target as HTMLInputElement).value)
                             }
                           />
+                          <span className="tcp-subtle text-xs">
+                            Only used when backend is set to `tandem` or `auto`. This is the hosted
+                            Tandem search router, not the SearXNG endpoint.
+                          </span>
                         </label>
                         <label className="grid gap-1 text-sm">
                           <span className="tcp-subtle text-xs uppercase tracking-[0.18em]">
@@ -2602,7 +2670,82 @@ export function SettingsPage({
                               setSearchSearxngUrl((e.target as HTMLInputElement).value)
                             }
                           />
+                          <span className="tcp-subtle text-xs">
+                            Only used when backend is `searxng` or `auto`.
+                          </span>
                         </label>
+                      </div>
+
+                      <div className="grid gap-3 rounded-2xl border border-slate-700/60 bg-slate-950/25 p-4">
+                        <div className="flex items-center justify-between gap-3">
+                          <div>
+                            <div className="font-medium">Search test</div>
+                            <div className="tcp-subtle mt-1 text-xs">
+                              Runs `websearch` against the currently running engine config and
+                              renders the result as markdown below.
+                            </div>
+                          </div>
+                          <Badge tone="warn">Tests live engine config</Badge>
+                        </div>
+                        <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto]">
+                          <input
+                            className="tcp-input"
+                            placeholder="Try a test query like autonomous AI agentic workflows"
+                            value={searchTestQuery}
+                            onInput={(e) =>
+                              setSearchTestQuery((e.target as HTMLInputElement).value)
+                            }
+                          />
+                          <button
+                            className="tcp-btn"
+                            onClick={() =>
+                              testSearchMutation.mutate({
+                                query: searchTestQuery.trim(),
+                              })
+                            }
+                            disabled={
+                              !searchSettingsQuery.data?.available ||
+                              !searchTestQuery.trim() ||
+                              testSearchMutation.isPending
+                            }
+                          >
+                            <i
+                              data-lucide={testSearchMutation.isPending ? "loader-circle" : "play"}
+                            ></i>
+                            {testSearchMutation.isPending ? "Running..." : "Run test"}
+                          </button>
+                        </div>
+                        {searchTestResult?.markdown ? (
+                          <div className="grid gap-2">
+                            <div className="flex flex-wrap items-center gap-2 text-xs">
+                              <Badge tone="ok">
+                                Backend{" "}
+                                {String(
+                                  searchTestResult.parsed_output?.backend ||
+                                    searchTestResult.metadata?.backend ||
+                                    "unknown"
+                                )}
+                              </Badge>
+                              {searchTestResult.parsed_output?.configured_backend ? (
+                                <Badge tone="info">
+                                  Configured{" "}
+                                  {String(searchTestResult.parsed_output.configured_backend)}
+                                </Badge>
+                              ) : null}
+                              {searchTestResult.metadata?.error ? (
+                                <Badge tone="warn">
+                                  {String(searchTestResult.metadata.error).replaceAll("_", " ")}
+                                </Badge>
+                              ) : null}
+                            </div>
+                            <div
+                              className="tcp-markdown tcp-markdown-ai max-h-[320px] overflow-auto rounded-xl border border-slate-700/60 bg-black/20 p-3 text-sm"
+                              dangerouslySetInnerHTML={{
+                                __html: renderMarkdownSafe(searchTestResult.markdown || ""),
+                              }}
+                            />
+                          </div>
+                        ) : null}
                       </div>
 
                       <div className="grid gap-3 md:grid-cols-2">

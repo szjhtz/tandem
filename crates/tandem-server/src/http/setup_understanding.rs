@@ -216,6 +216,9 @@ pub(super) async fn resolve_setup_request(
 ) -> SetupUnderstandResponse {
     let setup_state = load_setup_understanding_state(state).await;
     let normalized = normalize_input_text(&request.text);
+    if looks_like_plain_url_share(&normalized) {
+        return pass_through_response();
+    }
     let broad_setup = is_broad_setup_request(&normalized);
     let provider = score_provider_setup(&normalized, &setup_state.providers);
     let integration = score_integration_setup(&normalized, &setup_state.integrations);
@@ -417,6 +420,30 @@ fn is_broad_setup_request(input: &str) -> bool {
         ],
     ) || contains_any(input, &["set me up", "make this work"]))
         && !contains_any(input, AUTOMATION_VERBS)
+}
+
+fn contains_url(input: &str) -> bool {
+    input.contains("http://") || input.contains("https://") || input.contains("www.")
+}
+
+fn looks_like_plain_url_share(input: &str) -> bool {
+    contains_url(input)
+        && !contains_any(input, SETUP_VERBS)
+        && !contains_any(input, AUTOMATION_VERBS)
+        && !contains_any(
+            input,
+            &[
+                "integration",
+                "tool",
+                "mcp",
+                "connector",
+                "provider",
+                "model",
+                "api key",
+                "channel",
+                "automation",
+            ],
+        )
 }
 
 fn score_provider_setup(input: &str, state: &ProviderSetupState) -> IntentScore {
