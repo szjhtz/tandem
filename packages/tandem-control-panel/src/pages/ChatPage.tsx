@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { renderIcons } from "../app/icons.js";
 import { renderMarkdownSafe } from "../lib/markdown";
+import { ChatInterfacePanel } from "../components/ChatInterfacePanel";
 import type { AppPageProps } from "./pageTypes";
 import {
   type ChatSession,
@@ -1384,178 +1385,43 @@ export function ChatPage({ client, api, toast, providerStatus, identity, navigat
             </div>
           ) : null}
 
-          <div
-            ref={messagesRef}
-            className={`chat-messages mb-2 min-h-0 min-w-0 flex-1 overflow-auto p-3 ${
-              messagePaneEmpty ? "chat-messages-empty" : "space-y-2"
-            }`}
-          >
-            {messagesLoading && !messages.length ? (
-              <p className="chat-rail-empty">Loading messages...</p>
-            ) : null}
+          <ChatInterfacePanel
+            messages={messages.map((m) => ({
+              id: m.id,
+              role: m.role,
+              displayRole: m.displayRole,
+              text: m.text,
+              markdown: m.markdown,
+            }))}
+            emptyText="No messages yet. Send a prompt to start."
+            inputValue={prompt}
+            inputPlaceholder="Ask anything... (Enter to send, Shift+Enter newline)"
+            sendLabel="Send"
+            onInputChange={setPrompt}
+            onSend={() => void sendPrompt()}
+            sendDisabled={sending}
+            inputDisabled={sending}
+            botIdentity={{ botName: identity.botName, botAvatarUrl: identity.botAvatarUrl }}
+            streamingText={streamingText}
+            showThinking={showThinking}
+            thinkingText="Thinking"
+            attachments={uploads.map((u) => ({ path: u.path, name: u.path, size: u.size }))}
+            onRemoveAttachment={(index) => setUploads((prev) => prev.filter((_, i) => i !== index))}
+            onAttach={() => fileInputRef.current?.click()}
+            attachDisabled={sending}
+            statusTitle={sending ? "Sending…" : ""}
+          />
 
-            {messagePaneEmpty ? (
-              <div className="chat-empty-state">
-                <p className="chat-rail-empty">No messages yet. Send a prompt to start.</p>
-              </div>
-            ) : null}
-
-            <AnimatePresence initial={false}>
-              {messages.map((message) => {
-                const assistantLike = message.role === "assistant" || message.role === "system";
-                const roleClass = assistantLike ? "assistant" : "user";
-                return (
-                  <motion.article
-                    key={message.id}
-                    className={`chat-msg ${roleClass}`}
-                    initial={reducedMotion ? false : { opacity: 0, y: 4 }}
-                    animate={reducedMotion ? undefined : { opacity: 1, y: 0 }}
-                    exit={reducedMotion ? undefined : { opacity: 0, y: -4 }}
-                  >
-                    <div className="chat-msg-role">
-                      {assistantLike ? (
-                        <span className="inline-flex items-center gap-2">
-                          {identity.botAvatarUrl ? (
-                            <img
-                              src={identity.botAvatarUrl}
-                              alt={identity.botName}
-                              className="chat-avatar-ring h-5 w-5 rounded-full object-cover"
-                            />
-                          ) : null}
-                          <span>{message.displayRole}</span>
-                        </span>
-                      ) : (
-                        message.displayRole
-                      )}
-                    </div>
-                    {message.markdown ? (
-                      <div
-                        className="tcp-markdown tcp-markdown-ai"
-                        dangerouslySetInnerHTML={{ __html: renderMarkdownSafe(message.text || "") }}
-                      />
-                    ) : (
-                      <pre className="chat-msg-pre">{message.text}</pre>
-                    )}
-                  </motion.article>
-                );
-              })}
-            </AnimatePresence>
-
-            {showThinking || streamingText ? (
-              <article className="chat-msg assistant">
-                <div className="chat-msg-role">
-                  <span className="inline-flex items-center gap-2">
-                    {identity.botAvatarUrl ? (
-                      <img
-                        src={identity.botAvatarUrl}
-                        alt={identity.botName}
-                        className="chat-avatar-ring h-5 w-5 rounded-full object-cover"
-                      />
-                    ) : null}
-                    <span>{identity.botName || "Assistant"}</span>
-                  </span>
-                </div>
-                {showThinking && !streamingText ? (
-                  <div className="tcp-thinking" aria-live="polite">
-                    <span>Thinking</span>
-                    <i></i>
-                    <i></i>
-                    <i></i>
-                  </div>
-                ) : null}
-                {streamingText ? <pre className="chat-msg-pre">{streamingText}</pre> : null}
-              </article>
-            ) : null}
-          </div>
-
-          <div className="chat-composer shrink-0">
-            <div className={`chat-attach-row mb-2 ${attachedCount ? "" : "hidden"}`}>
-              <span className="tcp-subtle">{attachedCount} attached</span>
-              <div className="chat-files-line">
-                {uploads.map((file, index) => (
-                  <span key={`${file.path}-${index}`} className="chat-file-pill min-w-0">
-                    <span className="chat-file-pill-name" title={file.path}>
-                      {file.path}
-                    </span>
-                    <span className="chat-file-pill-size">{formatBytes(file.size)}</span>
-                    <button
-                      type="button"
-                      className="chat-file-pill-btn chat-file-pill-btn-danger"
-                      title="Remove from list"
-                      onClick={() => setUploads((prev) => prev.filter((_, i) => i !== index))}
-                    >
-                      <i data-lucide="x"></i>
-                    </button>
-                  </span>
-                ))}
-              </div>
-            </div>
-
-            {!!uploadRows.length ? (
-              <div className="mb-2 grid gap-1.5">
-                {uploadRows.map((row) => {
-                  const pct = Math.max(0, Math.min(100, Number(row.progress || 0)));
-                  return (
-                    <div key={row.id} className="chat-upload-card">
-                      <div className="mb-1 flex items-center justify-between gap-2 text-xs">
-                        <span className="chat-upload-name truncate">{row.name}</span>
-                        <span className={row.error ? "chat-upload-meta-error" : "chat-upload-meta"}>
-                          {row.error || `${pct.toFixed(0)}%`}
-                        </span>
-                      </div>
-                      <div className="chat-upload-bar">
-                        <div className="chat-upload-bar-fill" style={{ width: `${pct}%` }}></div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            ) : null}
-
-            <div className="chat-input-wrap">
-              <input
-                ref={fileInputRef}
-                type="file"
-                className="hidden"
-                multiple
-                onChange={(event) => {
-                  void uploadFiles((event.target as HTMLInputElement).files);
-                  (event.target as HTMLInputElement).value = "";
-                }}
-              />
-              <button
-                type="button"
-                className="chat-icon-btn chat-icon-btn-inner"
-                title="Attach files"
-                onClick={() => fileInputRef.current?.click()}
-              >
-                <i data-lucide="paperclip"></i>
-              </button>
-              <textarea
-                ref={inputRef}
-                rows={1}
-                value={prompt}
-                className="tcp-input chat-input-with-clip chat-input-modern resize-none"
-                placeholder="Ask anything... (Enter to send, Shift+Enter newline)"
-                onInput={(event) => setPrompt((event.target as HTMLTextAreaElement).value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" && !event.shiftKey) {
-                    event.preventDefault();
-                    void sendPrompt();
-                  }
-                }}
-              />
-              <button
-                type="button"
-                className="chat-send-btn"
-                title="Send"
-                disabled={sending}
-                onClick={() => void sendPrompt()}
-              >
-                <i data-lucide="send"></i>
-              </button>
-            </div>
-          </div>
+          <input
+            ref={fileInputRef}
+            type="file"
+            className="hidden"
+            multiple
+            onChange={(event) => {
+              void uploadFiles((event.target as HTMLInputElement).files);
+              (event.target as HTMLInputElement).value = "";
+            }}
+          />
         </section>
 
         <aside className="chat-right-rail hidden min-h-0 flex-col gap-3 overflow-hidden xl:flex">

@@ -4,6 +4,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Badge, PanelCard } from "../ui/index.tsx";
 import { EmptyState } from "./ui";
 import { ProviderModelSelector } from "../components/ProviderModelSelector";
+import { ChatInterfacePanel } from "../components/ChatInterfacePanel";
 import { renderMarkdownSafe } from "../lib/markdown";
 
 type ProviderOption = {
@@ -70,8 +71,6 @@ type ClarificationState =
       status: "waiting";
       question: string;
       options: ClarifierOption[];
-      selectedOptionId: string | null;
-      freeformText: string;
     };
 
 const DRAFT_PREFIX = "tcp.coding.task-planning.v1";
@@ -481,6 +480,7 @@ export function TaskPlanningPanel({
   const [goal, setGoal] = useState("");
   const [workspaceRoot, setWorkspaceRoot] = useState("");
   const [notes, setNotes] = useState("");
+  const [plannerInput, setPlannerInput] = useState("");
   const [plannerProvider, setPlannerProvider] = useState(providerStatus.defaultProvider || "");
   const [plannerModel, setPlannerModel] = useState(providerStatus.defaultModel || "");
   const [planPreview, setPlanPreview] = useState<any>(null);
@@ -581,7 +581,6 @@ export function TaskPlanningPanel({
     safeString(plannerModel) === safeString(providerStatus.defaultModel);
   const plannerCanUseLlm = hasBasePlannerModel || hasExplicitPlannerOverride;
   const isGeneratingPlan = planningState === "generating";
-  const isRevisingPlan = planningState === "revising";
   const isClarifying = planningState === "clarifying";
   const isPlanning = planningState !== "idle";
   const plannerFallbackReason = safeString(
@@ -595,13 +594,31 @@ export function TaskPlanningPanel({
           .find((message: any) => safeString(message?.role).toLowerCase() === "assistant")?.text
       : ""
   );
-  const clarificationQuestion =
-    (clarificationNeeded && safeString(plannerError)) ||
-    (clarificationNeeded && latestAssistantMessage) ||
-    "";
   const plannerTimedOut =
     /timed out before completion/i.test(safeString(plannerError)) ||
     /timed out before completion/i.test(latestAssistantMessage);
+  const plannerChatMessages = Array.isArray(planningConversation?.messages)
+    ? planningConversation.messages.map((message: any, index: number) => ({
+        id: `${message?.created_at_ms || index}-${index}`,
+        role: safeString(message?.role || "assistant").toLowerCase(),
+        displayRole: safeString(message?.role || "assistant"),
+        text: safeString(message?.text || "") || " ",
+        markdown: false,
+      }))
+    : [];
+  const plannerStatusTitle = isPlanning
+    ? isGeneratingPlan
+      ? "Generating task plan…"
+      : isClarifying
+        ? "Waiting for planner…"
+        : "Revising task plan…"
+    : "";
+  const plannerStatusDetail = isClarifying
+    ? "The planner is thinking. You'll be able to answer its question shortly."
+    : "The request is running against the engine now. Repo-aware planning can take a bit longer while the model inspects files and drafts the task breakdown.";
+  const plannerInputPlaceholder = planPreview
+    ? "Send a follow-up message or revision request to the planner. (Enter to send, Shift+Enter newline)"
+    : "Describe the outcome you want and send to planner. (Enter to send, Shift+Enter newline)";
   const planIsFallbackOnly =
     plannedTasks.length === 1 &&
     safeString(plannedTasks[0]?.id) === "execute_goal" &&
@@ -613,6 +630,7 @@ export function TaskPlanningPanel({
     setLoadingDraft(true);
     if (draft) {
       setGoal(draft.goal);
+      setPlannerInput(draft.notes || draft.goal || "");
       setWorkspaceRoot(draft.workspaceRoot || resolvedWorkspaceRoot || workspaceRootSeed || "");
       setNotes(draft.notes);
       setPlannerProvider(draft.plannerProvider || "");
@@ -631,6 +649,7 @@ export function TaskPlanningPanel({
       setPublishedTasks(draft.publishedTasks || []);
     } else {
       setGoal("");
+      setPlannerInput("");
       setWorkspaceRoot(resolvedWorkspaceRoot || workspaceRootSeed || "");
       setNotes("");
       setPlannerProvider(providerStatus.defaultProvider || "");
@@ -699,8 +718,8 @@ export function TaskPlanningPanel({
     workspaceRoot,
   ]);
 
-  const previewMutation = async () => {
-    const trimmedGoal = safeString(goal);
+  const previewMutation = async (messageOverride?: string) => {
+    const trimmedGoal = safeString(messageOverride ?? plannerInput ?? goal);
     const trimmedWorkspaceRoot = safeString(workspaceRoot);
     if (!trimmedGoal) {
       toast("warn", "Describe the goal you want to turn into tasks.");
@@ -721,6 +740,8 @@ export function TaskPlanningPanel({
     setSaveStatus("");
     setPlannerError("");
     setPlannerDiagnostics(null);
+    setGoal(trimmedGoal);
+    let nextState: "idle" | "clarifying" = "idle";
     setPlanningState("generating");
     try {
       const response = await client.workflowPlans.chatStart({
@@ -771,16 +792,15 @@ export function TaskPlanningPanel({
           status: "waiting",
           question: clarQuestion,
           options: clarOptions,
-          selectedOptionId: null,
-          freeformText: "",
         });
-        setPlanningState("clarifying");
+        nextState = "clarifying";
       } else {
         setClarification({ status: "none" });
       }
       setLastSavedAtMs(Date.now());
       setPublishedTasks([]);
       setSaveStatus("Plan saved locally.");
+      setPlannerInput("");
       toast(
         "ok",
         typeof response?.clarifier?.question === "string"
@@ -798,23 +818,25 @@ export function TaskPlanningPanel({
       );
       toast("err", message);
     } finally {
-      setPlanningState("idle");
+      setPlanningState(nextState);
     }
   };
 
-  const reviseMutation = async () => {
+  const reviseMutation = async (messageOverride?: string) => {
     if (!client?.workflowPlans?.chatMessage || !planPreview?.plan_id) {
       toast("warn", "Generate a plan first before revising it.");
       return;
     }
-    const trimmedNotes = safeString(notes);
+    const trimmedNotes = safeString(messageOverride ?? plannerInput ?? notes);
     if (!trimmedNotes) {
-      toast("warn", "Add a note or revision request first.");
+      toast("warn", "Add a message for the planner first.");
       return;
     }
     setSaveStatus("");
     setPlannerError("");
     setPlannerDiagnostics(null);
+    setNotes(trimmedNotes);
+    let nextState: "idle" | "clarifying" = "idle";
     setPlanningState("revising");
     try {
       const response = await client.workflowPlans.chatMessage({
@@ -858,16 +880,15 @@ export function TaskPlanningPanel({
           status: "waiting",
           question: clarQuestion,
           options: clarOptions,
-          selectedOptionId: null,
-          freeformText: "",
         });
-        setPlanningState("clarifying");
+        nextState = "clarifying";
       } else {
         setClarification({ status: "none" });
       }
       setLastSavedAtMs(Date.now());
       setPublishedTasks([]);
       setSaveStatus("Revision saved locally.");
+      setPlannerInput("");
       toast("ok", "Plan revised.");
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -880,13 +901,14 @@ export function TaskPlanningPanel({
       );
       toast("err", message);
     } finally {
-      setPlanningState("idle");
+      setPlanningState(nextState);
     }
   };
 
   const resetMutation = async () => {
     if (!planPreview?.plan_id || !client?.workflowPlans?.chatReset) {
       setGoal("");
+      setPlannerInput("");
       setNotes("");
       setPlanPreview(null);
       setPlanningConversation(null);
@@ -919,6 +941,7 @@ export function TaskPlanningPanel({
       });
       setPlanPreview(response?.plan || null);
       setPlanningConversation(response?.conversation || null);
+      setPlannerInput("");
       setPlanningChangeSummary([]);
       setPlannerError("");
       setPlannerDiagnostics(response?.planner_diagnostics || response?.plannerDiagnostics || null);
@@ -1146,9 +1169,18 @@ export function TaskPlanningPanel({
   const plannerTitle = isGitHubProject
     ? "GitHub Project task planning"
     : "Local kanban task planning";
+  const hasPlannerResponse =
+    !!planPreview ||
+    !!plannerDiagnostics ||
+    planningChangeSummary.length > 0 ||
+    (Array.isArray(planningConversation?.messages) && planningConversation.messages.length > 0);
 
   return (
-    <div className="grid gap-4 xl:grid-cols-[minmax(0,1.1fr)_minmax(340px,0.9fr)]">
+    <div
+      className={`grid gap-4 ${
+        hasPlannerResponse ? "xl:grid-cols-[minmax(0,1.1fr)_minmax(340px,0.9fr)]" : ""
+      }`}
+    >
       <PanelCard
         title={plannerTitle}
         subtitle="Use the built-in scrum-master planner to turn a goal into reviewable implementation tasks."
@@ -1249,16 +1281,6 @@ export function TaskPlanningPanel({
               </div>
             </div>
             <label className="grid gap-2 xl:col-span-2">
-              <span className="text-xs uppercase tracking-wide text-slate-500">Goal</span>
-              <textarea
-                className="tcp-input min-h-[112px] text-sm"
-                value={goal}
-                onInput={(event) => setGoal((event.target as HTMLTextAreaElement).value)}
-                placeholder="Explain the feature or outcome you want the planner to break down."
-                disabled={isPlanning}
-              />
-            </label>
-            <label className="grid gap-2 xl:col-span-2">
               <span className="text-xs uppercase tracking-wide text-slate-500">Workspace root</span>
               <input
                 className="tcp-input text-sm"
@@ -1278,149 +1300,42 @@ export function TaskPlanningPanel({
               </span>
             </label>
             <label className="grid gap-2 xl:col-span-2">
-              <span className="text-xs uppercase tracking-wide text-slate-500">Revision notes</span>
-              <textarea
-                className="tcp-input min-h-[96px] text-sm"
-                value={notes}
-                onInput={(event) => setNotes((event.target as HTMLTextAreaElement).value)}
-                placeholder={
-                  clarificationNeeded
-                    ? "Answer the planner's question here, then click Answer question."
-                    : "Tell the planner what to fix, narrow, or rework in the next pass."
-                }
-                disabled={isPlanning}
-              />
+              <span className="text-xs uppercase tracking-wide text-slate-500">Planner chat</span>
             </label>
           </div>
 
-          {clarification.status === "waiting" ? (
-            <div className="rounded-2xl border border-sky-500/40 bg-sky-950/30 p-4">
-              <div className="mb-2 text-sm font-medium text-sky-100">{clarification.question}</div>
-              {clarification.options.length > 0 ? (
-                <div className="mb-3 flex flex-wrap gap-2">
-                  {clarification.options.map((option) => (
-                    <button
-                      key={option.id}
-                      type="button"
-                      className={`tcp-btn text-sm ${
-                        clarification.selectedOptionId === option.id
-                          ? "border-sky-400 bg-sky-800 text-sky-100"
-                          : ""
-                      }`}
-                      onClick={() =>
-                        setClarification({
-                          ...clarification,
-                          selectedOptionId: option.id,
-                          freeformText: option.label,
-                        })
-                      }
-                    >
-                      {option.label}
-                    </button>
-                  ))}
-                </div>
-              ) : null}
-              <div className="flex items-center gap-2">
-                <input
-                  className="tcp-input flex-1 text-sm"
-                  value={clarification.freeformText}
-                  onInput={(event) =>
-                    setClarification({
-                      ...clarification,
-                      selectedOptionId: null,
-                      freeformText: (event.target as HTMLInputElement).value,
-                    })
-                  }
-                  placeholder="Or type your answer here..."
-                  disabled={isPlanning}
-                />
-                <button
-                  type="button"
-                  className="tcp-btn-primary"
-                  disabled={
-                    isPlanning ||
-                    (!clarification.selectedOptionId && !clarification.freeformText.trim())
-                  }
-                  onClick={() => {
-                    const answer = clarification.selectedOptionId
-                      ? clarification.options.find((o) => o.id === clarification.selectedOptionId)
-                          ?.label || clarification.freeformText
-                      : clarification.freeformText;
-                    setNotes(answer);
-                    setClarification({ status: "none" });
-                    setPlanningState("revising");
-                    void reviseMutation();
-                  }}
-                >
-                  Submit answer
-                </button>
-              </div>
-            </div>
-          ) : null}
-
-          {isPlanning ? (
-            <div className="rounded-2xl border border-sky-500/30 bg-sky-950/20 p-3 text-sm text-sky-100">
-              <div className="flex items-center gap-2 font-medium">
-                <i
-                  data-lucide="loader-circle"
-                  className="h-4 w-4 animate-spin"
-                  aria-hidden="true"
-                ></i>
-                {isGeneratingPlan
-                  ? "Generating task plan…"
-                  : isClarifying
-                    ? "Waiting for planner…"
-                    : "Revising task plan…"}
-              </div>
-              <div className="mt-1 text-xs text-sky-200/80">
-                {isClarifying
-                  ? "The planner is thinking. You'll be able to answer its question shortly."
-                  : "The request is running against the engine now. Repo-aware planning can take a bit longer while the model inspects files and drafts the task breakdown."}
-              </div>
-            </div>
-          ) : null}
+          <ChatInterfacePanel
+            messages={plannerChatMessages}
+            emptyText="Send your first planner message to start the chat flow."
+            inputValue={plannerInput}
+            inputPlaceholder={plannerInputPlaceholder}
+            sendLabel={planPreview ? "Send to planner" : "Generate plan"}
+            onInputChange={setPlannerInput}
+            onSend={() =>
+              void (planPreview ? reviseMutation(plannerInput) : previewMutation(plannerInput))
+            }
+            sendDisabled={isPlanning || !safeString(plannerInput)}
+            inputDisabled={isPlanning}
+            statusTitle={plannerStatusTitle}
+            statusDetail={isPlanning ? plannerStatusDetail : ""}
+            questionTitle="Planner question"
+            questionText={clarification.status === "waiting" ? clarification.question : ""}
+            quickReplies={clarification.status === "waiting" ? clarification.options : []}
+            onQuickReply={(option) => void reviseMutation(option.label)}
+            questionHint="Reply in the planner chat box below or choose a suggested answer."
+          />
 
           <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              className="tcp-btn-primary inline-flex items-center gap-2"
-              onClick={() => void previewMutation()}
-              disabled={isPlanning}
-            >
-              {isGeneratingPlan ? (
-                <i
-                  data-lucide="loader-circle"
-                  className="h-4 w-4 animate-spin"
-                  aria-hidden="true"
-                ></i>
-              ) : null}
-              {isGeneratingPlan
-                ? "Generating plan…"
-                : planPreview
-                  ? "Regenerate plan"
-                  : "Generate plan"}
-            </button>
-            <button
-              type="button"
-              className="tcp-btn inline-flex items-center gap-2"
-              onClick={() => void reviseMutation()}
-              disabled={isPlanning || !planPreview?.plan_id || (!isClarifying && !notes.trim())}
-            >
-              {isRevisingPlan ? (
-                <i
-                  data-lucide="loader-circle"
-                  className="h-4 w-4 animate-spin"
-                  aria-hidden="true"
-                ></i>
-              ) : null}
-              {isRevisingPlan
-                ? "Updating…"
-                : isClarifying
-                  ? "Submitting answer…"
-                  : clarificationNeeded
-                    ? "Answer question"
-                    : "Revise with notes"}
-            </button>
+            {planPreview ? (
+              <button
+                type="button"
+                className="tcp-btn"
+                onClick={() => void previewMutation(plannerInput || goal)}
+                disabled={isPlanning}
+              >
+                Regenerate plan
+              </button>
+            ) : null}
             <button
               type="button"
               className="tcp-btn"
@@ -1433,15 +1348,18 @@ export function TaskPlanningPanel({
               type="button"
               className="tcp-btn"
               onClick={() => {
+                setPlannerInput("");
                 setNotes("");
                 setPlannerError("");
                 setPlannerDiagnostics(null);
                 setClarification({ status: "none" });
                 setSaveStatus("");
               }}
-              disabled={isPlanning || (!notes && !plannerError && !plannerDiagnostics)}
+              disabled={
+                isPlanning || (!plannerInput && !notes && !plannerError && !plannerDiagnostics)
+              }
             >
-              Clear notes and warnings
+              Clear chat and warnings
             </button>
             <button
               type="button"
@@ -1485,7 +1403,7 @@ export function TaskPlanningPanel({
             </button>
           </div>
 
-          {plannerError && clarification.status !== "waiting" ? (
+          {plannerError && !clarificationNeeded ? (
             <div
               className={`rounded-2xl p-3 text-sm ${
                 plannerTimedOut
@@ -1505,19 +1423,6 @@ export function TaskPlanningPanel({
                 </div>
               ) : null}
               {plannerError}
-            </div>
-          ) : null}
-
-          {(clarificationQuestion || latestAssistantMessage) && planPreview ? (
-            <div className="rounded-2xl border border-white/10 bg-black/20 p-3">
-              <div className="text-xs uppercase tracking-wide text-slate-500">
-                Latest planner response
-              </div>
-              <div className="mt-2 text-sm text-slate-200 whitespace-pre-wrap">
-                {plannerTimedOut
-                  ? "The planner kept the current draft because the last revision timed out before completion. Your answer is still in the notes box, so you can retry or switch to the workspace default model."
-                  : clarificationQuestion || latestAssistantMessage}
-              </div>
             </div>
           ) : null}
 
@@ -1572,159 +1477,141 @@ export function TaskPlanningPanel({
         </div>
       </PanelCard>
 
-      <div className="grid gap-4">
-        <PanelCard title="Planned tasks" subtitle="Review the generated backlog before publishing">
-          {displayTasks.length ? (
-            <div className="grid gap-3">
-              {displayTasks.map((task, index) => (
-                <div
-                  key={`${task.id}-${index}`}
-                  className="rounded-2xl border border-white/10 bg-black/20 p-4"
-                >
-                  <div className="flex flex-wrap items-start justify-between gap-2">
-                    <div className="min-w-0">
-                      <div className="text-sm font-semibold text-slate-100">{task.title}</div>
-                      <div className="mt-1 text-xs text-slate-500">
-                        {task.kind || "task"}
-                        {task.dependsOn.length ? ` · depends on ${task.dependsOn.join(", ")}` : ""}
-                      </div>
-                    </div>
-                    <Badge tone="info">Step {index + 1}</Badge>
-                  </div>
-                  <div className="mt-3 grid gap-2 text-sm text-slate-300">
-                    <div>
-                      <span className="tcp-subtle">Summary:</span> {task.objective}
-                    </div>
-                    {task.outputContract ? (
-                      <div>
-                        <span className="tcp-subtle">Expected result:</span> {task.outputContract}
-                      </div>
-                    ) : null}
-                    {task.inputRefs.length ? (
-                      <div className="text-xs text-slate-500">
-                        <span className="tcp-subtle">Inputs:</span>{" "}
-                        {task.inputRefs
-                          .map((row) => `${row.alias} <- ${row.fromStepId}`)
-                          .join(", ")}
-                      </div>
-                    ) : null}
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : planPreview ? (
-            <EmptyState
-              text={
-                clarificationNeeded
-                  ? "Answer the planner's question to generate a real task breakdown."
-                  : plannerTimedOut
-                    ? "The last revision timed out, so the planner kept the current fallback draft."
-                    : "The planner returned a plan, but no usable step list was available."
-              }
-            />
-          ) : (
-            <EmptyState text="Generate a plan to see task drafts here." />
-          )}
-        </PanelCard>
-
-        <PanelCard
-          title="Plan details"
-          subtitle="The planner's markdown and conversation revisions stay visible here"
-        >
-          {planPreview ? (
-            <div className="grid gap-3">
-              <div className="grid gap-2 text-sm text-slate-300">
-                <div>
-                  <span className="tcp-subtle">Title:</span>{" "}
-                  {safeString(planPreview?.title) || "Untitled plan"}
-                </div>
-                <div>
-                  <span className="tcp-subtle">Confidence:</span>{" "}
-                  {safeString(planPreview?.confidence) || "unknown"}
-                </div>
-                <div>
-                  <span className="tcp-subtle">Plan source:</span>{" "}
-                  {safeString(planPreview?.plan_source || planPreview?.planSource) ||
-                    "coding_task_planning"}
-                </div>
-              </div>
-              {typeof planPreview?.description === "string" && planPreview.description.trim() ? (
-                <div className="rounded-2xl border border-white/10 bg-black/20 p-3">
-                  <div className="text-xs uppercase tracking-wide text-slate-500">
-                    Planner markdown
-                  </div>
+      {hasPlannerResponse ? (
+        <div className="grid gap-4">
+          <PanelCard
+            title="Planned tasks"
+            subtitle="Review the generated backlog before publishing"
+          >
+            {displayTasks.length ? (
+              <div className="grid gap-3">
+                {displayTasks.map((task, index) => (
                   <div
-                    className="tcp-markdown tcp-markdown-ai mt-2 text-sm"
-                    dangerouslySetInnerHTML={{
-                      __html: renderMarkdownSafe(String(planPreview.description || "")),
-                    }}
-                  />
-                </div>
-              ) : null}
-              <div className="rounded-2xl border border-white/10 bg-black/20 p-3">
-                <div className="text-xs uppercase tracking-wide text-slate-500">Conversation</div>
-                <div className="mt-2 max-h-72 overflow-auto space-y-3">
-                  {Array.isArray(planningConversation?.messages) &&
-                  planningConversation.messages.length ? (
-                    planningConversation.messages.map((message: any, index: number) => (
-                      <div
-                        key={`${message?.created_at_ms || index}-${index}`}
-                        className="grid gap-1"
-                      >
-                        <span className="text-[11px] uppercase tracking-wide text-slate-500">
-                          {safeString(message?.role || "assistant")}
-                        </span>
-                        <div className="text-sm text-slate-200">
-                          {safeString(message?.text || "") || " "}
+                    key={`${task.id}-${index}`}
+                    className="rounded-2xl border border-white/10 bg-black/20 p-4"
+                  >
+                    <div className="flex flex-wrap items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="text-sm font-semibold text-slate-100">{task.title}</div>
+                        <div className="mt-1 text-xs text-slate-500">
+                          {task.kind || "task"}
+                          {task.dependsOn.length
+                            ? ` · depends on ${task.dependsOn.join(", ")}`
+                            : ""}
                         </div>
                       </div>
-                    ))
-                  ) : (
-                    <div className="text-sm text-slate-400">
-                      The planner conversation will appear here after the first generation.
+                      <Badge tone="info">Step {index + 1}</Badge>
                     </div>
-                  )}
-                </div>
+                    <div className="mt-3 grid gap-2 text-sm text-slate-300">
+                      <div>
+                        <span className="tcp-subtle">Summary:</span> {task.objective}
+                      </div>
+                      {task.outputContract ? (
+                        <div>
+                          <span className="tcp-subtle">Expected result:</span> {task.outputContract}
+                        </div>
+                      ) : null}
+                      {task.inputRefs.length ? (
+                        <div className="text-xs text-slate-500">
+                          <span className="tcp-subtle">Inputs:</span>{" "}
+                          {task.inputRefs
+                            .map((row) => `${row.alias} <- ${row.fromStepId}`)
+                            .join(", ")}
+                        </div>
+                      ) : null}
+                    </div>
+                  </div>
+                ))}
               </div>
-              <div className="grid gap-2">
-                <button
-                  type="button"
-                  className="tcp-btn-primary"
-                  disabled={
-                    publishing ||
-                    isPlanning ||
-                    !goal.trim() ||
-                    !workspaceRoot.trim() ||
-                    clarificationNeeded ||
-                    plannerTimedOut ||
-                    planIsFallbackOnly
-                  }
-                  onClick={() => void publishTasks()}
-                >
-                  {publishing
-                    ? "Publishing…"
-                    : isGitHubProject && canPublishToGitHub
-                      ? "Approve and publish to GitHub Project"
-                      : "Save local task bundle"}
-                </button>
-                <div className="text-xs text-slate-500">
-                  {clarificationNeeded
-                    ? "Answer the planner's question before approving or publishing tasks."
+            ) : planPreview ? (
+              <EmptyState
+                text={
+                  clarificationNeeded
+                    ? "Answer the planner's question to generate a real task breakdown."
                     : plannerTimedOut
-                      ? "Retry the planner revision or switch models before approving tasks."
-                      : planIsFallbackOnly
-                        ? "Wait for a real task breakdown before approving or publishing tasks."
-                        : isGitHubProject && canPublishToGitHub
-                          ? "This will create GitHub issues, add each issue to the selected project board, and move it into Ready when the board metadata is available."
-                          : "Local kanban mode saves the plan locally so you can apply it to the board file or keep it as a durable draft."}
+                      ? "The last revision timed out, so the planner kept the current fallback draft."
+                      : "The planner returned a plan, but no usable step list was available."
+                }
+              />
+            ) : (
+              <EmptyState text="Generate a plan to see task drafts here." />
+            )}
+          </PanelCard>
+
+          <PanelCard
+            title="Plan details"
+            subtitle="Planner metadata and markdown stay visible here"
+          >
+            {planPreview ? (
+              <div className="grid gap-3">
+                <div className="grid gap-2 text-sm text-slate-300">
+                  <div>
+                    <span className="tcp-subtle">Title:</span>{" "}
+                    {safeString(planPreview?.title) || "Untitled plan"}
+                  </div>
+                  <div>
+                    <span className="tcp-subtle">Confidence:</span>{" "}
+                    {safeString(planPreview?.confidence) || "unknown"}
+                  </div>
+                  <div>
+                    <span className="tcp-subtle">Plan source:</span>{" "}
+                    {safeString(planPreview?.plan_source || planPreview?.planSource) ||
+                      "coding_task_planning"}
+                  </div>
+                </div>
+                {typeof planPreview?.description === "string" && planPreview.description.trim() ? (
+                  <div className="rounded-2xl border border-white/10 bg-black/20 p-3">
+                    <div className="text-xs uppercase tracking-wide text-slate-500">
+                      Planner markdown
+                    </div>
+                    <div
+                      className="tcp-markdown tcp-markdown-ai mt-2 text-sm"
+                      dangerouslySetInnerHTML={{
+                        __html: renderMarkdownSafe(String(planPreview.description || "")),
+                      }}
+                    />
+                  </div>
+                ) : null}
+                <div className="grid gap-2">
+                  <button
+                    type="button"
+                    className="tcp-btn-primary"
+                    disabled={
+                      publishing ||
+                      isPlanning ||
+                      !goal.trim() ||
+                      !workspaceRoot.trim() ||
+                      clarificationNeeded ||
+                      plannerTimedOut ||
+                      planIsFallbackOnly
+                    }
+                    onClick={() => void publishTasks()}
+                  >
+                    {publishing
+                      ? "Publishing…"
+                      : isGitHubProject && canPublishToGitHub
+                        ? "Approve and publish to GitHub Project"
+                        : "Save local task bundle"}
+                  </button>
+                  <div className="text-xs text-slate-500">
+                    {clarificationNeeded
+                      ? "Answer the planner's question before approving or publishing tasks."
+                      : plannerTimedOut
+                        ? "Retry the planner revision or switch models before approving tasks."
+                        : planIsFallbackOnly
+                          ? "Wait for a real task breakdown before approving or publishing tasks."
+                          : isGitHubProject && canPublishToGitHub
+                            ? "This will create GitHub issues, add each issue to the selected project board, and move it into Ready when the board metadata is available."
+                            : "Local kanban mode saves the plan locally so you can apply it to the board file or keep it as a durable draft."}
+                  </div>
                 </div>
               </div>
-            </div>
-          ) : (
-            <EmptyState text="No plan has been generated yet." />
-          )}
-        </PanelCard>
-      </div>
+            ) : (
+              <EmptyState text="No plan has been generated yet." />
+            )}
+          </PanelCard>
+        </div>
+      ) : null}
     </div>
   );
 }
