@@ -16,6 +16,23 @@ type TaskRuntimeMeta = {
   sessionId: string;
 };
 
+function canonicalWorkflowTaskId(raw: unknown, knownIds = new Set<string>()) {
+  const value = String(raw || "").trim();
+  if (!value) return "";
+  if (knownIds.has(value)) return value;
+  if (!value.startsWith("node-")) {
+    const workflowNodeId = `node-${value}`;
+    if (knownIds.has(workflowNodeId)) return workflowNodeId;
+  }
+  return value;
+}
+
+function canonicalDependencyIds(values: unknown, knownIds = new Set<string>()) {
+  return Array.isArray(values)
+    ? values.map((dep: unknown) => canonicalWorkflowTaskId(dep, knownIds)).filter(Boolean)
+    : [];
+}
+
 function normalizeTaskState(status: unknown): TaskState {
   const value = String(status || "")
     .trim()
@@ -59,19 +76,26 @@ function buildRuntimeMeta(events: any[]): Record<string, TaskRuntimeMeta> {
   return metaByTaskId;
 }
 
-function projectBlackboardTask(task: any, runtime: TaskRuntimeMeta | undefined): OrchestrationTask {
+function projectBlackboardTask(
+  task: any,
+  runtime: TaskRuntimeMeta | undefined,
+  knownIds = new Set<string>()
+): OrchestrationTask {
   const state = normalizeTaskState(task?.status);
   const payload = task?.payload && typeof task.payload === "object" ? task.payload : {};
   const leaseExpiresAtMs = Number(task?.lease_expires_at_ms || 0) || 0;
   const nextRetryAtMs = Number(task?.next_retry_at_ms || 0) || 0;
   const now = Date.now();
+  const workflowNodeId = String(task?.workflow_node_id || task?.workflowNodeId || "").trim();
+  const taskId = canonicalWorkflowTaskId(
+    workflowNodeId || task?.id || payload?.task_id || payload?.workflow_node_id,
+    knownIds
+  );
   return {
-    id: String(task?.id || ""),
+    id: taskId,
     title: String(payload?.title || task?.task_type || task?.id || "Untitled task"),
     description: String(payload?.description || payload?.objective || ""),
-    dependencies: Array.isArray(task?.depends_on_task_ids)
-      ? task.depends_on_task_ids.map((dep: unknown) => String(dep || "")).filter(Boolean)
-      : [],
+    dependencies: canonicalDependencyIds(task?.depends_on_task_ids, knownIds),
     state,
     retry_count: Number(task?.attempt || task?.retry_count || 0),
     error_message:
@@ -95,7 +119,7 @@ function projectBlackboardTask(task: any, runtime: TaskRuntimeMeta | undefined):
     task_owner: String(payload?.task_owner || payload?.owner || ""),
     verification_command: String(payload?.verification_command || ""),
     output_path: String(payload?.output_path || ""),
-    parent_task_id: String(task?.parent_task_id || ""),
+    parent_task_id: canonicalWorkflowTaskId(task?.parent_task_id, knownIds),
     task_type: String(task?.task_type || ""),
     projects_backlog_tasks: Boolean(payload?.projects_backlog_tasks),
     lease_owner: String(task?.lease_owner || ""),
@@ -106,15 +130,18 @@ function projectBlackboardTask(task: any, runtime: TaskRuntimeMeta | undefined):
   };
 }
 
-function projectContextTask(step: any, runtime: TaskRuntimeMeta | undefined): OrchestrationTask {
+function projectContextTask(
+  step: any,
+  runtime: TaskRuntimeMeta | undefined,
+  knownIds = new Set<string>()
+): OrchestrationTask {
+  const stepId = canonicalWorkflowTaskId(step?.taskId || step?.step_id, knownIds);
   const state = normalizeTaskState(step?.stepStatus || step?.status);
   return {
-    id: String(step?.taskId || step?.step_id || ""),
+    id: stepId,
     title: String(step?.title || step?.step_id || "Untitled step"),
     description: String(step?.description || ""),
-    dependencies: Array.isArray(step?.dependsOn)
-      ? step.dependsOn.map((dep: unknown) => String(dep || "")).filter(Boolean)
-      : [],
+    dependencies: canonicalDependencyIds(step?.dependsOn, knownIds),
     state,
     retry_count: Number(step?.retry_count || 0),
     error_message:
@@ -138,12 +165,25 @@ export function projectOrchestrationRun(payload: any): OrchestrationProjection {
       ? payload.blackboard.tasks
       : [];
   const contextTasks = Array.isArray(payload?.tasks) ? payload.tasks : [];
+  const knownBlackboardIds = new Set<string>();
+  for (const task of blackboardTasks) {
+    const workflowNodeId = String(task?.workflow_node_id || task?.workflowNodeId || "").trim();
+    const rawId = String(task?.id || "").trim();
+    if (rawId) knownBlackboardIds.add(rawId);
+    if (workflowNodeId) knownBlackboardIds.add(`node-${workflowNodeId}`);
+  }
   const projectedBlackboard = blackboardTasks
-    .map((task: any) => projectBlackboardTask(task, runtimeMeta[String(task?.id || "").trim()]))
+    .map((task: any) =>
+      projectBlackboardTask(task, runtimeMeta[String(task?.id || "").trim()], knownBlackboardIds)
+    )
     .filter((task) => task.id);
   const projectedContext = contextTasks
     .map((step: any) =>
-      projectContextTask(step, runtimeMeta[String(step?.taskId || step?.step_id || "").trim()])
+      projectContextTask(
+        step,
+        runtimeMeta[String(step?.taskId || step?.step_id || "").trim()],
+        knownBlackboardIds
+      )
     )
     .filter((task) => task.id);
   const tasksById = new Map<string, OrchestrationTask>();
@@ -166,7 +206,10 @@ export function projectOrchestrationRun(payload: any): OrchestrationProjection {
   }
   const tasks = [...tasksById.values()];
   const currentTaskId =
-    String(payload?.run?.current_step_id || "").trim() ||
+    canonicalWorkflowTaskId(
+      String(payload?.run?.current_step_id || "").trim(),
+      knownBlackboardIds
+    ) ||
     tasks.find((task) => task.state === "in_progress" || task.state === "assigned")?.id ||
     "";
   const taskSource: TaskProjectionSource = projectedBlackboard.length

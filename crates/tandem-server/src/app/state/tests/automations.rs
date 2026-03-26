@@ -1101,6 +1101,161 @@ fn filter_requested_tools_to_available_removes_unconfigured_websearch() {
 }
 
 #[test]
+fn wildcard_automation_allowlist_expands_to_minimal_research_tools() {
+    let node = AutomationFlowNode {
+        node_id: "research_sources".to_string(),
+        agent_id: "researcher".to_string(),
+        objective: "Research current web sources and collect citations.".to_string(),
+        depends_on: Vec::new(),
+        input_refs: vec![AutomationFlowInputRef {
+            from_step_id: "collect_inputs".to_string(),
+            alias: "research_brief".to_string(),
+        }],
+        output_contract: Some(AutomationFlowOutputContract {
+            kind: "citations".to_string(),
+            validator: Some(crate::AutomationOutputValidatorKind::ResearchBrief),
+            enforcement: None,
+            schema: None,
+            summary_guidance: None,
+        }),
+        retry_policy: None,
+        timeout_ms: None,
+        stage_kind: None,
+        gate: None,
+        metadata: Some(json!({
+            "builder": {
+                "output_path": ".tandem/artifacts/research-sources.json"
+            }
+        })),
+    };
+
+    let requested = normalize_automation_requested_tools(&node, "/tmp", vec!["*".to_string()]);
+
+    assert_eq!(
+        requested,
+        vec![
+            "glob".to_string(),
+            "read".to_string(),
+            "websearch".to_string(),
+            "write".to_string()
+        ]
+    );
+}
+
+#[test]
+fn wildcard_automation_allowlist_keeps_email_delivery_tools_narrow() {
+    let node = AutomationFlowNode {
+        node_id: "notify_user".to_string(),
+        agent_id: "committer".to_string(),
+        objective: "Send the finalized report to the requested email address.".to_string(),
+        depends_on: Vec::new(),
+        input_refs: Vec::new(),
+        output_contract: Some(AutomationFlowOutputContract {
+            kind: "approval_gate".to_string(),
+            validator: Some(crate::AutomationOutputValidatorKind::ReviewDecision),
+            enforcement: None,
+            schema: None,
+            summary_guidance: None,
+        }),
+        retry_policy: None,
+        timeout_ms: None,
+        stage_kind: None,
+        gate: None,
+        metadata: Some(json!({
+            "delivery": {
+                "method": "email",
+                "to": "evan@frumu.ai",
+                "content_type": "text/html",
+                "inline_body_only": true,
+                "attachments": false
+            }
+        })),
+    };
+    let available_tool_names = [
+        "glob".to_string(),
+        "read".to_string(),
+        "mcp.gmail_alt.gmail_send_draft".to_string(),
+        "mcp.gmail_alt.gmail_send_email".to_string(),
+        "mcp.github.issues_list".to_string(),
+    ]
+    .into_iter()
+    .collect::<HashSet<_>>();
+    let requested = automation_requested_tools_for_node(
+        &node,
+        "/tmp",
+        vec!["*".to_string()],
+        &available_tool_names,
+    );
+
+    assert!(!requested.iter().any(|tool| tool == "*"));
+    assert!(requested
+        .iter()
+        .any(|tool| tool == "mcp.gmail_alt.gmail_send_email"));
+    assert!(requested
+        .iter()
+        .any(|tool| tool == "mcp.gmail_alt.gmail_send_draft"));
+    assert!(!requested
+        .iter()
+        .any(|tool| tool == "mcp.github.issues_list"));
+}
+
+#[test]
+fn wildcard_automation_allowlist_recognizes_outlook_reply_and_compose_email_tools() {
+    let node = AutomationFlowNode {
+        node_id: "notify_user".to_string(),
+        agent_id: "committer".to_string(),
+        objective: "Send the finalized report to the requested email address.".to_string(),
+        depends_on: Vec::new(),
+        input_refs: Vec::new(),
+        output_contract: Some(AutomationFlowOutputContract {
+            kind: "approval_gate".to_string(),
+            validator: Some(crate::AutomationOutputValidatorKind::ReviewDecision),
+            enforcement: None,
+            schema: None,
+            summary_guidance: None,
+        }),
+        retry_policy: None,
+        timeout_ms: None,
+        stage_kind: None,
+        gate: None,
+        metadata: Some(json!({
+            "delivery": {
+                "method": "email",
+                "to": "evan@frumu.ai",
+                "content_type": "text/html",
+                "inline_body_only": true,
+                "attachments": false
+            }
+        })),
+    };
+    let available_tool_names = [
+        "glob".to_string(),
+        "read".to_string(),
+        "mcp.outlook.reply_message".to_string(),
+        "mcp.outlook.compose_draft".to_string(),
+        "mcp.github.issues_list".to_string(),
+    ]
+    .into_iter()
+    .collect::<HashSet<_>>();
+    let requested = automation_requested_tools_for_node(
+        &node,
+        "/tmp",
+        vec!["*".to_string()],
+        &available_tool_names,
+    );
+
+    assert!(requested
+        .iter()
+        .any(|tool| tool == "mcp.outlook.reply_message"));
+    assert!(requested
+        .iter()
+        .any(|tool| tool == "mcp.outlook.compose_draft"));
+    assert!(!requested
+        .iter()
+        .any(|tool| tool == "mcp.github.issues_list"));
+}
+
+#[test]
 fn structured_json_prompt_requires_json_only_without_follow_up_questions() {
     let automation = AutomationV2Spec {
         automation_id: "automation-json-only".to_string(),
@@ -1996,6 +2151,232 @@ fn prompt_includes_inline_metadata_inputs_and_temp_file_warning() {
 }
 
 #[test]
+fn prompt_includes_email_delivery_metadata_for_notify_user() {
+    let automation = AutomationV2Spec {
+        automation_id: "automation-email-delivery".to_string(),
+        name: "Email Delivery Automation".to_string(),
+        description: None,
+        status: crate::AutomationV2Status::Active,
+        schedule: crate::AutomationV2Schedule {
+            schedule_type: crate::AutomationV2ScheduleType::Manual,
+            cron_expression: None,
+            interval_seconds: None,
+            timezone: "UTC".to_string(),
+            misfire_policy: crate::RoutineMisfirePolicy::RunOnce,
+        },
+        agents: Vec::new(),
+        flow: crate::AutomationFlowSpec { nodes: Vec::new() },
+        execution: crate::AutomationExecutionPolicy {
+            max_parallel_agents: Some(1),
+            max_total_runtime_ms: None,
+            max_total_tool_calls: None,
+            max_total_tokens: None,
+            max_total_cost_usd: None,
+        },
+        output_targets: Vec::new(),
+        created_at_ms: 0,
+        updated_at_ms: 0,
+        creator_id: "test".to_string(),
+        workspace_root: Some("/tmp".to_string()),
+        metadata: None,
+        next_fire_at_ms: None,
+        last_fired_at_ms: None,
+    };
+    let node = AutomationFlowNode {
+        node_id: "notify_user".to_string(),
+        agent_id: "committer".to_string(),
+        objective: "Send the finalized report to the requested email address in the email body using simple HTML.".to_string(),
+        depends_on: vec!["generate_report".to_string()],
+        input_refs: vec![AutomationFlowInputRef {
+            from_step_id: "generate_report".to_string(),
+            alias: "report_body".to_string(),
+        }],
+        output_contract: Some(AutomationFlowOutputContract {
+            kind: "approval_gate".to_string(),
+            validator: Some(crate::AutomationOutputValidatorKind::ReviewDecision),
+            enforcement: None,
+            schema: None,
+            summary_guidance: None,
+        }),
+        retry_policy: None,
+        timeout_ms: None,
+        stage_kind: None,
+        gate: None,
+        metadata: Some(json!({
+            "delivery": {
+                "method": "email",
+                "to": "evan@frumu.ai",
+                "content_type": "text/html",
+                "inline_body_only": true,
+                "attachments": false
+            }
+        })),
+    };
+    let agent = AutomationAgentProfile {
+        agent_id: "committer".to_string(),
+        template_id: None,
+        display_name: "Committer".to_string(),
+        avatar_url: None,
+        model_policy: None,
+        skills: Vec::new(),
+        tool_policy: crate::AutomationAgentToolPolicy {
+            allowlist: vec!["*".to_string()],
+            denylist: Vec::new(),
+        },
+        mcp_policy: crate::AutomationAgentMcpPolicy {
+            allowed_servers: vec!["composio-1".to_string()],
+            allowed_tools: None,
+        },
+        approval_policy: None,
+    };
+
+    let prompt = render_automation_v2_prompt(
+        &automation,
+        "/tmp",
+        "run-email",
+        &node,
+        1,
+        &agent,
+        &[],
+        &["*".to_string()],
+        None,
+        None,
+        None,
+    );
+
+    assert!(prompt.contains("Delivery target:"));
+    assert!(prompt.contains("`evan@frumu.ai`"));
+    assert!(prompt.contains("Inline body only: `true`"));
+    assert!(prompt.contains(
+        "Do not mark the node completed unless you actually execute an email draft or send tool."
+    ));
+}
+
+#[test]
+fn prompt_compacts_upstream_outputs_for_downstream_nodes() {
+    let automation = AutomationV2Spec {
+        automation_id: "automation-compact-upstream".to_string(),
+        name: "Compact Upstream Automation".to_string(),
+        description: None,
+        status: crate::AutomationV2Status::Active,
+        schedule: crate::AutomationV2Schedule {
+            schedule_type: crate::AutomationV2ScheduleType::Manual,
+            cron_expression: None,
+            interval_seconds: None,
+            timezone: "UTC".to_string(),
+            misfire_policy: crate::RoutineMisfirePolicy::RunOnce,
+        },
+        agents: Vec::new(),
+        flow: crate::AutomationFlowSpec { nodes: Vec::new() },
+        execution: crate::AutomationExecutionPolicy {
+            max_parallel_agents: Some(1),
+            max_total_runtime_ms: None,
+            max_total_tool_calls: None,
+            max_total_tokens: None,
+            max_total_cost_usd: None,
+        },
+        output_targets: Vec::new(),
+        created_at_ms: 0,
+        updated_at_ms: 0,
+        creator_id: "test".to_string(),
+        workspace_root: Some("/tmp".to_string()),
+        metadata: None,
+        next_fire_at_ms: None,
+        last_fired_at_ms: None,
+    };
+    let node = AutomationFlowNode {
+        node_id: "analyze_findings".to_string(),
+        agent_id: "analyst".to_string(),
+        objective: "Synthesize the clustered themes into a concise analysis and recommendations."
+            .to_string(),
+        depends_on: vec!["cluster_topics".to_string()],
+        input_refs: vec![AutomationFlowInputRef {
+            from_step_id: "cluster_topics".to_string(),
+            alias: "topic_clusters".to_string(),
+        }],
+        output_contract: Some(AutomationFlowOutputContract {
+            kind: "structured_json".to_string(),
+            validator: Some(crate::AutomationOutputValidatorKind::StructuredJson),
+            enforcement: None,
+            schema: None,
+            summary_guidance: None,
+        }),
+        retry_policy: None,
+        timeout_ms: None,
+        stage_kind: None,
+        gate: None,
+        metadata: None,
+    };
+    let agent = AutomationAgentProfile {
+        agent_id: "analyst".to_string(),
+        template_id: None,
+        display_name: "Analyst".to_string(),
+        avatar_url: None,
+        model_policy: None,
+        skills: Vec::new(),
+        tool_policy: crate::AutomationAgentToolPolicy {
+            allowlist: vec!["*".to_string()],
+            denylist: Vec::new(),
+        },
+        mcp_policy: crate::AutomationAgentMcpPolicy {
+            allowed_servers: Vec::new(),
+            allowed_tools: None,
+        },
+        approval_policy: None,
+    };
+    let upstream_inputs = vec![json!({
+        "alias": "topic_clusters",
+        "from_step_id": "cluster_topics",
+        "output": {
+            "status": "completed",
+            "phase": "completed",
+            "summary": "Clustered pain points into report themes.",
+            "contract_kind": "structured_json",
+            "artifact_validation": {
+                "accepted_artifact_path": ".tandem/artifacts/cluster-topics.json",
+                "artifact_candidates": [{"source": "verified_output", "score": 999}],
+                "validation_outcome": "passed",
+                "warning_count": 0
+            },
+            "validator_summary": {
+                "kind": "structured_json",
+                "outcome": "passed",
+                "warning_count": 0
+            },
+            "tool_telemetry": {
+                "executed_tools": ["read", "write"],
+                "tool_call_counts": {"read": 1, "write": 1}
+            },
+            "content": {
+                "path": ".tandem/artifacts/cluster-topics.json",
+                "raw_assistant_text": "very verbose narrative",
+                "text": "{\"themes\":[{\"id\":\"T1\",\"summary\":\"alpha\"}],\"cross_cutting_observation\":\"beta\"}"
+            }
+        }
+    })];
+
+    let prompt = render_automation_v2_prompt(
+        &automation,
+        "/tmp",
+        "run-compact",
+        &node,
+        1,
+        &agent,
+        &upstream_inputs,
+        &["*".to_string()],
+        None,
+        None,
+        None,
+    );
+
+    assert!(prompt.contains("\"themes\""));
+    assert!(prompt.contains("\"cross_cutting_observation\""));
+    assert!(!prompt.contains("artifact_candidates"));
+    assert!(!prompt.contains("raw_assistant_text"));
+    assert!(!prompt.contains("tool_call_counts"));
+}
+
+#[test]
 fn standard_workflow_nodes_receive_default_workspace_output_paths() {
     let node = AutomationFlowNode {
         node_id: "research_sources".to_string(),
@@ -2649,6 +3030,403 @@ fn summarize_automation_tool_activity_treats_backend_unavailable_websearch_as_un
             .and_then(Value::as_bool),
         Some(false)
     );
+}
+
+#[test]
+fn summarize_automation_tool_activity_treats_partial_websearch_with_results_as_success() {
+    let node = AutomationFlowNode {
+        node_id: "research".to_string(),
+        agent_id: "agent-a".to_string(),
+        objective: "Research".to_string(),
+        depends_on: Vec::new(),
+        input_refs: Vec::new(),
+        output_contract: Some(AutomationFlowOutputContract {
+            kind: "brief".to_string(),
+            validator: None,
+            enforcement: None,
+            schema: None,
+            summary_guidance: None,
+        }),
+        retry_policy: None,
+        timeout_ms: None,
+        stage_kind: None,
+        gate: None,
+        metadata: None,
+    };
+    let mut session = Session::new(Some("partial websearch".to_string()), None);
+    session.messages.push(tandem_types::Message::new(
+        MessageRole::Assistant,
+        vec![MessagePart::ToolInvocation {
+            tool: "websearch".to_string(),
+            args: json!({"query":"autonomous AI agentic workflows 2025"}),
+            result: Some(json!({
+                "output": serde_json::to_string(&json!({
+                    "query": "autonomous AI agentic workflows 2025",
+                    "result_count": 2,
+                    "partial": true,
+                    "results": [
+                        {"title": "One", "url": "https://example.com/1"},
+                        {"title": "Two", "url": "https://example.com/2"}
+                    ]
+                })).expect("json output"),
+                "metadata": {
+                    "count": 2,
+                    "error": "rate_limited",
+                    "partial": true
+                }
+            })),
+            error: None,
+        }],
+    ));
+
+    let telemetry = summarize_automation_tool_activity(
+        &node,
+        &session,
+        &[
+            "glob".to_string(),
+            "read".to_string(),
+            "websearch".to_string(),
+            "write".to_string(),
+        ],
+    );
+
+    assert_eq!(
+        telemetry
+            .get("web_research_succeeded")
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        telemetry
+            .get("latest_web_research_failure")
+            .and_then(Value::as_str),
+        None
+    );
+}
+
+#[test]
+fn summarize_automation_tool_activity_treats_runtime_websearch_string_result_as_success() {
+    let node = AutomationFlowNode {
+        node_id: "research".to_string(),
+        agent_id: "agent-a".to_string(),
+        objective: "Research".to_string(),
+        depends_on: Vec::new(),
+        input_refs: Vec::new(),
+        output_contract: Some(AutomationFlowOutputContract {
+            kind: "brief".to_string(),
+            validator: None,
+            enforcement: None,
+            schema: None,
+            summary_guidance: None,
+        }),
+        retry_policy: None,
+        timeout_ms: None,
+        stage_kind: None,
+        gate: None,
+        metadata: None,
+    };
+    let mut session = Session::new(Some("runtime websearch".to_string()), None);
+    session.messages.push(tandem_types::Message::new(
+        MessageRole::Assistant,
+        vec![MessagePart::ToolInvocation {
+            tool: "websearch".to_string(),
+            args: json!({"query":"autonomous AI agentic workflows 2024 2025"}),
+            result: Some(json!(serde_json::to_string_pretty(&json!({
+                "attempted_backends": ["brave"],
+                "backend": "brave",
+                "configured_backend": "brave",
+                "partial": false,
+                "query": "autonomous AI agentic workflows 2024 2025",
+                "result_count": 2,
+                "results": [
+                    {
+                        "title": "AI Agents in 2025: Expectations vs. Reality | IBM",
+                        "url": "https://www.ibm.com/think/insights/ai-agents-2025-expectations-vs-reality"
+                    },
+                    {
+                        "title": "Agentic AI strategy | Deloitte Insights",
+                        "url": "https://www.deloitte.com/us/en/insights/topics/technology-management/tech-trends/2026/agentic-ai-strategy.html"
+                    }
+                ]
+            }))
+            .expect("json output"))),
+            error: None,
+        }],
+    ));
+
+    let telemetry = summarize_automation_tool_activity(
+        &node,
+        &session,
+        &[
+            "glob".to_string(),
+            "read".to_string(),
+            "websearch".to_string(),
+            "write".to_string(),
+        ],
+    );
+
+    assert_eq!(
+        telemetry.get("web_research_used").and_then(Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        telemetry
+            .get("web_research_succeeded")
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        telemetry
+            .get("latest_web_research_failure")
+            .and_then(Value::as_str),
+        None
+    );
+}
+
+#[test]
+fn automation_prompt_preflight_marks_warning_for_large_prompt() {
+    let prompt = "x".repeat(20_000);
+    let preflight = crate::app::state::automation::build_automation_prompt_preflight(
+        &prompt,
+        &["glob".to_string(), "read".to_string(), "write".to_string()],
+        &[json!({
+            "name": "write",
+            "description": "write a file",
+            "input_schema": {"type": "object"}
+        })],
+        "artifact_write",
+        &json!({
+            "required_capabilities": ["artifact_write"],
+            "resolved": {
+                "artifact_write": {
+                    "status": "resolved",
+                    "offered_tools": ["write"],
+                    "available_tools": ["write"]
+                }
+            },
+            "missing_capabilities": []
+        }),
+        "standard",
+        false,
+    );
+
+    assert_eq!(
+        preflight.get("budget_status").and_then(Value::as_str),
+        Some("high")
+    );
+    assert_eq!(
+        preflight.get("degraded_prompt").and_then(Value::as_bool),
+        Some(false)
+    );
+}
+
+#[test]
+fn build_automation_attempt_evidence_captures_runtime_websearch_success() {
+    let node = AutomationFlowNode {
+        node_id: "research_sources".to_string(),
+        agent_id: "agent-a".to_string(),
+        objective: "Research".to_string(),
+        depends_on: Vec::new(),
+        input_refs: vec![AutomationFlowInputRef {
+            from_step_id: "collect_inputs".to_string(),
+            alias: "research_brief".to_string(),
+        }],
+        output_contract: Some(AutomationFlowOutputContract {
+            kind: "citations".to_string(),
+            validator: Some(crate::AutomationOutputValidatorKind::ResearchBrief),
+            enforcement: None,
+            schema: None,
+            summary_guidance: None,
+        }),
+        retry_policy: None,
+        timeout_ms: None,
+        stage_kind: None,
+        gate: None,
+        metadata: Some(json!({
+            "builder": {
+                "output_path": ".tandem/artifacts/research-sources.json"
+            }
+        })),
+    };
+    let mut session = Session::new(Some("research".to_string()), None);
+    session.messages.push(tandem_types::Message::new(
+        MessageRole::Assistant,
+        vec![
+            MessagePart::ToolInvocation {
+                tool: "read".to_string(),
+                args: json!({"file_path": ".tandem/artifacts/collect-inputs.json"}),
+                result: Some(json!("{\"topic\":\"autonomous AI agentic workflows\"}")),
+                error: None,
+            },
+            MessagePart::ToolInvocation {
+                tool: "websearch".to_string(),
+                args: json!({"query":"autonomous AI agentic workflows 2024 2025"}),
+                result: Some(json!(serde_json::to_string_pretty(&json!({
+                    "backend": "brave",
+                    "result_count": 2,
+                    "partial": false,
+                    "results": [
+                        {"title": "IBM", "url": "https://example.com/ibm"},
+                        {"title": "Deloitte", "url": "https://example.com/deloitte"}
+                    ]
+                }))
+                .expect("json output"))),
+                error: None,
+            },
+        ],
+    ));
+
+    let tool_telemetry = summarize_automation_tool_activity(
+        &node,
+        &session,
+        &[
+            "glob".to_string(),
+            "read".to_string(),
+            "websearch".to_string(),
+            "write".to_string(),
+        ],
+    );
+    let preflight = crate::app::state::automation::build_automation_prompt_preflight(
+        "Research prompt",
+        &[
+            "glob".to_string(),
+            "read".to_string(),
+            "websearch".to_string(),
+            "write".to_string(),
+        ],
+        &[
+            json!({"name":"websearch"}),
+            json!({"name":"read"}),
+            json!({"name":"write"}),
+        ],
+        "artifact_write",
+        &json!({
+            "required_capabilities": ["workspace_read", "workspace_discover", "artifact_write", "web_research"],
+            "resolved": {},
+            "missing_capabilities": []
+        }),
+        "standard",
+        false,
+    );
+    let attempt_evidence = crate::app::state::automation::build_automation_attempt_evidence(
+        &node,
+        1,
+        &session,
+        &session.id,
+        ".",
+        &tool_telemetry,
+        &preflight,
+        &json!({
+            "required_capabilities": ["web_research"],
+            "resolved": {},
+            "missing_capabilities": []
+        }),
+        None,
+    );
+
+    let web_status = attempt_evidence
+        .get("evidence")
+        .and_then(Value::as_object)
+        .and_then(|value| value.get("web_research"))
+        .and_then(Value::as_object)
+        .and_then(|value| value.get("status"))
+        .and_then(Value::as_str);
+    assert_eq!(web_status, Some("succeeded"));
+
+    let succeeded_tools = attempt_evidence
+        .get("tool_execution")
+        .and_then(Value::as_object)
+        .and_then(|value| value.get("succeeded_tools"))
+        .and_then(Value::as_array);
+    assert_eq!(
+        succeeded_tools
+            .is_some_and(|rows| rows.iter().any(|value| value.as_str() == Some("websearch"))),
+        true
+    );
+}
+
+#[test]
+fn detect_automation_blocker_category_prefers_delivery_category_from_canonical_evidence() {
+    let node = AutomationFlowNode {
+        node_id: "notify_user".to_string(),
+        agent_id: "agent-committer".to_string(),
+        objective: "Send the report by email.".to_string(),
+        depends_on: Vec::new(),
+        input_refs: Vec::new(),
+        output_contract: Some(AutomationFlowOutputContract {
+            kind: "approval_gate".to_string(),
+            validator: Some(crate::AutomationOutputValidatorKind::ReviewDecision),
+            enforcement: None,
+            schema: None,
+            summary_guidance: None,
+        }),
+        retry_policy: None,
+        timeout_ms: None,
+        stage_kind: None,
+        gate: None,
+        metadata: Some(json!({
+            "delivery": {
+                "method": "email",
+                "to": "evan@frumu.ai",
+                "content_type": "text/html",
+                "inline_body_only": true,
+                "attachments": false
+            }
+        })),
+    };
+    let tool_telemetry = json!({
+        "executed_tools": ["read"],
+        "preflight": {"budget_status": "ok"},
+        "attempt_evidence": {
+            "capability_resolution": {
+                "missing_capabilities": []
+            },
+            "delivery": {
+                "status": "not_attempted"
+            }
+        }
+    });
+
+    assert_eq!(
+        crate::app::state::automation::detect_automation_blocker_category(
+            &node,
+            "blocked",
+            Some("email delivery to `evan@frumu.ai` was requested but no email draft/send tool executed"),
+            &tool_telemetry,
+            None,
+        )
+        .as_deref(),
+        Some("delivery_not_executed")
+    );
+}
+
+#[test]
+fn report_generation_objective_does_not_imply_email_delivery_execution() {
+    let node = AutomationFlowNode {
+        node_id: "generate_report".to_string(),
+        agent_id: "writer".to_string(),
+        objective: "Draft the report in simple HTML suitable for email body delivery.".to_string(),
+        depends_on: Vec::new(),
+        input_refs: Vec::new(),
+        output_contract: Some(AutomationFlowOutputContract {
+            kind: "report_markdown".to_string(),
+            validator: Some(crate::AutomationOutputValidatorKind::GenericArtifact),
+            enforcement: None,
+            schema: None,
+            summary_guidance: None,
+        }),
+        retry_policy: None,
+        timeout_ms: None,
+        stage_kind: None,
+        gate: None,
+        metadata: Some(json!({
+            "builder": {
+                "output_path": ".tandem/artifacts/generate-report.html"
+            }
+        })),
+    };
+
+    assert!(!crate::app::state::automation::automation_node_requires_email_delivery(&node));
 }
 
 #[test]
@@ -4400,6 +5178,270 @@ fn code_workflow_with_partial_verification_is_blocked() {
         Some("coding task completed with only 2 of 3 declared verification commands run")
     );
     assert_eq!(approved, None);
+}
+
+#[test]
+fn email_delivery_nodes_block_without_email_tool_execution() {
+    let node = AutomationFlowNode {
+        node_id: "notify_user".to_string(),
+        agent_id: "agent-committer".to_string(),
+        objective: "Send the finalized report to the requested email address in the email body using simple HTML.".to_string(),
+        depends_on: vec!["generate_report".to_string()],
+        input_refs: vec![AutomationFlowInputRef {
+            from_step_id: "generate_report".to_string(),
+            alias: "report_body".to_string(),
+        }],
+        output_contract: Some(AutomationFlowOutputContract {
+            kind: "approval_gate".to_string(),
+            validator: Some(crate::AutomationOutputValidatorKind::ReviewDecision),
+            enforcement: None,
+            schema: None,
+            summary_guidance: None,
+        }),
+        retry_policy: None,
+        timeout_ms: None,
+        stage_kind: None,
+        gate: None,
+        metadata: Some(json!({
+            "delivery": {
+                "method": "email",
+                "to": "evan@frumu.ai",
+                "content_type": "text/html",
+                "inline_body_only": true,
+                "attachments": false
+            }
+        })),
+    };
+
+    let (status, reason, approved) = detect_automation_node_status(
+        &node,
+        "The report is ready.\n\n{\"status\":\"completed\",\"approved\":true}",
+        None,
+        &json!({
+            "requested_tools": ["*"],
+            "executed_tools": ["read"],
+            "tool_call_counts": {"read": 1},
+            "workspace_inspection_used": true,
+            "email_delivery_attempted": false,
+            "email_delivery_succeeded": false,
+            "latest_email_delivery_failure": null
+        }),
+        None,
+    );
+
+    assert_eq!(status, "blocked");
+    assert_eq!(
+        reason.as_deref(),
+        Some(
+            "email delivery to `evan@frumu.ai` was requested but no email draft/send tool executed"
+        )
+    );
+    assert_eq!(approved, Some(true));
+}
+
+#[test]
+fn email_delivery_nodes_without_email_tools_report_tool_unavailable_with_diagnostics() {
+    let node = AutomationFlowNode {
+        node_id: "notify_user".to_string(),
+        agent_id: "agent-committer".to_string(),
+        objective: "Send the finalized report to the requested email address in the email body using simple HTML.".to_string(),
+        depends_on: vec!["generate_report".to_string()],
+        input_refs: vec![AutomationFlowInputRef {
+            from_step_id: "generate_report".to_string(),
+            alias: "report_body".to_string(),
+        }],
+        output_contract: Some(AutomationFlowOutputContract {
+            kind: "approval_gate".to_string(),
+            validator: Some(crate::AutomationOutputValidatorKind::ReviewDecision),
+            enforcement: None,
+            schema: None,
+            summary_guidance: None,
+        }),
+        retry_policy: None,
+        timeout_ms: None,
+        stage_kind: None,
+        gate: None,
+        metadata: Some(json!({
+            "delivery": {
+                "method": "email",
+                "to": "evan@frumu.ai",
+                "content_type": "text/html",
+                "inline_body_only": true,
+                "attachments": false
+            }
+        })),
+    };
+
+    let tool_telemetry = json!({
+        "requested_tools": ["glob", "read"],
+        "executed_tools": ["read"],
+        "tool_call_counts": {"read": 1},
+        "workspace_inspection_used": true,
+        "email_delivery_attempted": false,
+        "email_delivery_succeeded": false,
+        "latest_email_delivery_failure": null,
+        "capability_resolution": {
+            "required_capabilities": ["workspace_read", "email_send", "email_draft"],
+            "missing_capabilities": ["email_send", "email_draft"],
+            "email_tool_diagnostics": {
+                "available_tools": [],
+                "offered_tools": [],
+                "available_send_tools": [],
+                "offered_send_tools": [],
+                "available_draft_tools": [],
+                "offered_draft_tools": [],
+                "selected_servers": ["composio-1"],
+                "remote_tools": ["mcp.composio_1.send_message"],
+                "registered_tools": ["mcp.composio_1.send_message"]
+            },
+            "mcp_tool_diagnostics": {
+                "selected_servers": ["composio-1"],
+                "servers": [{
+                    "name": "composio-1",
+                    "connected": true,
+                    "remote_tools": ["mcp.composio_1.send_message"],
+                    "registered_tools": ["mcp.composio_1.send_message"]
+                }],
+                "remote_tools": ["mcp.composio_1.send_message"],
+                "registered_tools": ["mcp.composio_1.send_message"],
+                "remote_email_like_tools": [],
+                "registered_email_like_tools": []
+            }
+        },
+        "attempt_evidence": {
+            "delivery": {
+                "status": "not_attempted"
+            }
+        }
+    });
+
+    let (status, reason, approved) = detect_automation_node_status(
+        &node,
+        "I could not verify that an email was sent in this run.",
+        None,
+        &tool_telemetry,
+        None,
+    );
+
+    assert_eq!(status, "blocked");
+    assert!(reason
+        .as_deref()
+        .is_some_and(|value| value.contains("Discovered email-like tools: none")));
+    assert!(reason
+        .as_deref()
+        .is_some_and(|value| value.contains("Selected MCP servers: composio-1")));
+    assert!(reason
+        .as_deref()
+        .is_some_and(|value| value
+            .contains("Remote MCP tools on selected servers: mcp.composio_1.send_message")));
+    assert!(reason.as_deref().is_some_and(|value| value.contains(
+        "Registered tool-registry tools on selected servers: mcp.composio_1.send_message"
+    )));
+    assert_eq!(approved, None);
+    assert_eq!(
+        crate::app::state::automation::detect_automation_blocker_category(
+            &node,
+            &status,
+            reason.as_deref(),
+            &tool_telemetry,
+            None,
+        )
+        .as_deref(),
+        Some("tool_unavailable")
+    );
+}
+
+#[test]
+fn email_delivery_nodes_complete_after_email_tool_execution() {
+    let node = AutomationFlowNode {
+        node_id: "notify_user".to_string(),
+        agent_id: "agent-committer".to_string(),
+        objective: "Send the finalized report to the requested email address in the email body using simple HTML.".to_string(),
+        depends_on: vec!["generate_report".to_string()],
+        input_refs: vec![AutomationFlowInputRef {
+            from_step_id: "generate_report".to_string(),
+            alias: "report_body".to_string(),
+        }],
+        output_contract: Some(AutomationFlowOutputContract {
+            kind: "approval_gate".to_string(),
+            validator: Some(crate::AutomationOutputValidatorKind::ReviewDecision),
+            enforcement: None,
+            schema: None,
+            summary_guidance: None,
+        }),
+        retry_policy: None,
+        timeout_ms: None,
+        stage_kind: None,
+        gate: None,
+        metadata: Some(json!({
+            "delivery": {
+                "method": "email",
+                "to": "evan@frumu.ai",
+                "content_type": "text/html",
+                "inline_body_only": true,
+                "attachments": false
+            }
+        })),
+    };
+
+    let (status, reason, approved) = detect_automation_node_status(
+        &node,
+        "Sent the report.\n\n{\"status\":\"completed\",\"approved\":true}",
+        None,
+        &json!({
+            "requested_tools": ["*"],
+            "executed_tools": ["read", "mcp.composio_1.gmail_send_email"],
+            "tool_call_counts": {"read": 1, "mcp.composio_1.gmail_send_email": 1},
+            "workspace_inspection_used": true,
+            "email_delivery_attempted": true,
+            "email_delivery_succeeded": true,
+            "latest_email_delivery_failure": null
+        }),
+        None,
+    );
+
+    assert_eq!(status, "completed");
+    assert_eq!(reason, None);
+    assert_eq!(approved, Some(true));
+}
+
+#[test]
+fn infer_selected_mcp_servers_uses_enabled_servers_for_wildcard_allowlist() {
+    let selected = crate::app::state::automation::automation_infer_selected_mcp_servers(
+        &[],
+        &["*".to_string()],
+        &["gmail-main".to_string(), "slack-main".to_string()],
+        false,
+    );
+
+    assert_eq!(
+        selected,
+        vec!["gmail-main".to_string(), "slack-main".to_string()]
+    );
+}
+
+#[test]
+fn infer_selected_mcp_servers_uses_enabled_servers_for_email_delivery_fallback() {
+    let selected = crate::app::state::automation::automation_infer_selected_mcp_servers(
+        &[],
+        &["glob".to_string(), "read".to_string()],
+        &["gmail-main".to_string()],
+        true,
+    );
+
+    assert_eq!(selected, vec!["gmail-main".to_string()]);
+}
+
+#[test]
+fn infer_selected_mcp_servers_prefers_explicit_selection_when_present() {
+    let selected = crate::app::state::automation::automation_infer_selected_mcp_servers(
+        &["composio-1".to_string()],
+        &["*".to_string()],
+        &["gmail-main".to_string(), "composio-1".to_string()],
+        true,
+    );
+
+    assert_eq!(selected, vec!["composio-1".to_string()]);
 }
 
 #[test]

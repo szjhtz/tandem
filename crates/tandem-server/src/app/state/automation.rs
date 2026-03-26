@@ -139,6 +139,713 @@ pub fn automation_lifecycle_event_metadata_for_node(
     map
 }
 
+fn automation_tool_result_output_value<'a>(result: Option<&'a Value>) -> Option<&'a Value> {
+    let value = result?;
+    let Some(object) = value.as_object() else {
+        return Some(value);
+    };
+    if object.contains_key("output") || object.contains_key("metadata") {
+        object.get("output")
+    } else {
+        Some(value)
+    }
+}
+
+fn automation_tool_result_metadata<'a>(result: Option<&'a Value>) -> Option<&'a Value> {
+    let value = result?;
+    let object = value.as_object()?;
+    if object.contains_key("output") || object.contains_key("metadata") {
+        object.get("metadata")
+    } else {
+        None
+    }
+}
+
+fn automation_tool_result_output_text(result: Option<&Value>) -> Option<String> {
+    let output = automation_tool_result_output_value(result)?;
+    match output {
+        Value::Null => None,
+        Value::String(text) => Some(text.clone()),
+        Value::Array(values) => {
+            let lines = values
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .collect::<Vec<_>>();
+            if lines.is_empty() {
+                serde_json::to_string(output).ok()
+            } else {
+                Some(lines.join("\n"))
+            }
+        }
+        other => serde_json::to_string(other).ok(),
+    }
+}
+
+fn automation_tool_result_output_payload(result: Option<&Value>) -> Option<Value> {
+    let output = automation_tool_result_output_value(result)?;
+    match output {
+        Value::Null => None,
+        Value::String(text) => {
+            let trimmed = text.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                serde_json::from_str::<Value>(trimmed)
+                    .ok()
+                    .or_else(|| Some(Value::String(text.clone())))
+            }
+        }
+        other => Some(other.clone()),
+    }
+}
+
+const AUTOMATION_PROMPT_WARNING_TOKENS: u64 = 2_400;
+const AUTOMATION_PROMPT_HIGH_TOKENS: u64 = 3_200;
+const AUTOMATION_TOOL_SCHEMA_WARNING_CHARS: u64 = 18_000;
+const AUTOMATION_TOOL_SCHEMA_HIGH_CHARS: u64 = 26_000;
+
+#[derive(Clone, Copy, Debug, Default)]
+struct AutomationPromptRenderOptions {
+    summary_only_upstream: bool,
+}
+
+fn automation_tool_name_is_workspace_read(tool_name: &str) -> bool {
+    tool_name.trim().eq_ignore_ascii_case("read")
+}
+
+fn automation_tool_name_is_workspace_discover(tool_name: &str) -> bool {
+    matches!(
+        tool_name
+            .trim()
+            .to_ascii_lowercase()
+            .replace('-', "_")
+            .as_str(),
+        "glob" | "search" | "grep" | "codesearch" | "ls" | "list"
+    )
+}
+
+fn automation_tool_name_is_artifact_write(tool_name: &str) -> bool {
+    matches!(
+        tool_name
+            .trim()
+            .to_ascii_lowercase()
+            .replace('-', "_")
+            .as_str(),
+        "write" | "edit" | "apply_patch"
+    )
+}
+
+fn automation_tool_name_is_web_research(tool_name: &str) -> bool {
+    matches!(
+        tool_name
+            .trim()
+            .to_ascii_lowercase()
+            .replace('-', "_")
+            .as_str(),
+        "websearch" | "webfetch" | "webfetch_html"
+    )
+}
+
+fn automation_tool_name_is_verify_command(tool_name: &str) -> bool {
+    tool_name.trim().eq_ignore_ascii_case("bash")
+}
+
+fn automation_tool_name_tokens(tool_name: &str) -> Vec<String> {
+    tool_name
+        .trim()
+        .to_ascii_lowercase()
+        .chars()
+        .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { ' ' })
+        .collect::<String>()
+        .split_whitespace()
+        .map(str::to_string)
+        .collect::<Vec<_>>()
+}
+
+fn automation_tool_name_contains_token(tokens: &[String], needle: &str) -> bool {
+    tokens.iter().any(|token| token == needle)
+}
+
+fn automation_tool_name_is_email_send(tool_name: &str) -> bool {
+    let tokens = automation_tool_name_tokens(tool_name);
+    automation_tool_name_is_email_delivery(tool_name)
+        && (automation_tool_name_contains_token(&tokens, "send")
+            || automation_tool_name_contains_token(&tokens, "deliver")
+            || automation_tool_name_contains_token(&tokens, "reply"))
+}
+
+fn automation_tool_name_is_email_draft(tool_name: &str) -> bool {
+    let tokens = automation_tool_name_tokens(tool_name);
+    automation_tool_name_is_email_delivery(tool_name)
+        && (automation_tool_name_contains_token(&tokens, "draft")
+            || automation_tool_name_contains_token(&tokens, "compose"))
+}
+
+fn automation_discovered_tools_for_predicate<F>(
+    tools: impl IntoIterator<Item = String>,
+    predicate: F,
+) -> Vec<String>
+where
+    F: Fn(&str) -> bool,
+{
+    let mut discovered = tools
+        .into_iter()
+        .filter(|tool_name| predicate(tool_name))
+        .collect::<Vec<_>>();
+    discovered.sort();
+    discovered.dedup();
+    discovered
+}
+
+fn automation_prompt_token_estimate(text: &str) -> u64 {
+    let chars = text.chars().count() as u64;
+    chars.div_ceil(4)
+}
+
+fn automation_tool_schema_chars<T: serde::Serialize>(schemas: &[T]) -> u64 {
+    schemas
+        .iter()
+        .map(|schema| {
+            serde_json::to_string(schema)
+                .map(|text| text.len() as u64)
+                .unwrap_or(0)
+        })
+        .sum()
+}
+
+fn automation_tool_capability_ids(node: &AutomationFlowNode, execution_mode: &str) -> Vec<String> {
+    let mut capabilities = Vec::new();
+    if !node.input_refs.is_empty()
+        || automation_node_required_tools(node)
+            .iter()
+            .any(|tool| tool == "read")
+    {
+        capabilities.push("workspace_read".to_string());
+    }
+    if automation_node_required_output_path(node).is_some()
+        || automation_output_validator_kind(node)
+            == crate::AutomationOutputValidatorKind::ResearchBrief
+    {
+        capabilities.push("workspace_discover".to_string());
+    }
+    if automation_node_required_output_path(node).is_some() {
+        capabilities.push("artifact_write".to_string());
+    }
+    if automation_node_web_research_expected(node) {
+        capabilities.push("web_research".to_string());
+    }
+    if automation_node_requires_email_delivery(node) {
+        capabilities.push("email_send".to_string());
+        capabilities.push("email_draft".to_string());
+    }
+    if automation_node_is_code_workflow(node)
+        && (execution_mode == "git_patch" || execution_mode == "filesystem_patch")
+    {
+        capabilities.push("verify_command".to_string());
+    }
+    capabilities.sort();
+    capabilities.dedup();
+    capabilities
+}
+
+fn automation_capability_matches_tool(capability_id: &str, tool_name: &str) -> bool {
+    match capability_id {
+        "workspace_read" => automation_tool_name_is_workspace_read(tool_name),
+        "workspace_discover" => automation_tool_name_is_workspace_discover(tool_name),
+        "artifact_write" => automation_tool_name_is_artifact_write(tool_name),
+        "web_research" => automation_tool_name_is_web_research(tool_name),
+        "email_send" => automation_tool_name_is_email_send(tool_name),
+        "email_draft" => automation_tool_name_is_email_draft(tool_name),
+        "verify_command" => automation_tool_name_is_verify_command(tool_name),
+        _ => false,
+    }
+}
+
+fn automation_resolve_capabilities(
+    node: &AutomationFlowNode,
+    execution_mode: &str,
+    offered_tools: &[String],
+    available_tool_names: &HashSet<String>,
+) -> Value {
+    let required_capabilities = automation_tool_capability_ids(node, execution_mode);
+    let mut resolved = serde_json::Map::new();
+    let mut missing = Vec::new();
+    for capability_id in &required_capabilities {
+        let available_matches = available_tool_names
+            .iter()
+            .filter(|tool_name| automation_capability_matches_tool(capability_id, tool_name))
+            .cloned()
+            .collect::<Vec<_>>();
+        let offered_matches = offered_tools
+            .iter()
+            .filter(|tool_name| automation_capability_matches_tool(capability_id, tool_name))
+            .cloned()
+            .collect::<Vec<_>>();
+        let status = if !offered_matches.is_empty() {
+            "resolved"
+        } else if !available_matches.is_empty() {
+            "not_offered"
+        } else {
+            "unavailable"
+        };
+        if status != "resolved" {
+            missing.push(capability_id.clone());
+        }
+        resolved.insert(
+            capability_id.clone(),
+            json!({
+                "status": status,
+                "offered_tools": offered_matches,
+                "available_tools": available_matches,
+            }),
+        );
+    }
+    let mut output = serde_json::Map::new();
+    output.insert(
+        "required_capabilities".to_string(),
+        json!(required_capabilities),
+    );
+    output.insert("resolved".to_string(), json!(resolved));
+    output.insert("missing_capabilities".to_string(), json!(missing));
+    if automation_node_requires_email_delivery(node) {
+        let available_email_like_tools = automation_discovered_tools_for_predicate(
+            available_tool_names.iter().cloned().collect::<Vec<_>>(),
+            automation_tool_name_is_email_delivery,
+        );
+        let offered_email_like_tools = automation_discovered_tools_for_predicate(
+            offered_tools.to_vec(),
+            automation_tool_name_is_email_delivery,
+        );
+        let available_send_tools = automation_discovered_tools_for_predicate(
+            available_tool_names.iter().cloned().collect::<Vec<_>>(),
+            automation_tool_name_is_email_send,
+        );
+        let offered_send_tools = automation_discovered_tools_for_predicate(
+            offered_tools.to_vec(),
+            automation_tool_name_is_email_send,
+        );
+        let available_draft_tools = automation_discovered_tools_for_predicate(
+            available_tool_names.iter().cloned().collect::<Vec<_>>(),
+            automation_tool_name_is_email_draft,
+        );
+        let offered_draft_tools = automation_discovered_tools_for_predicate(
+            offered_tools.to_vec(),
+            automation_tool_name_is_email_draft,
+        );
+        output.insert(
+            "email_tool_diagnostics".to_string(),
+            json!({
+                "available_tools": available_email_like_tools,
+                "offered_tools": offered_email_like_tools,
+                "available_send_tools": available_send_tools,
+                "offered_send_tools": offered_send_tools,
+                "available_draft_tools": available_draft_tools,
+                "offered_draft_tools": offered_draft_tools,
+            }),
+        );
+    }
+    Value::Object(output)
+}
+
+pub(crate) fn build_automation_prompt_preflight<T: serde::Serialize>(
+    prompt: &str,
+    offered_tools: &[String],
+    offered_tool_schemas: &[T],
+    execution_mode: &str,
+    capability_resolution: &Value,
+    prompt_compaction: &str,
+    degraded_prompt: bool,
+) -> Value {
+    let estimated_prompt_tokens = automation_prompt_token_estimate(prompt);
+    let offered_tool_schema_chars = automation_tool_schema_chars(offered_tool_schemas);
+    let budget_status = if estimated_prompt_tokens >= AUTOMATION_PROMPT_HIGH_TOKENS
+        || offered_tool_schema_chars >= AUTOMATION_TOOL_SCHEMA_HIGH_CHARS
+    {
+        "high"
+    } else if estimated_prompt_tokens >= AUTOMATION_PROMPT_WARNING_TOKENS
+        || offered_tool_schema_chars >= AUTOMATION_TOOL_SCHEMA_WARNING_CHARS
+    {
+        "warning"
+    } else {
+        "ok"
+    };
+    json!({
+        "rendered_prompt_chars": prompt.chars().count(),
+        "estimated_prompt_tokens": estimated_prompt_tokens,
+        "offered_tools": offered_tools,
+        "offered_tool_schema_count": offered_tool_schemas.len(),
+        "offered_tool_schema_chars": offered_tool_schema_chars,
+        "execution_mode": execution_mode,
+        "budget_status": budget_status,
+        "degraded_prompt": degraded_prompt,
+        "prompt_compaction": prompt_compaction,
+        "required_capability_availability": capability_resolution,
+    })
+}
+
+fn automation_preflight_should_degrade(preflight: &Value) -> bool {
+    preflight
+        .get("budget_status")
+        .and_then(Value::as_str)
+        .is_some_and(|status| matches!(status, "warning" | "high"))
+}
+
+fn summarize_json_keys(value: &Value) -> Value {
+    match value {
+        Value::Object(map) => {
+            let mut keys = map.keys().cloned().collect::<Vec<_>>();
+            keys.sort();
+            json!({
+                "type": "object",
+                "keys": keys,
+                "field_count": map.len()
+            })
+        }
+        Value::Array(rows) => json!({
+            "type": "array",
+            "length": rows.len()
+        }),
+        Value::String(text) => json!({
+            "type": "string",
+            "length": text.len()
+        }),
+        Value::Null => json!({"type": "null"}),
+        Value::Bool(_) => json!({"type": "boolean"}),
+        Value::Number(_) => json!({"type": "number"}),
+    }
+}
+
+fn automation_attempt_evidence_from_tool_telemetry<'a>(
+    tool_telemetry: &'a Value,
+) -> Option<&'a Value> {
+    tool_telemetry.get("attempt_evidence")
+}
+
+fn automation_attempt_evidence_read_paths(tool_telemetry: &Value) -> Vec<String> {
+    automation_attempt_evidence_from_tool_telemetry(tool_telemetry)
+        .and_then(|value| value.get("evidence"))
+        .and_then(|value| value.get("read_paths"))
+        .and_then(Value::as_array)
+        .map(|rows| {
+            rows.iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default()
+}
+
+fn automation_attempt_evidence_web_research_status(tool_telemetry: &Value) -> Option<String> {
+    automation_attempt_evidence_from_tool_telemetry(tool_telemetry)
+        .and_then(|value| value.get("evidence"))
+        .and_then(|value| value.get("web_research"))
+        .and_then(|value| value.get("status"))
+        .and_then(Value::as_str)
+        .map(str::to_string)
+}
+
+fn automation_attempt_evidence_delivery_status(tool_telemetry: &Value) -> Option<String> {
+    automation_attempt_evidence_from_tool_telemetry(tool_telemetry)
+        .and_then(|value| value.get("delivery"))
+        .and_then(|value| value.get("status"))
+        .and_then(Value::as_str)
+        .map(str::to_string)
+}
+
+fn automation_attempt_evidence_missing_capabilities(tool_telemetry: &Value) -> Vec<String> {
+    automation_attempt_evidence_from_tool_telemetry(tool_telemetry)
+        .and_then(|value| value.get("capability_resolution"))
+        .and_then(|value| value.get("missing_capabilities"))
+        .and_then(Value::as_array)
+        .map(|rows| {
+            rows.iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default()
+}
+
+fn automation_capability_resolution_email_tools(tool_telemetry: &Value, key: &str) -> Vec<String> {
+    tool_telemetry
+        .get("capability_resolution")
+        .and_then(|value| value.get("email_tool_diagnostics"))
+        .and_then(|value| value.get(key))
+        .and_then(Value::as_array)
+        .map(|rows| {
+            rows.iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default()
+}
+
+fn automation_capability_resolution_mcp_tools(tool_telemetry: &Value, key: &str) -> Vec<String> {
+    tool_telemetry
+        .get("capability_resolution")
+        .and_then(|value| value.get("mcp_tool_diagnostics"))
+        .and_then(|value| value.get(key))
+        .and_then(Value::as_array)
+        .map(|rows| {
+            rows.iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default()
+}
+
+fn automation_normalize_server_list(raw: &[String]) -> Vec<String> {
+    let mut servers = raw
+        .iter()
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    servers.sort();
+    servers.dedup();
+    servers
+}
+
+fn automation_tool_names_for_mcp_server(tool_names: &[String], server_name: &str) -> Vec<String> {
+    let prefix = format!(
+        "mcp.{}.",
+        crate::http::mcp::mcp_namespace_segment(server_name)
+    );
+    let mut tools = tool_names
+        .iter()
+        .filter(|tool_name| tool_name.starts_with(&prefix))
+        .cloned()
+        .collect::<Vec<_>>();
+    tools.sort();
+    tools.dedup();
+    tools
+}
+
+fn automation_merge_mcp_capability_diagnostics(
+    capability_resolution: &mut Value,
+    mcp_diagnostics: &Value,
+) {
+    let Some(root) = capability_resolution.as_object_mut() else {
+        return;
+    };
+    root.insert("mcp_tool_diagnostics".to_string(), mcp_diagnostics.clone());
+    if let Some(email_diagnostics) = root
+        .get_mut("email_tool_diagnostics")
+        .and_then(Value::as_object_mut)
+    {
+        for key in [
+            "selected_servers",
+            "remote_tools",
+            "registered_tools",
+            "remote_email_like_tools",
+            "registered_email_like_tools",
+            "servers",
+        ] {
+            if let Some(value) = mcp_diagnostics.get(key).cloned() {
+                email_diagnostics.insert(key.to_string(), value);
+            }
+        }
+    }
+}
+
+fn automation_selected_mcp_servers_from_allowlist(
+    allowlist: &[String],
+    known_server_names: &[String],
+) -> Vec<String> {
+    let mut selected = Vec::new();
+    for server_name in known_server_names {
+        let namespace = crate::http::mcp::mcp_namespace_segment(server_name);
+        if allowlist.iter().any(|entry| {
+            let normalized = entry.trim();
+            normalized == format!("mcp.{namespace}.*")
+                || normalized.starts_with(&format!("mcp.{namespace}."))
+        }) {
+            selected.push(server_name.clone());
+        }
+    }
+    selected.sort();
+    selected.dedup();
+    selected
+}
+
+pub(crate) fn automation_infer_selected_mcp_servers(
+    allowed_servers: &[String],
+    allowlist: &[String],
+    enabled_server_names: &[String],
+    requires_email_delivery: bool,
+) -> Vec<String> {
+    let mut selected_servers = automation_normalize_server_list(allowed_servers);
+    selected_servers.extend(automation_selected_mcp_servers_from_allowlist(
+        allowlist,
+        enabled_server_names,
+    ));
+    selected_servers.sort();
+    selected_servers.dedup();
+    if !selected_servers.is_empty() {
+        return selected_servers;
+    }
+    let wildcard_allowed = allowlist.iter().any(|entry| entry.trim() == "*");
+    if wildcard_allowed || requires_email_delivery {
+        return enabled_server_names.to_vec();
+    }
+    Vec::new()
+}
+
+async fn sync_automation_allowed_mcp_servers(
+    state: &AppState,
+    node: &AutomationFlowNode,
+    allowed_servers: &[String],
+    allowlist: &[String],
+) -> Value {
+    let mcp_servers = state.mcp.list().await;
+    let enabled_server_names = mcp_servers
+        .values()
+        .filter(|server| server.enabled)
+        .map(|server| server.name.clone())
+        .collect::<Vec<_>>();
+    let selected_servers = automation_infer_selected_mcp_servers(
+        allowed_servers,
+        allowlist,
+        &enabled_server_names,
+        automation_node_requires_email_delivery(node),
+    );
+    if selected_servers.is_empty() {
+        return json!({
+            "selected_servers": [],
+            "servers": [],
+            "remote_tools": [],
+            "registered_tools": [],
+            "remote_email_like_tools": [],
+            "registered_email_like_tools": [],
+        });
+    }
+    let mut server_rows = Vec::new();
+    for server_name in &selected_servers {
+        let server_record = mcp_servers.get(server_name);
+        let exists = server_record.is_some();
+        let enabled = server_record.is_some_and(|server| server.enabled);
+        let connected = if enabled {
+            state.mcp.connect(server_name).await
+        } else {
+            false
+        };
+        let sync_count = if connected {
+            crate::http::mcp::sync_mcp_tools_for_server(state, server_name).await as u64
+        } else {
+            0
+        };
+        let sync_error = if !exists {
+            Some("server_not_found")
+        } else if !enabled {
+            Some("server_disabled")
+        } else if !connected {
+            Some("connect_failed")
+        } else {
+            None
+        };
+        server_rows.push(json!({
+            "name": server_name,
+            "exists": exists,
+            "enabled": enabled,
+            "connected": connected,
+            "sync_error": sync_error,
+            "registered_tool_count_after_sync": sync_count,
+        }));
+    }
+
+    let remote_tools = state.mcp.list_tools().await;
+    let registered_tool_names = state
+        .tools
+        .list()
+        .await
+        .into_iter()
+        .map(|schema| schema.name)
+        .collect::<Vec<_>>();
+
+    let mut all_remote_names = Vec::new();
+    let mut all_registered_names = Vec::new();
+    let mut all_remote_email_like_names = Vec::new();
+    let mut all_registered_email_like_names = Vec::new();
+
+    for row in &mut server_rows {
+        let Some(server_name) = row.get("name").and_then(Value::as_str) else {
+            continue;
+        };
+        let mut remote_names = remote_tools
+            .iter()
+            .filter(|tool| tool.server_name == server_name)
+            .map(|tool| {
+                if tool.namespaced_name.trim().is_empty() {
+                    format!(
+                        "mcp.{}.{}",
+                        crate::http::mcp::mcp_namespace_segment(server_name),
+                        tool.tool_name
+                    )
+                } else {
+                    tool.namespaced_name.clone()
+                }
+            })
+            .collect::<Vec<_>>();
+        remote_names.sort();
+        remote_names.dedup();
+
+        let registered_names =
+            automation_tool_names_for_mcp_server(&registered_tool_names, server_name);
+        let remote_email_like_names = automation_discovered_tools_for_predicate(
+            remote_names.clone(),
+            automation_tool_name_is_email_delivery,
+        );
+        let registered_email_like_names = automation_discovered_tools_for_predicate(
+            registered_names.clone(),
+            automation_tool_name_is_email_delivery,
+        );
+
+        all_remote_names.extend(remote_names.clone());
+        all_registered_names.extend(registered_names.clone());
+        all_remote_email_like_names.extend(remote_email_like_names.clone());
+        all_registered_email_like_names.extend(registered_email_like_names.clone());
+
+        if let Some(object) = row.as_object_mut() {
+            object.insert("remote_tools".to_string(), json!(remote_names));
+            object.insert("registered_tools".to_string(), json!(registered_names));
+            object.insert(
+                "remote_email_like_tools".to_string(),
+                json!(remote_email_like_names),
+            );
+            object.insert(
+                "registered_email_like_tools".to_string(),
+                json!(registered_email_like_names),
+            );
+        }
+    }
+
+    all_remote_names.sort();
+    all_remote_names.dedup();
+    all_registered_names.sort();
+    all_registered_names.dedup();
+    all_remote_email_like_names.sort();
+    all_remote_email_like_names.dedup();
+    all_registered_email_like_names.sort();
+    all_registered_email_like_names.dedup();
+
+    json!({
+        "selected_servers": selected_servers,
+        "servers": server_rows,
+        "remote_tools": all_remote_names,
+        "registered_tools": all_registered_names,
+        "remote_email_like_tools": all_remote_email_like_names,
+        "registered_email_like_tools": all_registered_email_like_names,
+    })
+}
+
+fn automation_node_delivery_method_value(node: &AutomationFlowNode) -> String {
+    automation_node_delivery_method(node).unwrap_or_else(|| "none".to_string())
+}
+
 pub fn record_automation_workflow_state_events(
     run: &mut AutomationV2RunRecord,
     node_id: &str,
@@ -1891,6 +2598,36 @@ pub(crate) fn render_automation_v2_prompt(
     standup_report_path: Option<&str>,
     memory_project_id: Option<&str>,
 ) -> String {
+    render_automation_v2_prompt_with_options(
+        automation,
+        workspace_root,
+        run_id,
+        node,
+        attempt,
+        agent,
+        upstream_inputs,
+        requested_tools,
+        template_system_prompt,
+        standup_report_path,
+        memory_project_id,
+        AutomationPromptRenderOptions::default(),
+    )
+}
+
+fn render_automation_v2_prompt_with_options(
+    automation: &AutomationV2Spec,
+    workspace_root: &str,
+    run_id: &str,
+    node: &AutomationFlowNode,
+    attempt: u32,
+    agent: &AutomationAgentProfile,
+    upstream_inputs: &[Value],
+    requested_tools: &[String],
+    template_system_prompt: Option<&str>,
+    standup_report_path: Option<&str>,
+    memory_project_id: Option<&str>,
+    options: AutomationPromptRenderOptions,
+) -> String {
     let contract_kind = node
         .output_contract
         .as_ref()
@@ -2100,7 +2837,12 @@ pub(crate) fn render_automation_v2_prompt(
                 .get("from_step_id")
                 .and_then(Value::as_str)
                 .unwrap_or("unknown");
-            let output = input.get("output").cloned().unwrap_or(Value::Null);
+            let output = input
+                .get("output")
+                .map(|value| {
+                    compact_automation_prompt_output_with_mode(value, options.summary_only_upstream)
+                })
+                .unwrap_or(Value::Null);
             let rendered =
                 serde_json::to_string_pretty(&output).unwrap_or_else(|_| output.to_string());
             prompt.push_str(&format!(
@@ -2123,10 +2865,23 @@ pub(crate) fn render_automation_v2_prompt(
             prompt.push_str(&summary);
         }
     }
-    if node.node_id == "notify_user" || node.objective.to_ascii_lowercase().contains("email") {
+    if automation_node_requires_email_delivery(node) {
         prompt.push_str(
             "\n\nDelivery rules:\n- Prefer inline email body delivery by default.\n- Only include an email attachment when upstream inputs contain a concrete attachment artifact with a non-empty s3key or upload result.\n- Never send an attachment parameter with an empty or null s3key.\n- If no attachment artifact exists, omit the attachment parameter entirely.",
         );
+        let delivery_target =
+            automation_node_delivery_target(node).unwrap_or_else(|| "missing".to_string());
+        let content_type =
+            automation_node_email_content_type(node).unwrap_or_else(|| "text/html".to_string());
+        let inline_body_only = automation_node_inline_body_only(node).unwrap_or(true);
+        let attachments_allowed = automation_node_allows_attachments(node).unwrap_or(false);
+        prompt.push_str(&format!(
+            "\n\nDelivery target:\n- Method: `email`\n- Recipient: `{}`\n- Content-Type: `{}`\n- Inline body only: `{}`\n- Attachments allowed: `{}`\n- Treat this delivery target as authoritative for this run.\n- Do not say the recipient is missing when it is listed above.\n- Do not mark the node completed unless you actually execute an email draft or send tool.",
+            delivery_target,
+            content_type,
+            inline_body_only,
+            attachments_allowed
+        ));
     }
     if let Some(report_path) = standup_report_path
         .map(str::trim)
@@ -2173,6 +2928,133 @@ pub(crate) fn render_automation_v2_prompt(
         }
     }
     prompt
+}
+
+fn truncate_automation_prompt_text(raw: &str, max_chars: usize) -> String {
+    let trimmed = raw.trim();
+    if trimmed.chars().count() <= max_chars {
+        return trimmed.to_string();
+    }
+    let truncated = trimmed.chars().take(max_chars).collect::<String>();
+    format!("{truncated}...")
+}
+
+fn compact_automation_prompt_content(content: &Value, summary_only: bool) -> Value {
+    let Some(object) = content.as_object() else {
+        return content.clone();
+    };
+    let mut compact = serde_json::Map::new();
+    if let Some(path) = object.get("path").cloned().filter(|value| !value.is_null()) {
+        compact.insert("path".to_string(), path);
+    }
+    if let Some(handoff) = object
+        .get("structured_handoff")
+        .cloned()
+        .filter(|value| !value.is_null())
+    {
+        compact.insert("structured_handoff".to_string(), handoff);
+        return Value::Object(compact);
+    }
+    let candidate_text = object
+        .get("text")
+        .and_then(Value::as_str)
+        .or_else(|| object.get("raw_text").and_then(Value::as_str))
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    if let Some(text) = candidate_text {
+        if let Ok(parsed) = serde_json::from_str::<Value>(text) {
+            if summary_only {
+                compact.insert("data_summary".to_string(), summarize_json_keys(&parsed));
+            } else {
+                compact.insert("data".to_string(), parsed);
+            }
+        } else {
+            compact.insert(
+                "text".to_string(),
+                json!(truncate_automation_prompt_text(
+                    text,
+                    if summary_only { 800 } else { 4000 }
+                )),
+            );
+        }
+    }
+    Value::Object(compact)
+}
+
+fn compact_automation_prompt_output_with_mode(output: &Value, summary_only: bool) -> Value {
+    let Some(object) = output.as_object() else {
+        return output.clone();
+    };
+    let mut compact = serde_json::Map::new();
+    for key in [
+        "status",
+        "phase",
+        "contract_kind",
+        "summary",
+        "blocked_reason",
+        "workflow_class",
+    ] {
+        if let Some(value) = object.get(key).cloned().filter(|value| !value.is_null()) {
+            compact.insert(key.to_string(), value);
+        }
+    }
+    if let Some(validator_summary) = object.get("validator_summary").and_then(Value::as_object) {
+        let mut validator = serde_json::Map::new();
+        for key in [
+            "kind",
+            "outcome",
+            "warning_count",
+            "warning_requirements",
+            "unmet_requirements",
+        ] {
+            if let Some(value) = validator_summary
+                .get(key)
+                .cloned()
+                .filter(|value| !value.is_null())
+            {
+                validator.insert(key.to_string(), value);
+            }
+        }
+        if !validator.is_empty() {
+            compact.insert("validator_summary".to_string(), Value::Object(validator));
+        }
+    }
+    if let Some(artifact_validation) = object.get("artifact_validation").and_then(Value::as_object)
+    {
+        let mut validation = serde_json::Map::new();
+        for key in [
+            "accepted_artifact_path",
+            "accepted_candidate_source",
+            "validation_outcome",
+            "validation_profile",
+            "warning_count",
+            "warning_requirements",
+            "unmet_requirements",
+            "semantic_block_reason",
+            "rejected_artifact_reason",
+        ] {
+            if let Some(value) = artifact_validation
+                .get(key)
+                .cloned()
+                .filter(|value| !value.is_null())
+            {
+                validation.insert(key.to_string(), value);
+            }
+        }
+        if !validation.is_empty() {
+            compact.insert("artifact_validation".to_string(), Value::Object(validation));
+        }
+    }
+    if let Some(content) = object.get("content") {
+        let compact_content = compact_automation_prompt_content(content, summary_only);
+        if compact_content
+            .as_object()
+            .is_some_and(|value| !value.is_empty())
+        {
+            compact.insert("content".to_string(), compact_content);
+        }
+    }
+    Value::Object(compact)
 }
 
 pub(crate) fn render_automation_repair_brief(
@@ -2723,15 +3605,17 @@ fn automation_node_execution_mode(node: &AutomationFlowNode, workspace_root: &st
     }
 }
 
-fn normalize_automation_requested_tools(
+pub(crate) fn normalize_automation_requested_tools(
     node: &AutomationFlowNode,
     workspace_root: &str,
     raw: Vec<String>,
 ) -> Vec<String> {
     let mut normalized = config::channels::normalize_allowed_tools(raw);
-    if normalized.iter().any(|tool| tool == "*") {
-        return vec!["*".to_string()];
+    let had_wildcard = normalized.iter().any(|tool| tool == "*");
+    if had_wildcard {
+        normalized.retain(|tool| tool != "*");
     }
+    normalized.extend(automation_node_required_tools(node));
     match automation_node_execution_mode(node, workspace_root) {
         "git_patch" => {
             normalized.extend([
@@ -2758,6 +3642,9 @@ fn normalize_automation_requested_tools(
             }
         }
     }
+    if !node.input_refs.is_empty() {
+        normalized.push("read".to_string());
+    }
     let has_read = normalized.iter().any(|tool| tool == "read");
     let has_workspace_probe = normalized
         .iter()
@@ -2773,6 +3660,135 @@ fn normalize_automation_requested_tools(
     normalized
 }
 
+fn automation_node_delivery_method(node: &AutomationFlowNode) -> Option<String> {
+    node.metadata
+        .as_ref()
+        .and_then(|value| {
+            value
+                .pointer("/delivery/method")
+                .or_else(|| value.pointer("/builder/delivery/method"))
+        })
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_ascii_lowercase)
+}
+
+fn automation_node_delivery_target(node: &AutomationFlowNode) -> Option<String> {
+    node.metadata
+        .as_ref()
+        .and_then(|value| {
+            value
+                .pointer("/delivery/to")
+                .or_else(|| value.pointer("/builder/delivery/to"))
+        })
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+fn automation_node_email_content_type(node: &AutomationFlowNode) -> Option<String> {
+    node.metadata
+        .as_ref()
+        .and_then(|value| {
+            value
+                .pointer("/delivery/content_type")
+                .or_else(|| value.pointer("/builder/delivery/content_type"))
+        })
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+fn automation_node_inline_body_only(node: &AutomationFlowNode) -> Option<bool> {
+    node.metadata
+        .as_ref()
+        .and_then(|value| {
+            value
+                .pointer("/delivery/inline_body_only")
+                .or_else(|| value.pointer("/builder/delivery/inline_body_only"))
+        })
+        .and_then(Value::as_bool)
+}
+
+fn automation_node_allows_attachments(node: &AutomationFlowNode) -> Option<bool> {
+    node.metadata
+        .as_ref()
+        .and_then(|value| {
+            value
+                .pointer("/delivery/attachments")
+                .or_else(|| value.pointer("/builder/delivery/attachments"))
+        })
+        .and_then(Value::as_bool)
+}
+
+pub(crate) fn automation_node_requires_email_delivery(node: &AutomationFlowNode) -> bool {
+    if automation_node_delivery_method(node)
+        .as_deref()
+        .is_some_and(|method| method == "email")
+    {
+        return true;
+    }
+    if !automation_node_is_outbound_action(node) {
+        return false;
+    }
+    let objective = node.objective.to_ascii_lowercase();
+    [
+        "send email",
+        "send the email",
+        "send by email",
+        "send the report by email",
+        "email the ",
+        "email report",
+        "draft email",
+        "draft the email",
+        "notify by email",
+        "notify the operator by email",
+    ]
+    .iter()
+    .any(|needle| objective.contains(needle))
+}
+
+fn automation_tool_name_is_email_delivery(tool_name: &str) -> bool {
+    let tokens = automation_tool_name_tokens(tool_name);
+    tokens.iter().any(|token| {
+        matches!(
+            token.as_str(),
+            "email"
+                | "mail"
+                | "gmail"
+                | "outlook"
+                | "smtp"
+                | "imap"
+                | "inbox"
+                | "mailbox"
+                | "mailer"
+                | "exchange"
+                | "sendgrid"
+                | "mailgun"
+                | "postmark"
+                | "resend"
+                | "ses"
+        )
+    })
+}
+
+fn discover_automation_tools_for_capability(
+    capability_id: &str,
+    available_tool_names: &HashSet<String>,
+) -> Vec<String> {
+    let mut matches = available_tool_names
+        .iter()
+        .filter(|tool_name| automation_capability_matches_tool(capability_id, tool_name))
+        .cloned()
+        .collect::<Vec<_>>();
+    matches.sort();
+    matches.dedup();
+    matches
+}
+
 pub(crate) fn filter_requested_tools_to_available(
     requested_tools: Vec<String>,
     available_tool_names: &HashSet<String>,
@@ -2784,6 +3800,28 @@ pub(crate) fn filter_requested_tools_to_available(
         .into_iter()
         .filter(|tool| available_tool_names.contains(tool))
         .collect()
+}
+
+pub(crate) fn automation_requested_tools_for_node(
+    node: &AutomationFlowNode,
+    workspace_root: &str,
+    raw: Vec<String>,
+    available_tool_names: &HashSet<String>,
+) -> Vec<String> {
+    let execution_mode = automation_node_execution_mode(node, workspace_root);
+    let mut requested_tools = filter_requested_tools_to_available(
+        normalize_automation_requested_tools(node, workspace_root, raw),
+        available_tool_names,
+    );
+    for capability_id in automation_tool_capability_ids(node, execution_mode) {
+        requested_tools.extend(discover_automation_tools_for_capability(
+            &capability_id,
+            available_tool_names,
+        ));
+    }
+    requested_tools.sort();
+    requested_tools.dedup();
+    requested_tools
 }
 
 pub(crate) fn automation_node_prewrite_requirements(
@@ -4009,11 +5047,9 @@ fn session_discovered_relevant_paths(session: &Session, workspace_root: &str) ->
             {
                 continue;
             }
-            let output = result
-                .as_ref()
-                .and_then(|value| value.get("output"))
-                .and_then(Value::as_str)
-                .unwrap_or_default();
+            let Some(output) = automation_tool_result_output_text(result.as_ref()) else {
+                continue;
+            };
             for line in output.lines() {
                 let trimmed = line.trim();
                 if trimmed.is_empty() {
@@ -4622,21 +5658,30 @@ pub(crate) fn validate_automation_artifact_output_with_upstream(
             .get("executed_tools")
             .and_then(Value::as_array)
             .is_some_and(|tools| tools.iter().any(|value| value.as_str() == Some("read")));
+        let canonical_read_paths = automation_attempt_evidence_read_paths(tool_telemetry);
         let upstream_has_read = use_upstream_evidence
             && upstream_evidence.is_some_and(|evidence| !evidence.read_paths.is_empty());
-        let executed_has_read = current_executed_has_read || upstream_has_read;
+        let executed_has_read =
+            current_executed_has_read || !canonical_read_paths.is_empty() || upstream_has_read;
         let latest_web_research_failure = tool_telemetry
             .get("latest_web_research_failure")
             .and_then(Value::as_str);
-        let web_research_backend_unavailable =
-            web_research_unavailable(latest_web_research_failure);
+        let canonical_web_research_status =
+            automation_attempt_evidence_web_research_status(tool_telemetry);
+        let web_research_backend_unavailable = canonical_web_research_status
+            .as_deref()
+            .is_some_and(|status| status == "unavailable")
+            || web_research_unavailable(latest_web_research_failure);
         let web_research_unavailable = !requested_has_websearch || web_research_backend_unavailable;
         let web_research_expected =
             enforcement_requires_external_sources(&enforcement) && !web_research_unavailable;
-        let current_web_research_succeeded = tool_telemetry
-            .get("web_research_succeeded")
-            .and_then(Value::as_bool)
-            .unwrap_or(false);
+        let current_web_research_succeeded = canonical_web_research_status
+            .as_deref()
+            .is_some_and(|status| status == "succeeded")
+            || tool_telemetry
+                .get("web_research_succeeded")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
         let web_research_succeeded = current_web_research_succeeded
             || (use_upstream_evidence
                 && upstream_evidence.is_some_and(|evidence| evidence.web_research_succeeded));
@@ -5511,6 +6556,9 @@ pub(crate) fn summarize_automation_tool_activity(
     let mut web_research_used = false;
     let mut web_research_succeeded = false;
     let mut latest_web_research_failure = None::<String>;
+    let mut email_delivery_attempted = false;
+    let mut email_delivery_succeeded = false;
+    let mut latest_email_delivery_failure = None::<String>;
     for message in &session.messages {
         for part in &message.parts {
             let MessagePart::ToolInvocation {
@@ -5531,6 +6579,7 @@ pub(crate) fn summarize_automation_tool_activity(
                 normalized.as_str(),
                 "websearch" | "webfetch" | "webfetch_html"
             );
+            let is_email_tool = automation_tool_name_is_email_delivery(&normalized);
             if error.as_ref().is_some_and(|value| !value.trim().is_empty()) {
                 if !executed_tools.iter().any(|entry| entry == &normalized) {
                     executed_tools.push(normalized.clone());
@@ -5554,6 +6603,14 @@ pub(crate) fn summarize_automation_tool_activity(
                         .filter(|value| !value.is_empty())
                         .map(normalize_web_research_failure_label);
                 }
+                if is_email_tool {
+                    email_delivery_attempted = true;
+                    latest_email_delivery_failure = error
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                        .map(str::to_string);
+                }
                 continue;
             }
             if !executed_tools.iter().any(|entry| entry == &normalized) {
@@ -5570,15 +6627,10 @@ pub(crate) fn summarize_automation_tool_activity(
             }
             if is_web_tool {
                 web_research_used = true;
-                let metadata = result
-                    .as_ref()
-                    .and_then(|value| value.get("metadata"))
+                let metadata = automation_tool_result_metadata(result.as_ref())
                     .cloned()
                     .unwrap_or(Value::Null);
-                let output = result
-                    .as_ref()
-                    .and_then(|value| value.get("output"))
-                    .and_then(Value::as_str)
+                let output = automation_tool_result_output_text(result.as_ref())
                     .unwrap_or_default()
                     .trim()
                     .to_ascii_lowercase();
@@ -5588,6 +6640,22 @@ pub(crate) fn summarize_automation_tool_activity(
                     .map(str::trim)
                     .filter(|value| !value.is_empty())
                     .map(str::to_string);
+                let result_has_sources = metadata
+                    .get("count")
+                    .and_then(Value::as_u64)
+                    .is_some_and(|count| count > 0)
+                    || automation_tool_result_output_payload(result.as_ref()).is_some_and(
+                        |payload| {
+                            payload
+                                .get("result_count")
+                                .and_then(Value::as_u64)
+                                .is_some_and(|count| count > 0)
+                                || payload
+                                    .get("results")
+                                    .and_then(Value::as_array)
+                                    .is_some_and(|results| !results.is_empty())
+                        },
+                    );
                 let timed_out = result_error
                     .as_deref()
                     .is_some_and(|value| value.eq_ignore_ascii_case("timeout"))
@@ -5598,7 +6666,11 @@ pub(crate) fn summarize_automation_tool_activity(
                     .as_deref()
                     .is_some_and(web_research_unavailable_failure)
                     || web_research_unavailable_failure(&output);
-                if result_error.is_none() && !timed_out && !unavailable && !output.is_empty() {
+                if (result_error.is_none() || result_has_sources)
+                    && !timed_out
+                    && !unavailable
+                    && !output.is_empty()
+                {
                     web_research_succeeded = true;
                     latest_web_research_failure = None;
                 } else if latest_web_research_failure.is_none() {
@@ -5616,6 +6688,11 @@ pub(crate) fn summarize_automation_tool_activity(
                             }
                         });
                 }
+            }
+            if is_email_tool {
+                email_delivery_attempted = true;
+                email_delivery_succeeded = true;
+                latest_email_delivery_failure = None;
             }
         }
     }
@@ -5727,6 +6804,9 @@ pub(crate) fn summarize_automation_tool_activity(
         "web_research_used": web_research_used,
         "web_research_succeeded": web_research_succeeded,
         "latest_web_research_failure": latest_web_research_failure,
+        "email_delivery_attempted": email_delivery_attempted,
+        "email_delivery_succeeded": email_delivery_succeeded,
+        "latest_email_delivery_failure": latest_email_delivery_failure,
         "verification_expected": verification.get("verification_expected").cloned().unwrap_or(json!(false)),
         "verification_command": verification.get("verification_command").cloned().unwrap_or(Value::Null),
         "verification_plan": verification.get("verification_plan").cloned().unwrap_or(json!([])),
@@ -5741,6 +6821,232 @@ pub(crate) fn summarize_automation_tool_activity(
         "latest_verification_command": verification.get("latest_verification_command").cloned().unwrap_or(Value::Null),
         "latest_verification_failure": verification.get("latest_verification_failure").cloned().unwrap_or(Value::Null),
     })
+}
+
+pub(crate) fn build_automation_attempt_evidence(
+    node: &AutomationFlowNode,
+    attempt: u32,
+    session: &Session,
+    session_id: &str,
+    workspace_root: &str,
+    tool_telemetry: &Value,
+    preflight: &Value,
+    capability_resolution: &Value,
+    verified_output: Option<&(String, String)>,
+) -> Value {
+    let mut attempted_tools = Vec::new();
+    let mut succeeded_tools = Vec::new();
+    let mut failed_tools = Vec::new();
+    let mut normalized_failures = serde_json::Map::new();
+    for message in &session.messages {
+        for part in &message.parts {
+            let MessagePart::ToolInvocation {
+                tool,
+                error,
+                result,
+                ..
+            } = part
+            else {
+                continue;
+            };
+            let normalized = tool.trim().to_ascii_lowercase().replace('-', "_");
+            if !attempted_tools.iter().any(|value| value == &normalized) {
+                attempted_tools.push(normalized.clone());
+            }
+            if error.as_ref().is_some_and(|value| !value.trim().is_empty()) {
+                if !failed_tools.iter().any(|value| value == &normalized) {
+                    failed_tools.push(normalized.clone());
+                }
+                normalized_failures.insert(
+                    normalized.clone(),
+                    json!(normalize_web_research_failure_label(
+                        error.as_deref().unwrap_or_default()
+                    )),
+                );
+                continue;
+            }
+            if automation_tool_result_output_value(result.as_ref()).is_some() {
+                if !succeeded_tools.iter().any(|value| value == &normalized) {
+                    succeeded_tools.push(normalized.clone());
+                }
+            }
+        }
+    }
+    let read_paths = session_read_paths(session, workspace_root);
+    let discovered_paths = session_discovered_relevant_paths(session, workspace_root);
+    let web_research_status = automation_attempt_evidence_web_research_status(tool_telemetry)
+        .unwrap_or_else(|| {
+            if tool_telemetry
+                .get("web_research_succeeded")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+            {
+                "succeeded".to_string()
+            } else if tool_telemetry
+                .get("web_research_used")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+            {
+                let failure = tool_telemetry
+                    .get("latest_web_research_failure")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_ascii_lowercase();
+                if web_research_unavailable_failure(&failure) {
+                    "unavailable".to_string()
+                } else if failure.contains("timed out") {
+                    "timed_out".to_string()
+                } else {
+                    "unusable".to_string()
+                }
+            } else if automation_node_web_research_expected(node) {
+                "not_attempted".to_string()
+            } else {
+                "not_required".to_string()
+            }
+        });
+    let delivery_status = automation_attempt_evidence_delivery_status(tool_telemetry)
+        .unwrap_or_else(|| {
+            if automation_node_requires_email_delivery(node) {
+                if tool_telemetry
+                    .get("email_delivery_succeeded")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false)
+                {
+                    "succeeded".to_string()
+                } else if tool_telemetry
+                    .get("email_delivery_attempted")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false)
+                {
+                    "attempted_failed".to_string()
+                } else {
+                    "not_attempted".to_string()
+                }
+            } else {
+                "not_required".to_string()
+            }
+        });
+    let artifact_status = if let Some((path, text)) = verified_output {
+        json!({
+            "status": "written",
+            "path": path,
+            "content_digest": crate::sha256_hex(&[text]),
+        })
+    } else if automation_node_required_output_path(node).is_some() {
+        json!({
+            "status": "missing",
+            "path": automation_node_required_output_path(node),
+        })
+    } else {
+        json!({
+            "status": "not_required"
+        })
+    };
+    json!({
+        "attempt": attempt,
+        "created_at_ms": now_ms(),
+        "session_id": session_id,
+        "preflight": preflight,
+        "capability_resolution": capability_resolution,
+        "tool_execution": {
+            "attempted_tools": attempted_tools,
+            "succeeded_tools": succeeded_tools,
+            "failed_tools": failed_tools,
+            "normalized_failures": normalized_failures,
+            "tool_call_counts": tool_telemetry.get("tool_call_counts").cloned().unwrap_or_else(|| json!({})),
+        },
+        "evidence": {
+            "read_paths": read_paths,
+            "discovered_paths": discovered_paths,
+            "web_research": {
+                "status": web_research_status,
+                "latest_failure": tool_telemetry.get("latest_web_research_failure").cloned().unwrap_or(Value::Null),
+                "used": tool_telemetry.get("web_research_used").cloned().unwrap_or(json!(false)),
+                "succeeded": tool_telemetry.get("web_research_succeeded").cloned().unwrap_or(json!(false)),
+            },
+        },
+        "delivery": {
+            "method": automation_node_delivery_method_value(node),
+            "recipient": automation_node_delivery_target(node),
+            "status": delivery_status,
+            "attempted": tool_telemetry.get("email_delivery_attempted").cloned().unwrap_or(json!(false)),
+            "succeeded": tool_telemetry.get("email_delivery_succeeded").cloned().unwrap_or(json!(false)),
+            "latest_failure": tool_telemetry.get("latest_email_delivery_failure").cloned().unwrap_or(Value::Null),
+        },
+        "artifact": artifact_status,
+    })
+}
+
+fn augment_automation_attempt_evidence_with_validation(
+    attempt_evidence: &Value,
+    artifact_validation: Option<&Value>,
+    accepted_output: Option<&(String, String)>,
+    accepted_candidate_source: Option<&str>,
+    blocker_category: Option<&str>,
+    fallback_used: bool,
+) -> Value {
+    let Some(mut object) = attempt_evidence.as_object().cloned() else {
+        return attempt_evidence.clone();
+    };
+    let mut evidence = object
+        .get("evidence")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    if let Some(validation) = artifact_validation {
+        evidence.insert(
+            "citation_count".to_string(),
+            validation
+                .get("citation_count")
+                .cloned()
+                .unwrap_or_else(|| json!(0)),
+        );
+        evidence.insert(
+            "web_sources_reviewed_present".to_string(),
+            validation
+                .get("web_sources_reviewed_present")
+                .cloned()
+                .unwrap_or(json!(false)),
+        );
+        evidence.insert(
+            "reviewed_paths".to_string(),
+            validation
+                .get("read_paths")
+                .cloned()
+                .unwrap_or_else(|| json!([])),
+        );
+    }
+    object.insert("evidence".to_string(), Value::Object(evidence));
+    let mut artifact = object
+        .get("artifact")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    if let Some((path, text)) = accepted_output {
+        artifact.insert("status".to_string(), json!("written"));
+        artifact.insert("path".to_string(), json!(path));
+        artifact.insert(
+            "content_digest".to_string(),
+            json!(crate::sha256_hex(&[text])),
+        );
+    }
+    if let Some(source) = accepted_candidate_source {
+        artifact.insert("accepted_candidate_source".to_string(), json!(source));
+        if source == "session_write" || source == "preexisting_output" {
+            artifact.insert("status".to_string(), json!("reused_valid"));
+            artifact.insert("recovery_source".to_string(), json!(source));
+        }
+    }
+    object.insert("artifact".to_string(), Value::Object(artifact));
+    object.insert(
+        "blocker_category".to_string(),
+        blocker_category
+            .map(|value| Value::String(value.to_string()))
+            .unwrap_or(Value::Null),
+    );
+    object.insert("fallback_used".to_string(), json!(fallback_used));
+    Value::Object(object)
 }
 
 fn normalize_web_research_failure_label(raw: &str) -> String {
@@ -6128,6 +7434,35 @@ pub(crate) fn detect_automation_node_status(
     let executed_has_read = executed_tools
         .iter()
         .any(|value| value.as_str() == Some("read"));
+    let email_delivery_attempted = tool_telemetry
+        .get("email_delivery_attempted")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let email_delivery_succeeded = tool_telemetry
+        .get("email_delivery_succeeded")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let latest_email_delivery_failure = tool_telemetry
+        .get("latest_email_delivery_failure")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    let available_email_like_tools =
+        automation_capability_resolution_email_tools(tool_telemetry, "available_tools");
+    let offered_email_like_tools =
+        automation_capability_resolution_email_tools(tool_telemetry, "offered_tools");
+    let offered_email_send_tools =
+        automation_capability_resolution_email_tools(tool_telemetry, "offered_send_tools");
+    let offered_email_draft_tools =
+        automation_capability_resolution_email_tools(tool_telemetry, "offered_draft_tools");
+    let selected_mcp_servers =
+        automation_capability_resolution_mcp_tools(tool_telemetry, "selected_servers");
+    let discovered_remote_mcp_tools =
+        automation_capability_resolution_mcp_tools(tool_telemetry, "remote_tools");
+    let discovered_registered_mcp_tools =
+        automation_capability_resolution_mcp_tools(tool_telemetry, "registered_tools");
+    let canonical_delivery_status = automation_attempt_evidence_delivery_status(tool_telemetry);
     let is_brief_contract = validator_kind == crate::AutomationOutputValidatorKind::ResearchBrief;
     let requires_read = automation_node_required_tools(node)
         .iter()
@@ -6233,6 +7568,78 @@ pub(crate) fn detect_automation_node_status(
             }),
             approved,
         );
+    }
+    if automation_node_requires_email_delivery(node)
+        && canonical_delivery_status
+            .as_deref()
+            .unwrap_or(if email_delivery_succeeded {
+                "succeeded"
+            } else if email_delivery_attempted {
+                "attempted_failed"
+            } else {
+                "not_attempted"
+            })
+            != "succeeded"
+    {
+        let discovered_summary = if available_email_like_tools.is_empty() {
+            "none".to_string()
+        } else {
+            available_email_like_tools.join(", ")
+        };
+        let offered_summary = if offered_email_like_tools.is_empty() {
+            "none".to_string()
+        } else {
+            offered_email_like_tools.join(", ")
+        };
+        let reason = if email_delivery_attempted {
+            latest_email_delivery_failure.unwrap_or_else(|| {
+                "email delivery was attempted but did not complete successfully".to_string()
+            })
+        } else if offered_email_send_tools.is_empty() && offered_email_draft_tools.is_empty() {
+            let selected_servers_summary = if selected_mcp_servers.is_empty() {
+                "none".to_string()
+            } else {
+                selected_mcp_servers.join(", ")
+            };
+            let remote_mcp_tools_summary = if discovered_remote_mcp_tools.is_empty() {
+                "none".to_string()
+            } else {
+                discovered_remote_mcp_tools.join(", ")
+            };
+            let registered_mcp_tools_summary = if discovered_registered_mcp_tools.is_empty() {
+                "none".to_string()
+            } else {
+                discovered_registered_mcp_tools.join(", ")
+            };
+            if let Some(target) = automation_node_delivery_target(node) {
+                format!(
+                    "email delivery to `{}` was requested but no email-capable tools were available. Selected MCP servers: {}. Remote MCP tools on selected servers: {}. Registered tool-registry tools on selected servers: {}. Discovered email-like tools: {}. Offered email-like tools: {}. This usually means the email connector is unavailable, MCP tools were not synced into the registry, or the tool names did not match email capability detection.",
+                    target,
+                    selected_servers_summary,
+                    remote_mcp_tools_summary,
+                    registered_mcp_tools_summary,
+                    discovered_summary,
+                    offered_summary
+                )
+            } else {
+                format!(
+                    "email delivery was requested but no email-capable tools were available. Selected MCP servers: {}. Remote MCP tools on selected servers: {}. Registered tool-registry tools on selected servers: {}. Discovered email-like tools: {}. Offered email-like tools: {}. This usually means the email connector is unavailable, MCP tools were not synced into the registry, or the tool names did not match email capability detection.",
+                    selected_servers_summary,
+                    remote_mcp_tools_summary,
+                    registered_mcp_tools_summary,
+                    discovered_summary,
+                    offered_summary
+                )
+            }
+        } else if let Some(target) = automation_node_delivery_target(node) {
+            format!(
+                "email delivery to `{}` was requested but no email draft/send tool executed",
+                target
+            )
+        } else {
+            "email delivery was requested but no email draft/send tool executed".to_string()
+        };
+        return ("blocked".to_string(), Some(reason), approved);
     }
     if automation_node_is_code_workflow(node) {
         return ("done".to_string(), explicit_reason, approved);
@@ -6529,6 +7936,125 @@ pub(crate) fn build_automation_validator_summary(
     }
 }
 
+fn automation_status_used_legacy_fallback(
+    session_text: &str,
+    artifact_validation: Option<&Value>,
+) -> bool {
+    if artifact_validation
+        .and_then(|value| value.get("semantic_block_reason"))
+        .and_then(Value::as_str)
+        .is_some()
+    {
+        return false;
+    }
+    let lowered = session_text
+        .chars()
+        .take(1600)
+        .collect::<String>()
+        .to_ascii_lowercase();
+    [
+        "status: blocked",
+        "status blocked",
+        "## status blocked",
+        "blocked pending",
+        "this brief is blocked",
+        "brief is blocked",
+        "partially blocked",
+        "provisional",
+        "path-level evidence",
+        "based on filenames not content",
+        "could not be confirmed from file contents",
+        "could not safely cite exact file-derived claims",
+        "not approved",
+        "approval has not happened",
+        "publication is blocked",
+        "i’m blocked",
+        "i'm blocked",
+        "status: verify_failed",
+        "status verify_failed",
+        "verification failed",
+        "tests failed",
+        "build failed",
+        "lint failed",
+        "verify failed",
+    ]
+    .iter()
+    .any(|marker| lowered.contains(marker))
+}
+
+pub(crate) fn detect_automation_blocker_category(
+    node: &AutomationFlowNode,
+    status: &str,
+    blocked_reason: Option<&str>,
+    tool_telemetry: &Value,
+    artifact_validation: Option<&Value>,
+) -> Option<String> {
+    if !matches!(
+        status.trim().to_ascii_lowercase().as_str(),
+        "blocked" | "needs_repair" | "verify_failed"
+    ) {
+        return None;
+    }
+    let reason = blocked_reason.unwrap_or_default().to_ascii_lowercase();
+    let missing_capabilities = automation_attempt_evidence_missing_capabilities(tool_telemetry);
+    let offered_email_like_tools =
+        automation_capability_resolution_email_tools(tool_telemetry, "offered_tools");
+    if reason.contains("prompt tokens limit exceeded")
+        || tool_telemetry
+            .get("preflight")
+            .and_then(|value| value.get("budget_status"))
+            .and_then(Value::as_str)
+            .is_some_and(|status| status == "high")
+            && missing_capabilities.is_empty()
+            && tool_telemetry
+                .get("executed_tools")
+                .and_then(Value::as_array)
+                .is_none_or(|rows| rows.is_empty())
+    {
+        return Some("prompt_budget".to_string());
+    }
+    if automation_node_requires_email_delivery(node)
+        && offered_email_like_tools.is_empty()
+        && automation_attempt_evidence_delivery_status(tool_telemetry)
+            .as_deref()
+            .is_some_and(|status| status != "succeeded" && status != "not_required")
+    {
+        return Some("tool_unavailable".to_string());
+    }
+    if automation_node_requires_email_delivery(node)
+        && automation_attempt_evidence_delivery_status(tool_telemetry)
+            .as_deref()
+            .is_some_and(|status| status != "succeeded" && status != "not_required")
+    {
+        return Some("delivery_not_executed".to_string());
+    }
+    if !missing_capabilities.is_empty() {
+        return Some("tool_unavailable".to_string());
+    }
+    let web_status = automation_attempt_evidence_web_research_status(tool_telemetry);
+    if web_status.as_deref() == Some("unavailable") {
+        return Some("tool_unavailable".to_string());
+    }
+    if matches!(
+        web_status.as_deref(),
+        Some("timed_out" | "unusable" | "not_attempted")
+    ) {
+        return Some("tool_result_unusable".to_string());
+    }
+    if artifact_validation
+        .and_then(|value| value.get("semantic_block_reason"))
+        .and_then(Value::as_str)
+        .is_some()
+        || artifact_validation
+            .and_then(|value| value.get("rejected_artifact_reason"))
+            .and_then(Value::as_str)
+            .is_some()
+    {
+        return Some("artifact_contract_unmet".to_string());
+    }
+    None
+}
+
 pub(crate) fn enrich_automation_node_output_for_contract(
     node: &AutomationFlowNode,
     output: &Value,
@@ -6749,6 +8275,31 @@ pub(crate) fn wrap_automation_node_output(
         &tool_telemetry,
         artifact_validation.as_ref(),
     );
+    let blocker_category = detect_automation_blocker_category(
+        node,
+        &status,
+        blocked_reason.as_deref(),
+        &tool_telemetry,
+        artifact_validation.as_ref(),
+    );
+    let fallback_used =
+        automation_status_used_legacy_fallback(session_text, artifact_validation.as_ref());
+    let final_attempt_evidence = tool_telemetry
+        .get("attempt_evidence")
+        .cloned()
+        .map(|value| {
+            augment_automation_attempt_evidence_with_validation(
+                &value,
+                artifact_validation.as_ref(),
+                verified_output.as_ref(),
+                artifact_validation
+                    .as_ref()
+                    .and_then(|value| value.get("accepted_candidate_source"))
+                    .and_then(Value::as_str),
+                blocker_category.as_deref(),
+                fallback_used,
+            )
+        });
     let workflow_class = automation_node_workflow_class(node);
     let phase = detect_automation_node_phase(node, &status, artifact_validation.as_ref());
     let failure_kind = detect_automation_node_failure_kind(
@@ -6764,6 +8315,8 @@ pub(crate) fn wrap_automation_node_output(
         blocked_reason.as_deref(),
         artifact_validation.as_ref(),
     );
+    let preflight = tool_telemetry.get("preflight").cloned();
+    let capability_resolution = tool_telemetry.get("capability_resolution").cloned();
     let content = match contract_kind.as_str() {
         "report_markdown" | "text_summary" => {
             json!({
@@ -6821,6 +8374,11 @@ pub(crate) fn wrap_automation_node_output(
         phase: Some(phase),
         failure_kind,
         tool_telemetry: Some(tool_telemetry),
+        preflight,
+        capability_resolution,
+        attempt_evidence: final_attempt_evidence,
+        blocker_category,
+        fallback_used: Some(fallback_used),
         artifact_validation,
     })
 }
@@ -7369,17 +8927,46 @@ pub(crate) async fn execute_automation_v2_node(
     if let Some(mcp_tools) = agent.mcp_policy.allowed_tools.as_ref() {
         allowlist.extend(mcp_tools.clone());
     }
-    let available_tool_names = state
-        .tools
-        .list()
-        .await
-        .into_iter()
-        .map(|schema| schema.name)
+    let mcp_tool_diagnostics = sync_automation_allowed_mcp_servers(
+        state,
+        node,
+        &agent.mcp_policy.allowed_servers,
+        &allowlist,
+    )
+    .await;
+    let available_tool_schemas = state.tools.list().await;
+    let available_tool_names = available_tool_schemas
+        .iter()
+        .map(|schema| schema.name.clone())
         .collect::<HashSet<_>>();
-    let requested_tools = filter_requested_tools_to_available(
-        normalize_automation_requested_tools(node, &workspace_root, allowlist.clone()),
+    let requested_tools = automation_requested_tools_for_node(
+        node,
+        &workspace_root,
+        allowlist.clone(),
         &available_tool_names,
     );
+    let execution_mode = automation_node_execution_mode(node, &workspace_root);
+    let mut capability_resolution = automation_resolve_capabilities(
+        node,
+        execution_mode,
+        &requested_tools,
+        &available_tool_names,
+    );
+    let selected_mcp_servers = mcp_tool_diagnostics
+        .get("selected_servers")
+        .and_then(Value::as_array)
+        .is_some_and(|rows| !rows.is_empty());
+    if automation_node_requires_email_delivery(node) || selected_mcp_servers {
+        automation_merge_mcp_capability_diagnostics(
+            &mut capability_resolution,
+            &mcp_tool_diagnostics,
+        );
+    }
+    let offered_tool_schemas = available_tool_schemas
+        .iter()
+        .filter(|schema| requested_tools.iter().any(|tool| tool == &schema.name))
+        .cloned()
+        .collect::<Vec<_>>();
     state
         .engine_loop
         .set_session_allowed_tools(&session_id, requested_tools.clone())
@@ -7422,6 +9009,48 @@ pub(crate) async fn execute_automation_v2_node(
             None
         },
     );
+    let mut preflight = build_automation_prompt_preflight(
+        &prompt,
+        &requested_tools,
+        &offered_tool_schemas,
+        execution_mode,
+        &capability_resolution,
+        "standard",
+        false,
+    );
+    if automation_preflight_should_degrade(&preflight) && !upstream_inputs.is_empty() {
+        prompt = render_automation_v2_prompt_with_options(
+            automation,
+            &workspace_root,
+            run_id,
+            node,
+            attempt,
+            agent,
+            &upstream_inputs,
+            &requested_tools,
+            template
+                .as_ref()
+                .and_then(|value| value.system_prompt.as_deref()),
+            standup_report_path.as_deref(),
+            if is_agent_standup_automation(automation) {
+                Some(project_id.as_str())
+            } else {
+                None
+            },
+            AutomationPromptRenderOptions {
+                summary_only_upstream: true,
+            },
+        );
+        preflight = build_automation_prompt_preflight(
+            &prompt,
+            &requested_tools,
+            &offered_tool_schemas,
+            execution_mode,
+            &capability_resolution,
+            "summary_only_upstream",
+            true,
+        );
+    }
     if let Some(repair_brief) = render_automation_repair_brief(
         node,
         run.checkpoint.node_outputs.get(&node.node_id),
@@ -7496,6 +9125,29 @@ pub(crate) async fn execute_automation_v2_node(
         None
     };
     let tool_telemetry = summarize_automation_tool_activity(node, &session, &requested_tools);
+    let mut tool_telemetry = tool_telemetry;
+    let base_attempt_evidence = build_automation_attempt_evidence(
+        node,
+        attempt,
+        &session,
+        &session_id,
+        &workspace_root,
+        &tool_telemetry,
+        &preflight,
+        &capability_resolution,
+        verified_output.as_ref(),
+    );
+    if let Some(object) = tool_telemetry.as_object_mut() {
+        object.insert("preflight".to_string(), preflight.clone());
+        object.insert(
+            "capability_resolution".to_string(),
+            capability_resolution.clone(),
+        );
+        object.insert(
+            "attempt_evidence".to_string(),
+            base_attempt_evidence.clone(),
+        );
+    }
     let upstream_evidence = if automation_node_is_research_finalize(node) {
         Some(
             collect_automation_upstream_research_evidence(

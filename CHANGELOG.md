@@ -39,6 +39,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Automation MCP delivery availability and diagnostics**:
+  - fixed automation MCP server selection so wildcard tool access and email-delivery nodes can sync enabled MCP servers before capability resolution instead of silently running with no MCP tools available
+  - expanded email capability detection beyond `email`/`gmail` naming heuristics to include broader mail-provider/tool families and added targeted coverage for those matches
+  - added delivery-specific diagnostics that report selected MCP servers, remote MCP tools, registered tool-registry tools, and discovered/offered email-like tools when `notify_user` blocks
+- **Workflow board task projection consistency**:
+  - fixed control-panel workflow task projection so context-run steps and blackboard workflow tasks canonicalize onto the same `node-*` ids instead of rendering duplicate pending/done copies of the same node
+  - fixed current-step and dependency projection to use the same canonical workflow ids, reducing false “pending” cards after retries when upstream steps are already complete
 - **Automation artifact-path sandbox failures**:
   - fixed automation-node prompt rendering so inline `metadata.inputs` are surfaced directly to the executing agent instead of forcing input discovery through undeclared temp files
   - added workspace-local default artifact paths for standard automation handoff nodes, preventing `/tmp/...` read/write attempts from tripping the workspace sandbox

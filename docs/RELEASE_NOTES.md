@@ -44,6 +44,17 @@
 - Updated workflow planner and mission-builder enforcement defaults to emit profile-appropriate hard requirements instead of one-size-fits-all research-brief blockers.
 - Added non-blocking warning visibility in automation task details so operators can distinguish “completed with warnings” from true repair/block states.
 
+### Automation MCP Delivery Availability And Diagnostics
+
+- Fixed automation MCP server selection so wildcard tool access and email-delivery nodes sync enabled MCP servers before capability resolution instead of silently running with no MCP tools available.
+- Expanded email-capable tool detection beyond `email` and `gmail` naming to cover broader mail-provider/tool families.
+- Added delivery diagnostics that report selected MCP servers, remote MCP tools, registered tool-registry tools, and discovered/offered email-like tools when `notify_user` blocks.
+
+### Workflow Board Task Projection Consistency
+
+- Fixed control-panel workflow task projection so blackboard workflow tasks and context-run steps canonicalize onto the same workflow `node-*` ids.
+- Fixed current-step and dependency projection to use those canonical ids as well, which removes duplicate “pending” cards for steps that were already completed.
+
 ## Tandem v0.4.15 Release Notes (Released 2026-03-24)
 
 ### Control Panel ACA/Hal900 Optional Integration

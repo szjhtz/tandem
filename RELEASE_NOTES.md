@@ -38,6 +38,14 @@ Canonical release notes live in `docs/RELEASE_NOTES.md`.
   - updated workflow planner and mission-builder enforcement defaults to emit profile-appropriate hard requirements instead of one-size-fits-all research-brief blockers
   - added non-blocking warning visibility in automation task details so operators can distinguish “completed with warnings” from true repair/block states
 
+- Automation MCP delivery availability and diagnostics
+  - fixed automation MCP server selection so wildcard tool access and email-delivery nodes sync enabled MCP servers before tool/capability resolution instead of dropping to `Selected MCP servers: none`
+  - expanded email-tool detection beyond `email`/`gmail` names and added diagnostics showing selected servers, remote MCP tools, registered tool-registry tools, and discovered/offered email-like tools when delivery is blocked
+
+- Workflow board task projection consistency
+  - fixed control-panel workflow task projection so blackboard tasks and context-run steps canonicalize onto the same workflow `node-*` ids
+  - prevents the workflow board from showing duplicate pending/done versions of the same task, especially after retrying a downstream node
+
 ## v0.4.15 (Released 2026-03-24)
 
 - Control panel ACA/Hal900 optional integration
