@@ -1649,7 +1649,7 @@ html[data-theme="porcelain"] .tcp-markdown-ai {
   }
 
   .chat-main-shell {
-    @apply h-full min-h-0;
+    @apply flex min-h-0 flex-1;
     border-right: 1px solid color-mix(in srgb, var(--color-border-subtle) 92%, transparent);
     background: color-mix(in srgb, var(--color-surface) 86%, #000 14%);
   }
@@ -2882,6 +2882,39 @@ html[data-theme="porcelain"] .tcp-markdown-ai {
 
 .fc .fc-view-harness {
   min-height: 44rem;
+}
+
+.fc .fc-timegrid-more-link,
+.fc .tcp-calendar-more-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 1.5rem;
+  margin: 0.125rem 0;
+  border: 1px dashed rgba(148, 163, 184, 0.35);
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.86);
+  color: rgb(191, 219, 254);
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.fc .fc-timegrid-more-link:hover,
+.fc .tcp-calendar-more-link:hover {
+  border-color: rgba(96, 165, 250, 0.45);
+  background: rgba(30, 41, 59, 0.96);
+  color: rgb(224, 242, 254);
+}
+
+.fc .tcp-calendar-slot-focus {
+  background: linear-gradient(
+    90deg,
+    rgba(245, 158, 11, 0.18) 0%,
+    rgba(245, 158, 11, 0.08) 22%,
+    rgba(15, 23, 42, 0) 100%
+  );
+  box-shadow: inset 3px 0 0 rgba(245, 158, 11, 0.9);
 }
 
 @media (prefers-reduced-motion: reduce) {

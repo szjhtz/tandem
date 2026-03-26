@@ -32,6 +32,14 @@
 - Improved planner UX with visible loading state, disabled regenerate/revise actions while requests are running, and longer planner chat request timeouts.
 - Loosened workflow validation defaults so external-research and synthesis steps can complete with warnings instead of being blocked by local source-audit conventions.
 - Added explicit validation profiles plus `accepted_with_warnings` outcomes so usable automation artifacts can continue downstream while still surfacing validator warnings.
+- Improved workflow debugger blocker details with blocker category, prompt preflight budget, missing capabilities, MCP tool inventory, and per-node attempt evidence.
+- Treated engine restart/gateway failures as transient control-panel info states with retry-aware polling instead of always surfacing them as hard errors.
+- Tightened chat-panel and app-shell layout behavior for long transcripts and long route subtitles.
+
+### Faster Local Engine Iteration
+
+- Added a `fast-release` Cargo profile for quicker local engine rebuilds.
+- Updated engine-testing docs to use the `fast-release` profile in the local build/install/restart loop.
 
 ### Automation Runtime Sandbox Fix
 
@@ -54,6 +62,11 @@
 
 - Fixed control-panel workflow task projection so blackboard workflow tasks and context-run steps canonicalize onto the same workflow `node-*` ids.
 - Fixed current-step and dependency projection to use those canonical ids as well, which removes duplicate “pending” cards for steps that were already completed.
+
+### Planner Authentication Failure Clarity
+
+- Fixed workflow planner revision failures to classify provider-auth errors like `User not found`, `unauthorized`, and invalid API keys explicitly instead of collapsing them into generic planner-response failures.
+- Aligned session dispatch error classification with those provider-auth failure signatures.
 
 ## Tandem v0.4.15 Release Notes (Released 2026-03-24)
 

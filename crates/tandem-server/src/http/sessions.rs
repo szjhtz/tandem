@@ -1022,6 +1022,8 @@ pub(super) fn dispatch_error_code(message: &str) -> &'static str {
     }
     if lower.contains("unauthorized")
         || lower.contains("authentication")
+        || lower.contains("user not found")
+        || lower.contains("invalid api key")
         || lower.contains("401")
         || lower.contains("403")
     {

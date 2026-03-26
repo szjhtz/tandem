@@ -440,7 +440,7 @@ export function AppShell({
           <div className="min-w-0">
             <div className="tcp-page-eyebrow">Tandem Control</div>
             <h1 className="tcp-main-title">{routeMeta.title}</h1>
-            <p className="tcp-subtle mt-1 max-w-2xl">{routeMeta.subtitle}</p>
+            <p className="tcp-subtle mt-1 line-clamp-2">{routeMeta.subtitle}</p>
           </div>
           <div className="tcp-topbar-status">
             {bugMonitorState ? (

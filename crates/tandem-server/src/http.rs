@@ -58,7 +58,7 @@ pub(crate) mod context_runs;
 pub(crate) mod context_types;
 mod external_actions;
 mod global;
-mod mcp;
+pub(crate) mod mcp;
 mod middleware;
 mod mission_builder;
 mod missions_teams;

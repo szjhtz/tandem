@@ -96,6 +96,7 @@ fn automation_v2_run_with_context_links(run: &crate::AutomationV2RunRecord) -> V
         }
     }
     let mut node_repair_guidance = serde_json::Map::new();
+    let mut node_attempt_evidence = serde_json::Map::new();
     let mut needs_repair_node_ids = Vec::new();
     for (node_id, output) in &normalized_run.checkpoint.node_outputs {
         if output
@@ -107,6 +108,13 @@ fn automation_v2_run_with_context_links(run: &crate::AutomationV2RunRecord) -> V
         }
         if let Some(guidance) = automation_v2_node_repair_guidance(output) {
             node_repair_guidance.insert(node_id.clone(), guidance);
+        }
+        if let Some(attempt_evidence) = output
+            .get("attempt_evidence")
+            .cloned()
+            .filter(|value| !value.is_null())
+        {
+            node_attempt_evidence.insert(node_id.clone(), attempt_evidence);
         }
     }
     let context_run_id = super::context_runs::automation_v2_context_run_id(&run.run_id);
@@ -121,6 +129,10 @@ fn automation_v2_run_with_context_links(run: &crate::AutomationV2RunRecord) -> V
         obj.insert(
             "needsRepairNodeIDs".to_string(),
             json!(needs_repair_node_ids),
+        );
+        obj.insert(
+            "nodeAttemptEvidence".to_string(),
+            Value::Object(node_attempt_evidence),
         );
     }
     payload

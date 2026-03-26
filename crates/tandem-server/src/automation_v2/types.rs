@@ -300,6 +300,16 @@ pub struct AutomationNodeOutput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_telemetry: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preflight: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capability_resolution: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attempt_evidence: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub blocker_category: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fallback_used: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub artifact_validation: Option<Value>,
 }
 

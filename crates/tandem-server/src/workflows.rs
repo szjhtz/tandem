@@ -298,6 +298,11 @@ async fn sync_workflow_automation_action_completed(
                     phase: Some("execution".to_string()),
                     failure_kind: None,
                     tool_telemetry: None,
+                    preflight: None,
+                    capability_resolution: None,
+                    attempt_evidence: None,
+                    blocker_category: None,
+                    fallback_used: None,
                     artifact_validation: None,
                 }),
             );
@@ -376,6 +381,11 @@ async fn sync_workflow_automation_action_failed(
                     phase: Some("execution".to_string()),
                     failure_kind: Some("workflow_action_failed".to_string()),
                     tool_telemetry: None,
+                    preflight: None,
+                    capability_resolution: None,
+                    attempt_evidence: None,
+                    blocker_category: Some("tool_result_unusable".to_string()),
+                    fallback_used: None,
                     artifact_validation: None,
                 }),
             );

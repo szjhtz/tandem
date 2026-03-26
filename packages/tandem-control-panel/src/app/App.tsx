@@ -27,7 +27,7 @@ import {
   setControlPanelTheme,
 } from "./themes.js";
 import { renderIcons } from "./icons.js";
-import { api } from "../lib/api";
+import { api, isTransientEngineError } from "../lib/api";
 import { useCapabilities, useSwarmStatus, useSystemHealth } from "../features/system/queries";
 import type { RouteId } from "./routes";
 
@@ -217,7 +217,8 @@ function AppBody() {
       navigate("dashboard");
     },
     onError: (error) => {
-      toast("err", error instanceof Error ? error.message : String(error));
+      const message = error instanceof Error ? error.message : String(error);
+      toast(isTransientEngineError(error) ? "info" : "err", message);
     },
   });
 
@@ -376,7 +377,8 @@ function AppBody() {
               health?.engine?.ready || health?.engine?.healthy ? "healthy" : "unhealthy";
             toast("info", `Engine ${status}: ${health?.engineUrl || "n/a"}`);
           } catch (error) {
-            toast("err", error instanceof Error ? error.message : String(error));
+            const message = error instanceof Error ? error.message : String(error);
+            toast(isTransientEngineError(error) ? "info" : "err", message);
           }
         },
       },

@@ -45,6 +45,7 @@ type ChatInterfacePanelProps = {
   onRemoveAttachment?: (index: number) => void;
   onAttach?: () => void;
   attachDisabled?: boolean;
+  className?: string;
 };
 
 export function ChatInterfacePanel({
@@ -72,14 +73,22 @@ export function ChatInterfacePanel({
   onRemoveAttachment,
   onAttach,
   attachDisabled = false,
+  className = "",
 }: ChatInterfacePanelProps) {
   const reducedMotion = !!useReducedMotion();
   const messagesRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const stickToBottomRef = useRef(true);
+
+  const isNearBottom = (element: HTMLDivElement) => {
+    const distance = element.scrollHeight - element.scrollTop - element.clientHeight;
+    return distance <= 24;
+  };
 
   useEffect(() => {
     const host = messagesRef.current;
     if (!host) return;
+    if (!stickToBottomRef.current) return;
     host.scrollTop = host.scrollHeight;
   }, [messages, streamingText, showThinking]);
 
@@ -93,7 +102,9 @@ export function ChatInterfacePanel({
   const assistantLabel = botIdentity?.botName || "Assistant";
 
   return (
-    <div className="rounded-2xl border border-white/10 bg-black/20 p-3">
+    <div
+      className={`rounded-2xl border border-white/10 bg-black/20 p-3 flex min-h-0 flex-1 flex-col ${className}`}
+    >
       {questionText ? (
         <div className="mb-3 rounded-xl border border-sky-500/40 bg-sky-950/30 p-3">
           <div className="text-xs uppercase tracking-wide text-sky-200">
@@ -122,6 +133,11 @@ export function ChatInterfacePanel({
       <div
         ref={messagesRef}
         className="chat-messages mb-2 min-h-0 min-w-0 flex-1 overflow-auto p-2 space-y-2"
+        onScroll={() => {
+          const host = messagesRef.current;
+          if (!host) return;
+          stickToBottomRef.current = isNearBottom(host);
+        }}
       >
         {messages.length ? (
           <AnimatePresence initial={false}>

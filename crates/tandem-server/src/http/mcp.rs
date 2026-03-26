@@ -227,7 +227,7 @@ pub(super) async fn add_mcp(
     Json(json!({"ok": true}))
 }
 
-pub(super) fn mcp_namespace_segment(raw: &str) -> String {
+pub(crate) fn mcp_namespace_segment(raw: &str) -> String {
     let mut out = String::new();
     let mut previous_underscore = false;
     for ch in raw.trim().chars() {
@@ -247,7 +247,7 @@ pub(super) fn mcp_namespace_segment(raw: &str) -> String {
     }
 }
 
-pub(super) async fn sync_mcp_tools_for_server(state: &AppState, name: &str) -> usize {
+pub(crate) async fn sync_mcp_tools_for_server(state: &AppState, name: &str) -> usize {
     let prefix = format!("mcp.{}.", mcp_namespace_segment(name));
     state.tools.unregister_by_prefix(&prefix).await;
     let tools = state.mcp.server_tools(name).await;

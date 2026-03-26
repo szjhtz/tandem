@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { api } from "../../lib/api";
+import { api, isTransientEngineError } from "../../lib/api";
 
 export function useSystemHealth(enabled = true) {
   return useQuery({
@@ -7,6 +7,9 @@ export function useSystemHealth(enabled = true) {
     queryFn: () => api("/api/system/health"),
     enabled,
     refetchInterval: enabled ? 15000 : false,
+    retry: (failureCount, error) =>
+      isTransientEngineError(error) ? failureCount < 6 : failureCount < 2,
+    retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 10000),
   });
 }
 
@@ -16,6 +19,9 @@ export function useSwarmStatus(enabled = true) {
     queryFn: () => api("/api/swarm/status"),
     enabled,
     refetchInterval: enabled ? 5000 : false,
+    retry: (failureCount, error) =>
+      isTransientEngineError(error) ? failureCount < 6 : failureCount < 2,
+    retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 10000),
   });
 }
 

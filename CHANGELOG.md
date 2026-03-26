@@ -36,9 +36,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - updated the coding board layout to use the full page width, with run detail and live logs moved below the board and collapsed by default
   - improved planner UX in Coding Workflows with visible in-flight status, disabled regenerate/revise controls during active requests, and a longer client timeout for planner chat requests
   - improved Web Search settings handling of legacy Exa key env names so older installs do not silently lose builtin `websearch`
+  - improved workflow debugger blocker details with surfaced blocker category, prompt preflight budget, missing capabilities, MCP tool inventory, and per-node attempt evidence
+  - made control-panel health/status polling and engine actions treat restart-style gateway failures as transient info states instead of immediate hard errors
+  - tightened chat panel and app-shell layout behavior for long pages and scrolling transcripts
+  - added a `fast-release` Cargo profile and updated local engine-testing docs to prefer that faster iterative build path over full release builds
 
 ### Fixed
 
+- **Planner authentication failure clarity**:
+  - fixed workflow planner revision failures to classify provider-auth errors like `User not found`, `unauthorized`, and invalid API keys explicitly instead of collapsing them into generic invalid-response clarifiers
+  - aligned session dispatch error classification with those provider-auth failure signatures
 - **Automation MCP delivery availability and diagnostics**:
   - fixed automation MCP server selection so wildcard tool access and email-delivery nodes can sync enabled MCP servers before capability resolution instead of silently running with no MCP tools available
   - expanded email capability detection beyond `email`/`gmail` naming heuristics to include broader mail-provider/tool families and added targeted coverage for those matches

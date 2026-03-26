@@ -1013,10 +1013,7 @@ async fn revise_workflow_plan_with_planner_loop(
                 )
             }),
         Err(failure) => {
-            let question = failure
-                .detail
-                .filter(|value| !value.trim().is_empty())
-                .unwrap_or_else(|| planner_llm_invalid_response_hint().to_string());
+            let question = planner_failure_clarifier_hint(&failure);
             (
                 current_plan.clone(),
                 format!("I kept the current plan. Clarification needed: {question}"),
@@ -1043,6 +1040,31 @@ fn planner_llm_provider_unconfigured_hint(provider_id: &str) -> String {
 
 fn planner_llm_invalid_response_hint() -> &'static str {
     "The planner could not produce a valid workflow revision. Keep the current plan or try a more specific request."
+}
+
+fn planner_failure_clarifier_hint(failure: &PlannerInvocationFailure) -> String {
+    let detail = failure
+        .detail
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("");
+    let lower = detail.to_ascii_lowercase();
+    if failure.reason == "provider_auth_failed"
+        || lower.contains("user not found")
+        || lower.contains("unauthorized")
+        || lower.contains("authentication")
+        || lower.contains("invalid api key")
+        || lower.contains("403")
+        || lower.contains("401")
+    {
+        return "The configured planner provider rejected authentication (User not found / unauthorized). Check provider account linkage or API key in Settings, or switch planner model/provider.".to_string();
+    }
+    if detail.is_empty() {
+        planner_llm_invalid_response_hint().to_string()
+    } else {
+        detail.to_string()
+    }
 }
 
 fn plan_save_options() -> Value {
@@ -1883,6 +1905,14 @@ fn classify_planner_provider_failure_reason(error: &str) -> &'static str {
     let lower = error.to_ascii_lowercase();
     if lower.contains("array too long") || lower.contains("maximum length 128") {
         "tool_schema_too_large"
+    } else if lower.contains("user not found")
+        || lower.contains("unauthorized")
+        || lower.contains("authentication")
+        || lower.contains("invalid api key")
+        || lower.contains("403")
+        || lower.contains("401")
+    {
+        "provider_auth_failed"
     } else if lower.contains("invalid function name")
         || lower.contains("function_declarations")
         || lower.contains("tools[0]")

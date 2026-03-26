@@ -1,11 +1,9 @@
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
-import FullCalendar from "@fullcalendar/react";
-import interactionPlugin from "@fullcalendar/interaction";
-import timeGridPlugin from "@fullcalendar/timegrid";
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import YAML from "yaml";
 import { renderIcons } from "../app/icons.js";
+import { AutomationCalendar } from "../features/automations/AutomationCalendar";
 import { projectOrchestrationRun } from "../features/orchestrator/blackboardProjection";
 import { TaskBoard } from "../features/orchestration/TaskBoard";
 import {
@@ -1322,8 +1320,81 @@ function buildRunBlockers(run: any, sessionEvents: any[], runEvents: any[]) {
         `Node blocked: ${output.nodeId}`,
         [
           String(output?.value?.blocked_reason || output?.value?.blockedReason || "").trim(),
+          String(output?.value?.blocker_category || output?.value?.blockerCategory || "").trim()
+            ? `blocker category: ${String(
+                output?.value?.blocker_category || output?.value?.blockerCategory || ""
+              ).trim()}`
+            : "",
           requested ? `offered tools: ${requested}` : "",
           executed ? `executed tools: ${executed}` : "",
+          String(
+            output?.value?.preflight?.budget_status || output?.value?.preflight?.budgetStatus || ""
+          )
+            ? `preflight budget: ${String(
+                output?.value?.preflight?.budget_status ||
+                  output?.value?.preflight?.budgetStatus ||
+                  ""
+              ).trim()}`
+            : "",
+          Array.isArray(output?.value?.capability_resolution?.missing_capabilities) &&
+          output.value.capability_resolution.missing_capabilities.length
+            ? `missing capabilities: ${output.value.capability_resolution.missing_capabilities.join(", ")}`
+            : "",
+          output?.value?.capability_resolution?.email_tool_diagnostics
+            ? `selected mcp servers: ${
+                Array.isArray(
+                  output.value.capability_resolution.email_tool_diagnostics.selected_servers
+                ) &&
+                output.value.capability_resolution.email_tool_diagnostics.selected_servers.length
+                  ? output.value.capability_resolution.email_tool_diagnostics.selected_servers.join(
+                      ", "
+                    )
+                  : "none"
+              }`
+            : "",
+          output?.value?.capability_resolution?.email_tool_diagnostics
+            ? `email-like tools discovered: ${
+                Array.isArray(
+                  output.value.capability_resolution.email_tool_diagnostics.available_tools
+                ) &&
+                output.value.capability_resolution.email_tool_diagnostics.available_tools.length
+                  ? output.value.capability_resolution.email_tool_diagnostics.available_tools.join(
+                      ", "
+                    )
+                  : "none"
+              }`
+            : "",
+          output?.value?.capability_resolution?.email_tool_diagnostics
+            ? `email-like tools offered: ${
+                Array.isArray(
+                  output.value.capability_resolution.email_tool_diagnostics.offered_tools
+                ) && output.value.capability_resolution.email_tool_diagnostics.offered_tools.length
+                  ? output.value.capability_resolution.email_tool_diagnostics.offered_tools.join(
+                      ", "
+                    )
+                  : "none"
+              }`
+            : "",
+          output?.value?.capability_resolution?.mcp_tool_diagnostics
+            ? `mcp remote tools: ${
+                Array.isArray(
+                  output.value.capability_resolution.mcp_tool_diagnostics.remote_tools
+                ) && output.value.capability_resolution.mcp_tool_diagnostics.remote_tools.length
+                  ? output.value.capability_resolution.mcp_tool_diagnostics.remote_tools.join(", ")
+                  : "none"
+              }`
+            : "",
+          output?.value?.capability_resolution?.mcp_tool_diagnostics
+            ? `registered mcp tools: ${
+                Array.isArray(
+                  output.value.capability_resolution.mcp_tool_diagnostics.registered_tools
+                ) && output.value.capability_resolution.mcp_tool_diagnostics.registered_tools.length
+                  ? output.value.capability_resolution.mcp_tool_diagnostics.registered_tools.join(
+                      ", "
+                    )
+                  : "none"
+              }`
+            : "",
           String(artifactValidation?.semantic_block_reason || "").trim()
             ? `research validation: ${String(artifactValidation?.semantic_block_reason || "").trim()}`
             : "",
@@ -4909,22 +4980,6 @@ function MyAutomations({
     }
   };
 
-  const renderCalendarEventContent = (arg: any) => {
-    const status = String(arg?.event?.extendedProps?.status || "active").trim() || "active";
-    const scheduleLabel = String(arg?.event?.extendedProps?.scheduleLabel || "").trim();
-    return (
-      <div className="flex h-full min-h-0 flex-col gap-0.5 overflow-hidden rounded-lg border border-slate-700/60 bg-slate-950/90 px-2 py-1 text-xs shadow-sm">
-        <div className="flex items-center justify-between gap-2">
-          <span className="truncate font-medium text-slate-100">
-            {String(arg?.event?.title || "")}
-          </span>
-          <span className={statusColor(status)}>{status}</span>
-        </div>
-        <div className="truncate text-[11px] text-slate-400">{scheduleLabel}</div>
-      </div>
-    );
-  };
-
   const legacyAutomationCount = automations.length;
   const workflowAutomationCount = automationsV2.length;
   const totalSavedAutomations = legacyAutomationCount + workflowAutomationCount;
@@ -4965,63 +5020,13 @@ function MyAutomations({
   return (
     <div ref={rootRef} className="grid gap-4">
       {viewMode === "calendar" ? (
-        <div className="grid gap-3">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="grid gap-1">
-              <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
-                Cron schedules
-              </p>
-              <div className="tcp-subtle text-xs">
-                Drag a card to change when that automation fires. Only cron-based automations are
-                shown here for now.
-              </div>
-            </div>
-            <span className="tcp-badge-info">{calendarEvents.length} scheduled items</span>
-          </div>
-          <div className="overflow-hidden rounded-2xl border border-slate-800/80 bg-slate-950/35 p-2">
-            <FullCalendar
-              plugins={[timeGridPlugin, interactionPlugin]}
-              initialView="timeGridWeek"
-              timeZone="UTC"
-              firstDay={0}
-              height="auto"
-              expandRows
-              nowIndicator
-              editable
-              eventStartEditable
-              eventDurationEditable={false}
-              eventOverlap
-              slotEventOverlap
-              allDaySlot={false}
-              slotMinTime="00:00:00"
-              slotMaxTime="24:00:00"
-              stickyHeaderDates
-              headerToolbar={{
-                left: "prev,next today",
-                center: "title",
-                right: "",
-              }}
-              events={calendarEvents}
-              datesSet={(arg: any) => {
-                setCalendarRange({
-                  startMs: arg.start.getTime(),
-                  endMs: arg.end.getTime(),
-                });
-              }}
-              eventClick={(arg: any) => {
-                arg.jsEvent?.preventDefault?.();
-                openCalendarAutomationEdit(arg.event?.extendedProps?.automation);
-              }}
-              eventDrop={updateCalendarAutomationFromEvent}
-              eventContent={renderCalendarEventContent}
-              eventClassNames={(arg: any) => [
-                String(arg?.event?.extendedProps?.family || "legacy") === "v2"
-                  ? "tcp-calendar-event tcp-calendar-event-v2"
-                  : "tcp-calendar-event tcp-calendar-event-legacy",
-              ]}
-            />
-          </div>
-        </div>
+        <AutomationCalendar
+          events={calendarEvents}
+          onRangeChange={setCalendarRange}
+          onOpenAutomation={openCalendarAutomationEdit}
+          onEventDrop={updateCalendarAutomationFromEvent}
+          statusColor={statusColor}
+        />
       ) : null}
 
       {/* Installed packs from pack_builder */}
