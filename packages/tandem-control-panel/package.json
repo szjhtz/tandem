@@ -32,6 +32,7 @@
     "lib",
     "server",
     "dist",
+    "src/generated",
     ".env.example",
     "README.md"
   ],

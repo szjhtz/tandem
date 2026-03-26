@@ -351,6 +351,46 @@ function normalizeMcpServers(raw: any): McpServerOption[] {
   return [];
 }
 
+function formatAgentInstructionsMarkdown(raw: string) {
+  const lines = String(raw || "")
+    .split(/\r?\n/)
+    .map((line) => line.trimEnd());
+  const out: string[] = [];
+  let inSectionList = false;
+  const sectionHeaders = new Set(["Working mode", "Focus on", "Quality checks", "Return"]);
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (!line) {
+      if (inSectionList && out[out.length - 1] !== "") out.push("");
+      inSectionList = false;
+      continue;
+    }
+    if (/^\d+\.\s+/.test(line) || /^[-*]\s+/.test(line)) {
+      out.push(line);
+      inSectionList = true;
+      continue;
+    }
+    const headerMatch = line.match(/^([A-Za-z][A-Za-z\s]+):$/);
+    if (headerMatch) {
+      const heading = headerMatch[1].trim();
+      out.push(`### ${heading}`);
+      inSectionList = sectionHeaders.has(heading);
+      continue;
+    }
+    if (inSectionList) {
+      out.push(`- ${line}`);
+      continue;
+    }
+    out.push(line);
+  }
+
+  return out
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 function toSchedulePayload(wizard: WizardState) {
   if (wizard.scheduleKind === "manual") {
     return { type: "manual" };
@@ -1565,16 +1605,14 @@ function Step1Goal({
 
   const filteredAgents = useMemo(() => {
     const query = agentSearch.toLowerCase().trim();
-    if (!query) return CATALOG.agents.slice(0, 20);
-    return CATALOG.agents
-      .filter(
-        (agent) =>
-          agent.name.toLowerCase().includes(query) ||
-          agent.summary.toLowerCase().includes(query) ||
-          agent.tags.some((tag) => tag.toLowerCase().includes(query)) ||
-          agent.category_title.toLowerCase().includes(query)
-      )
-      .slice(0, 20);
+    if (!query) return CATALOG.agents;
+    return CATALOG.agents.filter(
+      (agent) =>
+        agent.name.toLowerCase().includes(query) ||
+        agent.summary.toLowerCase().includes(query) ||
+        agent.tags.some((tag) => tag.toLowerCase().includes(query)) ||
+        agent.category_title.toLowerCase().includes(query)
+    );
   }, [agentSearch]);
 
   const selectedAgent = useMemo(
@@ -1596,14 +1634,17 @@ function Step1Goal({
       <div className="grid gap-2">
         <div className="flex items-center justify-between">
           <p className="text-xs text-slate-500">Search agents from catalog:</p>
-          {selectedAgentId && (
-            <button
-              className="tcp-btn h-6 px-2 text-xs"
-              onClick={() => onChangeSelectedAgentId("")}
-            >
-              Clear
-            </button>
-          )}
+          <div className="flex items-center gap-2">
+            <span className="text-[11px] text-slate-500">{filteredAgents.length} agents</span>
+            {selectedAgentId && (
+              <button
+                className="tcp-btn h-6 px-2 text-xs"
+                onClick={() => onChangeSelectedAgentId("")}
+              >
+                Clear
+              </button>
+            )}
+          </div>
         </div>
         <input
           className="tcp-input text-xs"
@@ -1646,9 +1687,11 @@ function Step1Goal({
             <span className="tcp-badge-info">{selectedAgent.role}</span>
           </div>
           <div
-            className="prose prose-sm prose-invert max-w-none text-slate-300"
+            className="prose prose-sm prose-invert max-w-none text-slate-300 prose-headings:text-amber-100 prose-p:text-slate-300 prose-li:text-slate-300 prose-strong:text-slate-100"
             dangerouslySetInnerHTML={{
-              __html: renderMarkdownSafe(selectedAgent.instructions || selectedAgent.summary),
+              __html: renderMarkdownSafe(
+                formatAgentInstructionsMarkdown(selectedAgent.instructions || selectedAgent.summary)
+              ),
             }}
           />
         </div>
