@@ -1,5 +1,6 @@
 import { DashboardPage } from "../pages/DashboardPage";
 import { ChatPage } from "../pages/ChatPage";
+import { IntentPlannerPage } from "../pages/IntentPlannerPage";
 import { WorkflowStudioPage } from "../pages/WorkflowStudioPage";
 import { AutomationsPage } from "../pages/AutomationsPage";
 import { CodingWorkflowsPage } from "../pages/CodingWorkflowsPage";
@@ -19,6 +20,8 @@ export function HashRouteOutlet({ routeId, pageProps }: { routeId: string; pageP
   switch (safeRoute) {
     case "chat":
       return <ChatPage {...pageProps} />;
+    case "planner":
+      return <IntentPlannerPage {...pageProps} />;
     case "studio":
       return <WorkflowStudioPage {...pageProps} />;
     case "automations":

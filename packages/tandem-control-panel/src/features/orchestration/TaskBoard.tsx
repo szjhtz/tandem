@@ -16,7 +16,7 @@ const LABELS: Record<TaskState, string> = {
 function statusClass(state: TaskState) {
   if (state === "done" || state === "validated") return "tcp-badge-ok";
   if (state === "failed") return "tcp-badge-err";
-  if (state === "blocked") return "border border-emerald-400/60 bg-emerald-400/10 text-emerald-200";
+  if (state === "blocked") return "tcp-badge-blocked";
   if (state === "in_progress" || state === "runnable" || state === "assigned")
     return "tcp-badge-warn";
   return "tcp-badge-info";
@@ -24,7 +24,7 @@ function statusClass(state: TaskState) {
 
 function taskCardClass(state: TaskState, isCurrent: boolean, isSelected: boolean) {
   if (isSelected) return "border-cyan-400/70 bg-cyan-950/20";
-  if (state === "blocked") return "border-emerald-500/35 bg-emerald-950/18";
+  if (state === "blocked") return "border-indigo-500/35 bg-indigo-950/18";
   if (isCurrent) return "border-emerald-400/70 bg-emerald-950/14";
   return "border-slate-700/60 bg-slate-900/20";
 }
@@ -209,15 +209,25 @@ export function TaskBoard({
     };
   }, [tasks]);
 
-  const columns: Array<{ key: string; label: string; tasks: OrchestrationTask[] }> = [
-    { key: "runnable", label: "Ready", tasks: grouped.runnable },
-    { key: "waiting", label: "Waiting on deps", tasks: grouped.waiting },
-    { key: "assigned", label: "Assigned", tasks: grouped.assigned },
-    { key: "in_progress", label: "In Progress", tasks: grouped.in_progress },
-    { key: "blocked", label: "Blocked", tasks: grouped.blocked },
-    { key: "done", label: "Done", tasks: grouped.done },
-    { key: "failed", label: "Failed", tasks: grouped.failed },
-  ];
+  const columns = useMemo(
+    () =>
+      [
+        { key: "runnable", label: "Ready", tasks: grouped.runnable },
+        { key: "waiting", label: "Waiting on deps", tasks: grouped.waiting },
+        { key: "assigned", label: "Assigned", tasks: grouped.assigned },
+        { key: "in_progress", label: "In Progress", tasks: grouped.in_progress },
+        { key: "blocked", label: "Blocked", tasks: grouped.blocked },
+        { key: "done", label: "Done", tasks: grouped.done },
+        { key: "failed", label: "Failed", tasks: grouped.failed },
+      ].filter((col) => {
+        // Hide "Waiting on deps" and "Assigned" if there are no tasks in them
+        if (col.key === "waiting" || col.key === "assigned") {
+          return col.tasks.length > 0;
+        }
+        return true;
+      }),
+    [grouped]
+  );
   const recommendedMobileColumnKey = useMemo(() => {
     const currentTask = columns.find((column) =>
       column.tasks.some((task) => task.id === currentTaskId)

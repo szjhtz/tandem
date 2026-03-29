@@ -443,6 +443,13 @@ mod tests {
                 model: None,
                 has_key: false,
             },
+            llama_cpp: ProviderConfig {
+                enabled: false,
+                default: false,
+                endpoint: "http://127.0.0.1:8080/v1".to_string(),
+                model: Some("llm".to_string()),
+                has_key: true,
+            },
             ollama: ProviderConfig {
                 enabled: true,
                 default: false,

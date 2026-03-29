@@ -309,6 +309,7 @@ fn resolve_default_provider_and_model(
         ("opencode", &config.opencode_zen), // OpenCode expects "opencode" not "opencode_zen"
         ("anthropic", &config.anthropic),
         ("openai", &config.openai),
+        ("llama_cpp", &config.llama_cpp),
         ("ollama", &config.ollama),
         ("poe", &config.poe),
     ];
@@ -353,6 +354,7 @@ fn selected_provider_slot(config: &ProvidersConfig) -> Option<&'static str> {
         "anthropic" => Some("anthropic"),
         "poe" => Some("poe"),
         "opencode" | "opencode_zen" | "zen" => Some("opencode_zen"),
+        "llama_cpp" | "llama.cpp" => Some("llama_cpp"),
         "ollama" => Some("ollama"),
         "custom" => Some("custom"),
         _ => None,
@@ -367,6 +369,7 @@ fn provider_slot_active(config: &ProvidersConfig, slot: &str) -> bool {
         "opencode_zen" => config.opencode_zen.enabled || selected_active,
         "anthropic" => config.anthropic.enabled || selected_active,
         "openai" => config.openai.enabled || selected_active,
+        "llama_cpp" => config.llama_cpp.enabled || selected_active,
         "poe" => config.poe.enabled || selected_active,
         "ollama" => config.ollama.enabled || selected_active,
         "custom" => config.custom.iter().any(|provider| provider.enabled) || selected_active,
@@ -485,7 +488,7 @@ async fn validate_model_provider_in_sidecar_catalog(
 
     let model = model.unwrap();
     let provider = provider.unwrap().to_lowercase();
-    if provider == "custom" {
+    if provider == "custom" || provider == "llama_cpp" || provider == "llama.cpp" {
         return Ok(());
     }
 

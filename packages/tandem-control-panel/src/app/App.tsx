@@ -74,20 +74,28 @@ function useProviderStatus(client: TandemClient | null, enabled: boolean) {
         };
       }
       try {
+        let catalogError: string | null = null;
         const [config, catalog, authStatus] = await Promise.all([
           client.providers.config(),
-          client.providers.catalog(),
+          client.providers.catalog().catch((error) => {
+            catalogError = error instanceof Error ? error.message : String(error);
+            return { connected: [] };
+          }),
           client.providers.authStatus().catch(() => ({})),
         ]);
-        return deriveProviderState(config, catalog, authStatus);
+        const state = deriveProviderState(config, catalog, authStatus);
+        return catalogError ? { ...state, error: catalogError } : state;
       } catch (error) {
+        // A transient backend/network failure should not hard-lock the app back
+        // onto Settings. Keep the error visible, but avoid treating it as an
+        // onboarding requirement unless we successfully fetched provider state.
         return {
           ready: false,
           defaultProvider: "",
           defaultModel: "",
           connected: [],
           error: error instanceof Error ? error.message : String(error),
-          needsOnboarding: true,
+          needsOnboarding: false,
         };
       }
     },

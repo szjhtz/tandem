@@ -601,6 +601,7 @@ function App() {
       (state.providers_config.anthropic?.enabled && state.providers_config.anthropic?.has_key) ||
       (state.providers_config.openai?.enabled && state.providers_config.openai?.has_key) ||
       state.providers_config.opencode_zen?.enabled ||
+      (state.providers_config.llama_cpp?.enabled && state.providers_config.llama_cpp?.has_key) ||
       (state.providers_config.ollama?.enabled && state.providers_config.ollama?.has_key) ||
       // If the user explicitly selected a provider+model from the sidecar catalog, treat as configured.
       (!!state.providers_config.selected_model?.provider_id?.trim() &&
@@ -622,6 +623,9 @@ function App() {
           return "Anthropic";
         case "openai":
           return "OpenAI";
+        case "llama_cpp":
+        case "llama.cpp":
+          return "llama.cpp";
         case "ollama":
           return "Ollama";
         default:
@@ -648,6 +652,7 @@ function App() {
       { id: "opencode_zen", label: "Opencode Zen", config: config.opencode_zen },
       { id: "anthropic", label: "Anthropic", config: config.anthropic },
       { id: "openai", label: "OpenAI", config: config.openai },
+      { id: "llama_cpp", label: "llama.cpp", config: config.llama_cpp },
       { id: "ollama", label: "Ollama", config: config.ollama },
       ...(enabledCustom ? [{ id: "custom", label: "Custom", config: enabledCustom }] : []),
     ];

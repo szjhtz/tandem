@@ -55,10 +55,10 @@ function standupScheduleToAutomationSchedule(selectedPreset: string, customCron:
     return { type: "cron", cron_expression: trimmedCron, timezone: "UTC" };
   }
   const preset = SCHEDULE_PRESETS.find((row) => row.label === selectedPreset);
-  if (preset?.intervalSeconds) {
+  if (preset && "intervalSeconds" in preset) {
     return { type: "interval", interval_seconds: preset.intervalSeconds };
   }
-  if (preset?.cron) {
+  if (preset && "cron" in preset && preset.cron) {
     return { type: "cron", cron_expression: preset.cron, timezone: "UTC" };
   }
   return { type: "manual" };

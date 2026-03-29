@@ -822,7 +822,7 @@ async function installServices() {
     TANDEM_PROMPT_CONTEXT_HOOK_TIMEOUT_MS:
       existingEngineEnv.TANDEM_PROMPT_CONTEXT_HOOK_TIMEOUT_MS || "5000",
     TANDEM_PROVIDER_STREAM_CONNECT_TIMEOUT_MS:
-      existingEngineEnv.TANDEM_PROVIDER_STREAM_CONNECT_TIMEOUT_MS || "30000",
+      existingEngineEnv.TANDEM_PROVIDER_STREAM_CONNECT_TIMEOUT_MS || "90000",
     TANDEM_PROVIDER_STREAM_IDLE_TIMEOUT_MS:
       existingEngineEnv.TANDEM_PROVIDER_STREAM_IDLE_TIMEOUT_MS || "90000",
     TANDEM_PERMISSION_WAIT_TIMEOUT_MS:
@@ -1161,6 +1161,70 @@ async function writeManagedSearchSettings(payload = {}) {
   };
 }
 
+function getManagedSchedulerSettings() {
+  const envPath = getManagedEngineEnvPath();
+  const localEngine = isLocalEngineUrl(ENGINE_URL);
+  const env = existsSync(envPath) ? parseDotEnv(readFileSync(envPath, "utf8")) : {};
+  const modeRaw = String(env.TANDEM_SCHEDULER_MODE || "multi").trim().toLowerCase();
+  const mode = modeRaw === "single" ? "single" : "multi";
+  const maxRaw = Number.parseInt(String(env.TANDEM_SCHEDULER_MAX_CONCURRENT_RUNS || ""), 10);
+  const maxConcurrentRuns = Number.isFinite(maxRaw) && maxRaw > 0 ? maxRaw : null;
+  return {
+    available: localEngine,
+    local_engine: localEngine,
+    writable: localEngine,
+    managed_env_path: envPath,
+    restart_required: false,
+    restart_hint: "Restart tandem-engine after changing scheduler mode.",
+    settings: {
+      mode,
+      max_concurrent_runs: maxConcurrentRuns,
+    },
+    reason: localEngine
+      ? ""
+      : "Scheduler settings can only be edited here when the control panel points at a local engine host.",
+  };
+}
+
+async function writeManagedSchedulerSettings(payload = {}) {
+  const current = getManagedSchedulerSettings();
+  if (!current.local_engine) {
+    const error = new Error(
+      current.reason || "Scheduler settings are not editable for this engine."
+    );
+    error.statusCode = 400;
+    throw error;
+  }
+  const envPath = current.managed_env_path;
+  const existingEnv = existsSync(envPath) ? parseDotEnv(readFileSync(envPath, "utf8")) : {};
+  const nextEnv = { ...existingEnv };
+  const modeRaw = String(payload.mode || "multi").trim().toLowerCase();
+  nextEnv.TANDEM_SCHEDULER_MODE = modeRaw === "single" ? "single" : "multi";
+  if (payload.max_concurrent_runs != null && payload.max_concurrent_runs > 0) {
+    nextEnv.TANDEM_SCHEDULER_MAX_CONCURRENT_RUNS = String(payload.max_concurrent_runs);
+  } else {
+    delete nextEnv.TANDEM_SCHEDULER_MAX_CONCURRENT_RUNS;
+  }
+  const preferredKeys = [
+    "TANDEM_API_TOKEN",
+    "TANDEM_STATE_DIR",
+    "TANDEM_SCHEDULER_MODE",
+    "TANDEM_SCHEDULER_MAX_CONCURRENT_RUNS",
+  ];
+  const ordered = [];
+  for (const key of preferredKeys) {
+    if (nextEnv[key] !== undefined) ordered.push([key, nextEnv[key]]);
+  }
+  for (const [key, value] of Object.entries(nextEnv)) {
+    if (!preferredKeys.includes(key)) ordered.push([key, value]);
+  }
+  await writeFile(envPath, serializeEnv(ordered), "utf8");
+  return {
+    ...getManagedSchedulerSettings(),
+    restart_required: true,
+  };
+}
+
 function sendJson(res, code, payload) {
   if (res.headersSent || res.writableEnded || res.destroyed) return;
   const body = JSON.stringify(payload);
@@ -1395,7 +1459,7 @@ async function ensureEngineRunning() {
         TANDEM_PROMPT_CONTEXT_HOOK_TIMEOUT_MS:
           process.env.TANDEM_PROMPT_CONTEXT_HOOK_TIMEOUT_MS || "5000",
         TANDEM_PROVIDER_STREAM_CONNECT_TIMEOUT_MS:
-          process.env.TANDEM_PROVIDER_STREAM_CONNECT_TIMEOUT_MS || "30000",
+          process.env.TANDEM_PROVIDER_STREAM_CONNECT_TIMEOUT_MS || "90000",
         TANDEM_PROVIDER_STREAM_IDLE_TIMEOUT_MS:
           process.env.TANDEM_PROVIDER_STREAM_IDLE_TIMEOUT_MS || "90000",
         TANDEM_PERMISSION_WAIT_TIMEOUT_MS: process.env.TANDEM_PERMISSION_WAIT_TIMEOUT_MS || "15000",
@@ -4787,6 +4851,29 @@ async function handleApi(req, res) {
         parsed_output: parsedOutput,
         metadata: result?.metadata || {},
       });
+    } catch (error) {
+      sendJson(res, Number(error?.statusCode || 500), {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+    return true;
+  }
+
+  if (pathname === "/api/system/scheduler-settings" && req.method === "GET") {
+    const session = requireSession(req, res);
+    if (!session) return true;
+    sendJson(res, 200, getManagedSchedulerSettings());
+    return true;
+  }
+
+  if (pathname === "/api/system/scheduler-settings" && req.method === "PATCH") {
+    const session = requireSession(req, res);
+    if (!session) return true;
+    try {
+      const payload = await readJsonBody(req);
+      const saved = await writeManagedSchedulerSettings(payload);
+      sendJson(res, 200, saved);
     } catch (error) {
       sendJson(res, Number(error?.statusCode || 500), {
         ok: false,

@@ -1,4 +1,91 @@
 // ============================================================================
+// Scheduler Configuration
+// ============================================================================
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SchedulerSettings {
+    #[serde(default)]
+    pub mode: String,
+    #[serde(default)]
+    pub max_concurrent_runs: Option<usize>,
+}
+
+impl Default for SchedulerSettings {
+    fn default() -> Self {
+        Self {
+            mode: "multi".to_string(),
+            max_concurrent_runs: None,
+        }
+    }
+}
+
+impl SchedulerSettings {
+    fn normalized(&self) -> Self {
+        let mode = match self.mode.trim().to_ascii_lowercase().as_str() {
+            "single" => "single",
+            "multi" => "multi",
+            _ => "multi",
+        };
+        Self {
+            mode: mode.to_string(),
+            max_concurrent_runs: self.max_concurrent_runs.filter(|&v| v > 0),
+        }
+    }
+}
+
+pub(crate) fn load_saved_scheduler_settings(app: &AppHandle) -> SchedulerSettings {
+    if let Ok(store) = app.store("settings.json") {
+        if let Some(value) = store.get("scheduler_settings") {
+            if let Ok(settings) = serde_json::from_value::<SchedulerSettings>(value.clone()) {
+                return settings.normalized();
+            }
+        }
+    }
+    SchedulerSettings::default()
+}
+
+pub(crate) async fn sync_scheduler_settings_env(state: &AppState, settings: &SchedulerSettings) {
+    state
+        .sidecar
+        .set_env("TANDEM_SCHEDULER_MODE", &settings.mode)
+        .await;
+    if let Some(max) = settings.max_concurrent_runs {
+        state
+            .sidecar
+            .set_env("TANDEM_SCHEDULER_MAX_CONCURRENT_RUNS", &max.to_string())
+            .await;
+    } else {
+        state
+            .sidecar
+            .remove_env("TANDEM_SCHEDULER_MAX_CONCURRENT_RUNS")
+            .await;
+    }
+}
+
+#[tauri::command]
+pub async fn get_scheduler_settings(app: AppHandle) -> Result<SchedulerSettings> {
+    Ok(load_saved_scheduler_settings(&app))
+}
+
+#[tauri::command]
+pub async fn set_scheduler_settings(
+    app: AppHandle,
+    settings: SchedulerSettings,
+    state: State<'_, AppState>,
+) -> Result<SchedulerSettings> {
+    let normalized = settings.normalized();
+    if let Ok(store) = app.store("settings.json") {
+        store.set(
+            "scheduler_settings",
+            serde_json::to_value(&normalized).unwrap_or_default(),
+        );
+        let _ = store.save();
+    }
+    sync_scheduler_settings_env(&state, &normalized).await;
+    Ok(normalized)
+}
+
+// ============================================================================
 // Provider Configuration
 // ============================================================================
 
@@ -215,18 +302,17 @@ pub fn populate_provider_keys(app: &AppHandle, config: &mut ProvidersConfig) {
         config.anthropic.has_key = keystore.has(&anthropic_key);
         config.openai.has_key = keystore.has(&openai_key);
         config.poe.has_key = keystore.has(&poe_key);
-        // For local models, we might consider them "having a key" or check connection
-        config.ollama.has_key = true; // Local inference is always 'authed'
+        config.llama_cpp.has_key = true;
+        config.ollama.has_key = true;
     } else {
-        // Expected when the vault is locked; `get_app_state` calls this frequently.
         tracing::debug!("[populate_provider_keys] Keystore not available (vault locked?)");
-        // Keystore not initialized (vault locked)
         config.openrouter.has_key = false;
         config.opencode_zen.has_key = false;
         config.anthropic.has_key = false;
         config.openai.has_key = false;
         config.poe.has_key = false;
-        config.ollama.has_key = true; // Local is fine
+        config.llama_cpp.has_key = true;
+        config.ollama.has_key = true;
     }
 }
 
@@ -392,12 +478,35 @@ fn selected_custom_model_signature(config: &ProvidersConfig) -> Option<String> {
     None
 }
 
-fn sync_custom_provider_config_file(config: &ProvidersConfig) -> Result<()> {
+fn selected_provider_model_signature(
+    config: &ProvidersConfig,
+    provider_ids: &[&str],
+) -> Option<String> {
+    let selected = config.selected_model.as_ref()?;
+    if provider_ids.iter().any(|provider_id| {
+        selected
+            .provider_id
+            .trim()
+            .eq_ignore_ascii_case(provider_id)
+    }) {
+        let model = selected.model_id.trim();
+        if !model.is_empty() {
+            return Some(model.to_string());
+        }
+    }
+    None
+}
+
+fn sync_provider_config_file(config: &ProvidersConfig) -> Result<()> {
     let custom_provider = config
         .custom
         .iter()
         .find(|c| c.enabled && !c.endpoint.trim().is_empty());
-
+    let llama_cpp_provider = config
+        .llama_cpp
+        .enabled
+        .then_some(&config.llama_cpp)
+        .filter(|provider| !provider.endpoint.trim().is_empty());
     let config_path = crate::tandem_config::global_config_path()?;
     crate::tandem_config::update_config_at(&config_path, |cfg| {
         let root = if let Some(root) = cfg.as_object_mut() {
@@ -419,42 +528,89 @@ fn sync_custom_provider_config_file(config: &ProvidersConfig) -> Result<()> {
                 .expect("providers must be object")
         };
 
-        match custom_provider {
-            Some(custom) => {
-                let endpoint = custom.endpoint.trim();
-                let default_model = custom
-                    .model
-                    .as_ref()
-                    .map(|m| m.trim().to_string())
-                    .filter(|m| !m.is_empty());
+        if let Some(custom) = custom_provider {
+            let endpoint = custom.endpoint.trim();
+            let default_model = custom
+                .model
+                .as_ref()
+                .map(|m| m.trim().to_string())
+                .filter(|m| !m.is_empty());
 
-                let mut custom_cfg = serde_json::Map::new();
+            let mut custom_cfg = serde_json::Map::new();
+            custom_cfg.insert(
+                "url".to_string(),
+                serde_json::Value::String(endpoint.to_string()),
+            );
+            if let Some(model) = default_model {
                 custom_cfg.insert(
-                    "url".to_string(),
-                    serde_json::Value::String(endpoint.to_string()),
+                    "default_model".to_string(),
+                    serde_json::Value::String(model),
                 );
-                if let Some(model) = default_model {
-                    custom_cfg.insert(
-                        "default_model".to_string(),
-                        serde_json::Value::String(model),
-                    );
-                }
-                providers.insert("custom".to_string(), serde_json::Value::Object(custom_cfg));
+            }
+            providers.insert("custom".to_string(), serde_json::Value::Object(custom_cfg));
+        } else {
+            providers.remove("custom");
+        }
 
-                let selected_custom = selected_custom_model_signature(config).is_some();
-                if custom.default || selected_custom {
-                    root.insert(
-                        "default_provider".to_string(),
-                        serde_json::Value::String("custom".to_string()),
-                    );
-                }
+        if let Some(llama_cpp) = llama_cpp_provider {
+            let endpoint = llama_cpp.endpoint.trim();
+            let default_model = llama_cpp
+                .model
+                .as_ref()
+                .map(|m| m.trim().to_string())
+                .filter(|m| !m.is_empty());
+
+            let mut llama_cpp_cfg = serde_json::Map::new();
+            llama_cpp_cfg.insert(
+                "url".to_string(),
+                serde_json::Value::String(endpoint.to_string()),
+            );
+            if let Some(model) = default_model {
+                llama_cpp_cfg.insert(
+                    "default_model".to_string(),
+                    serde_json::Value::String(model),
+                );
+            }
+            providers.insert(
+                "llama_cpp".to_string(),
+                serde_json::Value::Object(llama_cpp_cfg),
+            );
+            providers.remove("llama.cpp");
+        } else {
+            providers.remove("llama_cpp");
+            providers.remove("llama.cpp");
+        }
+
+        let selected_custom = selected_provider_model_signature(config, &["custom"]).is_some();
+        let selected_llama_cpp =
+            selected_provider_model_signature(config, &["llama_cpp", "llama.cpp"]).is_some();
+        let default_provider = if custom_provider.is_some_and(|provider| provider.default)
+            || selected_custom
+        {
+            Some("custom")
+        } else if llama_cpp_provider.is_some_and(|provider| provider.default) || selected_llama_cpp
+        {
+            Some("llama_cpp")
+        } else {
+            None
+        };
+
+        match default_provider {
+            Some(provider_id) => {
+                root.insert(
+                    "default_provider".to_string(),
+                    serde_json::Value::String(provider_id.to_string()),
+                );
             }
             None => {
-                providers.remove("custom");
                 let should_clear_default = root
                     .get("default_provider")
                     .and_then(|v| v.as_str())
-                    .map(|v| v.eq_ignore_ascii_case("custom"))
+                    .map(|v| {
+                        v.eq_ignore_ascii_case("custom")
+                            || v.eq_ignore_ascii_case("llama_cpp")
+                            || v.eq_ignore_ascii_case("llama.cpp")
+                    })
                     .unwrap_or(false);
                 if should_clear_default {
                     root.remove("default_provider");
@@ -581,6 +737,16 @@ async fn sync_provider_keys_env(app: &AppHandle, state: &AppState, config: &Prov
         state.sidecar.remove_env("OPENAI_API_KEY").await;
     }
 
+    if provider_slot_active(config, "llama_cpp") {
+        if let Ok(Some(key)) = get_api_key(app, "llama_cpp").await {
+            state.sidecar.set_env("LLAMA_CPP_API_KEY", &key).await;
+        } else {
+            state.sidecar.remove_env("LLAMA_CPP_API_KEY").await;
+        }
+    } else {
+        state.sidecar.remove_env("LLAMA_CPP_API_KEY").await;
+    }
+
     // Poe
     if provider_slot_active(config, "poe") {
         if let Ok(Some(key)) = get_api_key(app, "poe").await {
@@ -620,6 +786,11 @@ async fn sync_provider_keys_runtime_auth(
     if provider_slot_active(config, "openai") {
         if let Ok(Some(key)) = get_api_key(app, "openai").await {
             let _ = state.sidecar.set_provider_auth("openai", &key).await;
+        }
+    }
+    if provider_slot_active(config, "llama_cpp") {
+        if let Ok(Some(key)) = get_api_key(app, "llama_cpp").await {
+            let _ = state.sidecar.set_provider_auth("llama_cpp", &key).await;
         }
     }
     if provider_slot_active(config, "poe") {
@@ -662,10 +833,14 @@ pub async fn set_providers_config(
         let _ = store.save();
     }
 
-    sync_custom_provider_config_file(&config)?;
+    sync_provider_config_file(&config)?;
 
     let ollama_changed = previous_config.ollama.enabled != config.ollama.enabled
         || previous_config.ollama.endpoint != config.ollama.endpoint;
+    let llama_cpp_changed = previous_config.llama_cpp.enabled != config.llama_cpp.enabled
+        || previous_config.llama_cpp.endpoint != config.llama_cpp.endpoint
+        || previous_config.llama_cpp.model != config.llama_cpp.model
+        || previous_config.llama_cpp.default != config.llama_cpp.default;
     let custom_changed = serde_json::to_value(&previous_config.custom).ok()
         != serde_json::to_value(&config.custom).ok()
         || selected_custom_model_signature(&previous_config)
@@ -675,10 +850,11 @@ pub async fn set_providers_config(
         || previous_config.opencode_zen.enabled != config.opencode_zen.enabled
         || previous_config.anthropic.enabled != config.anthropic.enabled
         || previous_config.openai.enabled != config.openai.enabled
+        || previous_config.llama_cpp.enabled != config.llama_cpp.enabled
         || previous_config.poe.enabled != config.poe.enabled
         || selected_provider_slot(&previous_config) != selected_provider_slot(&config);
 
-    if ollama_changed || key_providers_changed || custom_changed {
+    if ollama_changed || llama_cpp_changed || key_providers_changed || custom_changed {
         sync_ollama_env(&state, &config).await;
         sync_provider_keys_env(&app, &state, &config).await;
 

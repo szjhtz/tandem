@@ -557,9 +557,14 @@
   .tcp-panel-card-head {
     margin-bottom: 0.9rem;
     display: flex;
+    flex-wrap: wrap;
     align-items: start;
     justify-content: space-between;
     gap: 0.9rem;
+  }
+
+  .tcp-panel-card-head > .min-w-0 {
+    flex: 1 1 240px;
   }
 
   .tcp-page-header {
@@ -629,6 +634,19 @@
     @apply rounded-2xl p-5 shadow-soft;
     border: 1px solid color-mix(in srgb, var(--color-border-subtle) 92%, transparent);
     background: color-mix(in srgb, var(--color-surface) 96%, #000 4%);
+  }
+
+  .tcp-chat-container {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-height: 0;
+  }
+
+  .tcp-chat-fill {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: hidden;
   }
 
   .tcp-input {
@@ -702,6 +720,10 @@
     @apply tcp-badge;
     border-color: color-mix(in srgb, var(--color-primary) 38%, transparent);
     color: color-mix(in srgb, var(--color-primary) 76%, var(--color-text) 24%);
+  }
+
+  .tcp-badge-blocked {
+    @apply tcp-badge border-indigo-400/60 text-indigo-300;
   }
 
   .tcp-badge-ghost {

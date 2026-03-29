@@ -2243,6 +2243,86 @@ export function AdvancedMissionBuilder({
                   ))}
                 </div>
               </div>
+              <div className="rounded-lg border border-border bg-surface-elevated/40 p-3">
+                <div className="text-sm font-medium text-text">Compiled Mission Spec</div>
+                <div className="mt-3 grid gap-2 text-xs text-text-muted sm:grid-cols-2">
+                  <div>Mission ID: {preview.mission_spec?.mission_id || "—"}</div>
+                  <div>Entrypoint: {preview.mission_spec?.entrypoint || "—"}</div>
+                  <div>Title: {preview.mission_spec?.title || "—"}</div>
+                  <div>Goal: {preview.mission_spec?.goal || "—"}</div>
+                  <div>Phases: {(effectiveBlueprint.phases || []).length}</div>
+                  <div>Milestones: {(effectiveBlueprint.milestones || []).length}</div>
+                </div>
+                {preview.mission_spec?.success_criteria?.length ? (
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {preview.mission_spec.success_criteria.map((item, index) => (
+                      <span
+                        key={`${item}-${index}`}
+                        className="rounded-full border border-border bg-surface px-2 py-1 text-[11px] text-text-muted"
+                      >
+                        {item}
+                      </span>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+              <div className="rounded-lg border border-border bg-surface-elevated/40 p-3">
+                <div className="text-sm font-medium text-text">Compiled Work Items</div>
+                <div className="mt-3 space-y-2">
+                  {preview.work_items.length ? (
+                    preview.work_items.map((item) => {
+                      const metadata =
+                        (item.metadata as Record<string, unknown> | null | undefined) || null;
+                      return (
+                        <div
+                          key={item.work_item_id}
+                          className="rounded-lg border border-border bg-surface px-3 py-2"
+                        >
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="text-sm font-medium text-text">
+                              {item.title || item.work_item_id}
+                            </div>
+                            <span className="text-[10px] uppercase tracking-wide text-text-subtle">
+                              {item.status}
+                            </span>
+                          </div>
+                          <div className="mt-1 text-xs text-text-muted">
+                            Work item: {item.work_item_id}
+                          </div>
+                          {item.detail ? (
+                            <div className="mt-1 text-xs text-text-muted">{item.detail}</div>
+                          ) : null}
+                          <div className="mt-1 text-xs text-text-muted">
+                            Assigned agent: {item.assigned_agent || "—"}
+                          </div>
+                          <div className="mt-1 text-xs text-text-muted">
+                            Depends on:{" "}
+                            {item.depends_on?.length ? item.depends_on.join(", ") : "none"}
+                          </div>
+                          {metadata ? (
+                            <div className="mt-2 flex flex-wrap gap-2 text-[11px] text-text-subtle">
+                              <span className="rounded border border-border px-2 py-1">
+                                phase {String(metadata.phase_id || "—")}
+                              </span>
+                              <span className="rounded border border-border px-2 py-1">
+                                lane {String(metadata.lane || "—")}
+                              </span>
+                              <span className="rounded border border-border px-2 py-1">
+                                milestone {String(metadata.milestone || "—")}
+                              </span>
+                              <span className="rounded border border-border px-2 py-1">
+                                stage {String(metadata.stage_kind || "—")}
+                              </span>
+                            </div>
+                          ) : null}
+                        </div>
+                      );
+                    })
+                  ) : (
+                    <div className="text-sm text-text-muted">No compiled work items returned.</div>
+                  )}
+                </div>
+              </div>
             </div>
             <div className="rounded-lg border border-border bg-surface-elevated/40 p-3">
               <div className="text-sm font-medium text-text">Mission Brief Preview</div>

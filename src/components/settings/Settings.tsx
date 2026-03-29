@@ -1,4 +1,4 @@
-﻿import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useTranslation } from "react-i18next";
 import {
@@ -54,6 +54,8 @@ import {
   patchIdentityConfig,
   setProvidersConfig,
   setSearchSettings,
+  getSchedulerSettings,
+  setSchedulerSettings,
   getUserProjects,
   getActiveProject,
   addProject,
@@ -73,6 +75,7 @@ import {
   type EngineApiTokenInfo,
   type ProvidersConfig,
   type SearchSettings,
+  type SchedulerSettings,
   type CustomBackgroundInfo,
   type IdentityConfigResponse,
   type IdentityPreset,
@@ -168,6 +171,9 @@ export function Settings({
     message: string;
   } | null>(null);
   const [searchSettingsState, setSearchSettingsState] = useState<SearchSettings | null>(null);
+  const [schedulerSettingsState, setSchedulerSettingsState] = useState<SchedulerSettings | null>(
+    null
+  );
   const [searchBraveKeyInput, setSearchBraveKeyInput] = useState("");
   const [searchExaKeyInput, setSearchExaKeyInput] = useState("");
   const [searchHasBraveKey, setSearchHasBraveKey] = useState(false);
@@ -282,6 +288,7 @@ export function Settings({
         searchPayload,
         braveKeyPresent,
         exaKeyPresent,
+        schedulerPayload,
       ] = await Promise.all([
         getProvidersConfig(),
         getUserProjects(),
@@ -291,6 +298,7 @@ export function Settings({
         getSearchSettings().catch(() => null),
         hasApiKey("brave_search").catch(() => false),
         hasApiKey("exa_search").catch(() => false),
+        getSchedulerSettings().catch(() => null),
       ]);
       setProviders(config);
       setProjects(userProjects);
@@ -325,6 +333,11 @@ export function Settings({
       }
       setSearchHasBraveKey(Boolean(braveKeyPresent) || !!searchConfig?.has_brave_key);
       setSearchHasExaKey(Boolean(exaKeyPresent) || !!searchConfig?.has_exa_key);
+      if (schedulerPayload) {
+        setSchedulerSettingsState(schedulerPayload as SchedulerSettings);
+      } else {
+        setSchedulerSettingsState({ mode: "multi" });
+      }
       const storageMigrationStatus = await getStorageMigrationStatus();
       setMigrationStatus(storageMigrationStatus);
     } catch (err) {
@@ -578,10 +591,9 @@ export function Settings({
     }
   };
 
-  const handleProviderChange = async (
-    provider: keyof Omit<ProvidersConfig, "custom">,
-    enabled: boolean
-  ) => {
+  type ProviderSlot = keyof Omit<ProvidersConfig, "custom" | "selected_model">;
+
+  const handleProviderChange = async (provider: ProviderSlot, enabled: boolean) => {
     if (!providers) return;
 
     // When enabling a provider, disable all others
@@ -607,6 +619,11 @@ export function Settings({
             enabled: provider === "openai",
             default: provider === "openai",
           },
+          llama_cpp: {
+            ...providers.llama_cpp,
+            enabled: provider === "llama_cpp",
+            default: provider === "llama_cpp",
+          },
           ollama: {
             ...providers.ollama,
             enabled: provider === "ollama",
@@ -630,7 +647,7 @@ export function Settings({
     onProviderChange?.();
   };
 
-  const handleSetDefault = async (provider: keyof Omit<ProvidersConfig, "custom">) => {
+  const handleSetDefault = async (provider: ProviderSlot) => {
     if (!providers) return;
 
     // Reset all defaults and set the new one
@@ -639,6 +656,7 @@ export function Settings({
       opencode_zen: { ...providers.opencode_zen, default: provider === "opencode_zen" },
       anthropic: { ...providers.anthropic, default: provider === "anthropic" },
       openai: { ...providers.openai, default: provider === "openai" },
+      llama_cpp: { ...providers.llama_cpp, default: provider === "llama_cpp" },
       ollama: { ...providers.ollama, default: provider === "ollama" },
       poe: { ...providers.poe, default: provider === "poe" },
       custom: providers.custom,
@@ -649,10 +667,7 @@ export function Settings({
     onProviderChange?.();
   };
 
-  const handleModelChange = async (
-    provider: keyof Omit<ProvidersConfig, "custom">,
-    model: string
-  ) => {
+  const handleModelChange = async (provider: ProviderSlot, model: string) => {
     if (!providers) return;
 
     const updated = {
@@ -664,10 +679,7 @@ export function Settings({
     onProviderChange?.();
   };
 
-  const handleEndpointChange = async (
-    provider: keyof Omit<ProvidersConfig, "custom">,
-    endpoint: string
-  ) => {
+  const handleEndpointChange = async (provider: ProviderSlot, endpoint: string) => {
     if (!providers) return;
 
     const updated = {
@@ -809,6 +821,7 @@ export function Settings({
       opencode_zen: { ...providers.opencode_zen, enabled: false, default: false },
       anthropic: { ...providers.anthropic, enabled: false, default: false },
       openai: { ...providers.openai, enabled: false, default: false },
+      llama_cpp: { ...providers.llama_cpp, enabled: false, default: false },
       ollama: { ...providers.ollama, enabled: false, default: false },
       poe: { ...providers.poe, enabled: false, default: false },
       custom: [
@@ -857,6 +870,7 @@ export function Settings({
         opencode_zen: { ...providers.opencode_zen, enabled: false, default: false },
         anthropic: { ...providers.anthropic, enabled: false, default: false },
         openai: { ...providers.openai, enabled: false, default: false },
+        llama_cpp: { ...providers.llama_cpp, enabled: false, default: false },
         ollama: { ...providers.ollama, enabled: false, default: false },
         poe: { ...providers.poe, enabled: false, default: false },
         custom: [
@@ -918,6 +932,19 @@ export function Settings({
       });
     } finally {
       setSearchSaving(false);
+    }
+  };
+
+  const handleSchedulerSettingsSave = async () => {
+    if (!schedulerSettingsState) return;
+    try {
+      const payload = await setSchedulerSettings({
+        mode: schedulerSettingsState.mode || "multi",
+        max_concurrent_runs: schedulerSettingsState.max_concurrent_runs,
+      });
+      setSchedulerSettingsState(payload);
+    } catch (err) {
+      console.error("Failed to save scheduler settings:", err);
     }
   };
 
@@ -1868,6 +1895,24 @@ export function Settings({
               />
 
               <ProviderCard
+                id="llama_cpp"
+                name="llama.cpp"
+                description={t("providersCatalog.llama_cpp.description", { ns: "settings" })}
+                endpoint={providers.llama_cpp.endpoint}
+                defaultEndpoint="http://127.0.0.1:8080/v1"
+                model={providers.llama_cpp.model}
+                catalogModelIds={providerCatalogModels.llama_cpp ?? []}
+                isDefault={providers.llama_cpp.default}
+                enabled={providers.llama_cpp.enabled}
+                onEnabledChange={(enabled) => handleProviderChange("llama_cpp", enabled)}
+                onModelChange={(model) => handleModelChange("llama_cpp", model)}
+                onEndpointChange={(endpoint) => handleEndpointChange("llama_cpp", endpoint)}
+                onSetDefault={() => handleSetDefault("llama_cpp")}
+                onKeyChange={onProviderChange}
+                docsUrl="https://github.com/ggml-org/llama.cpp"
+              />
+
+              <ProviderCard
                 id="ollama"
                 name="Ollama"
                 description={t("providersCatalog.ollama.description", { ns: "settings" })}
@@ -2074,6 +2119,68 @@ export function Settings({
                     <p className="text-xs text-text-muted">
                       `auto` will try the configured backends with failover. If Brave is
                       rate-limited, Tandem can continue with Exa when both keys are present.
+                    </p>
+                  </CardContent>
+                </Card>
+              )}
+
+              {schedulerSettingsState && (
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Automation Scheduler</CardTitle>
+                    <CardDescription>
+                      Controls whether automation runs are executed one at a time or in parallel.
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div className="grid gap-4 md:grid-cols-2">
+                      <div className="space-y-2">
+                        <label className="text-xs font-medium text-text-subtle">Mode</label>
+                        <select
+                          className="w-full rounded-xl border border-border bg-surface px-3 py-2 text-sm text-text focus:outline-none focus:ring-2 focus:ring-primary/40"
+                          value={schedulerSettingsState.mode}
+                          onChange={(e) =>
+                            setSchedulerSettingsState((prev) =>
+                              prev ? { ...prev, mode: e.target.value } : prev
+                            )
+                          }
+                        >
+                          <option value="multi">Multi — parallel runs (recommended)</option>
+                          <option value="single">Single — one run at a time</option>
+                        </select>
+                      </div>
+                      <Input
+                        label="Max concurrent runs"
+                        type="number"
+                        min={1}
+                        max={32}
+                        value={
+                          schedulerSettingsState.max_concurrent_runs != null
+                            ? String(schedulerSettingsState.max_concurrent_runs)
+                            : ""
+                        }
+                        placeholder="8 (default)"
+                        onChange={(e) =>
+                          setSchedulerSettingsState((prev) =>
+                            prev
+                              ? {
+                                  ...prev,
+                                  max_concurrent_runs: e.target.value
+                                    ? Number.parseInt(e.target.value, 10)
+                                    : null,
+                                }
+                              : prev
+                          )
+                        }
+                      />
+                    </div>
+                    <div className="flex flex-wrap items-center gap-3">
+                      <Button onClick={handleSchedulerSettingsSave}>Save Scheduler Settings</Button>
+                    </div>
+                    <p className="text-xs text-text-muted">
+                      Multi mode allows several automation runs to execute concurrently. Max
+                      concurrent runs caps parallelism. Changes take effect on the next engine
+                      start.
                     </p>
                   </CardContent>
                 </Card>

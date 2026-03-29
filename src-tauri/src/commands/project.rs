@@ -405,7 +405,7 @@ pub async fn set_active_project(
                 let config = state.providers_config.read().unwrap();
                 config.clone()
             };
-            let _ = sync_custom_provider_config_file(&providers);
+            let _ = sync_provider_config_file(&providers);
             sync_ollama_env(&state, &providers).await;
             sync_provider_keys_env(&app, &state, &providers).await;
             sync_channel_tokens_env(&app, &state).await;

@@ -55,6 +55,7 @@ const SUGGESTED_MODELS: Record<string, string[]> = {
     "claude-haiku-4-5-20251001",
   ],
   openai: ["gpt-5.2", "gpt-5.1", "gpt-5", "gpt-5-mini", "gpt-5-nano", "gpt-4.1"],
+  llama_cpp: ["llm", "qwen2.5-coder", "llama-3.2-3b-instruct", "mistral-7b-instruct"],
   openrouter: [
     "anthropic/claude-sonnet-4",
     "anthropic/claude-3.5-sonnet",
@@ -78,7 +79,14 @@ const SUGGESTED_MODELS: Record<string, string[]> = {
 
 // Providers that use free-form text input.
 // This avoids stale static dropdowns when live catalogs are unavailable.
-const TEXT_INPUT_PROVIDERS = ["anthropic", "openai", "openrouter", "ollama", "opencode_zen"];
+const TEXT_INPUT_PROVIDERS = [
+  "anthropic",
+  "openai",
+  "openrouter",
+  "llama_cpp",
+  "ollama",
+  "opencode_zen",
+];
 
 interface ProviderCardProps {
   id: ApiKeyType;
@@ -162,11 +170,13 @@ export function ProviderCard({
         ? "claude-sonnet-4-6"
         : id === "openai"
           ? "gpt-5.2"
-          : t("providerCard.placeholders.modelGeneric", { ns: "settings" });
+          : id === "llama_cpp"
+            ? "llm"
+            : t("providerCard.placeholders.modelGeneric", { ns: "settings" });
 
   const selectedModel = model || availableModels[0]?.id || "";
   const selectedModelInfo = availableModels.find((m) => m.id === selectedModel);
-  const requiresApiKey = id !== "ollama";
+  const requiresApiKey = id !== "ollama" && id !== "llama_cpp";
 
   // Filter suggestions based on input
   const filteredSuggestions = suggestions.filter((s) =>

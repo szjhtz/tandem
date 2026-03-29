@@ -53,7 +53,7 @@ async fn start_sidecar_inner(app: &AppHandle, state: &AppState) -> Result<u16> {
         config.clone()
     };
 
-    sync_custom_provider_config_file(&providers)?;
+    sync_provider_config_file(&providers)?;
 
     // Configure Ollama endpoint env (local models)
     sync_ollama_env(&state, &providers).await;

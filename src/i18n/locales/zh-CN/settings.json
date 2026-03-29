@@ -216,6 +216,9 @@
     "openai": {
       "description": "GPT-4 及其他 OpenAI 模型"
     },
+    "llama_cpp": {
+      "description": "连接本地或远程的 llama.cpp OpenAI 兼容服务"
+    },
     "ollama": {
       "description": "本地运行模型，无需 API 密钥"
     },

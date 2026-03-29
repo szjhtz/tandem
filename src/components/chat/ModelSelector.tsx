@@ -86,6 +86,9 @@ export function ModelSelector({
             return "OpenRouter";
           case "opencode_zen":
             return "Opencode Zen";
+          case "llama_cpp":
+          case "llama.cpp":
+            return "llama.cpp";
           case "ollama":
             return "Ollama";
           case "poe":
@@ -140,6 +143,7 @@ export function ModelSelector({
               if (pid === "anthropic") return config.anthropic;
               if (pid === "openrouter") return config.openrouter;
               if (pid === "opencode_zen") return config.opencode_zen;
+              if (pid === "llama_cpp" || pid === "llama.cpp") return config.llama_cpp;
               if (pid === "ollama") return config.ollama;
               if (pid === "poe") return config.poe;
               return undefined;
@@ -151,8 +155,16 @@ export function ModelSelector({
             const hasKeyA = confA?.has_key || confA?.enabled;
             const hasKeyB = confB?.has_key || confB?.enabled;
 
-            const isPriorityA = hasKeyA || a.providerId === "ollama";
-            const isPriorityB = hasKeyB || b.providerId === "ollama";
+            const isPriorityA =
+              hasKeyA ||
+              a.providerId === "ollama" ||
+              a.providerId === "llama_cpp" ||
+              a.providerId === "llama.cpp";
+            const isPriorityB =
+              hasKeyB ||
+              b.providerId === "ollama" ||
+              b.providerId === "llama_cpp" ||
+              b.providerId === "llama.cpp";
 
             if (isPriorityA && !isPriorityB) return -1;
             if (!isPriorityA && isPriorityB) return 1;

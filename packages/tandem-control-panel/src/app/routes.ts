@@ -6,6 +6,7 @@ export const APP_NAV_ROUTES = NAV_ROUTES;
 export type RouteId =
   | "dashboard"
   | "chat"
+  | "planner"
   | "studio"
   | "automations"
   | "coding"

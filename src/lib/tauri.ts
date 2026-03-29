@@ -32,6 +32,7 @@ export interface ProvidersConfig {
   opencode_zen: ProviderConfig;
   anthropic: ProviderConfig;
   openai: ProviderConfig;
+  llama_cpp: ProviderConfig;
   ollama: ProviderConfig;
   poe: ProviderConfig;
   custom: ProviderConfig[];
@@ -45,6 +46,11 @@ export interface SearchSettings {
   timeout_ms: number;
   has_brave_key?: boolean;
   has_exa_key?: boolean;
+}
+
+export interface SchedulerSettings {
+  mode: string;
+  max_concurrent_runs?: number | null;
 }
 
 export interface AppStateInfo {
@@ -71,6 +77,7 @@ export type ApiKeyType =
   | "opencode_zen"
   | "anthropic"
   | "openai"
+  | "llama_cpp"
   | "ollama"
   | "poe"
   | string;
@@ -703,6 +710,16 @@ export async function getSearchSettings(): Promise<SearchSettings> {
 
 export async function setSearchSettings(settings: SearchSettings): Promise<SearchSettings> {
   return invoke("set_search_settings", { settings });
+}
+
+export async function getSchedulerSettings(): Promise<SchedulerSettings> {
+  return invoke("get_scheduler_settings");
+}
+
+export async function setSchedulerSettings(
+  settings: SchedulerSettings
+): Promise<SchedulerSettings> {
+  return invoke("set_scheduler_settings", { settings });
 }
 
 // ============================================================================

@@ -1847,7 +1847,7 @@ export function WorkflowStudioPage({ client, api, toast, navigate }: AppPageProp
         },
       };
       const response = draft.automationId
-        ? await client.automationsV2.update(draft.automationId, automationPayload)
+        ? await client.automationsV2.update(draft.automationId, automationPayload as any)
         : await client.automationsV2.create(automationPayload as any);
       const automationId = safeString(
         (response as any)?.automation?.automation_id || (response as any)?.automation?.automationId

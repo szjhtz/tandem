@@ -158,7 +158,7 @@ function parseAutomationWizardConfig(source: string): AutomationWizardConfig {
   }
 
   const config = parsed as Partial<AutomationWizardConfig>;
-  const defaults = config.defaults || {};
+  const defaults = (config.defaults || {}) as Partial<AutomationWizardConfig["defaults"]>;
   const steps = config.steps;
   const schedulePresets = config.schedulePresets;
   const executionModes = config.executionModes;
@@ -4170,9 +4170,6 @@ function MyAutomations({
         if (contextHistory.length) return contextHistory;
         return workflowPersistedHistoryEntries(
           Array.isArray(persistedRunEventsQuery.data) ? persistedRunEventsQuery.data : [],
-          workflowEventType,
-          workflowEventReason,
-          workflowEventAt,
           selectedRunId
         );
       })()
@@ -4186,8 +4183,6 @@ function MyAutomations({
       Array.isArray(persistedRunEventsQuery.data) ? persistedRunEventsQuery.data : [],
       workflowContextEvents,
       isWorkflowRun,
-      workflowEventType,
-      workflowEventAt,
       selectedRunId
     );
   }, [isWorkflowRun, persistedRunEventsQuery.data, selectedRunId, workflowContextEvents]);

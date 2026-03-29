@@ -956,7 +956,7 @@ export function AdvancedMissionBuilderPanel({
     }
   }
 
-  async function saveMission() {
+  async function saveMission(dryRunAfterCreate = false) {
     if (uiValidationMessages.length) {
       const message = uiValidationMessages.join(" ");
       setError(message);
@@ -1005,7 +1005,13 @@ export function AdvancedMissionBuilderPanel({
         queryClient.invalidateQueries({ queryKey: ["automations", "v2", "list"] }),
       ]);
       const automationId = String(response?.automation?.automation_id || "").trim();
-      if (runAfterCreate && automationId) {
+      if (automationId && dryRunAfterCreate) {
+        await client.automationsV2.runNow(automationId, {
+          dryRun: true,
+        });
+        toast("ok", "Advanced mission created and dry-run recorded.");
+        onShowRuns();
+      } else if (runAfterCreate && automationId) {
         await client.automationsV2.runNow(automationId);
         toast("ok", "Advanced mission created and started.");
         onShowRuns();
@@ -2043,16 +2049,26 @@ export function AdvancedMissionBuilderPanel({
                     : "Create draft"}
             </button>
             {!editingAutomation ? (
-              <label className="ml-2 inline-flex items-center gap-2 text-xs text-slate-300">
-                <input
-                  type="checkbox"
-                  checked={runAfterCreate}
-                  onChange={(event) =>
-                    setRunAfterCreate((event.target as HTMLInputElement).checked)
-                  }
-                />
-                Run immediately after create
-              </label>
+              <>
+                <button
+                  className="tcp-btn h-8 px-3 text-xs"
+                  disabled={busy === "apply"}
+                  onClick={() => void saveMission(true)}
+                >
+                  <i data-lucide="flask-conical"></i>
+                  Create and dry run
+                </button>
+                <label className="ml-2 inline-flex items-center gap-2 text-xs text-slate-300">
+                  <input
+                    type="checkbox"
+                    checked={runAfterCreate}
+                    onChange={(event) =>
+                      setRunAfterCreate((event.target as HTMLInputElement).checked)
+                    }
+                  />
+                  Run immediately after create
+                </label>
+              </>
             ) : null}
             {editingAutomation && onClearEditing ? (
               <button className="tcp-btn h-8 px-3 text-xs" onClick={() => onClearEditing()}>
@@ -2156,10 +2172,95 @@ export function AdvancedMissionBuilderPanel({
                   )}
                 </div>
               </div>
+              <div className="grid gap-3 lg:grid-cols-2">
+                <div className="rounded-lg border border-slate-800 bg-slate-900/70 p-3">
+                  <div className="mb-2 text-sm font-semibold text-slate-100">
+                    Compiled mission spec
+                  </div>
+                  <div className="grid gap-1 text-xs text-slate-300">
+                    <div>mission id: {String(preview?.mission_spec?.mission_id || "—")}</div>
+                    <div>title: {String(preview?.mission_spec?.title || "—")}</div>
+                    <div>goal: {String(preview?.mission_spec?.goal || "—")}</div>
+                    <div>entrypoint: {String(preview?.mission_spec?.entrypoint || "—")}</div>
+                    <div>
+                      phases: {Array.isArray(blueprint?.phases) ? blueprint.phases.length : 0}
+                    </div>
+                    <div>
+                      milestones:{" "}
+                      {Array.isArray(blueprint?.milestones) ? blueprint.milestones.length : 0}
+                    </div>
+                    <div>
+                      success criteria:{" "}
+                      {Array.isArray(preview?.mission_spec?.success_criteria)
+                        ? preview.mission_spec.success_criteria.length
+                        : 0}
+                    </div>
+                  </div>
+                  {Array.isArray(preview?.mission_spec?.success_criteria) &&
+                  preview.mission_spec.success_criteria.length ? (
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {preview.mission_spec.success_criteria.map((item: any, index: number) => (
+                        <span
+                          key={`${String(item || "criterion")}-${index}`}
+                          className="rounded-full border border-slate-700 bg-slate-950/70 px-2 py-1 text-[11px] text-slate-300"
+                        >
+                          {String(item || "")}
+                        </span>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+                <div className="rounded-lg border border-slate-800 bg-slate-900/70 p-3">
+                  <div className="mb-2 text-sm font-semibold text-slate-100">
+                    Compiled work items
+                  </div>
+                  {Array.isArray(preview?.work_items) && preview.work_items.length ? (
+                    <div className="grid gap-2">
+                      {preview.work_items.map((item: any, index: number) => (
+                        <div
+                          key={String(item?.work_item_id || `work-item-${index + 1}`)}
+                          className="rounded-lg border border-slate-800 bg-slate-950/70 p-3 text-xs text-slate-300"
+                        >
+                          <div className="flex flex-wrap items-center gap-2">
+                            <strong className="text-slate-100">
+                              {String(item?.title || item?.work_item_id || "work item")}
+                            </strong>
+                            <span className="tcp-subtle">{String(item?.work_item_id || "")}</span>
+                            <span className="tcp-subtle">
+                              status: {String(item?.status || "—")}
+                            </span>
+                          </div>
+                          {item?.detail ? <div className="mt-1">{String(item.detail)}</div> : null}
+                          <div className="mt-1">
+                            assigned agent: {String(item?.assigned_agent || "—")}
+                          </div>
+                          <div className="mt-1">
+                            depends on:{" "}
+                            {Array.isArray(item?.depends_on) && item.depends_on.length
+                              ? item.depends_on.join(", ")
+                              : "none"}
+                          </div>
+                          {item?.metadata && typeof item.metadata === "object" ? (
+                            <div className="mt-2 grid gap-1 sm:grid-cols-2">
+                              <div>phase: {String(item.metadata.phase_id || "—")}</div>
+                              <div>lane: {String(item.metadata.lane || "—")}</div>
+                              <div>milestone: {String(item.metadata.milestone || "—")}</div>
+                              <div>stage: {String(item.metadata.stage_kind || "—")}</div>
+                            </div>
+                          ) : null}
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="tcp-subtle text-xs">No compiled work items returned.</div>
+                  )}
+                </div>
+              </div>
             </>
           ) : (
             <div className="tcp-subtle text-xs">
-              Compile the mission to inspect validation, compiled nodes, and execution shape.
+              Compile the mission to inspect validation, compiled mission spec, work items, and
+              execution shape.
             </div>
           )}
         </Section>

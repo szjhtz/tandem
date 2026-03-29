@@ -4,6 +4,10 @@
     "module": "ESNext",
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "moduleResolution": "Bundler",
+    "baseUrl": ".",
+    "paths": {
+      "@frumu/tandem-client": ["../tandem-client-ts/src/index.ts"]
+    },
     "jsx": "react-jsx",
     "jsxImportSource": "react",
     "strict": false,

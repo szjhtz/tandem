@@ -49,6 +49,7 @@ import { ProviderModelSelector } from "../components/ProviderModelSelector";
 import { describeScheduleValue } from "../features/automations/scheduleBuilder";
 import { AdvancedMissionBuilderPanel } from "./AdvancedMissionBuilderPanel";
 import { OptimizationCampaignsPanel } from "./OptimizationCampaignsPanel";
+import { ScopeInspector } from "../features/automations/ScopeInspector";
 import { PageCard, EmptyState, formatJson } from "./ui";
 import type { AppPageProps } from "./pageTypes";
 import agentCatalog from "../generated/agent-catalog.json";
@@ -159,6 +160,13 @@ interface WorkflowEditDraft {
   customToolsText: string;
   selectedMcpServers: string[];
   nodes: WorkflowNodeEditDraft[];
+  scopeSnapshot: any | null;
+  planPackageBundle: any | null;
+  planPackageReplay: any | null;
+  scopeValidation: any | null;
+  runtimeContext: any | null;
+  approvedPlanMaterialization: any | null;
+  connectorBindingsJson: string;
 }
 
 interface WorkflowNodeEditDraft {
@@ -166,6 +174,8 @@ interface WorkflowNodeEditDraft {
   title: string;
   objective: string;
   agentId: string;
+  modelProvider: string;
+  modelId: string;
 }
 
 interface AutomationWizardConfig {
@@ -201,7 +211,7 @@ function parseAutomationWizardConfig(source: string): AutomationWizardConfig {
   }
 
   const config = parsed as Partial<AutomationWizardConfig>;
-  const defaults = config.defaults || {};
+  const defaults = (config.defaults || {}) as Partial<AutomationWizardConfig["defaults"]>;
   const steps = config.steps;
   const schedulePresets = config.schedulePresets;
   const executionModes = config.executionModes;
@@ -670,6 +680,151 @@ function workflowToolAccessFromAutomation(automation: any) {
   };
 }
 
+function connectorBindingsJsonFromPlanPackage(planPackage: any | null) {
+  return formatJson(
+    Array.isArray(planPackage?.connector_bindings) ? planPackage.connector_bindings : []
+  );
+}
+
+function cloneJsonValue<T>(value: T): T {
+  if (value === undefined) return value;
+  return JSON.parse(JSON.stringify(value));
+}
+
+function deriveConnectorBindingResolutionFromPlanPackage(
+  planPackage: any | null,
+  connectorBindings: Array<Record<string, any>>
+) {
+  const intents = Array.isArray(planPackage?.connector_intents)
+    ? planPackage.connector_intents
+    : [];
+  const entriesByCapability = new Map<string, Record<string, any>>();
+
+  for (const intent of intents) {
+    const capability = String(intent?.capability || "").trim();
+    if (!capability) continue;
+    entriesByCapability.set(capability, {
+      capability,
+      why: String(intent?.why || "").trim() || null,
+      required: intent?.required === true,
+      degraded_mode_allowed: intent?.degraded_mode_allowed === true,
+      resolved: false,
+      status: intent?.required === true ? "unresolved_required" : "unresolved_optional",
+      binding_type: null,
+      binding_id: null,
+      allowlist_pattern: null,
+    });
+  }
+
+  for (const binding of connectorBindings) {
+    const capability = String(binding?.capability || "").trim();
+    if (!capability) continue;
+    const resolved =
+      String(binding?.status || "")
+        .trim()
+        .toLowerCase() === "mapped";
+    const entry = entriesByCapability.get(capability) || {
+      capability,
+      why: null,
+      required: false,
+      degraded_mode_allowed: false,
+      resolved: false,
+      status: "unresolved_optional",
+      binding_type: null,
+      binding_id: null,
+      allowlist_pattern: null,
+    };
+    entry.binding_type = String(binding?.binding_type || "").trim() || null;
+    entry.binding_id = String(binding?.binding_id || "").trim() || null;
+    entry.allowlist_pattern = String(binding?.allowlist_pattern || "").trim() || null;
+    entry.resolved = resolved;
+    entry.status = resolved
+      ? "mapped"
+      : entry.required
+        ? "unresolved_required"
+        : "unresolved_optional";
+    entriesByCapability.set(capability, entry);
+  }
+
+  const entries = Array.from(entriesByCapability.values()).sort((left, right) =>
+    left.capability.localeCompare(right.capability)
+  );
+  const mappedCount = entries.filter((entry) => entry.resolved).length;
+  const unresolvedRequiredCount = entries.filter(
+    (entry) => !entry.resolved && entry.required
+  ).length;
+  const unresolvedOptionalCount = entries.filter(
+    (entry) => !entry.resolved && !entry.required
+  ).length;
+
+  return {
+    mapped_count: mappedCount,
+    unresolved_required_count: unresolvedRequiredCount,
+    unresolved_optional_count: unresolvedOptionalCount,
+    entries,
+  };
+}
+
+function parseConnectorBindingsJson(text: string) {
+  const raw = String(text || "").trim();
+  if (!raw) return [];
+  const parsed = JSON.parse(raw);
+  if (!Array.isArray(parsed)) {
+    throw new Error("Connector bindings must be a JSON array.");
+  }
+  const seen = new Set<string>();
+  return parsed.map((binding: any, index: number) => {
+    if (!binding || typeof binding !== "object") {
+      throw new Error(`Connector binding ${index + 1} must be an object.`);
+    }
+    const capability = String(binding.capability || "").trim();
+    if (!capability) {
+      throw new Error(`Connector binding ${index + 1} is missing a capability.`);
+    }
+    if (seen.has(capability)) {
+      throw new Error(`Connector binding capability \`${capability}\` is declared more than once.`);
+    }
+    seen.add(capability);
+    const bindingType = String(binding.binding_type || binding.bindingType || "").trim();
+    const bindingId = String(binding.binding_id || binding.bindingId || "").trim();
+    const allowlistPattern = String(
+      binding.allowlist_pattern || binding.allowlistPattern || ""
+    ).trim();
+    const status = String(binding.status || "")
+      .trim()
+      .toLowerCase();
+    if (!status) {
+      throw new Error(
+        `Connector binding \`${capability}\` must include an explicit status of mapped, unresolved_required, or unresolved_optional.`
+      );
+    }
+    const normalizedStatus =
+      status === "mapped" || status === "unresolved_required" || status === "unresolved_optional"
+        ? status
+        : null;
+
+    if (!normalizedStatus) {
+      throw new Error(
+        `Connector binding \`${capability}\` has unsupported status \`${status}\`. Use mapped, unresolved_required, or unresolved_optional.`
+      );
+    }
+
+    if (normalizedStatus === "mapped" && (!bindingType || !bindingId)) {
+      throw new Error(
+        `Connector binding \`${capability}\` must include binding_type and binding_id when status is mapped.`
+      );
+    }
+
+    return {
+      capability,
+      binding_type: bindingType,
+      binding_id: bindingId,
+      allowlist_pattern: allowlistPattern || null,
+      status: normalizedStatus,
+    };
+  });
+}
+
 function workflowAutomationToEditDraft(automation: any): WorkflowEditDraft | null {
   const automationId = String(
     automation?.automation_id || automation?.automationId || automation?.id || ""
@@ -692,6 +847,16 @@ function workflowAutomationToEditDraft(automation: any): WorkflowEditDraft | nul
       ? automation.agents[0].mcp_policy.allowed_servers
       : [];
   const toolAccess = workflowToolAccessFromAutomation(automation);
+  const workflowModelProvider = String(prefs?.model_provider || prefs?.modelProvider || "").trim();
+  const workflowModelId = String(prefs?.model_id || prefs?.modelId || "").trim();
+  const agentsById = new Map<string, any>(
+    Array.isArray(automation?.agents)
+      ? automation.agents.map((agent: any) => [
+          String(agent?.agent_id || agent?.agentId || "").trim(),
+          agent,
+        ])
+      : []
+  );
   const nodes = Array.isArray(automation?.flow?.nodes)
     ? automation.flow.nodes.map((node: any, index: number) => ({
         nodeId: String(node?.node_id || node?.nodeId || node?.id || `node-${index}`).trim(),
@@ -705,8 +870,35 @@ function workflowAutomationToEditDraft(automation: any): WorkflowEditDraft | nul
         ).trim(),
         objective: String(node?.objective || "").trim(),
         agentId: String(node?.agent_id || node?.agentId || "").trim(),
+        ...(() => {
+          const agent = agentsById.get(String(node?.agent_id || node?.agentId || "").trim()) as
+            | any
+            | undefined;
+          return workflowNodeModelPolicyDraft(
+            agent?.model_policy || agent?.modelPolicy || null,
+            workflowModelProvider,
+            workflowModelId
+          );
+        })(),
       }))
     : [];
+  const scopeSnapshot =
+    automation?.metadata?.plan_package || automation?.metadata?.planPackage || null;
+  const planPackageBundle =
+    automation?.metadata?.plan_package_bundle || automation?.metadata?.planPackageBundle || null;
+  const planPackageReplay =
+    automation?.metadata?.plan_package_replay || automation?.metadata?.planPackageReplay || null;
+  const scopeValidation =
+    automation?.metadata?.plan_package_validation ||
+    automation?.metadata?.planPackageValidation ||
+    null;
+  const runtimeContext =
+    automation?.metadata?.context_materialization || automation?.runtime_context || null;
+  const approvedPlanMaterialization =
+    automation?.metadata?.approved_plan_materialization ||
+    automation?.metadata?.approvedPlanMaterialization ||
+    null;
+  const connectorBindingsJson = connectorBindingsJsonFromPlanPackage(scopeSnapshot);
   return {
     automationId,
     name: String(automation?.name || automationId).trim(),
@@ -729,8 +921,8 @@ function workflowAutomationToEditDraft(automation: any): WorkflowEditDraft | nul
     maxParallelAgents: String(
       Number.isFinite(maxParallelRaw) && maxParallelRaw > 0 ? Math.round(maxParallelRaw) : 1
     ),
-    modelProvider: String(prefs?.model_provider || prefs?.modelProvider || "").trim(),
-    modelId: String(prefs?.model_id || prefs?.modelId || "").trim(),
+    modelProvider: workflowModelProvider,
+    modelId: workflowModelId,
     plannerModelProvider: String(
       plannerRoleModel?.provider_id || plannerRoleModel?.providerId || ""
     ).trim(),
@@ -741,6 +933,13 @@ function workflowAutomationToEditDraft(automation: any): WorkflowEditDraft | nul
       .map((row: any) => String(row || "").trim())
       .filter(Boolean),
     nodes,
+    scopeSnapshot,
+    planPackageBundle,
+    planPackageReplay,
+    scopeValidation,
+    runtimeContext,
+    approvedPlanMaterialization,
+    connectorBindingsJson,
   };
 }
 
@@ -970,6 +1169,21 @@ function buildCalendarOccurrences({
     family === "legacy" ? formatScheduleLabel(schedule) : formatAutomationV2ScheduleLabel(schedule);
   const status = getAutomationCalendarScheduleStatus(automation);
   const timezone = getAutomationScheduleTimezone(automation);
+  const lifecycleState = String(
+    automation?.metadata?.approved_plan_materialization?.lifecycle_state ||
+      automation?.metadata?.approvedPlanMaterialization?.lifecycleState ||
+      automation?.metadata?.plan_package?.lifecycle_state ||
+      automation?.metadata?.planPackage?.lifecycleState ||
+      automation?.lifecycle_state ||
+      automation?.lifecycleState ||
+      ""
+  )
+    .trim()
+    .toLowerCase();
+  const approvalRequired =
+    automation?.requires_approval === true ||
+    automation?.policy?.approval?.requires_approval === true;
+  const activationReady = automation?.metadata?.plan_package_validation?.ready_for_activation;
   const editable = isCalendarEditableCron(cronExpression);
   const starts = expandCronOccurrences(cronExpression, rangeStartMs, rangeEndMs);
   return starts.map((startMs) => ({
@@ -990,6 +1204,10 @@ function buildCalendarOccurrences({
       cronExpression,
       status,
       timezone,
+      lifecycleState,
+      approvalRequired,
+      approvalState: approvalRequired ? "approval required" : "approval optional",
+      activationReady,
     },
   }));
 }
@@ -1062,6 +1280,51 @@ function compileWorkflowModelPolicy(operatorPreferences: Record<string, any>) {
   return Object.keys(payload).length ? payload : null;
 }
 
+function workflowNodeModelPolicyDraft(
+  agentModelPolicy: any | null,
+  workflowModelProvider: string,
+  workflowModelId: string
+) {
+  const defaultModel = agentModelPolicy?.default_model || agentModelPolicy?.defaultModel || null;
+  const provider = String(defaultModel?.provider_id || defaultModel?.providerId || "").trim();
+  const model = String(defaultModel?.model_id || defaultModel?.modelId || "").trim();
+  if (
+    provider &&
+    model &&
+    provider === String(workflowModelProvider || "").trim() &&
+    model === String(workflowModelId || "").trim()
+  ) {
+    return {
+      modelProvider: "",
+      modelId: "",
+    };
+  }
+  return {
+    modelProvider: provider,
+    modelId: model,
+  };
+}
+
+function workflowNodeModelPolicyWithOverride(
+  baseModelPolicy: Record<string, any> | null,
+  provider: string,
+  model: string
+) {
+  const providerValue = String(provider || "").trim();
+  const modelValue = String(model || "").trim();
+  if (!providerValue && !modelValue) {
+    return baseModelPolicy ? cloneJsonValue(baseModelPolicy) : null;
+  }
+  const nextPolicy = baseModelPolicy
+    ? (cloneJsonValue(baseModelPolicy) as Record<string, any>)
+    : {};
+  nextPolicy.default_model = {
+    provider_id: providerValue,
+    model_id: modelValue,
+  };
+  return nextPolicy;
+}
+
 function isActiveRunStatus(status: string) {
   const normalized = String(status || "")
     .trim()
@@ -1074,6 +1337,54 @@ function isActiveRunStatus(status: string) {
     "pending_approval",
     "awaiting_approval",
   ].includes(normalized);
+}
+
+function workflowQueueReason(run: any) {
+  return String(
+    run?.scheduler?.queue_reason || run?.scheduler?.queueReason || run?.scheduler?.reason || ""
+  )
+    .trim()
+    .toLowerCase();
+}
+
+function workflowQueueResourceKey(run: any) {
+  return String(run?.scheduler?.resource_key || run?.scheduler?.resourceKey || "").trim();
+}
+
+function workflowStatusDisplay(run: any) {
+  const status = workflowDerivedRunStatus(run);
+  if (status !== "queued") return status || "unknown";
+  const reason = workflowQueueReason(run);
+  if (reason === "workspace_lock") return "queued (workspace lock)";
+  if (reason === "capacity") return "queued (capacity)";
+  if (reason === "rate_limit") {
+    const provider = String(
+      run?.scheduler?.rate_limited_provider || run?.scheduler?.rateLimitedProvider || ""
+    ).trim();
+    return provider ? `queued (rate limit: ${provider})` : "queued (rate limit)";
+  }
+  return "queued";
+}
+
+function workflowStatusSubtleDetail(run: any) {
+  const reason = workflowQueueReason(run);
+  if (!reason) return "";
+  if (reason === "workspace_lock") {
+    const resourceKey = workflowQueueResourceKey(run);
+    return resourceKey
+      ? `Waiting for workspace lock: ${resourceKey}`
+      : "Waiting for workspace lock";
+  }
+  if (reason === "capacity") return "Waiting for scheduler capacity";
+  if (reason === "rate_limit") {
+    const provider = String(
+      run?.scheduler?.rate_limited_provider || run?.scheduler?.rateLimitedProvider || ""
+    ).trim();
+    return provider
+      ? `Waiting for provider rate limit: ${provider}`
+      : "Waiting for provider rate limit";
+  }
+  return "";
 }
 
 function runTimeLabel(run: any) {
@@ -2148,82 +2459,35 @@ function Step3Mode({
       </AnimatePresence>
       <div className="grid gap-2 rounded-xl border border-slate-700/50 bg-slate-900/30 p-3">
         <div className="text-xs uppercase tracking-wide text-slate-500">Model Selection</div>
-        <div className="grid gap-2 sm:grid-cols-2">
-          <div className="grid gap-1">
-            <label className="text-xs text-slate-400">Provider</label>
-            <select
-              className="tcp-input text-sm"
-              value={providerId}
-              onInput={(e) => onProviderChange((e.target as HTMLSelectElement).value)}
-            >
-              <option value="">Use workspace default</option>
-              {providerOptions.map((provider) => (
-                <option key={provider.id} value={provider.id}>
-                  {provider.id}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="grid gap-1">
-            <label className="text-xs text-slate-400">Model</label>
-            <input
-              className="tcp-input text-sm"
-              value={modelId}
-              list={providerId ? `models-${providerId}` : undefined}
-              onInput={(e) => onModelChange((e.target as HTMLInputElement).value)}
-              placeholder="Use workspace default model"
-            />
-            {providerId ? (
-              <datalist id={`models-${providerId}`}>
-                {modelOptions.map((model) => (
-                  <option key={model} value={model} />
-                ))}
-              </datalist>
-            ) : null}
-          </div>
-        </div>
+        <ProviderModelSelector
+          providerLabel="Provider"
+          modelLabel="Model"
+          draft={{ provider: providerId, model: modelId }}
+          providers={providerOptions}
+          onChange={(draft) => {
+            onProviderChange(draft.provider);
+            onModelChange(draft.model);
+          }}
+          inheritLabel="Use workspace default"
+        />
         <div className="grid gap-2 rounded-lg border border-slate-800/70 bg-slate-950/30 p-3">
           <div className="text-xs uppercase tracking-wide text-slate-500">
             Planner fallback model
           </div>
           <div className="text-xs text-slate-400">
-            Optional. Use this only if you want planning chat to try broader engine-side revisions
-            beyond the built-in deterministic edits.
+            Optional. Leave blank to use the workflow default model for planning and revisions.
           </div>
-          <div className="grid gap-2 sm:grid-cols-2">
-            <div className="grid gap-1">
-              <label className="text-xs text-slate-400">Planner provider</label>
-              <select
-                className="tcp-input text-sm"
-                value={plannerProviderId}
-                onInput={(e) => onPlannerProviderChange((e.target as HTMLSelectElement).value)}
-              >
-                <option value="">Disabled</option>
-                {providerOptions.map((provider) => (
-                  <option key={`planner-${provider.id}`} value={provider.id}>
-                    {provider.id}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="grid gap-1">
-              <label className="text-xs text-slate-400">Planner model</label>
-              <input
-                className="tcp-input text-sm"
-                value={plannerModelId}
-                list={plannerProviderId ? `planner-models-${plannerProviderId}` : undefined}
-                onInput={(e) => onPlannerModelChange((e.target as HTMLInputElement).value)}
-                placeholder="Disabled unless provider and model are set"
-              />
-              {plannerProviderId ? (
-                <datalist id={`planner-models-${plannerProviderId}`}>
-                  {plannerModelOptions.map((model) => (
-                    <option key={model} value={model} />
-                  ))}
-                </datalist>
-              ) : null}
-            </div>
-          </div>
+          <ProviderModelSelector
+            providerLabel="Planner provider"
+            modelLabel="Planner model"
+            draft={{ provider: plannerProviderId, model: plannerModelId }}
+            providers={providerOptions}
+            onChange={(draft) => {
+              onPlannerProviderChange(draft.provider);
+              onPlannerModelChange(draft.model);
+            }}
+            inheritLabel="Disabled"
+          />
           {plannerModelError ? (
             <div className="text-xs text-red-300">{plannerModelError}</div>
           ) : null}
@@ -2321,6 +2585,9 @@ function Step4Review({
   wizard,
   onToggleExportPackDraft,
   onSubmit,
+  overlapAnalysis,
+  overlapDecision,
+  onSelectOverlapDecision,
   isPending,
   planPreview,
   isPreviewing,
@@ -2338,6 +2605,9 @@ function Step4Review({
   wizard: WizardState;
   onToggleExportPackDraft: () => void;
   onSubmit: () => void;
+  overlapAnalysis: any;
+  overlapDecision: string;
+  onSelectOverlapDecision: (decision: string) => void;
   isPending: boolean;
   planPreview: any;
   isPreviewing: boolean;
@@ -2440,6 +2710,17 @@ function Step4Review({
     plannerDiagnostics?.fallback_reason || plannerDiagnostics?.fallbackReason || ""
   ).trim();
   const plannerFallbackDetail = String(plannerDiagnostics?.detail || "").trim();
+  const overlapMatchLayer = String(
+    overlapAnalysis?.match_layer || overlapAnalysis?.matchLayer || ""
+  )
+    .trim()
+    .toLowerCase();
+  const overlapRequiresConfirmation = Boolean(
+    overlapAnalysis?.requires_user_confirmation || overlapAnalysis?.requiresUserConfirmation
+  );
+  const overlapScore = Number(
+    overlapAnalysis?.similarity_score ?? overlapAnalysis?.similarityScore ?? NaN
+  );
   const toggleStepExpanded = (stepId: string) =>
     setExpandedStepIds((current) => ({ ...current, [stepId]: !current[stepId] }));
 
@@ -2696,6 +2977,78 @@ function Step4Review({
         </div>
       ) : null}
 
+      {overlapAnalysis?.matched_plan_id || overlapAnalysis?.matchedPlanId ? (
+        <div className="rounded-xl border border-indigo-500/30 bg-indigo-950/20 p-3 text-sm text-indigo-100">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="font-medium text-indigo-200">Overlap review</div>
+            <span className={overlapRequiresConfirmation ? "tcp-badge-warning" : "tcp-badge-info"}>
+              {overlapRequiresConfirmation ? "confirmation required" : "decision ready"}
+            </span>
+          </div>
+          <div className="mt-2 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+            <div>
+              prior plan:{" "}
+              <strong>
+                {String(overlapAnalysis?.matched_plan_id || overlapAnalysis?.matchedPlanId)}
+              </strong>
+            </div>
+            <div>
+              revision:{" "}
+              <strong>
+                {String(
+                  overlapAnalysis?.matched_plan_revision ||
+                    overlapAnalysis?.matchedPlanRevision ||
+                    "n/a"
+                )}
+              </strong>
+            </div>
+            <div>
+              match layer: <strong>{overlapMatchLayer || "n/a"}</strong>
+            </div>
+            <div>
+              recommended decision:{" "}
+              <strong>{String(overlapAnalysis?.decision || "new").toLowerCase()}</strong>
+            </div>
+          </div>
+          {Number.isFinite(overlapScore) ? (
+            <div className="mt-2 text-xs text-indigo-200/80">
+              Similarity score: {(overlapScore * 100).toFixed(0)}%
+            </div>
+          ) : null}
+          {typeof overlapAnalysis?.reason === "string" && overlapAnalysis.reason.trim() ? (
+            <div className="mt-2 text-xs text-indigo-200/80">{overlapAnalysis.reason}</div>
+          ) : null}
+          {overlapRequiresConfirmation ? (
+            <div className="mt-3 grid gap-2">
+              <div className="text-xs uppercase tracking-wide text-indigo-200/80">
+                Choose how to handle this overlap
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {["reuse", "merge", "fork", "new"].map((decision) => (
+                  <button
+                    key={decision}
+                    type="button"
+                    className={
+                      overlapDecision === decision
+                        ? "tcp-btn-primary h-8 px-3 text-xs"
+                        : "tcp-btn h-8 px-3 text-xs"
+                    }
+                    onClick={() => onSelectOverlapDecision(decision)}
+                  >
+                    {decision}
+                  </button>
+                ))}
+              </div>
+              {!overlapDecision ? (
+                <div className="text-xs text-amber-200">
+                  Select a decision before creating the automation.
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
       {plannerFallbackReason ? (
         <div className="rounded-xl border border-amber-500/40 bg-amber-950/30 p-3 text-sm text-amber-100">
           <div className="font-medium text-amber-200">Planner fallback</div>
@@ -2839,7 +3192,13 @@ function Step4Review({
 
       <button
         className="tcp-btn-primary"
-        disabled={isPending || isPreviewing || !wizard.goal.trim() || !planPreview}
+        disabled={
+          isPending ||
+          isPreviewing ||
+          !wizard.goal.trim() ||
+          !planPreview ||
+          (overlapRequiresConfirmation && !overlapDecision)
+        }
         onClick={onSubmit}
       >
         {isPending ? "Creating automation…" : "🚀 Create Automation"}
@@ -2872,6 +3231,8 @@ function CreateWizard({
     Array<{ skill_name?: string; confidence?: number }>
   >([]);
   const [planPreview, setPlanPreview] = useState<any>(null);
+  const [overlapAnalysis, setOverlapAnalysis] = useState<any>(null);
+  const [overlapDecision, setOverlapDecision] = useState<string>("");
   const [planningConversation, setPlanningConversation] = useState<any>(null);
   const [planningChangeSummary, setPlanningChangeSummary] = useState<string[]>([]);
   const [plannerError, setPlannerError] = useState<string>("");
@@ -3024,6 +3385,8 @@ function CreateWizard({
     },
     onSuccess: (res) => {
       setPlanPreview(res?.plan || null);
+      setOverlapAnalysis(res?.overlap_analysis || res?.overlapAnalysis || null);
+      setOverlapDecision("");
       setPlanningConversation(res?.conversation || null);
       setPlanningChangeSummary([]);
       setPlannerError("");
@@ -3031,6 +3394,8 @@ function CreateWizard({
     },
     onError: (error) => {
       setPlanPreview(null);
+      setOverlapAnalysis(null);
+      setOverlapDecision("");
       setPlanningConversation(null);
       setPlanningChangeSummary([]);
       setPlannerError(error instanceof Error ? error.message : String(error));
@@ -3050,6 +3415,8 @@ function CreateWizard({
     },
     onSuccess: (res) => {
       setPlanPreview(res?.plan || null);
+      setOverlapAnalysis(res?.overlap_analysis || res?.overlapAnalysis || null);
+      setOverlapDecision("");
       setPlanningConversation(res?.conversation || null);
       setPlanningChangeSummary(
         Array.isArray(res?.change_summary)
@@ -3079,6 +3446,8 @@ function CreateWizard({
     },
     onSuccess: (res) => {
       setPlanPreview(res?.plan || null);
+      setOverlapAnalysis(res?.overlap_analysis || res?.overlapAnalysis || null);
+      setOverlapDecision("");
       setPlanningConversation(res?.conversation || null);
       setPlanningChangeSummary([]);
       setPlannerError("");
@@ -3188,9 +3557,17 @@ function CreateWizard({
       if (!nextPlan) {
         throw new Error("Workflow plan preview failed.");
       }
+      if (
+        (overlapAnalysis?.requires_user_confirmation ||
+          overlapAnalysis?.requiresUserConfirmation) &&
+        !overlapDecision.trim()
+      ) {
+        throw new Error("Select an overlap decision before creating the automation.");
+      }
       return client.workflowPlans.apply({
         plan: nextPlan,
         creator_id: "control-panel",
+        overlap_decision: overlapDecision.trim() || undefined,
         ...(wizard.exportPackDraft
           ? {
               pack_builder_export: {
@@ -3229,6 +3606,8 @@ function CreateWizard({
       setRouterMatches([]);
       setPlanSource("automations_page");
       setPlanPreview(null);
+      setOverlapAnalysis(null);
+      setOverlapDecision("");
       setPlanningConversation(null);
       setPlanningChangeSummary([]);
       setPlannerError("");
@@ -3547,6 +3926,9 @@ function CreateWizard({
                 setWizard((s) => ({ ...s, exportPackDraft: !s.exportPackDraft }))
               }
               onSubmit={() => deployMutation.mutate()}
+              overlapAnalysis={overlapAnalysis}
+              overlapDecision={overlapDecision}
+              onSelectOverlapDecision={setOverlapDecision}
               isPending={deployMutation.isPending}
               planPreview={planPreview}
               isPreviewing={compileMutation.isPending}
@@ -3636,7 +4018,7 @@ function MyAutomations({
     "all" | "automations" | "context" | "global"
   >("all");
   const [runEvents, setRunEvents] = useState<
-    Array<{ id: string; source: "automations" | "global"; at: number; event: any }>
+    Array<{ id: string; source: "automations" | "context" | "global"; at: number; event: any }>
   >([]);
   const [selectedSessionId, setSelectedSessionId] = useState<string>("");
   const [selectedSessionFilterId, setSelectedSessionFilterId] = useState<string>("all");
@@ -3648,7 +4030,7 @@ function MyAutomations({
   const boardDetailRef = useRef<HTMLDivElement | null>(null);
   const artifactsSectionRef = useRef<HTMLDivElement | null>(null);
   const sessionLogRef = useRef<HTMLDivElement | null>(null);
-  const [sessionLogPinnedToBottom, setSessionLogPinnedToBottom] = useState(true);
+  const [sessionLogPinnedToBottom, setSessionLogPinnedToBottom] = useState(false);
   const [workflowEditDraft, setWorkflowEditDraft] = useState<WorkflowEditDraft | null>(null);
   const [calendarRange, setCalendarRange] = useState(() => {
     const now = new Date();
@@ -3687,6 +4069,61 @@ function MyAutomations({
     }
     return Array.from(byId.values());
   }, [automationsV2Query.data]);
+  const overlapHistoryEntries = useMemo(() => {
+    const rows: Array<Record<string, any>> = [];
+    for (const automation of automationsV2) {
+      const automationId = String(
+        automation?.automation_id || automation?.automationId || automation?.id || ""
+      ).trim();
+      const automationName = String(automation?.name || "").trim();
+      const planPackage = automation?.metadata?.plan_package || automation?.metadata?.planPackage;
+      const overlapLog = toArray(planPackage?.overlap_policy, "overlap_log");
+      const sourcePlanId = String(
+        planPackage?.plan_id || planPackage?.planId || automationId || ""
+      ).trim();
+      const sourcePlanRevision = Number(
+        planPackage?.plan_revision || planPackage?.planRevision || 0
+      );
+      const sourceLifecycleState = String(
+        planPackage?.lifecycle_state || planPackage?.lifecycleState || automation?.status || ""
+      ).trim();
+      for (const entry of overlapLog) {
+        rows.push({
+          rowKey: [
+            automationId || sourcePlanId || "automation",
+            String(entry?.matched_plan_id || entry?.matchedPlanId || ""),
+            String(entry?.matched_plan_revision || entry?.matchedPlanRevision || ""),
+            String(entry?.decision || ""),
+            String(entry?.decided_at || entry?.decidedAt || ""),
+          ].join(":"),
+          sourceLabel: automationName || automationId || sourcePlanId || "workflow plan",
+          sourceAutomationId: automationId,
+          sourcePlanId,
+          sourcePlanRevision: Number.isFinite(sourcePlanRevision) ? sourcePlanRevision : 0,
+          sourceLifecycleState,
+          matchedPlanId: String(entry?.matched_plan_id || entry?.matchedPlanId || "").trim(),
+          matchedPlanRevision: Number(
+            entry?.matched_plan_revision || entry?.matchedPlanRevision || 0
+          ),
+          matchLayer: String(entry?.match_layer || entry?.matchLayer || "").trim(),
+          similarityScore: entry?.similarity_score ?? entry?.similarityScore ?? null,
+          decision: String(entry?.decision || "").trim(),
+          decidedBy: String(entry?.decided_by || entry?.decidedBy || "").trim(),
+          decidedAt: String(entry?.decided_at || entry?.decidedAt || "").trim(),
+        });
+      }
+    }
+    return rows.sort((left, right) => {
+      const leftAt = Number(Date.parse(String(left.decidedAt || "")));
+      const rightAt = Number(Date.parse(String(right.decidedAt || "")));
+      if (Number.isFinite(leftAt) && Number.isFinite(rightAt) && leftAt !== rightAt) {
+        return rightAt - leftAt;
+      }
+      return String(left.sourcePlanId || left.sourceAutomationId || left.rowKey).localeCompare(
+        String(right.sourcePlanId || right.sourceAutomationId || right.rowKey)
+      );
+    });
+  }, [automationsV2]);
   const providerCatalogQuery = useQuery({
     queryKey: ["providers", "catalog", "workflow-edit"],
     queryFn: () =>
@@ -3859,10 +4296,16 @@ function MyAutomations({
     onError: (error) => toast("err", error instanceof Error ? error.message : String(error)),
   });
   const runNowV2Mutation = useMutation({
-    mutationFn: (id: string) => client?.automationsV2?.runNow?.(id),
+    mutationFn: async ({ id, dryRun }: { id: string; dryRun?: boolean }) => {
+      if (!client?.automationsV2?.runNow) {
+        throw new Error("Workflow run now is not available in this client.");
+      }
+      return client.automationsV2.runNow(id, { dryRun: !!dryRun });
+    },
     onSuccess: async (payload: any) => {
       const runId = String(payload?.run?.run_id || payload?.run?.runId || "").trim();
-      toast("ok", "Workflow automation triggered.");
+      const isDryRun = payload?.dry_run === true || payload?.dryRun === true;
+      toast("ok", isDryRun ? "Workflow dry run recorded." : "Workflow automation triggered.");
       await queryClient.invalidateQueries({ queryKey: ["automations"] });
       if (runId) {
         onSelectRunId(runId);
@@ -4157,6 +4600,9 @@ function MyAutomations({
       }
       const operatorPreferences = workflowEditToOperatorPreferences(draft);
       const modelPolicy = compileWorkflowModelPolicy(operatorPreferences);
+      const baseModelPolicy = modelPolicy
+        ? (cloneJsonValue(modelPolicy) as Record<string, any>)
+        : null;
       const selectedMcpServers = draft.selectedMcpServers
         .map((row) => String(row || "").trim())
         .filter(Boolean);
@@ -4165,29 +4611,57 @@ function MyAutomations({
         draft.toolAccessMode,
         draft.customToolsText
       );
+      const connectorBindings = parseConnectorBindingsJson(draft.connectorBindingsJson);
+      const stepModelPolicies = new Map<string, Record<string, any> | null>();
+      for (const node of draft.nodes) {
+        const nodeAgentId = String(node.agentId || "").trim();
+        if (!nodeAgentId) continue;
+        const nodeModelProvider = String(node.modelProvider || "").trim();
+        const nodeModelId = String(node.modelId || "").trim();
+        const nodeModelError = validateModelInput(nodeModelProvider, nodeModelId);
+        if (nodeModelError) {
+          throw new Error(`${node.title || node.nodeId || nodeAgentId}: ${nodeModelError}`);
+        }
+        stepModelPolicies.set(
+          nodeAgentId,
+          workflowNodeModelPolicyWithOverride(baseModelPolicy, nodeModelProvider, nodeModelId)
+        );
+      }
+      const nextScopeSnapshot = draft.scopeSnapshot ? cloneJsonValue(draft.scopeSnapshot) : null;
+      if (nextScopeSnapshot && typeof nextScopeSnapshot === "object") {
+        nextScopeSnapshot.connector_bindings = connectorBindings;
+        nextScopeSnapshot.connector_binding_resolution =
+          deriveConnectorBindingResolutionFromPlanPackage(nextScopeSnapshot, connectorBindings);
+      }
       const existing = automationsV2.find(
         (row: any) =>
           String(row?.automation_id || row?.automationId || row?.id || "").trim() ===
           draft.automationId
       );
       const agents = Array.isArray(existing?.agents)
-        ? existing.agents.map((agent: any) => ({
-            ...agent,
-            model_policy: modelPolicy,
-            modelPolicy: undefined,
-            tool_policy: {
-              ...(agent?.tool_policy || {}),
-              allowlist: toolAllowlist,
-              denylist: Array.isArray(agent?.tool_policy?.denylist)
-                ? agent.tool_policy.denylist
-                : [],
-            },
-            mcp_policy: {
-              ...(agent?.mcp_policy || {}),
-              allowed_servers: selectedMcpServers,
-              allowed_tools: null,
-            },
-          }))
+        ? existing.agents.map((agent: any) => {
+            const agentId = String(agent?.agent_id || agent?.agentId || "").trim();
+            const nextModelPolicy = stepModelPolicies.has(agentId)
+              ? stepModelPolicies.get(agentId)
+              : agent?.model_policy || agent?.modelPolicy || modelPolicy;
+            return {
+              ...agent,
+              model_policy: nextModelPolicy ? cloneJsonValue(nextModelPolicy) : null,
+              modelPolicy: undefined,
+              tool_policy: {
+                ...(agent?.tool_policy || {}),
+                allowlist: toolAllowlist,
+                denylist: Array.isArray(agent?.tool_policy?.denylist)
+                  ? agent.tool_policy.denylist
+                  : [],
+              },
+              mcp_policy: {
+                ...(agent?.mcp_policy || {}),
+                allowed_servers: selectedMcpServers,
+                allowed_tools: null,
+              },
+            };
+          })
         : [];
       const flowNodes = Array.isArray(existing?.flow?.nodes)
         ? existing.flow.nodes.map((node: any, index: number) => {
@@ -4205,6 +4679,19 @@ function MyAutomations({
         : [];
       const existingMetadata =
         existing?.metadata && typeof existing.metadata === "object" ? existing.metadata : {};
+      const nextPlanPackage = nextScopeSnapshot
+        ? {
+            ...(cloneJsonValue(existingMetadata?.plan_package) || {}),
+            ...nextScopeSnapshot,
+          }
+        : existingMetadata?.plan_package;
+      const nextPlanPackageBundle =
+        nextScopeSnapshot && existingMetadata?.plan_package_bundle
+          ? {
+              ...cloneJsonValue(existingMetadata.plan_package_bundle),
+              scope_snapshot: nextScopeSnapshot,
+            }
+          : existingMetadata?.plan_package_bundle;
       return client.automationsV2.update(draft.automationId, {
         name,
         description: description || null,
@@ -4232,6 +4719,8 @@ function MyAutomations({
           workspace_root: workspaceRoot,
           operator_preferences: operatorPreferences,
           allowed_mcp_servers: selectedMcpServers,
+          ...(nextPlanPackage ? { plan_package: nextPlanPackage } : {}),
+          ...(nextPlanPackageBundle ? { plan_package_bundle: nextPlanPackageBundle } : {}),
         },
       });
     },
@@ -4345,6 +4834,24 @@ function MyAutomations({
   }, [legacyRuns, workflowRuns]);
   const packs = toArray(packsQuery.data, "packs");
   const activeRuns = runs.filter((run: any) => isActiveRunStatus(workflowDerivedRunStatus(run)));
+  const workflowQueueCounts = useMemo(() => {
+    let active = 0;
+    let queuedCapacity = 0;
+    let queuedWorkspaceLock = 0;
+    let queuedOther = 0;
+    workflowRuns.forEach((run: any) => {
+      const status = workflowDerivedRunStatus(run);
+      const reason = workflowQueueReason(run);
+      if (status === "queued") {
+        if (reason === "capacity") queuedCapacity += 1;
+        else if (reason === "workspace_lock") queuedWorkspaceLock += 1;
+        else queuedOther += 1;
+        return;
+      }
+      if (isActiveRunStatus(status)) active += 1;
+    });
+    return { active, queuedCapacity, queuedWorkspaceLock, queuedOther };
+  }, [workflowRuns]);
   const failedRuns = runs.filter((run: any) => {
     const status = workflowDerivedRunStatus(run);
     return status === "failed" || status === "error" || status === "blocked";
@@ -4508,9 +5015,9 @@ function MyAutomations({
       .filter(Boolean) as Array<{ nodeId: string; guidance: any }>;
   }, [selectedRun]);
   useEffect(() => {
-    if (!selectedBoardTask || !boardDetailRef.current) return;
+    if (!selectedBoardTaskId || !boardDetailRef.current) return;
     boardDetailRef.current.scrollIntoView({ block: "nearest", behavior: "smooth" });
-  }, [selectedBoardTask]);
+  }, [selectedBoardTaskId]);
   useEffect(() => {
     setSelectedRunArtifactKey("");
   }, [selectedRunId, selectedBoardTaskId]);
@@ -4647,6 +5154,8 @@ function MyAutomations({
     selectedBoardTaskIsWorkflowNode &&
     !!selectedBoardTaskNodeId &&
     ["blocked", "failed"].includes(selectedBoardTaskStateNormalized);
+  const runDebuggerRetryNodeId =
+    canTaskRetry && selectedBoardTaskIsWorkflowNode ? selectedBoardTaskNodeId : "";
   const canTaskContinue =
     isWorkflowRun &&
     !!selectedRunId &&
@@ -4705,9 +5214,6 @@ function MyAutomations({
         if (contextHistory.length) return contextHistory;
         return workflowPersistedHistoryEntries(
           Array.isArray(persistedRunEventsQuery.data) ? persistedRunEventsQuery.data : [],
-          workflowEventType,
-          workflowEventReason,
-          workflowEventAt,
           selectedRunId
         );
       })()
@@ -4721,8 +5227,6 @@ function MyAutomations({
       Array.isArray(persistedRunEventsQuery.data) ? persistedRunEventsQuery.data : [],
       workflowContextEvents,
       isWorkflowRun,
-      workflowEventType,
-      workflowEventAt,
       selectedRunId
     );
   }, [isWorkflowRun, persistedRunEventsQuery.data, selectedRunId, workflowContextEvents]);
@@ -5141,36 +5645,173 @@ function MyAutomations({
           events={calendarEvents}
           onRangeChange={setCalendarRange}
           onOpenAutomation={openCalendarAutomationEdit}
+          onRunAutomation={(
+            automation: any,
+            family: "legacy" | "v2",
+            opts?: { dryRun?: boolean }
+          ) => {
+            const automationId = String(
+              automation?.automation_id || automation?.automationId || automation?.id || ""
+            ).trim();
+            if (!automationId) return;
+            if (opts?.dryRun) {
+              runNowV2Mutation.mutate({ id: automationId, dryRun: true });
+              return;
+            }
+            if (family === "v2") {
+              runNowV2Mutation.mutate({ id: automationId });
+              return;
+            }
+            runNowMutation.mutate(automationId);
+          }}
           onEventDrop={updateCalendarAutomationFromEvent}
           statusColor={statusColor}
+          runActionsDisabled={runNowMutation.isPending || runNowV2Mutation.isPending}
         />
       ) : null}
 
-      {/* Installed packs from pack_builder */}
-      {viewMode === "list" && packs.length > 0 ? (
-        <div className="grid gap-2">
-          <p className="text-xs text-slate-500 uppercase tracking-wide font-medium">
-            Installed Packs
-          </p>
-          {packs.map((pack: any, i: number) => (
-            <div key={String(pack?.id || pack?.name || i)} className="tcp-list-item">
-              <div className="flex items-center justify-between gap-2">
-                <div className="flex items-center gap-2">
-                  <span>📦</span>
-                  <strong>{String(pack?.name || pack?.id || "Pack")}</strong>
+      {viewMode === "list" ? (
+        <div className="space-y-4 mb-4">
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-[11px] font-medium uppercase tracking-[0.24em] text-slate-500">
+              Workflow Automations
+            </p>
+            <span className="tcp-badge-ghost text-xs tracking-wide">
+              {workflowAutomationCount} items
+            </span>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+            {automationsV2.length > 0 ? (
+              automationsV2.map((automation: any) => {
+                const id = String(
+                  automation?.automation_id || automation?.automationId || ""
+                ).trim();
+                const status = String(automation?.status || "draft").trim();
+                const paused = status.toLowerCase() === "paused";
+                const standup = isStandupAutomation(automation);
+                return (
+                  <div key={id} className="tcp-card flex flex-col gap-3 group">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <span className="text-xl">🧩</span>
+                        <div className="min-w-0">
+                          <strong className="block truncate text-sm font-bold tracking-tight text-white mb-0.5">
+                            {String(automation?.name || id || "Workflow automation")}
+                          </strong>
+                          {standup ? (
+                            <span className="tcp-badge-ok text-[10px] py-0 px-1.5">Standup</span>
+                          ) : null}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <button
+                          className="tcp-icon-btn h-8 w-8 opacity-0 group-hover:opacity-100 transition-opacity"
+                          onClick={() => {
+                            if (isMissionBlueprintAutomation(automation)) {
+                              onOpenAdvancedEdit(automation);
+                              return;
+                            }
+                            setWorkflowEditDraft(workflowAutomationToEditDraft(automation));
+                          }}
+                          disabled={!id}
+                          title="Edit workflow automation"
+                          aria-label="Edit workflow automation"
+                        >
+                          <i data-lucide="pencil" className="w-3.5 h-3.5"></i>
+                        </button>
+                        <span
+                          className={`text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded ${statusColor(status)}`}
+                        >
+                          {status}
+                        </span>
+                      </div>
+                    </div>
+
+                    {String(automation?.description || "").trim() ? (
+                      <div className="tcp-subtle text-xs line-clamp-2 leading-relaxed">
+                        {String(automation.description)}
+                      </div>
+                    ) : (
+                      <div className="tcp-subtle text-xs italic opacity-40">
+                        No description provided
+                      </div>
+                    )}
+
+                    {standup ? (
+                      <div className="text-[10px] text-emerald-300/80 font-mono tracking-tight bg-emerald-500/10 p-1.5 rounded-md truncate">
+                        report: {String(automation?.metadata?.standup?.report_path_template || "")}
+                      </div>
+                    ) : null}
+
+                    <div className="tcp-subtle text-[11px] font-medium flex items-center gap-1.5">
+                      <i data-lucide="calendar" className="w-3 h-3"></i>
+                      {formatAutomationV2ScheduleLabel(automation?.schedule)}
+                    </div>
+
+                    <div className="mt-auto pt-3 flex flex-wrap gap-2 border-t border-white/5">
+                      <button
+                        className="tcp-btn-primary flex-1 h-8 px-2 text-[11px]"
+                        onClick={() => runNowV2Mutation.mutate({ id })}
+                        disabled={!id || runNowV2Mutation.isPending}
+                      >
+                        <i data-lucide="play" className="w-3 h-3"></i>
+                        {runNowV2Mutation.isPending ? "Starting..." : "Run"}
+                      </button>
+                      <button
+                        className="tcp-btn h-8 px-2 text-[11px]"
+                        onClick={() => runNowV2Mutation.mutate({ id, dryRun: true })}
+                        disabled={!id || runNowV2Mutation.isPending}
+                      >
+                        <i data-lucide="flask-conical" className="w-3 h-3"></i>
+                        Dry
+                      </button>
+                      <button
+                        className="tcp-btn h-8 px-2 text-[11px]"
+                        onClick={() =>
+                          automationActionMutation.mutate({
+                            action: paused ? "resume" : "pause",
+                            automationId: id,
+                            family: "v2",
+                          })
+                        }
+                        disabled={!id || automationActionMutation.isPending}
+                      >
+                        <i data-lucide={paused ? "play" : "pause"} className="w-3 h-3"></i>
+                        {paused ? "Resume" : "Pause"}
+                      </button>
+                      <button
+                        className="tcp-btn-danger h-8 w-8 px-0 flex items-center justify-center"
+                        onClick={() =>
+                          setDeleteConfirm({
+                            automationId: id,
+                            family: "v2",
+                            title: String(automation?.name || id || "workflow automation"),
+                          })
+                        }
+                        disabled={!id || automationActionMutation.isPending}
+                        title="Remove"
+                      >
+                        <i data-lucide="trash-2" className="w-3.5 h-3.5"></i>
+                      </button>
+                    </div>
+                  </div>
+                );
+              })
+            ) : (
+              <div className="tcp-list-item">
+                <div className="font-medium">No workflow automations saved yet</div>
+                <div className="tcp-subtle mt-1 text-xs">
+                  This section is separate from run history and only shows workflow automation
+                  definitions.
                 </div>
-                <span className="tcp-badge-info">{String(pack?.version || "1.0.0")}</span>
               </div>
-              <div className="tcp-subtle text-xs mt-1">
-                {String(pack?.description || pack?.path || "")}
-              </div>
-            </div>
-          ))}
+            )}
+          </div>
         </div>
       ) : null}
 
       {viewMode === "list" ? (
-        <div className="grid gap-2">
+        <div className="grid gap-2 mb-4">
           <div className="flex items-center justify-between gap-2">
             <p className="text-xs text-slate-500 uppercase tracking-wide font-medium">
               Saved Automations
@@ -5291,108 +5932,27 @@ function MyAutomations({
         </div>
       ) : null}
 
-      {viewMode === "list" ? (
-        <div className="grid gap-2">
-          <div className="flex items-center justify-between gap-2">
-            <p className="text-[11px] font-medium uppercase tracking-[0.24em] text-slate-500">
-              Workflow Automations
-            </p>
-            <span className="tcp-subtle text-xs">{workflowAutomationCount} items</span>
-          </div>
-          {automationsV2.length > 0 ? (
-            automationsV2.map((automation: any) => {
-              const id = String(automation?.automation_id || automation?.automationId || "").trim();
-              const status = String(automation?.status || "draft").trim();
-              const paused = status.toLowerCase() === "paused";
-              const standup = isStandupAutomation(automation);
-              return (
-                <div key={id} className="tcp-list-item">
-                  <div className="mb-1 flex items-center justify-between gap-2">
-                    <div className="flex items-center gap-2">
-                      <span>🧩</span>
-                      <strong>{String(automation?.name || id || "Workflow automation")}</strong>
-                      {standup ? <span className="tcp-badge-ok">Standup</span> : null}
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <button
-                        className="tcp-btn h-7 px-2 text-xs"
-                        onClick={() => {
-                          if (isMissionBlueprintAutomation(automation)) {
-                            onOpenAdvancedEdit(automation);
-                            return;
-                          }
-                          setWorkflowEditDraft(workflowAutomationToEditDraft(automation));
-                        }}
-                        disabled={!id}
-                        title="Edit workflow automation"
-                        aria-label="Edit workflow automation"
-                      >
-                        <i data-lucide="pencil"></i>
-                      </button>
-                      <span className={statusColor(status)}>{status}</span>
-                    </div>
+      {/* Installed packs from pack_builder */}
+      {viewMode === "list" && packs.length > 0 ? (
+        <div className="mt-12 pt-8 border-t border-white/5 opacity-60 hover:opacity-100 transition-opacity">
+          <p className="text-[10px] text-slate-500 uppercase tracking-widest font-bold mb-3">
+            System: Installed Packs
+          </p>
+          <div className="grid gap-2">
+            {packs.map((pack: any, i: number) => (
+              <div key={String(pack?.id || pack?.name || i)} className="tcp-list-item py-2">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm opacity-70">📦</span>
+                    <strong className="text-xs">{String(pack?.name || pack?.id || "Pack")}</strong>
                   </div>
-                  {String(automation?.description || "").trim() ? (
-                    <div className="tcp-subtle text-xs">{String(automation.description)}</div>
-                  ) : null}
-                  {standup ? (
-                    <div className="mt-1 text-xs text-emerald-200">
-                      report: {String(automation?.metadata?.standup?.report_path_template || "")}
-                    </div>
-                  ) : null}
-                  <div className="tcp-subtle mt-1 text-xs">
-                    {formatAutomationV2ScheduleLabel(automation?.schedule)}
-                  </div>
-                  <div className="mt-2 flex flex-wrap gap-2">
-                    <button
-                      className="tcp-btn h-7 px-2 text-xs"
-                      onClick={() => runNowV2Mutation.mutate(id)}
-                      disabled={!id || runNowV2Mutation.isPending}
-                    >
-                      <i data-lucide="play"></i>
-                      {runNowV2Mutation.isPending ? "Starting..." : "Run now"}
-                    </button>
-                    <button
-                      className="tcp-btn h-7 px-2 text-xs"
-                      onClick={() =>
-                        automationActionMutation.mutate({
-                          action: paused ? "resume" : "pause",
-                          automationId: id,
-                          family: "v2",
-                        })
-                      }
-                      disabled={!id || automationActionMutation.isPending}
-                    >
-                      <i data-lucide={paused ? "play" : "pause"}></i>
-                      {paused ? "Resume" : "Pause"}
-                    </button>
-                    <button
-                      className="tcp-btn-danger h-7 px-2 text-xs"
-                      onClick={() =>
-                        setDeleteConfirm({
-                          automationId: id,
-                          family: "v2",
-                          title: String(automation?.name || id || "workflow automation"),
-                        })
-                      }
-                      disabled={!id || automationActionMutation.isPending}
-                    >
-                      <i data-lucide="trash-2"></i>
-                      Remove
-                    </button>
-                  </div>
+                  <span className="text-[10px] text-slate-500">
+                    {String(pack?.version || "1.0.0")}
+                  </span>
                 </div>
-              );
-            })
-          ) : (
-            <div className="tcp-list-item">
-              <div className="font-medium">No workflow automations saved yet</div>
-              <div className="tcp-subtle mt-1 text-xs">
-                This section is separate from run history and only shows workflow automation
-                definitions.
               </div>
-            </div>
-          )}
+            ))}
+          </div>
         </div>
       ) : null}
 
@@ -5400,16 +5960,32 @@ function MyAutomations({
         activeRuns.length > 0 ? (
           <div className="grid gap-2">
             <div className="flex items-center justify-between gap-2">
-              <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
-                Active Running Tasks
-              </p>
-              <span className="tcp-badge-warn">{activeRuns.length} active</span>
+              <div className="grid gap-1">
+                <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                  Active Running Tasks
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  <span className="tcp-badge-warn">{workflowQueueCounts.active} active</span>
+                  <span className="tcp-badge-info">
+                    {workflowQueueCounts.queuedCapacity} queued for capacity
+                  </span>
+                  <span className="tcp-badge-info">
+                    {workflowQueueCounts.queuedWorkspaceLock} queued for workspace lock
+                  </span>
+                  {workflowQueueCounts.queuedOther > 0 ? (
+                    <span className="tcp-badge-info">
+                      {workflowQueueCounts.queuedOther} other queued
+                    </span>
+                  ) : null}
+                </div>
+              </div>
             </div>
             {activeRuns.slice(0, 14).map((run: any, index: number) => {
               const runId = String(run?.run_id || run?.id || index).trim();
-              const runStatus = workflowDerivedRunStatus(run);
+              const runStatus = workflowStatusDisplay(run);
               const startedAt =
                 run?.started_at_ms || run?.startedAtMs || run?.created_at_ms || run?.createdAtMs;
+              const runStatusDetail = workflowStatusSubtleDetail(run);
               return (
                 <div key={runId || index} className="tcp-list-item">
                   <div className="flex items-center justify-between gap-2">
@@ -5427,6 +6003,9 @@ function MyAutomations({
                         <span className="text-xs text-slate-400">
                           {shortText(runObjectiveText(run), 160)}
                         </span>
+                      ) : null}
+                      {runStatusDetail ? (
+                        <span className="tcp-subtle text-xs">{runStatusDetail}</span>
                       ) : null}
                     </div>
                     <span className={statusColor(runStatus)}>{runStatus || "unknown"}</span>
@@ -5492,7 +6071,8 @@ function MyAutomations({
           </div>
           {failedRuns.slice(0, 10).map((run: any, index: number) => {
             const runId = String(run?.run_id || run?.id || index).trim();
-            const runStatus = workflowDerivedRunStatus(run);
+            const runStatus = workflowStatusDisplay(run);
+            const runStatusDetail = workflowStatusSubtleDetail(run);
             return (
               <div key={`failed-${runId || index}`} className="tcp-list-item">
                 <div className="flex items-center justify-between gap-2">
@@ -5520,6 +6100,9 @@ function MyAutomations({
                         {shortText(runObjectiveText(run), 160)}
                       </span>
                     ) : null}
+                    {runStatusDetail ? (
+                      <span className="tcp-subtle text-xs">{runStatusDetail}</span>
+                    ) : null}
                   </div>
                   <div className="flex items-center gap-2">
                     <span className={statusColor(runStatus)}>{runStatus || "failed"}</span>
@@ -5539,7 +6122,7 @@ function MyAutomations({
       ) : null}
 
       {/* Recent run history */}
-      {runs.length > 0 ? (
+      {runs.length > 0 && viewMode === "running" ? (
         <div className="grid gap-2">
           <p className="text-xs text-slate-500 uppercase tracking-wide font-medium">
             {viewMode === "running" ? "Run Log Explorer" : "Recent Runs"}
@@ -5548,8 +6131,8 @@ function MyAutomations({
             <div key={String(run?.run_id || run?.id || index)} className="tcp-list-item">
               <div className="flex items-center justify-between gap-2">
                 <span className="font-medium text-sm">{runDisplayTitle(run)}</span>
-                <span className={statusColor(workflowDerivedRunStatus(run))}>
-                  {workflowDerivedRunStatus(run) || "unknown"}
+                <span className={statusColor(workflowStatusDisplay(run))}>
+                  {workflowStatusDisplay(run) || "unknown"}
                 </span>
               </div>
               <div className="mt-1 flex items-center justify-between gap-2">
@@ -5577,6 +6160,9 @@ function MyAutomations({
                     <span className="text-xs text-slate-400">
                       {shortText(runObjectiveText(run), 160)}
                     </span>
+                  ) : null}
+                  {workflowStatusSubtleDetail(run) ? (
+                    <span className="tcp-subtle text-xs">{workflowStatusSubtleDetail(run)}</span>
                   ) : null}
                 </div>
                 <button
@@ -5670,19 +6256,37 @@ function MyAutomations({
                       type="button"
                       className="tcp-btn h-8 w-full px-2 text-xs sm:w-auto"
                       onClick={() =>
-                        workflowRecoverMutation.mutate({
-                          runId: selectedRunId,
-                          reason: "retried from run debugger",
-                        })
+                        runDebuggerRetryNodeId
+                          ? workflowTaskRetryMutation.mutate({
+                              runId: selectedRunId,
+                              nodeId: runDebuggerRetryNodeId,
+                              reason: `retried task ${runDebuggerRetryNodeId} from run debugger`,
+                            })
+                          : workflowRecoverMutation.mutate({
+                              runId: selectedRunId,
+                              reason: "retried from run debugger",
+                            })
                       }
                       disabled={
                         !selectedRunId ||
                         workflowRecoverMutation.isPending ||
+                        workflowTaskRetryMutation.isPending ||
                         runActionMutation.isPending
+                      }
+                      title={
+                        runDebuggerRetryNodeId
+                          ? `Retry selected task ${runDebuggerRetryNodeId}`
+                          : "Retry the whole run"
                       }
                     >
                       <i data-lucide="rotate-ccw"></i>
-                      {workflowRecoverMutation.isPending ? "Retrying..." : "Retry"}
+                      {runDebuggerRetryNodeId
+                        ? workflowTaskRetryMutation.isPending
+                          ? "Retrying task..."
+                          : "Retry Task"
+                        : workflowRecoverMutation.isPending
+                          ? "Retrying..."
+                          : "Retry"}
                     </button>
                   ) : null}
                   {selectedRunId ? (
@@ -5876,13 +6480,14 @@ function MyAutomations({
                                 {String(selectedBoardTaskOutput?.status || "").trim() ? (
                                   <span
                                     className={
-                                      selectedBoardTaskValidationOutcome ===
-                                        "accepted_with_warnings" ||
                                       String(selectedBoardTaskOutput?.status || "")
                                         .trim()
                                         .toLowerCase() === "blocked"
-                                        ? "tcp-badge-warn"
-                                        : "tcp-badge-ok"
+                                        ? "tcp-badge-blocked"
+                                        : selectedBoardTaskValidationOutcome ===
+                                            "accepted_with_warnings"
+                                          ? "tcp-badge-warn"
+                                          : "tcp-badge-ok"
                                     }
                                   >
                                     status:{" "}
@@ -6927,7 +7532,7 @@ function MyAutomations({
                         </div>
                         <div
                           ref={sessionLogRef}
-                          className="grid min-h-[12rem] gap-2 overflow-auto pr-1 sm:min-h-[14rem] sm:max-h-[18rem]"
+                          className="grid min-h-[12rem] gap-2 overflow-auto overscroll-contain pr-1 sm:min-h-[14rem] sm:max-h-[18rem]"
                           onScroll={(event) => {
                             const el = event.currentTarget;
                             const pinned = el.scrollHeight - (el.scrollTop + el.clientHeight) < 48;
@@ -7658,7 +8263,10 @@ function MyAutomations({
               </div>
               <div className="grid flex-1 gap-4 overflow-y-auto px-4 py-4 xl:grid-cols-[minmax(22rem,0.92fr)_minmax(0,1.35fr)]">
                 <div className="grid content-start gap-4">
-                  <div className="grid gap-3 rounded-xl border border-slate-700/50 bg-slate-900/30 p-4">
+                  <div
+                    id="workflow-model-selection"
+                    className="grid gap-3 rounded-xl border border-slate-700/50 bg-slate-900/30 p-4"
+                  >
                     <div className="grid gap-1">
                       <label className="text-xs text-slate-400">Automation name</label>
                       <input
@@ -7829,7 +8437,8 @@ function MyAutomations({
                         Planner fallback model
                       </div>
                       <div className="text-xs text-slate-400">
-                        Optional. Override the workflow model only for planning and revisions.
+                        Optional. Leave blank to use the workflow default model for planning and
+                        revisions.
                       </div>
                       <ProviderModelSelector
                         providerLabel="Planner provider"
@@ -7927,6 +8536,41 @@ function MyAutomations({
                     )}
                   </div>
 
+                  <div
+                    id="workflow-connector-bindings"
+                    className="grid gap-3 rounded-xl border border-slate-700/50 bg-slate-900/30 p-4"
+                  >
+                    <div className="text-xs uppercase tracking-wide text-slate-500">
+                      Connector bindings
+                    </div>
+                    <div className="text-xs text-slate-400">
+                      Edit the connector binding snapshot that the scope inspector reads back. Save
+                      will persist the new binding set into the automation metadata. Each binding
+                      must include an explicit status (mapped, unresolved_required, or
+                      unresolved_optional).
+                    </div>
+                    <textarea
+                      className="tcp-input min-h-[220px] font-mono text-xs leading-5"
+                      value={workflowEditDraft.connectorBindingsJson}
+                      onInput={(e) =>
+                        setWorkflowEditDraft((current) =>
+                          current
+                            ? {
+                                ...current,
+                                connectorBindingsJson: (e.target as HTMLTextAreaElement).value,
+                              }
+                            : current
+                        )
+                      }
+                      placeholder={`[\n  {\n    \"capability\": \"github\",\n    \"binding_type\": \"oauth\",\n    \"binding_id\": \"github-primary\",\n    \"allowlist_pattern\": \"github.com/*\",\n    \"status\": \"mapped\"\n  },\n  {\n    \"capability\": \"slack\",\n    \"binding_type\": null,\n    \"binding_id\": null,\n    \"allowlist_pattern\": null,\n    \"status\": \"unresolved_required\"\n  }\n]`}
+                    />
+                    <div className="text-xs text-slate-500">
+                      Keep this as a JSON array of binding objects with capability, binding_type,
+                      binding_id, allowlist_pattern, and an explicit status: mapped,
+                      unresolved_required, or unresolved_optional.
+                    </div>
+                  </div>
+
                   <div className="grid gap-2 rounded-xl border border-slate-700/50 bg-slate-900/30 p-4">
                     <div className="text-xs uppercase tracking-wide text-slate-500">
                       MCP Servers
@@ -7969,10 +8613,49 @@ function MyAutomations({
                       <div className="text-xs text-slate-400">No MCP servers configured yet.</div>
                     )}
                   </div>
+
+                  <ScopeInspector
+                    title="Workflow scope inspector"
+                    planPackage={workflowEditDraft.scopeSnapshot}
+                    planPackageBundle={workflowEditDraft.planPackageBundle}
+                    planPackageReplay={workflowEditDraft.planPackageReplay}
+                    validationReport={workflowEditDraft.scopeValidation}
+                    runtimeContext={workflowEditDraft.runtimeContext}
+                    approvedPlanMaterialization={workflowEditDraft.approvedPlanMaterialization}
+                    overlapHistoryEntries={overlapHistoryEntries}
+                    onOpenPromptEditor={() => {
+                      document
+                        .getElementById("workflow-prompt-editor")
+                        ?.scrollIntoView({ behavior: "smooth", block: "start" });
+                    }}
+                    onOpenModelRoutingEditor={() => {
+                      document
+                        .getElementById("workflow-model-selection")
+                        ?.scrollIntoView({ behavior: "smooth", block: "start" });
+                    }}
+                    onOpenConnectorBindingsEditor={() => {
+                      document
+                        .getElementById("workflow-connector-bindings")
+                        ?.scrollIntoView({ behavior: "smooth", block: "start" });
+                    }}
+                    onDryRun={
+                      workflowEditDraft.automationId
+                        ? () =>
+                            runNowV2Mutation.mutate({
+                              id: workflowEditDraft.automationId,
+                              dryRun: true,
+                            })
+                        : undefined
+                    }
+                    dryRunDisabled={!workflowEditDraft.automationId || runNowV2Mutation.isPending}
+                  />
                 </div>
 
                 <div className="grid content-start gap-4">
-                  <div className="grid gap-2 rounded-xl border border-slate-700/50 bg-slate-900/30 p-4">
+                  <div
+                    id="workflow-prompt-editor"
+                    className="grid gap-2 rounded-xl border border-slate-700/50 bg-slate-900/30 p-4"
+                  >
                     <div>
                       <div>
                         <div className="text-xs uppercase tracking-wide text-slate-500">
@@ -8021,6 +8704,55 @@ function MyAutomations({
                               }
                               placeholder="Describe exactly what this step should do."
                             />
+                            <div className="mt-3 grid gap-2 rounded-lg border border-slate-800/70 bg-slate-950/30 p-3">
+                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                <div className="text-xs uppercase tracking-wide text-slate-500">
+                                  Step routing
+                                </div>
+                                {node.modelProvider || node.modelId ? (
+                                  <span className="tcp-badge-info">overrides workflow model</span>
+                                ) : (
+                                  <span className="tcp-badge-info">inherits workflow model</span>
+                                )}
+                              </div>
+                              <ProviderModelSelector
+                                providerLabel="Step model provider"
+                                modelLabel="Step model"
+                                draft={{
+                                  provider: node.modelProvider,
+                                  model: node.modelId,
+                                }}
+                                providers={providerOptions}
+                                onChange={(draftModel) =>
+                                  setWorkflowEditDraft((current) =>
+                                    current
+                                      ? {
+                                          ...current,
+                                          nodes: current.nodes.map((row) =>
+                                            row.nodeId === node.nodeId
+                                              ? {
+                                                  ...row,
+                                                  modelProvider: draftModel.provider,
+                                                  modelId: draftModel.model,
+                                                }
+                                              : row
+                                          ),
+                                        }
+                                      : current
+                                  )
+                                }
+                                inheritLabel="Use workflow model"
+                              />
+                              {validateModelInput(node.modelProvider, node.modelId) ? (
+                                <div className="text-xs text-red-300">
+                                  {validateModelInput(node.modelProvider, node.modelId)}
+                                </div>
+                              ) : (
+                                <div className="text-xs text-slate-500">
+                                  Leave both fields blank to inherit the workflow model.
+                                </div>
+                              )}
+                            </div>
                           </div>
                         ))}
                       </div>
@@ -8036,6 +8768,20 @@ function MyAutomations({
                 <button className="tcp-btn" onClick={() => setWorkflowEditDraft(null)}>
                   <i data-lucide="x-circle"></i>
                   Cancel
+                </button>
+                <button
+                  className="tcp-btn"
+                  onClick={() =>
+                    workflowEditDraft &&
+                    workflowEditDraft.automationId &&
+                    runNowV2Mutation.mutate({
+                      id: workflowEditDraft.automationId,
+                    })
+                  }
+                  disabled={!workflowEditDraft?.automationId || runNowV2Mutation.isPending}
+                >
+                  <i data-lucide="play"></i>
+                  {runNowV2Mutation.isPending ? "Starting..." : "Run now"}
                 </button>
                 <button
                   className="tcp-btn-primary"

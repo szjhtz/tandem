@@ -11,7 +11,7 @@ function providerNeedsApiKey(providerId: string) {
   const id = String(providerId || "")
     .trim()
     .toLowerCase();
-  return !!id && id !== "ollama" && id !== "local";
+  return !!id && id !== "ollama" && id !== "llama_cpp" && id !== "llama.cpp" && id !== "local";
 }
 
 function providerHasStoredKey(authStatus: any, providerId: string) {
@@ -51,10 +51,7 @@ export function deriveProviderState(config: any, catalog: any, authStatus: any):
   );
   const hasStoredKey = providerHasStoredKey(authStatus, defaultProvider);
   const ready =
-    !!defaultProvider &&
-    !!defaultModel &&
-    connected.has(defaultProvider.toLowerCase()) &&
-    (!providerNeedsApiKey(defaultProvider) || hasStoredKey);
+    !!defaultProvider && !!defaultModel && (!providerNeedsApiKey(defaultProvider) || hasStoredKey);
 
   return {
     ready,

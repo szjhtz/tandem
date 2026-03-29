@@ -19,8 +19,14 @@ type AutomationCalendarProps = {
   events: any[];
   onRangeChange: (range: CalendarRange) => void;
   onOpenAutomation: (automation: any) => void;
+  onRunAutomation?: (
+    automation: any,
+    family: "legacy" | "v2",
+    opts?: { dryRun?: boolean }
+  ) => void | Promise<void>;
   onEventDrop: (info: EventDropArg) => void | Promise<void>;
   statusColor: (status: string) => string;
+  runActionsDisabled?: boolean;
 };
 
 const DEFAULT_DAY_SCROLL_TIME = "09:00:00";
@@ -67,12 +73,40 @@ function formatFocusedSlot(date: Date | null) {
   }).format(date)} UTC`;
 }
 
+function badgeClassForState(value: unknown, fallback: "info" | "success" | "warning" = "info") {
+  const label = String(value || "")
+    .trim()
+    .toLowerCase();
+  if (!label) {
+    return fallback === "success"
+      ? "tcp-badge-success"
+      : fallback === "warning"
+        ? "tcp-badge-warning"
+        : "tcp-badge-info";
+  }
+  if (
+    label.includes("required") ||
+    label.includes("pending") ||
+    label.includes("blocked") ||
+    label.includes("unready") ||
+    label.includes("not ready")
+  ) {
+    return "tcp-badge-warning";
+  }
+  if (label.includes("ready") || label.includes("approved") || label.includes("optional")) {
+    return "tcp-badge-success";
+  }
+  return "tcp-badge-info";
+}
+
 export function AutomationCalendar({
   events,
   onRangeChange,
   onOpenAutomation,
+  onRunAutomation,
   onEventDrop,
   statusColor,
+  runActionsDisabled,
 }: AutomationCalendarProps) {
   const calendarRef = useRef<FullCalendar | null>(null);
   const pendingScrollTimeRef = useRef("");
@@ -128,17 +162,80 @@ export function AutomationCalendar({
   };
 
   const renderEventContent = (arg: EventContentArg) => {
+    const automation = arg?.event?.extendedProps?.automation;
     const status = String(arg?.event?.extendedProps?.status || "active").trim() || "active";
     const scheduleLabel = String(arg?.event?.extendedProps?.scheduleLabel || "").trim();
+    const family = String(arg?.event?.extendedProps?.family || "legacy").trim();
+    const lifecycleState = String(arg?.event?.extendedProps?.lifecycleState || "").trim();
+    const approvalState = String(arg?.event?.extendedProps?.approvalState || "").trim();
+    const activationReady = arg?.event?.extendedProps?.activationReady;
+    const handleRunNow = () => {
+      if (!automation) return;
+      onRunAutomation?.(automation, family === "v2" ? "v2" : "legacy");
+    };
+    const handleDryRun = () => {
+      if (!automation) return;
+      onRunAutomation?.(automation, family === "v2" ? "v2" : "legacy", { dryRun: true });
+    };
     return (
       <div className="flex h-full min-h-0 flex-col gap-0.5 overflow-hidden rounded-lg border border-slate-700/60 bg-slate-950/90 px-2 py-1 text-xs shadow-sm">
         <div className="flex items-center justify-between gap-2">
           <span className="truncate font-medium text-slate-100">
             {String(arg?.event?.title || "")}
           </span>
-          <span className={statusColor(status)}>{status}</span>
+          <div className="flex items-center gap-1">
+            <span className="tcp-badge-info">
+              {family === "v2" ? "workflow mission" : "routine"}
+            </span>
+            <span className={statusColor(status)}>{status}</span>
+          </div>
         </div>
         <div className="truncate text-[11px] text-slate-400">{scheduleLabel}</div>
+        <div className="mt-1 flex flex-wrap gap-1">
+          {lifecycleState ? (
+            <span className={badgeClassForState(lifecycleState)}>lifecycle: {lifecycleState}</span>
+          ) : null}
+          {approvalState ? (
+            <span className={badgeClassForState(approvalState)}>{approvalState}</span>
+          ) : null}
+          {activationReady === true ? (
+            <span className="tcp-badge-success">activation ready</span>
+          ) : activationReady === false ? (
+            <span className="tcp-badge-warning">needs activation review</span>
+          ) : null}
+        </div>
+        {onRunAutomation && automation ? (
+          <div className="mt-1 flex flex-wrap gap-1">
+            <button
+              type="button"
+              className="tcp-btn h-5 px-1.5 text-[10px]"
+              disabled={!!runActionsDisabled}
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                handleRunNow();
+              }}
+            >
+              <i data-lucide="play"></i>
+              Run now
+            </button>
+            {family === "v2" ? (
+              <button
+                type="button"
+                className="tcp-btn h-5 px-1.5 text-[10px]"
+                disabled={!!runActionsDisabled}
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  handleDryRun();
+                }}
+              >
+                <i data-lucide="flask-conical"></i>
+                Dry run
+              </button>
+            ) : null}
+          </div>
+        ) : null}
       </div>
     );
   };
@@ -151,8 +248,9 @@ export function AutomationCalendar({
             Cron schedules
           </p>
           <div className="tcp-subtle text-xs">
-            Drag a card to change when that automation fires. Click a day or crowded time slot to
-            drill into a detailed day view. Only cron-based automations are shown here for now.
+            Drag a card to change when that automation fires. Click an event to open its editor.
+            Workflow-linked missions open the mission builder; other automations open the workflow
+            editor. Only cron-based automations are shown here for now.
           </div>
         </div>
         <div className="flex flex-wrap items-center justify-end gap-2">

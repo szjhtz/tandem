@@ -443,6 +443,13 @@ pub fn run() {
                 &initial_search_settings,
             ));
 
+            let initial_scheduler_settings =
+                commands::load_saved_scheduler_settings(&app.handle());
+            tauri::async_runtime::block_on(commands::sync_scheduler_settings_env(
+                &app_state,
+                &initial_scheduler_settings,
+            ));
+
             // Load workspace path
             if let Some(path) = store.get("workspace_path") {
                 if let Some(path_str) = path.as_str() {
@@ -611,6 +618,8 @@ pub fn run() {
             commands::set_providers_config,
             commands::get_search_settings,
             commands::set_search_settings,
+            commands::get_scheduler_settings,
+            commands::set_scheduler_settings,
             commands::get_identity_config,
             commands::patch_identity_config,
             // Channel connections

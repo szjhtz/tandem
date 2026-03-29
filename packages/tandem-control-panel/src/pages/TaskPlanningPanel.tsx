@@ -6,12 +6,12 @@ import { EmptyState } from "./ui";
 import { ProviderModelSelector } from "../components/ProviderModelSelector";
 import { ChatInterfacePanel } from "../components/ChatInterfacePanel";
 import { renderMarkdownSafe } from "../lib/markdown";
-
-type ProviderOption = {
-  id: string;
-  models: string[];
-  configured?: boolean;
-};
+import { PlannerDiagnosticsPanel } from "../features/planner/PlannerDiagnosticsPanel";
+import {
+  buildPlannerProviderOptions,
+  normalizePlannerConversationMessages,
+  type PlannerProviderOption,
+} from "../features/planner/plannerShared";
 
 type TaskPlanningPanelProps = {
   client: any;
@@ -74,6 +74,7 @@ type ClarificationState =
     };
 
 const DRAFT_PREFIX = "tcp.coding.task-planning.v1";
+const PLANNER_HANDOFF_KEY = "tandem.intent-planner.codingTaskHandoff.v1";
 
 function safeString(value: unknown) {
   return String(value || "").trim();
@@ -517,31 +518,13 @@ export function TaskPlanningPanel({
   const plannedTasks = useMemo(() => normalizePlanSteps(planPreview), [planPreview]);
   const localDraftKey = useMemo(() => storageKey(selectedProjectSlug), [selectedProjectSlug]);
   const isGitHubProject = String(taskSourceType || "").trim() === "github_project";
-  const providerOptions = useMemo<ProviderOption[]>(() => {
-    const rows = Array.isArray(providersCatalogQuery.data?.all)
-      ? providersCatalogQuery.data.all
-      : [];
-    const configuredProviders = ((providersConfigQuery.data?.providers as
-      | Record<string, any>
-      | undefined) || {}) as Record<string, any>;
-    const mapped = rows
-      .map((provider: any) => ({
-        id: String(provider?.id || "").trim(),
-        models: Object.keys(provider?.models || {}),
-        configured: !!configuredProviders[String(provider?.id || "").trim()],
-      }))
-      .filter((provider: ProviderOption) => !!provider.id)
-      .sort((a: ProviderOption, b: ProviderOption) => a.id.localeCompare(b.id));
-    const defaultProvider = safeString(providerStatus.defaultProvider);
-    const defaultModel = safeString(providerStatus.defaultModel);
-    if (defaultProvider && !mapped.some((row) => row.id === defaultProvider)) {
-      mapped.unshift({
-        id: defaultProvider,
-        models: defaultModel ? [defaultModel] : [],
-        configured: true,
-      });
-    }
-    return mapped;
+  const providerOptions = useMemo<PlannerProviderOption[]>(() => {
+    return buildPlannerProviderOptions({
+      providerCatalog: providersCatalogQuery.data,
+      providerConfig: providersConfigQuery.data,
+      defaultProvider: providerStatus.defaultProvider,
+      defaultModel: providerStatus.defaultModel,
+    });
   }, [
     providerStatus.defaultModel,
     providerStatus.defaultProvider,
@@ -597,15 +580,10 @@ export function TaskPlanningPanel({
   const plannerTimedOut =
     /timed out before completion/i.test(safeString(plannerError)) ||
     /timed out before completion/i.test(latestAssistantMessage);
-  const plannerChatMessages = Array.isArray(planningConversation?.messages)
-    ? planningConversation.messages.map((message: any, index: number) => ({
-        id: `${message?.created_at_ms || index}-${index}`,
-        role: safeString(message?.role || "assistant").toLowerCase(),
-        displayRole: safeString(message?.role || "assistant"),
-        text: safeString(message?.text || "") || " ",
-        markdown: false,
-      }))
-    : [];
+  const plannerChatMessages = useMemo(
+    () => normalizePlannerConversationMessages(planningConversation, false),
+    [planningConversation]
+  );
   const plannerStatusTitle = isPlanning
     ? isGeneratingPlan
       ? "Generating task plan…"
@@ -672,6 +650,33 @@ export function TaskPlanningPanel({
     selectedProjectSlug,
     workspaceRootSeed,
   ]);
+
+  useEffect(() => {
+    if (typeof sessionStorage === "undefined") return;
+    try {
+      const raw = sessionStorage.getItem(PLANNER_HANDOFF_KEY);
+      if (!raw) return;
+      sessionStorage.removeItem(PLANNER_HANDOFF_KEY);
+      const handoff = JSON.parse(raw);
+      setGoal(safeString(handoff?.goal));
+      setWorkspaceRoot(
+        safeString(handoff?.workspaceRoot || handoff?.workspace_root || workspaceRootSeed)
+      );
+      setNotes(safeString(handoff?.notes));
+      setPlannerProvider(safeString(handoff?.plannerProvider || handoff?.planner_provider));
+      setPlannerModel(safeString(handoff?.plannerModel || handoff?.planner_model));
+      setPlanPreview(handoff?.plan ?? null);
+      setPlanningConversation(handoff?.conversation ?? null);
+      setPlanningChangeSummary(Array.isArray(handoff?.changeSummary) ? handoff.changeSummary : []);
+      setPlannerError(safeString(handoff?.plannerError));
+      setPlannerDiagnostics(handoff?.plannerDiagnostics ?? null);
+      setPublishedTasks(Array.isArray(handoff?.publishedTasks) ? handoff.publishedTasks : []);
+      setLastSavedAtMs(Number(handoff?.publishedAtMs || 0) || null);
+      setPublishStatus("Planner handoff loaded from Planner page.");
+    } catch {
+      // ignore
+    }
+  }, [selectedProjectSlug, workspaceRootSeed]);
 
   useEffect(() => {
     if (!workspaceRoot && resolvedWorkspaceRoot) {
@@ -1426,41 +1431,22 @@ export function TaskPlanningPanel({
             </div>
           ) : null}
 
-          {plannerDiagnostics ? (
-            <div className="rounded-2xl border border-white/10 bg-black/20 p-3">
-              <div className="text-xs uppercase tracking-wide text-slate-500">
-                Planner diagnostics
-              </div>
-              {plannerFallbackReason ? (
-                <div className="mt-2 text-sm text-slate-300">
-                  {plannerFallbackReason === "no_planner_model"
+          {plannerDiagnostics || planningChangeSummary.length ? (
+            <PlannerDiagnosticsPanel
+              plannerDiagnostics={{
+                ...plannerDiagnostics,
+                summary:
+                  plannerDiagnostics?.summary ||
+                  plannerDiagnostics?.detail ||
+                  (plannerFallbackReason === "no_planner_model"
                     ? "The planner fell back because no usable planner model reached the backend for this generated plan."
                     : plannerFallbackReason === "clarification_needed"
                       ? "The planner needs one more answer before it can generate a richer repo-aware plan."
-                      : `Fallback reason: ${safeString(
-                          plannerDiagnostics?.fallback_reason || plannerDiagnostics?.fallbackReason
-                        )}`}
-                </div>
-              ) : null}
-              <pre className="mt-2 max-h-48 overflow-auto text-xs text-slate-300">
-                {JSON.stringify(plannerDiagnostics, null, 2)}
-              </pre>
-            </div>
-          ) : null}
-
-          {planningChangeSummary.length ? (
-            <div className="rounded-2xl border border-emerald-500/30 bg-emerald-950/20 p-3">
-              <div className="text-xs uppercase tracking-wide text-emerald-300">
-                Latest plan changes
-              </div>
-              <div className="mt-2 flex flex-wrap gap-2">
-                {planningChangeSummary.map((item, index) => (
-                  <span key={`${item}-${index}`} className="tcp-badge-ok">
-                    {item}
-                  </span>
-                ))}
-              </div>
-            </div>
+                      : ""),
+              }}
+              teachingLibrary={null}
+              planningChangeSummary={planningChangeSummary}
+            />
           ) : null}
 
           {saveStatus || publishStatus ? (

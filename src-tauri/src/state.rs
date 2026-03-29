@@ -47,6 +47,8 @@ pub struct ProvidersConfig {
     pub anthropic: ProviderConfig,
     #[serde(default = "default_openai")]
     pub openai: ProviderConfig,
+    #[serde(default = "default_llama_cpp")]
+    pub llama_cpp: ProviderConfig,
     #[serde(default = "default_ollama")]
     pub ollama: ProviderConfig,
     #[serde(default = "default_poe")]
@@ -99,6 +101,16 @@ fn default_openai() -> ProviderConfig {
     }
 }
 
+fn default_llama_cpp() -> ProviderConfig {
+    ProviderConfig {
+        enabled: false,
+        default: false,
+        endpoint: "http://127.0.0.1:8080/v1".to_string(),
+        model: Some("llm".to_string()),
+        has_key: false,
+    }
+}
+
 fn default_ollama() -> ProviderConfig {
     ProviderConfig {
         enabled: false,
@@ -126,6 +138,7 @@ impl Default for ProvidersConfig {
             opencode_zen: default_opencode_zen(),
             anthropic: default_anthropic(),
             openai: default_openai(),
+            llama_cpp: default_llama_cpp(),
             ollama: default_ollama(),
             poe: default_poe(),
             custom: Vec::new(),

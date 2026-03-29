@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AnimatePresence, motion } from "motion/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { JsonObject } from "@frumu/tandem-client";
 import { renderIcons } from "../app/icons.js";
 import { renderMarkdownSafe } from "../lib/markdown";
 import {
@@ -60,6 +61,7 @@ type SettingsSection =
   | "navigation"
   | "providers"
   | "search"
+  | "scheduler"
   | "identity"
   | "theme"
   | "channels"
@@ -82,6 +84,20 @@ type SearchSettingsResponse = {
     timeout_ms?: number | null;
     has_brave_key?: boolean;
     has_exa_key?: boolean;
+  } | null;
+};
+
+type SchedulerSettingsResponse = {
+  available?: boolean;
+  local_engine?: boolean;
+  writable?: boolean;
+  managed_env_path?: string | null;
+  restart_required?: boolean;
+  restart_hint?: string | null;
+  reason?: string | null;
+  settings?: {
+    mode?: string;
+    max_concurrent_runs?: number | null;
   } | null;
 };
 
@@ -682,6 +698,8 @@ export function SettingsPage({
   const [searchExaKey, setSearchExaKey] = useState("");
   const [searchTestQuery, setSearchTestQuery] = useState("autonomous AI agentic workflows");
   const [searchTestResult, setSearchTestResult] = useState<SearchTestResponse | null>(null);
+  const [schedulerMode, setSchedulerMode] = useState("multi");
+  const [schedulerMaxConcurrent, setSchedulerMaxConcurrent] = useState("");
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
   const [githubMcpGuideOpen, setGithubMcpGuideOpen] = useState(false);
   const [providerDefaultsOpen, setProviderDefaultsOpen] = useState(false);
@@ -836,6 +854,10 @@ export function SettingsPage({
     queryKey: ["settings", "search", "config"],
     queryFn: () => api("/api/system/search-settings", { method: "GET" }).catch(() => null),
   });
+  const schedulerSettingsQuery = useQuery<SchedulerSettingsResponse | null>({
+    queryKey: ["settings", "scheduler", "config"],
+    queryFn: () => api("/api/system/scheduler-settings", { method: "GET" }).catch(() => null),
+  });
 
   useEffect(() => {
     const settings = searchSettingsQuery.data?.settings || null;
@@ -845,6 +867,15 @@ export function SettingsPage({
     setSearchSearxngUrl(String(settings.searxng_url || "").trim());
     setSearchTimeoutMs(String(settings.timeout_ms || 10000));
   }, [searchSettingsQuery.data]);
+
+  useEffect(() => {
+    const settings = schedulerSettingsQuery.data?.settings || null;
+    if (!settings) return;
+    setSchedulerMode(String(settings.mode || "multi").trim() || "multi");
+    setSchedulerMaxConcurrent(
+      settings.max_concurrent_runs != null ? String(settings.max_concurrent_runs) : ""
+    );
+  }, [schedulerSettingsQuery.data]);
 
   const browserStatus = useQuery<BrowserStatusResponse | null>({
     queryKey: ["settings", "browser", "status"],
@@ -1237,6 +1268,23 @@ export function SettingsPage({
     },
     onError: (error) => toast("err", error instanceof Error ? error.message : String(error)),
   });
+  const saveSchedulerSettingsMutation = useMutation({
+    mutationFn: async (payload: Partial<{ mode: string; max_concurrent_runs: number | null }>) =>
+      api("/api/system/scheduler-settings", {
+        method: "PATCH",
+        body: JSON.stringify(payload),
+      }),
+    onSuccess: async (result: SchedulerSettingsResponse) => {
+      await queryClient.invalidateQueries({ queryKey: ["settings", "scheduler"] });
+      toast(
+        "ok",
+        result?.restart_required
+          ? "Scheduler settings saved. Restart tandem-engine to apply them."
+          : "Scheduler settings saved."
+      );
+    },
+    onError: (error) => toast("err", error instanceof Error ? error.message : String(error)),
+  });
   const testSearchMutation = useMutation({
     mutationFn: async ({ query }: { query: string }) =>
       api("/api/system/search-settings/test", {
@@ -1405,10 +1453,10 @@ export function SettingsPage({
   const verifyChannelMutation = useMutation({
     mutationFn: async (channel: "discord") => {
       const draft = channelDrafts[channel];
-      const payload = {
-        bot_token: String(draft?.botToken || "").trim() || undefined,
-      };
-      return client.channels.verify(channel, payload as any);
+      const token = String(draft?.botToken || "").trim();
+      const payload: JsonObject = {};
+      if (token) payload.bot_token = token;
+      return client.channels.verify(channel, payload);
     },
     onSuccess: (result, channel) => {
       setChannelVerifyResult((prev) => ({ ...prev, [channel]: result }));
@@ -1783,6 +1831,7 @@ export function SettingsPage({
     { id: "navigation", label: "Navigation", icon: "panel-left" },
     { id: "providers", label: "Providers", icon: "cpu" },
     { id: "search", label: "Web Search", icon: "globe" },
+    { id: "scheduler", label: "Scheduler", icon: "layers" },
     { id: "identity", label: "Identity", icon: "badge-check" },
     { id: "theme", label: "Themes", icon: "paint-bucket" },
     { id: "channels", label: "Channels", icon: "message-circle" },
@@ -2868,6 +2917,98 @@ export function SettingsPage({
                         `auto` tries the configured backends with failover. If Brave is rate-limited
                         and Exa is configured, the engine can continue with Exa instead of returning
                         a generic unavailable message.
+                      </div>
+                    </div>
+                  )}
+                </PanelCard>
+              ) : null}
+
+              {activeSection === "scheduler" ? (
+                <PanelCard
+                  title="Automation Scheduler"
+                  subtitle="Controls parallel execution of automation runs. Restart tandem-engine after changing."
+                  actions={
+                    <Toolbar>
+                      <button
+                        className="tcp-btn-primary"
+                        onClick={() =>
+                          saveSchedulerSettingsMutation.mutate({
+                            mode: schedulerMode,
+                            max_concurrent_runs: schedulerMaxConcurrent
+                              ? Number.parseInt(schedulerMaxConcurrent, 10)
+                              : null,
+                          })
+                        }
+                        disabled={
+                          !schedulerSettingsQuery.data?.available ||
+                          saveSchedulerSettingsMutation.isPending
+                        }
+                      >
+                        <i data-lucide="save"></i>
+                        Save
+                      </button>
+                    </Toolbar>
+                  }
+                >
+                  {!schedulerSettingsQuery.data?.available ? (
+                    <EmptyState
+                      text={
+                        schedulerSettingsQuery.data?.reason ||
+                        "Scheduler settings are only editable here when the panel points at a local engine host."
+                      }
+                    />
+                  ) : (
+                    <div className="grid gap-4">
+                      <div className="rounded-2xl border border-slate-700/60 bg-slate-950/25 p-4 text-sm">
+                        <div className="font-medium">Engine env file</div>
+                        <div className="tcp-subtle mt-1 break-all">
+                          {schedulerSettingsQuery.data?.managed_env_path ||
+                            "/etc/tandem/engine.env"}
+                        </div>
+                        <div className="tcp-subtle mt-2 text-xs">
+                          {schedulerSettingsQuery.data?.restart_hint ||
+                            "Restart tandem-engine after changing scheduler mode."}
+                        </div>
+                      </div>
+
+                      <div className="grid gap-3 md:grid-cols-2">
+                        <label className="grid gap-1 text-sm">
+                          <span className="tcp-subtle text-xs uppercase tracking-[0.18em]">
+                            Mode
+                          </span>
+                          <select
+                            className="tcp-select"
+                            value={schedulerMode}
+                            onChange={(e) =>
+                              setSchedulerMode((e.target as HTMLSelectElement).value)
+                            }
+                          >
+                            <option value="multi">Multi — parallel runs (recommended)</option>
+                            <option value="single">Single — one run at a time</option>
+                          </select>
+                        </label>
+                        <label className="grid gap-1 text-sm">
+                          <span className="tcp-subtle text-xs uppercase tracking-[0.18em]">
+                            Max concurrent runs
+                          </span>
+                          <input
+                            className="tcp-input"
+                            type="number"
+                            min={1}
+                            max={32}
+                            placeholder="8 (default)"
+                            value={schedulerMaxConcurrent}
+                            onInput={(e) =>
+                              setSchedulerMaxConcurrent((e.target as HTMLInputElement).value)
+                            }
+                          />
+                        </label>
+                      </div>
+
+                      <div className="tcp-subtle text-xs">
+                        Multi mode allows several automation runs to execute concurrently. Max
+                        concurrent runs caps parallelism. Changes require a tandem-engine restart to
+                        take effect.
                       </div>
                     </div>
                   )}

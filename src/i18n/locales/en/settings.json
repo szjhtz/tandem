@@ -216,6 +216,9 @@
     "openai": {
       "description": "GPT-4 and other OpenAI models"
     },
+    "llama_cpp": {
+      "description": "Connect to a local or remote llama.cpp OpenAI-compatible server"
+    },
     "ollama": {
       "description": "Run models locally - no API key needed"
     },

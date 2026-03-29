@@ -2,15 +2,25 @@ import { APP_NAV_ROUTES, type RouteId } from "./routes";
 
 export const NAV_VISIBILITY_STORAGE_KEY = "tcp.nav.visibility.v1";
 
-export const ACA_CORE_NAV_ROUTE_IDS = new Set<RouteId>(["dashboard", "chat", "coding", "settings"]);
+export const ACA_CORE_NAV_ROUTE_IDS = new Set<RouteId>([
+  "dashboard",
+  "chat",
+  "planner",
+  "coding",
+  "settings",
+]);
 
 export type NavigationVisibility = Record<RouteId, boolean>;
 
 export function getDefaultNavigationVisibility(acaMode: boolean): NavigationVisibility {
+  const standaloneHiddenRoutes = new Set<RouteId>(["coding", "memory", "feed"]);
+
   return Object.fromEntries(
     APP_NAV_ROUTES.map(([routeId]) => [
       routeId,
-      acaMode ? ACA_CORE_NAV_ROUTE_IDS.has(routeId as RouteId) : true,
+      acaMode
+        ? ACA_CORE_NAV_ROUTE_IDS.has(routeId as RouteId)
+        : !standaloneHiddenRoutes.has(routeId as RouteId),
     ])
   ) as NavigationVisibility;
 }

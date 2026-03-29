@@ -2,6 +2,7 @@
 export const ROUTES = [
   ["dashboard", "Dashboard", "home"],
   ["chat", "Chat", "message-square"],
+  ["planner", "Planner", "compass"],
   ["studio", "Studio", "network"],
   ["automations", "Automations", "bot"],
   ["coding", "Coding", "code"],
@@ -27,6 +28,7 @@ export const NAV_ROUTES = ROUTES.filter(([id]) =>
   [
     "dashboard",
     "chat",
+    "planner",
     "studio",
     "automations",
     "coding",
@@ -90,6 +92,11 @@ export const providerHints = {
     label: "GitHub Copilot",
     keyUrl: "https://github.com/settings/tokens",
     placeholder: "ghp_...",
+  },
+  llama_cpp: {
+    label: "llama.cpp",
+    keyUrl: "",
+    placeholder: "No key required",
   },
   ollama: { label: "Ollama", keyUrl: "", placeholder: "No key required" },
 };
