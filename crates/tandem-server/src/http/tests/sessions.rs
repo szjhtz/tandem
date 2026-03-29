@@ -1064,6 +1064,85 @@ fn extract_persistable_tool_part_uses_streamed_args_preview_when_part_args_empty
     }
 }
 
+#[test]
+fn extract_persistable_tool_part_skips_running_tool_deltas() {
+    let properties = json!({
+        "part": {
+            "type": "tool",
+            "tool": "write",
+            "messageID": "msg_123",
+            "state": "running",
+            "args": {
+                "path": "draft.md",
+                "content": "partial"
+            }
+        }
+    });
+    assert!(
+        crate::extract_persistable_tool_part(&properties).is_none(),
+        "running tool deltas should not be persisted"
+    );
+}
+
+#[test]
+fn extract_persistable_tool_part_keeps_completed_tool_updates() {
+    let properties = json!({
+        "part": {
+            "type": "tool",
+            "tool": "write",
+            "messageID": "msg_123",
+            "state": "completed",
+            "args": {
+                "path": "final.md",
+                "content": "done"
+            },
+            "result": "ok"
+        }
+    });
+    let (message_id, part) =
+        crate::extract_persistable_tool_part(&properties).expect("completed tool part");
+    assert_eq!(message_id, "msg_123");
+    match part {
+        tandem_types::MessagePart::ToolInvocation {
+            tool, args, result, ..
+        } => {
+            assert_eq!(tool, "write");
+            assert_eq!(args["path"], "final.md");
+            assert_eq!(args["content"], "done");
+            assert_eq!(result.as_ref(), Some(&json!("ok")));
+        }
+        other => panic!("expected tool invocation, got {other:?}"),
+    }
+}
+
+#[test]
+fn extract_persistable_tool_part_accepts_snake_case_tool_types() {
+    let properties = json!({
+        "part": {
+            "type": "tool_invocation",
+            "tool": "websearch",
+            "messageID": "msg_123",
+            "state": "completed",
+            "args": {
+                "query": "tandem workflow reliability"
+            },
+            "result": {
+                "result_count": 1
+            }
+        }
+    });
+    let (message_id, part) =
+        crate::extract_persistable_tool_part(&properties).expect("snake_case tool part");
+    assert_eq!(message_id, "msg_123");
+    match part {
+        tandem_types::MessagePart::ToolInvocation { tool, args, .. } => {
+            assert_eq!(tool, "websearch");
+            assert_eq!(args["query"], "tandem workflow reliability");
+        }
+        other => panic!("expected tool invocation, got {other:?}"),
+    }
+}
+
 #[tokio::test]
 async fn prompt_async_permission_approve_executes_tool_and_emits_todo_update() {
     let state = test_state().await;

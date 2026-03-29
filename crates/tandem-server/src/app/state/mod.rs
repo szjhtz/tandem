@@ -5309,7 +5309,27 @@ pub fn extract_persistable_tool_part(properties: &Value) -> Option<(String, Mess
         .and_then(|v| v.as_str())
         .unwrap_or_default()
         .to_ascii_lowercase();
-    if part_type != "tool" && part_type != "tool-invocation" && part_type != "tool-result" {
+    if part_type != "tool"
+        && part_type != "tool-invocation"
+        && part_type != "tool-result"
+        && part_type != "tool_invocation"
+        && part_type != "tool_result"
+    {
+        return None;
+    }
+    let part_state = part
+        .get("state")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    let has_result = part.get("result").is_some_and(|value| !value.is_null());
+    let has_error = part
+        .get("error")
+        .and_then(|v| v.as_str())
+        .is_some_and(|value| !value.trim().is_empty());
+    // Skip transient "running" deltas to avoid persistence storms from streamed
+    // tool-argument chunks; keep actionable/final updates.
+    if part_state == "running" && !has_result && !has_error {
         return None;
     }
     let tool = part.get("tool").and_then(|v| v.as_str())?.to_string();

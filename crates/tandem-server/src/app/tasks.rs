@@ -54,7 +54,10 @@ fn session_context_run_event_input(event: &EngineEvent) -> Option<ContextRunEven
                 .get("type")
                 .and_then(|value| value.as_str())
                 .unwrap_or_default();
-            if !matches!(part_type, "tool" | "tool-invocation" | "tool-result") {
+            if !matches!(
+                part_type,
+                "tool" | "tool-invocation" | "tool-result" | "tool_invocation" | "tool_result"
+            ) {
                 return None;
             }
             let tool_name = part

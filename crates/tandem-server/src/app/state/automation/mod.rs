@@ -6018,19 +6018,24 @@ async fn load_automation_session_after_run(
     expect_tool_activity: bool,
 ) -> Option<Session> {
     let mut last = state.storage.get_session(session_id).await?;
-    if !expect_tool_activity || session_contains_tool_invocations(&last) {
+    if !expect_tool_activity || session_contains_settled_tool_invocations(&last) {
         return Some(last);
     }
 
-    // `message.part.updated` events are persisted asynchronously; give storage a
-    // short window to capture tool invocations before we compute telemetry.
-    for _ in 0..10 {
+    // `message.part.updated` events are persisted asynchronously. Wait for a
+    // settled tool snapshot (result/error), not just a transient invocation.
+    let mut saw_any_invocation = session_contains_tool_invocations(&last);
+    for attempt in 0..100 {
         tokio::time::sleep(std::time::Duration::from_millis(75)).await;
         let current = state.storage.get_session(session_id).await?;
-        if session_contains_tool_invocations(&current) {
+        if session_contains_settled_tool_invocations(&current) {
             return Some(current);
         }
+        saw_any_invocation |= session_contains_tool_invocations(&current);
         last = current;
+        if !saw_any_invocation && attempt >= 20 {
+            break;
+        }
     }
     Some(last)
 }
@@ -6041,6 +6046,17 @@ fn session_contains_tool_invocations(session: &Session) -> bool {
             .parts
             .iter()
             .any(|part| matches!(part, MessagePart::ToolInvocation { .. }))
+    })
+}
+
+fn session_contains_settled_tool_invocations(session: &Session) -> bool {
+    session.messages.iter().any(|message| {
+        message.parts.iter().any(|part| {
+            let MessagePart::ToolInvocation { result, error, .. } = part else {
+                return false;
+            };
+            result.is_some() || error.as_ref().is_some_and(|value| !value.trim().is_empty())
+        })
     })
 }
 
