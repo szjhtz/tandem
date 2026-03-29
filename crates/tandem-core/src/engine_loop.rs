@@ -5726,6 +5726,9 @@ fn sanitize_path_candidate(raw: &str) -> Option<String> {
     if is_placeholder_path_token(token.as_str()) {
         return None;
     }
+    if token.ends_with('/') || token.ends_with('\\') {
+        return None;
+    }
 
     let looks_like_path = token.contains('/') || token.contains('\\');
     let has_file_ext = [
@@ -8122,6 +8125,22 @@ Call: todowrite(task_id=3, status="in_progress")
         assert_eq!(
             normalized.missing_terminal_reason.as_deref(),
             Some("FILE_PATH_MISSING")
+        );
+    }
+
+    #[test]
+    fn normalize_tool_args_write_output_target_only_recovers_from_dot_slash_path() {
+        let normalized = normalize_tool_args_with_mode(
+            "write",
+            json!({"path":"./","content":"{}"}),
+            "Required Workspace Output:\n- Create or update `.tandem/runs/automation-v2-run-123/artifacts/research-sources.json` relative to the workspace root.",
+            "",
+            WritePathRecoveryMode::OutputTargetOnly,
+        );
+        assert!(!normalized.missing_terminal);
+        assert_eq!(
+            normalized.args.get("path").and_then(|v| v.as_str()),
+            Some(".tandem/runs/automation-v2-run-123/artifacts/research-sources.json")
         );
     }
 

@@ -325,6 +325,25 @@ fn incoming_object_adds_terminal_args(existing: &Value, incoming: &Value) -> boo
     })
 }
 
+fn incoming_object_adds_execution_context(existing: &Value, incoming: &Value) -> bool {
+    let (Some(existing_obj), Some(incoming_obj)) = (existing.as_object(), incoming.as_object())
+    else {
+        return false;
+    };
+
+    let context_keys = ["__workspace_root", "__effective_cwd", "__session_id"];
+    let incoming_has_context = context_keys
+        .iter()
+        .any(|key| incoming_obj.contains_key(*key));
+    if !incoming_has_context {
+        return false;
+    }
+    let existing_has_context = context_keys
+        .iter()
+        .any(|key| existing_obj.contains_key(*key));
+    incoming_has_context && !existing_has_context
+}
+
 fn tool_args_object_looks_malformed(args: &Value) -> bool {
     let Some(obj) = args.as_object() else {
         return false;
@@ -346,6 +365,9 @@ fn tool_args_object_looks_malformed(args: &Value) -> bool {
 fn should_replace_tool_args(existing: &Value, incoming: &Value) -> bool {
     if tool_args_are_empty(incoming) {
         return tool_args_are_empty(existing);
+    }
+    if incoming_object_adds_execution_context(existing, incoming) {
+        return true;
     }
     if incoming_object_adds_terminal_args(existing, incoming) {
         return true;
@@ -2327,6 +2349,92 @@ mod tests {
                 assert_eq!(tool, "write");
                 assert_eq!(args["path"], "notes/report.md");
                 assert_eq!(args["content"], "# Report\n");
+                assert_eq!(result.as_ref(), Some(&json!("ok")));
+                assert_eq!(error.as_deref(), None);
+            }
+            other => panic!("expected tool part, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn append_message_part_prefers_executed_write_args_with_context_over_pending_raw_args() {
+        let base = std::env::temp_dir().join(format!(
+            "tandem-core-tool-executed-args-preferred-{}",
+            Uuid::new_v4()
+        ));
+        let storage = Storage::new(&base).await.expect("storage");
+        let session = Session::new(
+            Some("tool executed args preferred".to_string()),
+            Some(".".to_string()),
+        );
+        let session_id = session.id.clone();
+        storage.save_session(session).await.expect("save session");
+
+        let user = Message::new(
+            MessageRole::User,
+            vec![MessagePart::Text {
+                text: "build report".to_string(),
+            }],
+        );
+        let message_id = user.id.clone();
+        storage
+            .append_message(&session_id, user)
+            .await
+            .expect("append user");
+
+        storage
+            .append_message_part(
+                &session_id,
+                &message_id,
+                MessagePart::ToolInvocation {
+                    tool: "write".to_string(),
+                    args: json!({"path":".","content":"draft"}),
+                    result: None,
+                    error: None,
+                },
+            )
+            .await
+            .expect("append raw pending invocation");
+        storage
+            .append_message_part(
+                &session_id,
+                &message_id,
+                MessagePart::ToolInvocation {
+                    tool: "write".to_string(),
+                    args: json!({
+                        "path":".tandem/runs/run-123/artifacts/research-sources.json",
+                        "content":"draft",
+                        "__workspace_root":"/home/evan/marketing-tandem",
+                        "__effective_cwd":"/home/evan/marketing-tandem"
+                    }),
+                    result: Some(json!("ok")),
+                    error: None,
+                },
+            )
+            .await
+            .expect("append executed result");
+
+        let session = storage.get_session(&session_id).await.expect("session");
+        let message = session
+            .messages
+            .iter()
+            .find(|message| message.id == message_id)
+            .expect("message");
+        assert_eq!(message.parts.len(), 2);
+        match &message.parts[1] {
+            MessagePart::ToolInvocation {
+                tool,
+                args,
+                result,
+                error,
+            } => {
+                assert_eq!(tool, "write");
+                assert_eq!(
+                    args["path"],
+                    ".tandem/runs/run-123/artifacts/research-sources.json"
+                );
+                assert_eq!(args["content"], "draft");
+                assert_eq!(args["__workspace_root"], "/home/evan/marketing-tandem");
                 assert_eq!(result.as_ref(), Some(&json!("ok")));
                 assert_eq!(error.as_deref(), None);
             }
