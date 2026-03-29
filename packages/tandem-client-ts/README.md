@@ -127,9 +127,14 @@ await client.routines.create({
 ### `client.workflowPlans`
 
 ```typescript
+const preview = await client.workflowPlans.preview({
+  prompt: "Create a release checklist automation",
+  planSource: "planner_page",
+});
+
 const started = await client.workflowPlans.chatStart({
   prompt: "Create a release checklist automation",
-  planSource: "chat",
+  planSource: "planner_page",
 });
 
 const updated = await client.workflowPlans.chatMessage({
@@ -137,11 +142,53 @@ const updated = await client.workflowPlans.chatMessage({
   message: "Add a smoke-test step before rollout.",
 });
 
-await client.workflowPlans.apply({
+const applied = await client.workflowPlans.apply({
   planId: updated.plan.plan_id,
   creatorId: "operator-1",
 });
+
+const importPreview = await client.workflowPlans.importPreview({
+  bundle: applied.plan_package_bundle!,
+});
+
+const imported = await client.workflowPlans.importPlan({
+  bundle: importPreview.bundle ?? applied.plan_package_bundle!,
+});
 ```
+
+### Planner page workflow
+
+The Planner page uses the same `workflowPlans` surface, but keeps the bundle as the portable artifact. A minimal end-to-end flow looks like this:
+
+```typescript
+const started = await client.workflowPlans.chatStart({
+  prompt: "Plan a release workflow with approval and handoff",
+  planSource: "intent_planner_page",
+  workspaceRoot: "/workspace/repos/tandem",
+});
+
+const revised = await client.workflowPlans.chatMessage({
+  planId: started.plan.plan_id!,
+  message: "Split the work into review, validate, and publish phases.",
+});
+
+const applied = await client.workflowPlans.apply({
+  planId: revised.plan.plan_id!,
+  creatorId: "planner-operator",
+});
+
+const previewImport = await client.workflowPlans.importPreview({
+  bundle: applied.plan_package_bundle!,
+});
+
+if (previewImport.import_validation?.compatible) {
+  await client.workflowPlans.importPlan({
+    bundle: previewImport.bundle ?? applied.plan_package_bundle!,
+  });
+}
+```
+
+Use this flow when you want the same governed bundle the control-panel Planner page hands to Automations, Coding, and Orchestrator.
 
 ### Additional namespaces
 

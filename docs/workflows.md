@@ -172,6 +172,70 @@ The workflow HTTP surface currently includes:
 - `PATCH /workflow-hooks/{id}`
 - `GET /workflows/events`
 
+## Sharing or Reusing a Generated Workflow
+
+Generated workflows can be moved between workspaces as a bundle instead of being rebuilt from scratch. The shareable artifact is `plan_package_bundle`.
+
+The Planner page uses the same bundle-shaped workflow when it hands plans off into Automations, Coding, Orchestrator, or a saved intent. The SDKs expose the same preview/chat/apply/import calls, so external callers can drive the same workflow without going through the control panel UI.
+
+1. Preview or apply a workflow plan.
+   - `POST /workflow-plans/preview` returns `plan_package_bundle` alongside `plan`, `plan_package`, and `plan_package_validation`.
+   - `POST /workflow-plans/apply` returns the same bundle plus `approved_plan_materialization` for the stored automation snapshot.
+2. Copy the bundle into the target workspace or install.
+3. Validate the bundle before importing it.
+   - `POST /workflow-plans/import/preview` returns `import_validation`, `plan_package_preview`, `derived_scope_snapshot`, and `summary`.
+   - Check `import_validation.compatible` before import.
+4. Import the bundle.
+   - `POST /workflow-plans/import` stores the imported plan package in the target workspace.
+
+Example request flow:
+
+```bash
+curl -s -X POST http://localhost:4000/workflow-plans/preview \
+  -H 'content-type: application/json' \
+  -d '{"prompt":"Create a shareable workflow bundle","workspace_root":"/tmp/source"}'
+```
+
+The response includes a `plan_package_bundle` field. Copy that value into an import preview request:
+
+```json
+{
+  "bundle": { "...": "copied from plan_package_bundle" }
+}
+```
+
+If you are building against the SDK instead of raw HTTP, the same flow is available as `workflowPlans.preview`, `workflowPlans.chatStart`, `workflowPlans.chatMessage`, `workflowPlans.apply`, `workflowPlans.importPreview`, and `workflowPlans.importPlan` in TypeScript, or the snake_case equivalents in Python.
+
+Example SDK flow:
+
+```typescript
+const started = await client.workflowPlans.chatStart({
+  prompt: "Plan a release workflow with approval and handoff",
+  planSource: "intent_planner_page",
+  workspaceRoot: "/workspace/repos/tandem",
+});
+
+const revised = await client.workflowPlans.chatMessage({
+  planId: started.plan.plan_id!,
+  message: "Split the work into review, validate, and publish phases.",
+});
+
+const applied = await client.workflowPlans.apply({
+  planId: revised.plan.plan_id!,
+  creatorId: "planner-operator",
+});
+
+const previewImport = await client.workflowPlans.importPreview({
+  bundle: applied.plan_package_bundle!,
+});
+
+if (previewImport.import_validation?.compatible) {
+  await client.workflowPlans.importPlan({
+    bundle: previewImport.bundle ?? applied.plan_package_bundle!,
+  });
+}
+```
+
 ## Creating a Custom Workflow Hook
 
 1. Create `.tandem/workflows/build_feature.yaml`

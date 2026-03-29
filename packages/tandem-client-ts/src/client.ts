@@ -125,6 +125,12 @@ import type {
   AutomationV2RunRecord,
   WorkflowPlan,
   WorkflowPlanConversation,
+  WorkflowPlanPreviewResponse,
+  WorkflowPlanApplyResponse,
+  WorkflowPlanChatResponse,
+  WorkflowPlanGetResponse,
+  WorkflowPlanImportPreviewResponse,
+  WorkflowPlanImportResponse,
   WorkflowPlanPackBuilderExportRequest,
   WorkflowPlanPackBuilderExportResult,
   MissionCreateInput,
@@ -1907,7 +1913,7 @@ class Coder {
     const asObj = ((raw as JsonObject | null) ?? {}) as JsonObject;
     return {
       ...asObj,
-      binding: (asObj.binding as CoderProjectBindingGetResponse["binding"]) ?? null,
+      binding: (asObj.binding as unknown as CoderProjectBindingGetResponse["binding"]) ?? null,
     };
   }
 
@@ -2345,18 +2351,8 @@ class WorkflowPlans {
     workspace_root?: string;
     operatorPreferences?: JsonObject;
     operator_preferences?: JsonObject;
-  }): Promise<{
-    plan: WorkflowPlan;
-    clarifier?: JsonObject | null;
-    assistant_message?: JsonObject;
-    planner_diagnostics?: JsonObject | null;
-  }> {
-    return this.req<{
-      plan: WorkflowPlan;
-      clarifier?: JsonObject | null;
-      assistant_message?: JsonObject;
-      planner_diagnostics?: JsonObject | null;
-    }>("/workflow-plans/preview", {
+  }): Promise<WorkflowPlanPreviewResponse> {
+    return this.req<WorkflowPlanPreviewResponse>("/workflow-plans/preview", {
       method: "POST",
       body: JSON.stringify({
         prompt: options.prompt,
@@ -2377,24 +2373,17 @@ class WorkflowPlans {
     creator_id?: string;
     packBuilderExport?: WorkflowPlanPackBuilderExportRequest;
     pack_builder_export?: WorkflowPlanPackBuilderExportRequest;
-  }): Promise<{
-    ok?: boolean;
-    plan?: WorkflowPlan;
-    automation?: JsonObject;
-    pack_builder_export?: WorkflowPlanPackBuilderExportResult;
-  }> {
-    return this.req<{
-      ok?: boolean;
-      plan?: WorkflowPlan;
-      automation?: JsonObject;
-      pack_builder_export?: WorkflowPlanPackBuilderExportResult;
-    }>("/workflow-plans/apply", {
+    overlapDecision?: string;
+    overlap_decision?: string;
+  }): Promise<WorkflowPlanApplyResponse> {
+    return this.req<WorkflowPlanApplyResponse>("/workflow-plans/apply", {
       method: "POST",
       body: JSON.stringify({
         plan_id: options.plan_id ?? options.planId,
         plan: options.plan,
         creator_id: options.creator_id ?? options.creatorId,
         pack_builder_export: options.pack_builder_export ?? options.packBuilderExport,
+        overlap_decision: options.overlap_decision ?? options.overlapDecision,
       }),
     });
   }
@@ -2410,12 +2399,8 @@ class WorkflowPlans {
     workspace_root?: string;
     operatorPreferences?: JsonObject;
     operator_preferences?: JsonObject;
-  }): Promise<{ plan: WorkflowPlan; conversation: WorkflowPlanConversation }> {
-    return this.req<{
-      plan: WorkflowPlan;
-      conversation: WorkflowPlanConversation;
-      planner_diagnostics?: JsonObject | null;
-    }>("/workflow-plans/chat/start", {
+  }): Promise<WorkflowPlanChatResponse> {
+    return this.req<WorkflowPlanChatResponse>("/workflow-plans/chat/start", {
       method: "POST",
       timeoutMs: this.chatTimeoutMs,
       body: JSON.stringify({
@@ -2429,33 +2414,16 @@ class WorkflowPlans {
     });
   }
 
-  async get(planId: string): Promise<{
-    plan: WorkflowPlan;
-    conversation: WorkflowPlanConversation;
-    planner_diagnostics?: JsonObject | null;
-  }> {
-    return this.req<{
-      plan: WorkflowPlan;
-      conversation: WorkflowPlanConversation;
-      planner_diagnostics?: JsonObject | null;
-    }>(`/workflow-plans/${encodeURIComponent(planId)}`);
+  async get(planId: string): Promise<WorkflowPlanGetResponse> {
+    return this.req<WorkflowPlanGetResponse>(`/workflow-plans/${encodeURIComponent(planId)}`);
   }
 
-  async chatMessage(options: { planId?: string; plan_id?: string; message: string }): Promise<{
-    plan: WorkflowPlan;
-    conversation: WorkflowPlanConversation;
-    assistant_message?: JsonObject;
-    change_summary?: string[];
-    clarifier?: JsonObject | null;
-  }> {
-    return this.req<{
-      plan: WorkflowPlan;
-      conversation: WorkflowPlanConversation;
-      assistant_message?: JsonObject;
-      change_summary?: string[];
-      clarifier?: JsonObject | null;
-      planner_diagnostics?: JsonObject | null;
-    }>("/workflow-plans/chat/message", {
+  async chatMessage(options: {
+    planId?: string;
+    plan_id?: string;
+    message: string;
+  }): Promise<WorkflowPlanChatResponse> {
+    return this.req<WorkflowPlanChatResponse>("/workflow-plans/chat/message", {
       method: "POST",
       timeoutMs: this.chatTimeoutMs,
       body: JSON.stringify({
@@ -2465,19 +2433,42 @@ class WorkflowPlans {
     });
   }
 
-  async chatReset(options: { planId?: string; plan_id?: string }): Promise<{
-    plan: WorkflowPlan;
-    conversation: WorkflowPlanConversation;
-    planner_diagnostics?: JsonObject | null;
-  }> {
-    return this.req<{
-      plan: WorkflowPlan;
-      conversation: WorkflowPlanConversation;
-      planner_diagnostics?: JsonObject | null;
-    }>("/workflow-plans/chat/reset", {
+  async chatReset(options: {
+    planId?: string;
+    plan_id?: string;
+  }): Promise<WorkflowPlanChatResponse> {
+    return this.req<WorkflowPlanChatResponse>("/workflow-plans/chat/reset", {
       method: "POST",
       body: JSON.stringify({
         plan_id: options.plan_id ?? options.planId,
+      }),
+    });
+  }
+
+  async importPreview(options: {
+    bundle: JsonObject;
+    creatorId?: string;
+    creator_id?: string;
+  }): Promise<WorkflowPlanImportPreviewResponse> {
+    return this.req<WorkflowPlanImportPreviewResponse>("/workflow-plans/import/preview", {
+      method: "POST",
+      body: JSON.stringify({
+        bundle: options.bundle,
+        creator_id: options.creator_id ?? options.creatorId,
+      }),
+    });
+  }
+
+  async importPlan(options: {
+    bundle: JsonObject;
+    creatorId?: string;
+    creator_id?: string;
+  }): Promise<WorkflowPlanImportResponse> {
+    return this.req<WorkflowPlanImportResponse>("/workflow-plans/import", {
+      method: "POST",
+      body: JSON.stringify({
+        bundle: options.bundle,
+        creator_id: options.creator_id ?? options.creatorId,
       }),
     });
   }
@@ -2676,11 +2667,21 @@ class AutomationsV2 {
     );
   }
 
-  async runNow(id: string): Promise<{ ok?: boolean; run?: AutomationV2RunRecord }> {
-    return this.req<{ ok?: boolean; run?: AutomationV2RunRecord }>(
-      `/automations/v2/${encodeURIComponent(id)}/run_now`,
-      { method: "POST", body: JSON.stringify({}) }
-    );
+  async runNow(
+    id: string,
+    options?: { dryRun?: boolean }
+  ): Promise<{ ok?: boolean; dry_run?: boolean; dryRun?: boolean; run?: AutomationV2RunRecord }> {
+    return this.req<{
+      ok?: boolean;
+      dry_run?: boolean;
+      dryRun?: boolean;
+      run?: AutomationV2RunRecord;
+    }>(`/automations/v2/${encodeURIComponent(id)}/run_now`, {
+      method: "POST",
+      body: JSON.stringify({
+        dry_run: options?.dryRun === true,
+      }),
+    });
   }
 
   async pause(id: string, reason?: string): Promise<{ ok?: boolean; automation?: JsonObject }> {

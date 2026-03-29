@@ -154,6 +154,9 @@ async def test_workflow_plans_namespace_routes() -> None:
                     "schedule": {"type": "manual"},
                     "steps": [{"step_id": "step-1", "kind": "task", "objective": "Review changelog"}],
                 }
+                ,
+                "plan_package_bundle": {"bundle": "preview"},
+                "plan_package_validation": {"compatible": True},
             },
         )
     )
@@ -172,6 +175,7 @@ async def test_workflow_plans_namespace_routes() -> None:
                     "plan_id": "plan-1",
                     "messages": [{"role": "assistant", "text": "Drafted plan."}],
                 },
+                "plan_package_bundle": {"bundle": "chat"},
             },
         )
     )
@@ -191,6 +195,33 @@ async def test_workflow_plans_namespace_routes() -> None:
                     "messages": [{"role": "user", "text": "Add smoke tests."}],
                 },
                 "change_summary": ["Added smoke-test step."],
+                "plan_package_bundle": {"bundle": "message"},
+            },
+        )
+    )
+    import_preview_route = respx.post("http://localhost:39731/workflow-plans/import/preview").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "ok": True,
+                "bundle": {"bundle": "import"},
+                "import_validation": {"compatible": True},
+                "plan_package_preview": {"plan_id": "plan-1"},
+                "derived_scope_snapshot": {"plan_id": "plan-1"},
+                "summary": {"plan_id": "plan-1"},
+            },
+        )
+    )
+    import_route = respx.post("http://localhost:39731/workflow-plans/import").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "ok": True,
+                "bundle": {"bundle": "import"},
+                "import_validation": {"compatible": True},
+                "plan_package_preview": {"plan_id": "plan-1"},
+                "derived_scope_snapshot": {"plan_id": "plan-1"},
+                "summary": {"plan_id": "plan-1"},
             },
         )
     )
@@ -201,14 +232,20 @@ async def test_workflow_plans_namespace_routes() -> None:
         messaged = await client.workflow_plans.chat_message(
             plan_id="plan-1", message="Add smoke tests."
         )
+        imported_preview = await client.workflow_plans.import_preview(bundle={"bundle": "import"})
+        imported = await client.workflow_plans.import_plan(bundle={"bundle": "import"})
 
     assert preview.plan.plan_id == "plan-1"
     assert preview.plan.steps[0].objective == "Review changelog"
     assert started.conversation.conversation_id == "conv-1"
     assert messaged.change_summary == ["Added smoke-test step."]
+    assert imported_preview.import_validation == {"compatible": True}
+    assert imported.plan_package_preview == {"plan_id": "plan-1"}
     assert preview_route.called
     assert chat_start_route.called
     assert chat_message_route.called
+    assert import_preview_route.called
+    assert import_route.called
 
 
 @respx.mock

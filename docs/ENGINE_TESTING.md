@@ -54,7 +54,7 @@ cargo run -p tandem-ai -- serve --host 127.0.0.1 --port 39731
 cargo test -p tandem-server -p tandem-core -p tandem-ai
 ```
 
-# Teesting with packages/tandem-control-panel
+# Testing with packages/tandem-control-panel
 
 ```bash
 cargo build -p tandem-ai --profile fast-release

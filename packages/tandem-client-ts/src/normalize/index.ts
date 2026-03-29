@@ -135,6 +135,8 @@ export const SessionRunStateResponseSchema = z
 export const RunNowResponseSchema = z
   .object({
     ok: z.boolean().optional(),
+    dry_run: z.boolean().optional(),
+    dryRun: z.boolean().optional(),
     runID: z.string().optional(),
     runId: z.string().optional(),
     run_id: z.string().optional(),
@@ -144,6 +146,7 @@ export const RunNowResponseSchema = z
   .transform(
     (val): Public.RunNowResponse => ({
       ...val,
+      dryRun: val.dryRun ?? val.dry_run,
       runId: val.runId || val.runID || val.run_id,
     })
   );

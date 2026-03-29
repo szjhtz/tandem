@@ -98,6 +98,9 @@ from .types import (
     WorkflowPlanApplyResponse,
     WorkflowPlanChatResponse,
     WorkflowPlanConversation,
+    WorkflowPlanGetResponse,
+    WorkflowPlanImportPreviewResponse,
+    WorkflowPlanImportResponse,
     WorkflowPlanPackBuilderExportRequest,
     WorkflowPlanPreviewResponse,
     WorkflowListResponse,
@@ -1728,10 +1731,10 @@ class _WorkflowPlans:
         res.raise_for_status()
         return WorkflowPlanChatResponse.model_validate(res.json())
 
-    async def get(self, plan_id: str) -> WorkflowPlanChatResponse:
+    async def get(self, plan_id: str) -> WorkflowPlanGetResponse:
         res = await self._http.get(f"/workflow-plans/{quote(plan_id)}")
         res.raise_for_status()
-        return WorkflowPlanChatResponse.model_validate(res.json())
+        return WorkflowPlanGetResponse.model_validate(res.json())
 
     async def chat_message(self, *, plan_id: str, message: str) -> WorkflowPlanChatResponse:
         res = await self._http.post(
@@ -1745,6 +1748,32 @@ class _WorkflowPlans:
         res = await self._http.post("/workflow-plans/chat/reset", json={"plan_id": plan_id})
         res.raise_for_status()
         return WorkflowPlanChatResponse.model_validate(res.json())
+
+    async def import_preview(
+        self,
+        *,
+        bundle: dict[str, Any],
+        creator_id: Optional[str] = None,
+    ) -> WorkflowPlanImportPreviewResponse:
+        payload: dict[str, Any] = {"bundle": bundle}
+        if creator_id is not None:
+            payload["creator_id"] = creator_id
+        res = await self._http.post("/workflow-plans/import/preview", json=payload)
+        res.raise_for_status()
+        return WorkflowPlanImportPreviewResponse.model_validate(res.json())
+
+    async def import_plan(
+        self,
+        *,
+        bundle: dict[str, Any],
+        creator_id: Optional[str] = None,
+    ) -> WorkflowPlanImportResponse:
+        payload: dict[str, Any] = {"bundle": bundle}
+        if creator_id is not None:
+            payload["creator_id"] = creator_id
+        res = await self._http.post("/workflow-plans/import", json=payload)
+        res.raise_for_status()
+        return WorkflowPlanImportResponse.model_validate(res.json())
 
 
 # ─── Automations ──────────────────────────────────────────────────────────────
@@ -1882,8 +1911,11 @@ class _AutomationsV2:
         res.raise_for_status()
         return res.json()  # type: ignore[no-any-return]
 
-    async def run_now(self, automation_id: str) -> AutomationV2RunRecord:
-        res = await self._http.post(f"/automations/v2/{quote(automation_id)}/run_now", json={})
+    async def run_now(self, automation_id: str, dry_run: bool = False) -> AutomationV2RunRecord:
+        res = await self._http.post(
+            f"/automations/v2/{quote(automation_id)}/run_now",
+            json={"dry_run": dry_run},
+        )
         res.raise_for_status()
         return AutomationV2RunRecord.model_validate(res.json().get("run", {}))
 

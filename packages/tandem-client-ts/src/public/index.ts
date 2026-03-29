@@ -1047,6 +1047,7 @@ export interface PatchAutomationOptions {
 
 export interface RunNowResponse {
   ok?: boolean;
+  dryRun?: boolean;
   runId?: string;
   status?: RunStatus | string;
 }
@@ -1591,6 +1592,70 @@ export interface WorkflowPlanConversation {
   messages: WorkflowPlanChatMessage[];
   [key: string]: unknown;
 }
+
+export interface WorkflowPlanPreviewResponse {
+  plan: WorkflowPlan;
+  clarifier?: JsonObject | null;
+  assistant_message?: JsonObject;
+  planner_diagnostics?: JsonObject | null;
+  plan_package?: JsonObject;
+  plan_package_bundle?: JsonObject;
+  plan_package_validation?: JsonObject;
+  overlap_analysis?: JsonObject | null;
+  teaching_library?: JsonObject;
+}
+
+export interface WorkflowPlanApplyResponse {
+  ok?: boolean;
+  plan?: WorkflowPlan;
+  plan_package?: JsonObject;
+  plan_package_bundle?: JsonObject;
+  plan_package_validation?: JsonObject;
+  approved_plan_materialization?: JsonObject;
+  automation?: JsonObject;
+  overlap_analysis?: JsonObject;
+  pack_builder_export?: WorkflowPlanPackBuilderExportResult;
+}
+
+export interface WorkflowPlanChatResponse {
+  plan: WorkflowPlan;
+  conversation: WorkflowPlanConversation;
+  assistant_message?: JsonObject;
+  change_summary?: string[];
+  clarifier?: JsonObject | null;
+  planner_diagnostics?: JsonObject | null;
+  plan_package?: JsonObject;
+  plan_package_bundle?: JsonObject;
+  plan_package_validation?: JsonObject;
+  overlap_analysis?: JsonObject | null;
+  teaching_library?: JsonObject;
+}
+
+export interface WorkflowPlanGetResponse {
+  plan: WorkflowPlan;
+  conversation: WorkflowPlanConversation;
+  planner_diagnostics?: JsonObject | null;
+  overlap_analysis?: JsonObject | null;
+  plan_package?: JsonObject;
+  plan_package_bundle?: JsonObject;
+  plan_package_validation?: JsonObject;
+  plan_package_replay?: JsonObject;
+  teaching_library?: JsonObject;
+}
+
+export interface WorkflowPlanImportPreviewResponse {
+  ok?: boolean;
+  bundle?: JsonObject;
+  import_validation?: JsonObject;
+  plan_package_preview?: JsonObject;
+  plan_package_validation?: JsonObject;
+  derived_scope_snapshot?: JsonObject;
+  summary?: JsonObject;
+  import_transform_log?: JsonObject;
+  import_source_bundle_digest?: string;
+}
+
+export type WorkflowPlanImportResponse = WorkflowPlanImportPreviewResponse;
 
 export interface AutomationV2RunRecord {
   runId: string;

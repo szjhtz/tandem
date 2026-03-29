@@ -118,6 +118,79 @@ describe("Coder SDK coverage", () => {
   });
 });
 
+describe("Workflow planning SDK coverage", () => {
+  it("routes preview, apply, and import bundle calls", async () => {
+    const client = new TandemClient({
+      baseUrl: "http://localhost:39731",
+      token: "test-token",
+    });
+
+    const originalFetch = globalThis.fetch;
+    const calls: Array<{ url: string; method: string }> = [];
+    globalThis.fetch = (async (input, init) => {
+      calls.push({ url: String(input), method: String(init?.method ?? "GET") });
+      const url = String(input);
+      if (url.endsWith("/workflow-plans/import/preview")) {
+        return new Response(
+          JSON.stringify({
+            ok: true,
+            bundle: { bundle: "import" },
+            import_validation: { compatible: true },
+            plan_package_preview: { plan_id: "plan-1" },
+            derived_scope_snapshot: { plan_id: "plan-1" },
+            summary: { plan_id: "plan-1" },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      if (url.endsWith("/workflow-plans/import")) {
+        return new Response(
+          JSON.stringify({
+            ok: true,
+            bundle: { bundle: "import" },
+            import_validation: { compatible: true },
+            plan_package_preview: { plan_id: "plan-1" },
+            derived_scope_snapshot: { plan_id: "plan-1" },
+            summary: { plan_id: "plan-1" },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      return new Response(
+        JSON.stringify({
+          plan: {
+            plan_id: "plan-1",
+            title: "Release checklist",
+            schedule: { type: "manual" },
+            steps: [{ step_id: "step-1", kind: "task", objective: "Review changelog" }],
+          },
+          plan_package_bundle: { bundle: "preview" },
+          plan_package_validation: { compatible: true },
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      );
+    }) as typeof fetch;
+
+    try {
+      const preview = await client.workflowPlans.preview({ prompt: "Create a release checklist" });
+      const applied = await client.workflowPlans.apply({ planId: preview.plan.plan_id });
+      const importedPreview = await client.workflowPlans.importPreview({ bundle: { bundle: "x" } });
+      const imported = await client.workflowPlans.importPlan({ bundle: { bundle: "x" } });
+
+      expect(preview.plan.plan_id).toBe("plan-1");
+      expect(applied.plan_package_bundle).toEqual({ bundle: "preview" });
+      expect(importedPreview.import_validation).toEqual({ compatible: true });
+      expect(imported.summary).toEqual({ plan_id: "plan-1" });
+      expect(calls[0]?.url).toContain("/workflow-plans/preview");
+      expect(calls[1]?.url).toContain("/workflow-plans/apply");
+      expect(calls[2]?.url).toContain("/workflow-plans/import/preview");
+      expect(calls[3]?.url).toContain("/workflow-plans/import");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
 describe("High-value parity coverage", () => {
   it("exposes new top-level namespaces", () => {
     const client = new TandemClient({

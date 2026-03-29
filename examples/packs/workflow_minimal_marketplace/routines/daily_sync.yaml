@@ -1,6 +1,0 @@
-id: daily_sync
-trigger:
-  type: cron
-  expression: "0 13 * * *"
-mission_id: pr_triage
-enabled_by_default: false

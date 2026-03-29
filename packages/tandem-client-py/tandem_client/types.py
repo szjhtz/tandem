@@ -703,6 +703,7 @@ class DefinitionCreateResponse(BaseModel):
 class RunNowResponse(BaseModel):
     model_config = ConfigDict(extra="ignore")
     ok: Optional[bool] = None
+    dry_run: Optional[bool] = None
     run_id: Optional[str] = Field(None, validation_alias=AliasChoices("runID", "runId", "run_id"))
     status: Optional[RunStatus] = None
 
@@ -1220,6 +1221,11 @@ class WorkflowPlanPreviewResponse(BaseModel):
     clarifier: Optional[dict[str, Any]] = None
     assistant_message: Optional[dict[str, Any]] = None
     planner_diagnostics: Optional[dict[str, Any]] = None
+    plan_package: Optional[dict[str, Any]] = None
+    plan_package_bundle: Optional[dict[str, Any]] = None
+    plan_package_validation: Optional[dict[str, Any]] = None
+    overlap_analysis: Optional[dict[str, Any]] = None
+    teaching_library: Optional[dict[str, Any]] = None
 
 
 class WorkflowPlanApplyResponse(BaseModel):
@@ -1227,6 +1233,11 @@ class WorkflowPlanApplyResponse(BaseModel):
     ok: Optional[bool] = None
     plan: Optional[WorkflowPlan] = None
     automation: Optional[dict[str, Any]] = None
+    plan_package: Optional[dict[str, Any]] = None
+    plan_package_bundle: Optional[dict[str, Any]] = None
+    plan_package_validation: Optional[dict[str, Any]] = None
+    approved_plan_materialization: Optional[dict[str, Any]] = None
+    overlap_analysis: Optional[dict[str, Any]] = None
     pack_builder_export: Optional[WorkflowPlanPackBuilderExportResult] = Field(
         None, validation_alias=AliasChoices("packBuilderExport", "pack_builder_export")
     )
@@ -1242,6 +1253,33 @@ class WorkflowPlanChatResponse(BaseModel):
     )
     clarifier: Optional[dict[str, Any]] = None
     planner_diagnostics: Optional[dict[str, Any]] = None
+    plan_package: Optional[dict[str, Any]] = None
+    plan_package_bundle: Optional[dict[str, Any]] = None
+    plan_package_validation: Optional[dict[str, Any]] = None
+    overlap_analysis: Optional[dict[str, Any]] = None
+    teaching_library: Optional[dict[str, Any]] = None
+
+
+class WorkflowPlanGetResponse(WorkflowPlanChatResponse):
+    model_config = ConfigDict(extra="allow")
+    plan_package_replay: Optional[dict[str, Any]] = None
+
+
+class WorkflowPlanImportPreviewResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    ok: Optional[bool] = None
+    bundle: Optional[dict[str, Any]] = None
+    import_validation: Optional[dict[str, Any]] = None
+    plan_package_preview: Optional[dict[str, Any]] = None
+    plan_package_validation: Optional[dict[str, Any]] = None
+    derived_scope_snapshot: Optional[dict[str, Any]] = None
+    summary: Optional[dict[str, Any]] = None
+    import_transform_log: Optional[list[dict[str, Any]]] = None
+    import_source_bundle_digest: Optional[str] = None
+
+
+class WorkflowPlanImportResponse(WorkflowPlanImportPreviewResponse):
+    model_config = ConfigDict(extra="allow")
 
 
 # ─── Missions ─────────────────────────────────────────────────────────────────

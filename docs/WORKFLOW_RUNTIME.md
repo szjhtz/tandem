@@ -82,6 +82,62 @@ Tandem's workflow runtime closes that gap. It's infrastructure for AI operations
 
 The marketing content pipeline is an example. The same runtime runs any multi-stage workflow: code review, research synthesis, document generation, data processing pipelines. When the workflow says an artifact is complete and validated, it means it.
 
+## Sharing a Generated Workflow
+
+The portable unit for reuse is the workflow plan bundle, not the conversation transcript. A previewed or applied plan returns `plan_package_bundle`, and that bundle can be validated or imported in another workspace or install.
+
+This is the same artifact that the Planner page hands downstream to Automations, Coding, and Orchestrator. The control panel adds convenience around naming, replay, and handoff, but the SDK and the backend are still centered on the bundle.
+
+The reuse flow is:
+
+1. Generate the plan with `POST /workflow-plans/preview` or `POST /workflow-plans/apply`.
+2. Copy `plan_package_bundle` into the target environment.
+3. Call `POST /workflow-plans/import/preview` to check `import_validation`, `plan_package_preview`, `derived_scope_snapshot`, and `summary`.
+4. Call `POST /workflow-plans/import` if the import preview is compatible.
+
+Example response shape:
+
+```json
+{
+  "import_validation": { "compatible": true },
+  "plan_package_preview": { "lifecycle_state": "preview" },
+  "derived_scope_snapshot": { "plan_id": "imported-example" },
+  "summary": { "routine_count": 3, "credential_envelope_count": 2 }
+}
+```
+
+If `import_validation.compatible` is false, the bundle needs to be fixed before reuse or the target workspace needs to be adjusted.
+
+If you are driving the workflow from the SDK, the flow mirrors the HTTP calls:
+
+```typescript
+const started = await client.workflowPlans.chatStart({
+  prompt: "Plan a release workflow with approval and handoff",
+  planSource: "intent_planner_page",
+  workspaceRoot: "/workspace/repos/tandem",
+});
+
+const revised = await client.workflowPlans.chatMessage({
+  planId: started.plan.plan_id!,
+  message: "Split the work into review, validate, and publish phases.",
+});
+
+const applied = await client.workflowPlans.apply({
+  planId: revised.plan.plan_id!,
+  creatorId: "planner-operator",
+});
+
+const previewImport = await client.workflowPlans.importPreview({
+  bundle: applied.plan_package_bundle!,
+});
+
+if (previewImport.import_validation?.compatible) {
+  await client.workflowPlans.importPlan({
+    bundle: previewImport.bundle ?? applied.plan_package_bundle!,
+  });
+}
+```
+
 ## How It Feels
 
 You run a marketing campaign workflow. The AI discovers source material, researches positioning and competitors, drafts copy, reviews claims, and packages for publishing. You watch it work.

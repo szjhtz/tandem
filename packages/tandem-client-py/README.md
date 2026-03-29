@@ -221,11 +221,12 @@ run = await client.automations_v2.run_now(automation.automation_id or "")
 ```python
 preview = await client.workflow_plans.preview(
     prompt="Create a release checklist automation",
-    plan_source="chat",
+    plan_source="planner_page",
 )
 
 started = await client.workflow_plans.chat_start(
     prompt="Create a release checklist automation",
+    plan_source="planner_page",
 )
 
 updated = await client.workflow_plans.chat_message(
@@ -237,7 +238,48 @@ applied = await client.workflow_plans.apply(
     plan_id=updated.plan.plan_id,
     creator_id="operator-1",
 )
+
+import_preview = await client.workflow_plans.import_preview(
+    bundle=applied.plan_package_bundle,
+)
+
+imported = await client.workflow_plans.import_plan(
+    bundle=import_preview.bundle or applied.plan_package_bundle,
+)
 ```
+
+### Planner page workflow
+
+The Planner page uses the same `workflow_plans` surface and keeps the plan bundle as the portable artifact. A minimal end-to-end flow looks like this:
+
+```python
+started = await client.workflow_plans.chat_start(
+    prompt="Plan a release workflow with approval and handoff",
+    plan_source="intent_planner_page",
+    workspace_root="/workspace/repos/tandem",
+)
+
+revised = await client.workflow_plans.chat_message(
+    plan_id=started.plan.plan_id or "",
+    message="Split the work into review, validate, and publish phases.",
+)
+
+applied = await client.workflow_plans.apply(
+    plan_id=revised.plan.plan_id or "",
+    creator_id="planner-operator",
+)
+
+preview_import = await client.workflow_plans.import_preview(
+    bundle=applied.plan_package_bundle,
+)
+
+if preview_import.import_validation.get("compatible"):
+    await client.workflow_plans.import_plan(
+        bundle=preview_import.bundle or applied.plan_package_bundle,
+    )
+```
+
+Use this flow when you want the same governed bundle the control-panel Planner page hands to Automations, Coding, and Orchestrator.
 
 ### Additional namespaces
 
