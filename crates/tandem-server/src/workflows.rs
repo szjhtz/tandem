@@ -118,6 +118,7 @@ pub(crate) fn compile_workflow_spec_to_automation_preview(
             workflow.source.as_ref(),
             None,
         ),
+        None,
         "workflow_registry",
     );
     if let Some(metadata) = automation.metadata.as_mut().and_then(Value::as_object_mut) {
@@ -166,6 +167,7 @@ fn compile_workflow_run_automation(
             source,
             trigger_event,
         ),
+        None,
         "workflow_runtime",
     );
     automation.automation_id = automation_id.clone();
@@ -189,7 +191,7 @@ async fn sync_workflow_automation_run_start(
         .update_automation_v2_run(run_id, |run| {
             run.status = crate::AutomationRunStatus::Running;
             run.started_at_ms.get_or_insert_with(now_ms);
-            crate::app::state::record_automation_lifecycle_event(
+            crate::app::state::automation::lifecycle::record_automation_lifecycle_event(
                 run,
                 "workflow_run_started",
                 Some("workflow runtime mirror started".to_string()),
@@ -224,7 +226,7 @@ async fn sync_workflow_automation_action_started(
                 .node_attempts
                 .insert(action_id.to_string(), next_attempt);
             run.detail = Some(format!("Running workflow action `{action_id}`"));
-            crate::app::state::record_automation_lifecycle_event_with_metadata(
+            crate::app::state::automation::lifecycle::record_automation_lifecycle_event_with_metadata(
                 run,
                 "workflow_action_started",
                 Some(format!("workflow action `{action_id}` started")),
@@ -304,13 +306,29 @@ async fn sync_workflow_automation_action_completed(
                     blocker_category: None,
                     fallback_used: None,
                     artifact_validation: None,
+                    provenance: Some(crate::AutomationNodeOutputProvenance {
+                        session_id: format!("workflow-runtime-{run_id}"),
+                        node_id: action_id.to_string(),
+                        run_id: Some(run_id.to_string()),
+                        output_path: None,
+                        content_digest: None,
+                        accepted_candidate_source: Some("workflow_runtime".to_string()),
+                        validation_outcome: Some("not_applicable".to_string()),
+                        repair_attempt: Some(0),
+                        repair_succeeded: Some(false),
+                        reuse_allowed: Some(false),
+                        freshness: crate::AutomationNodeOutputFreshness {
+                            current_run: true,
+                            current_attempt: true,
+                        },
+                    }),
                 }),
             );
             if run.checkpoint.completed_nodes.len() >= action_count {
                 run.status = crate::AutomationRunStatus::Completed;
                 run.detail = Some("workflow runtime mirror completed".to_string());
             }
-            crate::app::state::record_automation_lifecycle_event_with_metadata(
+            crate::app::state::automation::lifecycle::record_automation_lifecycle_event_with_metadata(
                 run,
                 "workflow_action_completed",
                 Some(format!("workflow action `{action_id}` completed")),
@@ -387,9 +405,25 @@ async fn sync_workflow_automation_action_failed(
                     blocker_category: Some("tool_result_unusable".to_string()),
                     fallback_used: None,
                     artifact_validation: None,
+                    provenance: Some(crate::AutomationNodeOutputProvenance {
+                        session_id: format!("workflow-runtime-{run_id}"),
+                        node_id: action_id.to_string(),
+                        run_id: Some(run_id.to_string()),
+                        output_path: None,
+                        content_digest: None,
+                        accepted_candidate_source: None,
+                        validation_outcome: Some("failed".to_string()),
+                        repair_attempt: Some(0),
+                        repair_succeeded: Some(false),
+                        reuse_allowed: Some(false),
+                        freshness: crate::AutomationNodeOutputFreshness {
+                            current_run: true,
+                            current_attempt: true,
+                        },
+                    }),
                 }),
             );
-            crate::app::state::record_automation_lifecycle_event_with_metadata(
+            crate::app::state::automation::lifecycle::record_automation_lifecycle_event_with_metadata(
                 run,
                 "workflow_action_failed",
                 Some(format!("workflow action `{action_id}` failed")),

@@ -118,6 +118,7 @@ pub(crate) fn test_phase_run(
             lifecycle_history: Vec::new(),
             last_failure: None,
         },
+        runtime_context: None,
         automation_snapshot: None,
         pause_reason: None,
         resume_reason: None,
@@ -128,6 +129,7 @@ pub(crate) fn test_phase_run(
         completion_tokens: 0,
         total_tokens: 0,
         estimated_cost_usd: 0.0,
+        scheduler: None,
     }
 }
 

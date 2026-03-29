@@ -483,3 +483,8 @@ pub(super) async fn path_info(
         "inProcessMode": state.in_process_mode.load(std::sync::atomic::Ordering::Relaxed)
     }))
 }
+
+pub(super) async fn scheduler_metrics(State(state): State<AppState>) -> Json<Value> {
+    let scheduler = state.automation_scheduler.read().await;
+    Json(json!(scheduler.metrics()))
+}

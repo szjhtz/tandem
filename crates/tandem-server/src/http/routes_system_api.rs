@@ -23,4 +23,5 @@ pub(super) fn apply(router: Router<AppState>) -> Router<AppState> {
         .route("/session/{id}/command", post(run_command))
         .route("/session/{id}/shell", post(run_shell))
         .route("/path", get(path_info))
+        .route("/scheduler/metrics", get(scheduler_metrics))
 }

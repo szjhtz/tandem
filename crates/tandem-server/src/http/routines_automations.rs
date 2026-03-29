@@ -19,6 +19,7 @@ use crate::{
     RoutineHistoryEvent, RoutineMisfirePolicy, RoutineRunArtifact, RoutineRunRecord,
     RoutineRunStatus, RoutineSchedule, RoutineSpec, RoutineStatus, RoutineStoreError,
 };
+use tandem_plan_compiler::api as compiler_api;
 use tandem_types::EngineEvent;
 
 fn routine_run_with_context_links(run: &RoutineRunRecord) -> Value {
@@ -136,6 +137,79 @@ fn automation_v2_run_with_context_links(run: &crate::AutomationV2RunRecord) -> V
         );
     }
     payload
+}
+
+fn automation_v2_with_manual_trigger_record(
+    automation: &AutomationV2Spec,
+    run_id: &str,
+    dry_run: bool,
+) -> Option<AutomationV2Spec> {
+    let mut automation = automation.clone();
+    let metadata = automation.metadata.as_mut()?.as_object_mut()?;
+    let plan_package_value = metadata.get("plan_package")?.clone();
+    let plan_package: compiler_api::PlanPackage =
+        serde_json::from_value(plan_package_value).ok()?;
+    let plan_package = compiler_api::with_manual_trigger_record(
+        &plan_package,
+        &format!("manual-trigger-{run_id}"),
+        &automation.creator_id,
+        if dry_run {
+            compiler_api::ManualTriggerSource::DryRun
+        } else {
+            compiler_api::ManualTriggerSource::Api
+        },
+        dry_run,
+        &chrono::Utc::now().to_rfc3339(),
+        Some(run_id),
+        None,
+        Vec::new(),
+        Some(if dry_run {
+            "manual dry run triggered via API"
+        } else {
+            "manual run triggered via API"
+        }),
+    )?;
+    metadata.insert(
+        "plan_package".to_string(),
+        serde_json::to_value(plan_package).ok()?,
+    );
+    Some(automation)
+}
+
+fn automation_v2_failed_node_ids(run: &crate::AutomationV2RunRecord) -> Vec<String> {
+    let mut failed_nodes = run
+        .checkpoint
+        .node_outputs
+        .iter()
+        .filter_map(|(node_id, output)| {
+            let status = output
+                .get("status")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .unwrap_or_default()
+                .to_ascii_lowercase();
+            let failure_kind = output
+                .get("failure_kind")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .unwrap_or_default()
+                .to_ascii_lowercase();
+            (matches!(status.as_str(), "failed" | "verify_failed")
+                || matches!(failure_kind.as_str(), "verification_failed" | "run_failed"))
+            .then_some(node_id.clone())
+        })
+        .collect::<Vec<_>>();
+    failed_nodes.sort();
+    failed_nodes.dedup();
+    failed_nodes
+}
+
+fn automation_v2_recoverable_failure_node_id(run: &crate::AutomationV2RunRecord) -> Option<String> {
+    run.checkpoint
+        .last_failure
+        .as_ref()
+        .map(|failure| failure.node_id.clone())
+        .or_else(|| automation_v2_failed_node_ids(run).into_iter().next())
 }
 
 #[derive(Debug, Deserialize)]
@@ -290,6 +364,12 @@ pub(super) struct AutomationV2PatchInput {
     pub workspace_root: Option<String>,
     #[serde(default)]
     pub metadata: Option<Value>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub(super) struct AutomationV2RunNowInput {
+    #[serde(default)]
+    pub dry_run: bool,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -2231,6 +2311,7 @@ pub(super) async fn automations_v2_delete(
 pub(super) async fn automations_v2_run_now(
     State(state): State<AppState>,
     Path(id): Path<String>,
+    Json(input): Json<AutomationV2RunNowInput>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     let Some(automation) = state.get_automation_v2(&id).await else {
         return Err((
@@ -2240,22 +2321,55 @@ pub(super) async fn automations_v2_run_now(
             ),
         ));
     };
+    let dry_run = input.dry_run;
+    let run = if dry_run {
+        state
+            .create_automation_v2_dry_run(&automation, "manual")
+            .await
+            .map_err(|error| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({
+                        "error": error.to_string(),
+                        "code": "AUTOMATION_V2_RUN_CREATE_FAILED",
+                    })),
+                )
+            })?
+    } else {
+        state
+            .create_automation_v2_run(&automation, "manual")
+            .await
+            .map_err(|error| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({
+                        "error": error.to_string(),
+                        "code": "AUTOMATION_V2_RUN_CREATE_FAILED",
+                    })),
+                )
+            })?
+    };
+    if let Some(automation_with_trigger) =
+        automation_v2_with_manual_trigger_record(&automation, &run.run_id, dry_run)
+    {
+        let _ = state
+            .put_automation_v2(automation_with_trigger.clone())
+            .await;
+        let _ = state
+            .update_automation_v2_run(&run.run_id, |row| {
+                row.automation_snapshot = Some(automation_with_trigger);
+            })
+            .await;
+    }
     let run = state
-        .create_automation_v2_run(&automation, "manual")
+        .get_automation_v2_run(&run.run_id)
         .await
-        .map_err(|error| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({
-                    "error": error.to_string(),
-                    "code": "AUTOMATION_V2_RUN_CREATE_FAILED",
-                })),
-            )
-        })?;
+        .unwrap_or(run);
     let _ = super::context_runs::sync_automation_v2_run_blackboard(&state, &automation, &run).await;
     let context_run_id = super::context_runs::automation_v2_context_run_id(&run.run_id);
     Ok(Json(json!({
         "ok": true,
+        "dry_run": dry_run,
         "run": automation_v2_run_with_context_links(&run),
         "contextRunID": context_run_id,
         "linked_context_run_id": context_run_id,
@@ -2827,7 +2941,7 @@ pub(super) async fn automations_v2_run_recover(
         ));
     };
     let reset_nodes = if current.status == AutomationRunStatus::Failed {
-        let Some(failure) = current.checkpoint.last_failure.clone() else {
+        let Some(failure_node_id) = automation_v2_recoverable_failure_node_id(&current) else {
             return Err((
                 StatusCode::CONFLICT,
                 Json(
@@ -2835,8 +2949,7 @@ pub(super) async fn automations_v2_run_recover(
                 ),
             ));
         };
-        let roots =
-            std::iter::once(failure.node_id.clone()).collect::<std::collections::HashSet<_>>();
+        let roots = std::iter::once(failure_node_id).collect::<std::collections::HashSet<_>>();
         crate::collect_automation_descendants(&automation, &roots)
     } else {
         std::collections::HashSet::new()
@@ -3032,7 +3145,12 @@ pub(super) async fn automations_v2_run_repair(
     })?;
     let roots = std::iter::once(node_id.clone()).collect::<std::collections::HashSet<_>>();
     let reset_nodes = crate::collect_automation_descendants(&stored_automation, &roots);
-    let cleared_outputs = crate::clear_automation_subtree_outputs(&state, &stored_automation, &reset_nodes)
+    let cleared_outputs = crate::clear_automation_subtree_outputs(
+        &state,
+        &stored_automation,
+        &run_id,
+        &reset_nodes,
+    )
         .await
         .map_err(|error| {
             (
@@ -3194,17 +3312,18 @@ async fn automation_v2_reset_task_subtree(
     }
     let roots = std::iter::once(node_id.to_string()).collect::<std::collections::HashSet<_>>();
     let reset_nodes = crate::collect_automation_descendants(&automation, &roots);
-    let cleared_outputs = crate::clear_automation_subtree_outputs(state, &automation, &reset_nodes)
-        .await
-        .map_err(|error| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({
-                    "error": error.to_string(),
-                    "code":"AUTOMATION_V2_TASK_RESET_OUTPUT_CLEAR_FAILED"
-                })),
-            )
-        })?;
+    let cleared_outputs =
+        crate::clear_automation_subtree_outputs(state, &automation, run_id, &reset_nodes)
+            .await
+            .map_err(|error| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({
+                        "error": error.to_string(),
+                        "code":"AUTOMATION_V2_TASK_RESET_OUTPUT_CLEAR_FAILED"
+                    })),
+                )
+            })?;
     let mut reset_nodes_list = reset_nodes.iter().cloned().collect::<Vec<_>>();
     reset_nodes_list.sort();
     let updated = state
@@ -3501,7 +3620,7 @@ pub(super) async fn automations_v2_run_task_continue(
     }
     let reset_nodes = std::iter::once(node_id.clone()).collect::<std::collections::HashSet<_>>();
     let cleared_outputs =
-        crate::clear_automation_subtree_outputs(&state, &automation, &reset_nodes)
+        crate::clear_automation_subtree_outputs(&state, &automation, &run_id, &reset_nodes)
             .await
             .map_err(|error| {
                 (

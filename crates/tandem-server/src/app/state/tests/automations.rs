@@ -3,7 +3,179 @@ use std::collections::HashSet;
 
 use tandem_types::{MessageRole, PrewriteCoverageMode, Session};
 
+use crate::app::state::automation::node_output::{
+    build_automation_attempt_evidence, build_automation_validator_summary,
+    detect_automation_blocker_category, detect_automation_node_failure_kind,
+    detect_automation_node_phase, detect_automation_node_status, wrap_automation_node_output,
+};
 use crate::capability_resolver;
+
+fn routine_dependency_plan_package() -> tandem_plan_compiler::api::PlanPackage {
+    use tandem_plan_compiler::api::{
+        ApprovalMode, AuditScope, CommunicationModel, CrossRoutineVisibility, DataScope,
+        DependencyMode, DependencyResolution, DependencyResolutionStrategy,
+        FinalArtifactVisibility, InterRoutinePolicy, IntermediateArtifactVisibility,
+        MidRoutineConnectorFailureMode, MissionContextScope, MissionDefinition, PartialFailureMode,
+        PeerVisibility, PlanLifecycleState, PlanOwner, PlanPackage, ReentryPoint,
+        RoutineConnectorResolution, RoutineDependency, RoutinePackage, RoutineSemanticKind,
+        RunHistoryVisibility, StepFailurePolicy, StepModelPolicy, StepPackage, StepRetryPolicy,
+        SuccessCriteria, TriggerDefinition, TriggerKind,
+    };
+
+    let step_a = StepPackage {
+        step_id: "step_a".to_string(),
+        label: "Step A".to_string(),
+        kind: "execute".to_string(),
+        action: "run_a".to_string(),
+        inputs: Vec::new(),
+        outputs: Vec::new(),
+        dependencies: Vec::new(),
+        context_reads: Vec::new(),
+        context_writes: Vec::new(),
+        connector_requirements: Vec::new(),
+        model_policy: StepModelPolicy::default(),
+        approval_policy: ApprovalMode::InternalOnly,
+        success_criteria: SuccessCriteria::default(),
+        failure_policy: StepFailurePolicy::default(),
+        retry_policy: StepRetryPolicy::default(),
+        artifacts: Vec::new(),
+        provenance: None,
+        notes: None,
+    };
+    let step_b = StepPackage {
+        step_id: "step_b".to_string(),
+        label: "Step B".to_string(),
+        kind: "execute".to_string(),
+        action: "run_b".to_string(),
+        inputs: Vec::new(),
+        outputs: Vec::new(),
+        dependencies: Vec::new(),
+        context_reads: Vec::new(),
+        context_writes: Vec::new(),
+        connector_requirements: Vec::new(),
+        model_policy: StepModelPolicy::default(),
+        approval_policy: ApprovalMode::InternalOnly,
+        success_criteria: SuccessCriteria::default(),
+        failure_policy: StepFailurePolicy::default(),
+        retry_policy: StepRetryPolicy::default(),
+        artifacts: Vec::new(),
+        provenance: None,
+        notes: None,
+    };
+
+    PlanPackage {
+        plan_id: "plan-dependency-test".to_string(),
+        plan_revision: 1,
+        lifecycle_state: PlanLifecycleState::Preview,
+        owner: PlanOwner {
+            owner_id: "owner".to_string(),
+            scope: "workspace".to_string(),
+            audience: "internal".to_string(),
+        },
+        mission: MissionDefinition {
+            goal: "Dependency test".to_string(),
+            summary: None,
+            domain: None,
+        },
+        success_criteria: SuccessCriteria::default(),
+        budget_policy: None,
+        budget_enforcement: None,
+        approval_policy: None,
+        inter_routine_policy: Some(InterRoutinePolicy {
+            communication_model: CommunicationModel::ArtifactOnly,
+            shared_memory_access: false,
+            shared_memory_justification: None,
+            peer_visibility: PeerVisibility::None,
+            artifact_handoff_validation: true,
+        }),
+        trigger_policy: None,
+        output_roots: None,
+        precedence_log: Vec::new(),
+        plan_diff: None,
+        manual_trigger_record: None,
+        validation_state: None,
+        overlap_policy: None,
+        routine_graph: vec![
+            RoutinePackage {
+                routine_id: "routine_a".to_string(),
+                semantic_kind: RoutineSemanticKind::Execution,
+                trigger: TriggerDefinition {
+                    trigger_type: TriggerKind::Manual,
+                    schedule: None,
+                    timezone: None,
+                },
+                dependencies: Vec::new(),
+                dependency_resolution: DependencyResolution {
+                    strategy: DependencyResolutionStrategy::TopologicalSequential,
+                    partial_failure_mode: PartialFailureMode::PauseDownstreamOnly,
+                    reentry_point: ReentryPoint::FailedStep,
+                    mid_routine_connector_failure: MidRoutineConnectorFailureMode::SurfaceAndPause,
+                },
+                connector_resolution: RoutineConnectorResolution::default(),
+                data_scope: DataScope {
+                    readable_paths: Vec::new(),
+                    writable_paths: Vec::new(),
+                    denied_paths: Vec::new(),
+                    cross_routine_visibility: CrossRoutineVisibility::None,
+                    mission_context_scope: MissionContextScope::GoalOnly,
+                    mission_context_justification: None,
+                },
+                audit_scope: AuditScope {
+                    run_history_visibility: RunHistoryVisibility::PlanOwner,
+                    named_audit_roles: Vec::new(),
+                    intermediate_artifact_visibility: IntermediateArtifactVisibility::RoutineOnly,
+                    final_artifact_visibility: FinalArtifactVisibility::PlanOwner,
+                },
+                success_criteria: SuccessCriteria::default(),
+                steps: vec![step_a],
+            },
+            RoutinePackage {
+                routine_id: "routine_b".to_string(),
+                semantic_kind: RoutineSemanticKind::Execution,
+                trigger: TriggerDefinition {
+                    trigger_type: TriggerKind::Manual,
+                    schedule: None,
+                    timezone: None,
+                },
+                dependencies: vec![RoutineDependency {
+                    dependency_type: "routine".to_string(),
+                    routine_id: "routine_a".to_string(),
+                    mode: DependencyMode::Hard,
+                }],
+                dependency_resolution: DependencyResolution {
+                    strategy: DependencyResolutionStrategy::TopologicalSequential,
+                    partial_failure_mode: PartialFailureMode::PauseDownstreamOnly,
+                    reentry_point: ReentryPoint::FailedStep,
+                    mid_routine_connector_failure: MidRoutineConnectorFailureMode::SurfaceAndPause,
+                },
+                connector_resolution: RoutineConnectorResolution::default(),
+                data_scope: DataScope {
+                    readable_paths: Vec::new(),
+                    writable_paths: Vec::new(),
+                    denied_paths: Vec::new(),
+                    cross_routine_visibility: CrossRoutineVisibility::None,
+                    mission_context_scope: MissionContextScope::GoalOnly,
+                    mission_context_justification: None,
+                },
+                audit_scope: AuditScope {
+                    run_history_visibility: RunHistoryVisibility::PlanOwner,
+                    named_audit_roles: Vec::new(),
+                    intermediate_artifact_visibility: IntermediateArtifactVisibility::RoutineOnly,
+                    final_artifact_visibility: FinalArtifactVisibility::PlanOwner,
+                },
+                success_criteria: SuccessCriteria::default(),
+                steps: vec![step_b],
+            },
+        ],
+        connector_intents: Vec::new(),
+        connector_bindings: Vec::new(),
+        connector_binding_resolution: None,
+        model_routing_resolution: None,
+        credential_envelopes: Vec::new(),
+        context_objects: Vec::new(),
+        metadata: None,
+    }
+}
 #[test]
 fn automation_blocked_nodes_respects_barrier_open_phase() {
     let automation = test_phase_automation(
@@ -79,6 +251,78 @@ fn automation_soft_phase_limits_runnable_frontier_to_current_open_phase() {
 
     assert_eq!(filtered.len(), 1);
     assert_eq!(filtered[0].node_id, "draft");
+}
+
+#[test]
+fn automation_routine_dependency_filter_blocks_downstream_routine_until_upstream_completes() {
+    let mut automation = test_phase_automation(
+        json!([
+            { "phase_id": "phase_1", "title": "Phase 1", "execution_mode": "soft" }
+        ]),
+        vec![
+            test_automation_node("step_a", Vec::new(), "phase_1", 1),
+            test_automation_node("step_b", Vec::new(), "phase_1", 2),
+        ],
+    );
+    let plan_package_value =
+        serde_json::to_value(routine_dependency_plan_package()).expect("plan package json");
+    let parsed_plan_package: tandem_plan_compiler::api::PlanPackage =
+        serde_json::from_value(plan_package_value.clone()).expect("plan package parse");
+    assert_eq!(parsed_plan_package.routine_graph.len(), 2);
+    assert_eq!(
+        parsed_plan_package.routine_graph[0].steps[0].step_id,
+        "step_a"
+    );
+    assert_eq!(
+        parsed_plan_package.routine_graph[1].steps[0].step_id,
+        "step_b"
+    );
+    assert_eq!(
+        parsed_plan_package.routine_graph[1].dependencies[0].routine_id,
+        "routine_a"
+    );
+    automation.metadata = Some(json!({
+        "plan_package": plan_package_value
+    }));
+
+    let incomplete_run = test_phase_run(vec!["step_a", "step_b"], Vec::new());
+    let filtered = automation_filter_runnable_by_routine_dependencies(
+        &automation,
+        &incomplete_run,
+        automation.flow.nodes.clone(),
+    );
+    assert_eq!(
+        filtered
+            .iter()
+            .map(|node| node.node_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["step_a"]
+    );
+    assert_eq!(
+        automation_blocked_nodes(&automation, &incomplete_run),
+        vec!["step_b".to_string()]
+    );
+
+    let complete_upstream_run = test_phase_run(vec!["step_b"], vec!["step_a"]);
+    let filtered = automation_filter_runnable_by_routine_dependencies(
+        &automation,
+        &complete_upstream_run,
+        vec![automation
+            .flow
+            .nodes
+            .iter()
+            .find(|node| node.node_id == "step_b")
+            .cloned()
+            .expect("step_b node")],
+    );
+    assert_eq!(
+        filtered
+            .iter()
+            .map(|node| node.node_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["step_b"]
+    );
+    assert!(automation_blocked_nodes(&automation, &complete_upstream_run).is_empty());
 }
 
 #[test]
@@ -439,13 +683,14 @@ fn artifact_validation_rejection_blocks_node_status() {
         }
     });
 
-    let (status, reason, approved) = detect_automation_node_status(
-        &node,
-        "Done",
-        None,
-        &tool_telemetry,
-        Some(&artifact_validation),
-    );
+    let (status, reason, approved): (String, Option<String>, Option<bool>) =
+        detect_automation_node_status(
+            &node,
+            "Done",
+            None,
+            &tool_telemetry,
+            Some(&artifact_validation),
+        );
 
     assert_eq!(status, "blocked");
     assert_eq!(reason.as_deref(), Some("placeholder overwrite rejected"));
@@ -563,16 +808,17 @@ fn research_workflow_status_is_needs_repair_before_repair_budget_is_exhausted() 
         "repair_exhausted": false,
     });
 
-    let (status, reason, approved) = detect_automation_node_status(
-        &node,
-        "Done — `marketing-brief.md` was written.",
-        Some(&(
-            "marketing-brief.md".to_string(),
-            "# Marketing Brief".to_string(),
-        )),
-        &tool_telemetry,
-        Some(&artifact_validation),
-    );
+    let (status, reason, approved): (String, Option<String>, Option<bool>) =
+        detect_automation_node_status(
+            &node,
+            "Done — `marketing-brief.md` was written.",
+            Some(&(
+                "marketing-brief.md".to_string(),
+                "# Marketing Brief".to_string(),
+            )),
+            &tool_telemetry,
+            Some(&artifact_validation),
+        );
 
     assert_eq!(status, "needs_repair");
     assert_eq!(
@@ -626,16 +872,17 @@ fn research_workflow_status_blocks_after_repair_budget_is_exhausted() {
         "repair_exhausted": true,
     });
 
-    let (status, reason, approved) = detect_automation_node_status(
-        &node,
-        "Done — `marketing-brief.md` was written.",
-        Some(&(
-            "marketing-brief.md".to_string(),
-            "# Marketing Brief".to_string(),
-        )),
-        &tool_telemetry,
-        Some(&artifact_validation),
-    );
+    let (status, reason, approved): (String, Option<String>, Option<bool>) =
+        detect_automation_node_status(
+            &node,
+            "Done — `marketing-brief.md` was written.",
+            Some(&(
+                "marketing-brief.md".to_string(),
+                "# Marketing Brief".to_string(),
+            )),
+            &tool_telemetry,
+            Some(&artifact_validation),
+        );
 
     assert_eq!(status, "blocked");
     assert_eq!(
@@ -688,16 +935,17 @@ fn research_workflow_status_ignores_llm_blocked_when_validation_is_repairable() 
         "repair_exhausted": false,
     });
 
-    let (status, reason, approved) = detect_automation_node_status(
-        &node,
-        "The brief is blocked.\n\n{\"status\":\"blocked\",\"reason\":\"tools unavailable\"}",
-        Some(&(
-            "marketing-brief.md".to_string(),
-            "# Marketing Brief".to_string(),
-        )),
-        &tool_telemetry,
-        Some(&artifact_validation),
-    );
+    let (status, reason, approved): (String, Option<String>, Option<bool>) =
+        detect_automation_node_status(
+            &node,
+            "The brief is blocked.\n\n{\"status\":\"blocked\",\"reason\":\"tools unavailable\"}",
+            Some(&(
+                "marketing-brief.md".to_string(),
+                "# Marketing Brief".to_string(),
+            )),
+            &tool_telemetry,
+            Some(&artifact_validation),
+        );
 
     assert_eq!(status, "needs_repair");
     assert_eq!(
@@ -744,16 +992,17 @@ fn research_workflow_status_keeps_blocked_when_repair_is_exhausted_even_if_llm_d
         "repair_exhausted": true,
     });
 
-    let (status, reason, approved) = detect_automation_node_status(
-        &node,
-        "The brief is blocked.\n\n{\"status\":\"blocked\",\"reason\":\"tools unavailable\"}",
-        Some(&(
-            "marketing-brief.md".to_string(),
-            "# Marketing Brief".to_string(),
-        )),
-        &tool_telemetry,
-        Some(&artifact_validation),
-    );
+    let (status, reason, approved): (String, Option<String>, Option<bool>) =
+        detect_automation_node_status(
+            &node,
+            "The brief is blocked.\n\n{\"status\":\"blocked\",\"reason\":\"tools unavailable\"}",
+            Some(&(
+                "marketing-brief.md".to_string(),
+                "# Marketing Brief".to_string(),
+            )),
+            &tool_telemetry,
+            Some(&artifact_validation),
+        );
 
     assert_eq!(status, "blocked");
     assert_eq!(reason.as_deref(), Some("tools unavailable"));
@@ -824,6 +1073,64 @@ fn render_automation_repair_brief_summarizes_previous_research_miss() {
     assert!(brief.contains("glob, write"));
     assert!(brief.contains("docs/pricing.md, docs/customers.md"));
     assert!(brief.contains("Remaining repair attempts after this run: 3"));
+}
+
+#[test]
+fn code_patch_repair_brief_mentions_patch_apply_test_loop() {
+    let node = AutomationFlowNode {
+        node_id: "code_patch".to_string(),
+        agent_id: "agent-a".to_string(),
+        objective: "Patch the code and verify the change.".to_string(),
+        depends_on: Vec::new(),
+        input_refs: Vec::new(),
+        output_contract: Some(AutomationFlowOutputContract {
+            kind: "code_patch".to_string(),
+            validator: Some(crate::AutomationOutputValidatorKind::CodePatch),
+            enforcement: None,
+            schema: None,
+            summary_guidance: None,
+        }),
+        retry_policy: None,
+        timeout_ms: None,
+        stage_kind: None,
+        gate: None,
+        metadata: Some(json!({
+            "builder": {
+                "output_path": "src/lib.rs",
+                "verification_command": "cargo test",
+                "write_scope": "repo-scoped edits"
+            }
+        })),
+    };
+    let prior_output = json!({
+        "status": "needs_repair",
+        "validator_summary": {
+            "reason": "verification did not run",
+            "unmet_requirements": ["verification_missing"]
+        },
+        "tool_telemetry": {
+            "requested_tools": ["glob", "read", "edit", "apply_patch", "write"],
+            "executed_tools": ["glob", "read", "write"]
+        },
+        "artifact_validation": {
+            "blocking_classification": "verification_required",
+            "repair_attempt": 1,
+            "repair_attempts_remaining": 4,
+            "required_next_tool_actions": [
+                "Patch the code with `edit` or `apply_patch` before any new `write`.",
+                "Run `cargo test` after the patch and fix the smallest failing root cause."
+            ]
+        }
+    });
+
+    let brief =
+        render_automation_repair_brief(&node, Some(&prior_output), 2, 5).expect("repair brief");
+
+    assert!(brief.contains("Code workflow repair path"));
+    assert!(brief.contains("inspect the touched files"));
+    assert!(brief.contains("edit` or `apply_patch"));
+    assert!(brief.contains("cargo test"));
+    assert!(brief.contains("repo-scoped edits"));
 }
 
 #[test]
@@ -1044,6 +1351,113 @@ fn first_attempt_research_prompt_requires_completed_status() {
     assert!(prompt.contains("`status` set to `completed`"));
     assert!(prompt.contains("Do not declare the output blocked"));
     assert!(!prompt.contains("at least `status` (`completed` or `blocked`)"));
+}
+
+#[test]
+fn code_patch_prompt_includes_code_agent_contract_instructions() {
+    let automation = AutomationV2Spec {
+        automation_id: "automation-code-patch".to_string(),
+        name: "Code Patch Prompt".to_string(),
+        description: None,
+        status: crate::AutomationV2Status::Active,
+        schedule: crate::AutomationV2Schedule {
+            schedule_type: crate::AutomationV2ScheduleType::Manual,
+            cron_expression: None,
+            interval_seconds: None,
+            timezone: "UTC".to_string(),
+            misfire_policy: crate::RoutineMisfirePolicy::RunOnce,
+        },
+        agents: Vec::new(),
+        flow: crate::AutomationFlowSpec { nodes: Vec::new() },
+        execution: crate::AutomationExecutionPolicy {
+            max_parallel_agents: Some(1),
+            max_total_runtime_ms: None,
+            max_total_tool_calls: None,
+            max_total_tokens: None,
+            max_total_cost_usd: None,
+        },
+        output_targets: Vec::new(),
+        created_at_ms: 0,
+        updated_at_ms: 0,
+        creator_id: "test".to_string(),
+        workspace_root: Some("/tmp".to_string()),
+        metadata: None,
+        next_fire_at_ms: None,
+        last_fired_at_ms: None,
+    };
+    let node = AutomationFlowNode {
+        node_id: "code_patch".to_string(),
+        agent_id: "coder".to_string(),
+        objective: "Patch the code and verify the change.".to_string(),
+        depends_on: Vec::new(),
+        input_refs: Vec::new(),
+        output_contract: Some(AutomationFlowOutputContract {
+            kind: "code_patch".to_string(),
+            validator: Some(crate::AutomationOutputValidatorKind::CodePatch),
+            enforcement: None,
+            schema: None,
+            summary_guidance: Some("Produce a patch-backed artifact.".to_string()),
+        }),
+        retry_policy: None,
+        timeout_ms: None,
+        stage_kind: None,
+        gate: None,
+        metadata: Some(json!({
+            "builder": {
+                "task_kind": "code_change",
+                "output_path": "src/lib.rs",
+                "verification_command": "cargo test"
+            }
+        })),
+    };
+    let agent = AutomationAgentProfile {
+        agent_id: "coder".to_string(),
+        template_id: None,
+        display_name: "Coder".to_string(),
+        avatar_url: None,
+        model_policy: None,
+        skills: Vec::new(),
+        tool_policy: crate::AutomationAgentToolPolicy {
+            allowlist: vec![
+                "read".to_string(),
+                "edit".to_string(),
+                "apply_patch".to_string(),
+                "write".to_string(),
+                "bash".to_string(),
+            ],
+            denylist: Vec::new(),
+        },
+        mcp_policy: crate::AutomationAgentMcpPolicy {
+            allowed_servers: Vec::new(),
+            allowed_tools: None,
+        },
+        approval_policy: None,
+    };
+
+    let prompt = render_automation_v2_prompt(
+        &automation,
+        "/tmp",
+        "run-code",
+        &node,
+        1,
+        &agent,
+        &[],
+        &[
+            "read".to_string(),
+            "edit".to_string(),
+            "apply_patch".to_string(),
+            "write".to_string(),
+            "bash".to_string(),
+        ],
+        None,
+        None,
+        None,
+    );
+
+    assert!(prompt.contains("Code Agent Contract:"));
+    assert!(prompt.contains("inspect -> patch -> apply -> test -> repair"));
+    assert!(prompt.contains("Do not claim completion until the patch has been applied"));
+    assert!(prompt.contains("Run the declared verification command after applying changes"));
 }
 
 #[test]
@@ -1794,16 +2208,17 @@ fn generic_required_tools_validation_needs_repair_when_read_unused() {
         Some("Use `read` on concrete workspace files before finalizing the brief.")
     );
 
-    let (status, reason, approved) = detect_automation_node_status(
-        &node,
-        "Done — `notes.md` was written.",
-        Some(&(
-            "notes.md".to_string(),
-            "# Notes\n\nA short summary written without reading sources.\n".to_string(),
-        )),
-        &tool_telemetry,
-        Some(&artifact_validation),
-    );
+    let (status, reason, approved): (String, Option<String>, Option<bool>) =
+        detect_automation_node_status(
+            &node,
+            "Done — `notes.md` was written.",
+            Some(&(
+                "notes.md".to_string(),
+                "# Notes\n\nA short summary written without reading sources.\n".to_string(),
+            )),
+            &tool_telemetry,
+            Some(&artifact_validation),
+        );
     assert_eq!(status, "needs_repair");
     assert_eq!(
         detect_automation_node_failure_kind(
@@ -2151,6 +2566,107 @@ fn prompt_includes_inline_metadata_inputs_and_temp_file_warning() {
 }
 
 #[test]
+fn collect_inputs_prompt_requires_reading_before_writing() {
+    let automation = AutomationV2Spec {
+        automation_id: "automation-collect-inputs".to_string(),
+        name: "Collect Inputs".to_string(),
+        description: None,
+        status: crate::AutomationV2Status::Active,
+        schedule: crate::AutomationV2Schedule {
+            schedule_type: crate::AutomationV2ScheduleType::Manual,
+            cron_expression: None,
+            interval_seconds: None,
+            timezone: "UTC".to_string(),
+            misfire_policy: crate::RoutineMisfirePolicy::RunOnce,
+        },
+        agents: Vec::new(),
+        flow: crate::AutomationFlowSpec { nodes: Vec::new() },
+        execution: crate::AutomationExecutionPolicy {
+            max_parallel_agents: Some(1),
+            max_total_runtime_ms: None,
+            max_total_tool_calls: None,
+            max_total_tokens: None,
+            max_total_cost_usd: None,
+        },
+        output_targets: Vec::new(),
+        created_at_ms: 0,
+        updated_at_ms: 0,
+        creator_id: "test".to_string(),
+        workspace_root: Some("/tmp".to_string()),
+        metadata: None,
+        next_fire_at_ms: None,
+        last_fired_at_ms: None,
+    };
+    let node = AutomationFlowNode {
+        node_id: "collect_inputs".to_string(),
+        agent_id: "planner".to_string(),
+        objective: "Inspect the workspace and ground the project identity before web research."
+            .to_string(),
+        depends_on: Vec::new(),
+        input_refs: Vec::new(),
+        output_contract: Some(AutomationFlowOutputContract {
+            kind: "brief".to_string(),
+            validator: Some(crate::AutomationOutputValidatorKind::GenericArtifact),
+            enforcement: None,
+            schema: None,
+            summary_guidance: None,
+        }),
+        retry_policy: None,
+        timeout_ms: None,
+        stage_kind: None,
+        gate: None,
+        metadata: Some(json!({
+            "builder": {
+                "output_path": "collect-inputs.json"
+            }
+        })),
+    };
+    let agent = AutomationAgentProfile {
+        agent_id: "planner".to_string(),
+        template_id: None,
+        display_name: "Planner".to_string(),
+        avatar_url: None,
+        model_policy: None,
+        skills: Vec::new(),
+        tool_policy: crate::AutomationAgentToolPolicy {
+            allowlist: vec!["glob".to_string(), "read".to_string(), "write".to_string()],
+            denylist: Vec::new(),
+        },
+        mcp_policy: crate::AutomationAgentMcpPolicy {
+            allowed_servers: Vec::new(),
+            allowed_tools: None,
+        },
+        approval_policy: None,
+    };
+
+    let prompt = render_automation_v2_prompt(
+        &automation,
+        "/tmp",
+        "run-collect-inputs",
+        &node,
+        1,
+        &agent,
+        &[],
+        &["glob".to_string(), "read".to_string(), "write".to_string()],
+        None,
+        None,
+        None,
+    );
+
+    let expected_output_path = crate::app::state::automation::automation_run_scoped_output_path(
+        "run-collect-inputs",
+        ".tandem/artifacts/collect-inputs.json",
+    )
+    .expect("scoped output path");
+    assert!(prompt.contains("Collect Inputs Contract:"));
+    assert!(prompt.contains("do not stop after discovery"));
+    assert!(prompt.contains(&format!(
+        "Write the grounded result to `{}`",
+        expected_output_path
+    )));
+}
+
+#[test]
 fn prompt_includes_email_delivery_metadata_for_notify_user() {
     let automation = AutomationV2Spec {
         automation_id: "automation-email-delivery".to_string(),
@@ -2237,7 +2753,16 @@ fn prompt_includes_email_delivery_metadata_for_notify_user() {
         &node,
         1,
         &agent,
-        &[],
+        &[json!({
+            "alias": "report_body",
+            "from_step_id": "generate_report",
+            "output": {
+                "content": {
+                    "path": ".tandem/artifacts/generate-report.html",
+                    "text": "<h1>Tandem Strategic Analysis</h1><p>Rich upstream report body.</p>"
+                }
+            }
+        })],
         &["*".to_string()],
         None,
         None,
@@ -2247,6 +2772,13 @@ fn prompt_includes_email_delivery_metadata_for_notify_user() {
     assert!(prompt.contains("Delivery target:"));
     assert!(prompt.contains("`evan@frumu.ai`"));
     assert!(prompt.contains("Inline body only: `true`"));
+    assert!(prompt.contains("Upstream synthesis rules:"));
+    assert!(
+        prompt.contains("use the compiled upstream report/body as the email body source of truth")
+    );
+    assert!(prompt.contains("Deterministic Delivery Body:"));
+    assert!(prompt.contains("Source artifact: `.tandem/artifacts/generate-report.html`"));
+    assert!(prompt.contains("<h1>Tandem Strategic Analysis</h1>"));
     assert!(prompt.contains(
         "Do not mark the node completed unless you actually execute an email draft or send tool."
     ));
@@ -2405,6 +2937,86 @@ fn standard_workflow_nodes_receive_default_workspace_output_paths() {
 }
 
 #[test]
+fn report_markdown_retries_accept_html_sibling_outputs() {
+    let workspace_root = std::env::temp_dir().join(format!(
+        "tandem-report-html-sibling-{}",
+        uuid::Uuid::new_v4()
+    ));
+    let artifact_dir = workspace_root.join(".tandem/runs/run-research/artifacts");
+    std::fs::create_dir_all(&artifact_dir).expect("create artifact dir");
+    std::fs::write(
+        artifact_dir.join("generate-report.html"),
+        "<!doctype html><html><body>Report</body></html>",
+    )
+    .expect("write html artifact");
+
+    let node = AutomationFlowNode {
+        node_id: "generate_report".to_string(),
+        agent_id: "writer".to_string(),
+        objective: "Draft the report in simple HTML suitable for email body delivery.".to_string(),
+        depends_on: Vec::new(),
+        input_refs: Vec::new(),
+        output_contract: Some(AutomationFlowOutputContract {
+            kind: "report_markdown".to_string(),
+            validator: Some(crate::AutomationOutputValidatorKind::GenericArtifact),
+            enforcement: None,
+            schema: None,
+            summary_guidance: None,
+        }),
+        retry_policy: None,
+        timeout_ms: None,
+        stage_kind: None,
+        gate: None,
+        metadata: Some(json!({
+            "builder": {
+                "output_path": ".tandem/artifacts/generate-report.md"
+            }
+        })),
+    };
+    let mut session = Session::new(
+        Some("generate-report-retry".to_string()),
+        Some(workspace_root.to_str().expect("workspace utf8").to_string()),
+    );
+    let expected_output_path = crate::app::state::automation::automation_run_scoped_output_path(
+        "run-research",
+        ".tandem/artifacts/generate-report.md",
+    )
+    .expect("scoped output path");
+    session.messages.push(tandem_types::Message::new(
+        MessageRole::Assistant,
+        vec![MessagePart::ToolInvocation {
+            tool: "write".to_string(),
+            args: json!({
+                "path": expected_output_path.replace("generate-report.md", "generate-report.html"),
+                "content": "<!doctype html><html><body>Report</body></html>"
+            }),
+            result: Some(json!({"output":"written"})),
+            error: None,
+        }],
+    ));
+
+    let resolved = automation_resolve_verified_output_path(
+        &session,
+        workspace_root.to_str().expect("workspace utf8"),
+        "run-research",
+        &node,
+        ".tandem/artifacts/generate-report.md",
+    )
+    .expect("resolve verified output")
+    .expect("accepted sibling output");
+
+    assert_eq!(
+        resolved
+            .file_name()
+            .and_then(|value| value.to_str())
+            .expect("file name"),
+        "generate-report.html"
+    );
+
+    let _ = std::fs::remove_dir_all(&workspace_root);
+}
+
+#[test]
 fn citations_nodes_do_not_require_files_reviewed_sections_by_default() {
     let node = AutomationFlowNode {
         node_id: "research_sources".to_string(),
@@ -2495,15 +3107,20 @@ fn collect_inputs_nodes_write_deterministic_inline_artifacts() {
     let payload = automation_node_inline_artifact_payload(&node).expect("inline payload");
     let (written_path, file_text) = write_automation_inline_artifact(
         workspace_root.to_str().expect("workspace utf8"),
+        "run-inline-collect",
         &output_path,
         &payload,
     )
     .expect("inline artifact write");
 
-    assert_eq!(written_path, ".tandem/artifacts/collect-inputs.json");
+    assert_eq!(
+        written_path,
+        ".tandem/runs/run-inline-collect/artifacts/collect-inputs.json"
+    );
     assert!(file_text.contains("autonomous AI agentic workflows"));
 
-    let resolved = workspace_root.join(".tandem/artifacts/collect-inputs.json");
+    let resolved =
+        workspace_root.join(".tandem/runs/run-inline-collect/artifacts/collect-inputs.json");
     assert!(resolved.exists());
     let persisted = std::fs::read_to_string(&resolved).expect("read artifact");
     assert!(persisted.contains("\"delivery_email\": \"evan@frumu.ai\""));
@@ -2591,7 +3208,23 @@ async fn execute_collect_inputs_node_uses_deterministic_shortcut() {
         updated_at_ms: crate::now_ms(),
         creator_id: "test".to_string(),
         workspace_root: Some(workspace_root.to_string_lossy().to_string()),
-        metadata: None,
+        metadata: Some(json!({
+            "context_materialization": {
+                "routines": [
+                    {
+                        "routine_id": "collect_inputs",
+                        "visible_context_objects": [],
+                        "step_context_bindings": [
+                            {
+                                "step_id": "collect_inputs",
+                                "context_reads": ["ctx:collect_inputs:mission.goal"],
+                                "context_writes": []
+                            }
+                        ]
+                    }
+                ]
+            }
+        })),
         next_fire_at_ms: None,
         last_fired_at_ms: None,
     };
@@ -2601,10 +3234,33 @@ async fn execute_collect_inputs_node_uses_deterministic_shortcut() {
         .create_automation_v2_run(&automation, "manual")
         .await
         .expect("create run");
+    assert_eq!(
+        run.runtime_context
+            .as_ref()
+            .map(|context| context.routines.len()),
+        Some(1)
+    );
+    state
+        .update_automation_v2_run(&run.run_id, |row| {
+            row.runtime_context = None;
+        })
+        .await
+        .expect("clear runtime context");
+    let claimed = state
+        .claim_specific_automation_v2_run(&run.run_id)
+        .await
+        .expect("claim run");
+    assert_eq!(
+        claimed
+            .runtime_context
+            .as_ref()
+            .map(|context| context.routines.len()),
+        Some(1)
+    );
     let node = automation.flow.nodes.first().expect("collect_inputs node");
     let agent = automation.agents.first().expect("planner agent");
 
-    let output = execute_automation_v2_node(&state, &run.run_id, &automation, node, agent)
+    let output = execute_automation_v2_node(&state, &claimed.run_id, &automation, node, agent)
         .await
         .expect("execute collect_inputs");
 
@@ -2627,7 +3283,11 @@ async fn execute_collect_inputs_node_uses_deterministic_shortcut() {
         Some("node_metadata_inputs")
     );
 
-    let artifact_path = workspace_root.join(".tandem/artifacts/collect-inputs.json");
+    let artifact_path = workspace_root
+        .join(".tandem/runs")
+        .join(&claimed.run_id)
+        .join("artifacts")
+        .join("collect-inputs.json");
     assert!(artifact_path.exists());
     let artifact_text = std::fs::read_to_string(&artifact_path).expect("artifact text");
     assert!(artifact_text.contains("autonomous AI agentic workflows"));
@@ -2650,6 +3310,280 @@ async fn execute_collect_inputs_node_uses_deterministic_shortcut() {
     }));
 
     let _ = std::fs::remove_dir_all(&workspace_root);
+}
+
+#[tokio::test]
+async fn automation_run_requires_stored_runtime_context_partition_at_startup() {
+    let automation = AutomationV2Spec {
+        automation_id: "auto-runtime-context-test".to_string(),
+        name: "Runtime Context Test".to_string(),
+        description: None,
+        status: AutomationV2Status::Active,
+        schedule: AutomationV2Schedule {
+            schedule_type: AutomationV2ScheduleType::Manual,
+            cron_expression: None,
+            interval_seconds: None,
+            timezone: "UTC".to_string(),
+            misfire_policy: RoutineMisfirePolicy::RunOnce,
+        },
+        agents: Vec::new(),
+        flow: AutomationFlowSpec { nodes: Vec::new() },
+        execution: AutomationExecutionPolicy {
+            max_parallel_agents: Some(1),
+            max_total_runtime_ms: None,
+            max_total_tool_calls: None,
+            max_total_tokens: None,
+            max_total_cost_usd: None,
+        },
+        output_targets: Vec::new(),
+        created_at_ms: 1,
+        updated_at_ms: 1,
+        creator_id: "test".to_string(),
+        workspace_root: Some(".".to_string()),
+        metadata: Some(json!({
+            "context_materialization": {
+                "routines": [
+                    {
+                        "routine_id": "collect_inputs",
+                        "visible_context_objects": [],
+                        "step_context_bindings": []
+                    }
+                ]
+            }
+        })),
+        next_fire_at_ms: None,
+        last_fired_at_ms: None,
+    };
+    let state = ready_test_state().await;
+    state
+        .put_automation_v2(automation.clone())
+        .await
+        .expect("store automation");
+    let run = state
+        .create_automation_v2_run(&automation, "manual")
+        .await
+        .expect("create run");
+    state
+        .update_automation_v2_run(&run.run_id, |row| {
+            row.runtime_context = None;
+        })
+        .await
+        .expect("clear runtime context");
+    let stored_before_clear = state
+        .get_automation_v2_run(&run.run_id)
+        .await
+        .expect("stored run before clear");
+    assert!(state
+        .automation_v2_runtime_context(&stored_before_clear)
+        .is_some());
+    let stored_run = state
+        .get_automation_v2_run(&run.run_id)
+        .await
+        .expect("stored run");
+    assert!(state.automation_v2_runtime_context(&stored_run).is_some());
+
+    crate::automation_v2::executor::run_automation_v2_run(state.clone(), stored_run).await;
+
+    let persisted = state
+        .get_automation_v2_run(&run.run_id)
+        .await
+        .expect("persisted run");
+    assert_eq!(persisted.status, AutomationRunStatus::Failed);
+    assert_eq!(
+        persisted.detail.as_deref(),
+        Some("runtime context partition missing for automation run")
+    );
+}
+
+#[tokio::test]
+async fn automation_run_rejects_invalid_activation_validation_snapshot() {
+    let automation = AutomationV2Spec {
+        automation_id: "auto-activation-validation-test".to_string(),
+        name: "Activation Validation Test".to_string(),
+        description: None,
+        status: AutomationV2Status::Active,
+        schedule: AutomationV2Schedule {
+            schedule_type: AutomationV2ScheduleType::Manual,
+            cron_expression: None,
+            interval_seconds: None,
+            timezone: "UTC".to_string(),
+            misfire_policy: RoutineMisfirePolicy::RunOnce,
+        },
+        agents: Vec::new(),
+        flow: AutomationFlowSpec { nodes: Vec::new() },
+        execution: AutomationExecutionPolicy {
+            max_parallel_agents: Some(1),
+            max_total_runtime_ms: None,
+            max_total_tool_calls: None,
+            max_total_tokens: None,
+            max_total_cost_usd: None,
+        },
+        output_targets: Vec::new(),
+        created_at_ms: 1,
+        updated_at_ms: 1,
+        creator_id: "test".to_string(),
+        workspace_root: Some(".".to_string()),
+        metadata: Some(json!({
+            "context_materialization": {
+                "routines": [
+                    {
+                        "routine_id": "collect_inputs",
+                        "visible_context_objects": [],
+                        "step_context_bindings": []
+                    }
+                ]
+            },
+            "plan_package_validation": {
+                "ready_for_apply": false,
+                "ready_for_activation": false,
+                "blocker_count": 1,
+                "warning_count": 0,
+                "validation_state": {},
+                "issues": [
+                    {
+                        "code": "cross_routine_scope_overlap",
+                        "severity": "error",
+                        "path": "routines[0]",
+                        "message": "scope leak",
+                        "blocking": true
+                    }
+                ]
+            }
+        })),
+        next_fire_at_ms: None,
+        last_fired_at_ms: None,
+    };
+    let state = ready_test_state().await;
+    let run = state
+        .create_automation_v2_run(&automation, "manual")
+        .await
+        .expect("create run");
+    let run_id = run.run_id.clone();
+
+    crate::automation_v2::executor::run_automation_v2_run(state.clone(), run).await;
+
+    let persisted = state
+        .get_automation_v2_run(&run_id)
+        .await
+        .expect("persisted run");
+    assert_eq!(persisted.status, AutomationRunStatus::Failed);
+    assert_eq!(
+        persisted.detail.as_deref(),
+        Some("plan package not ready for activation: scope leak (cross_routine_scope_overlap)")
+    );
+}
+
+#[tokio::test]
+async fn automation_v2_approved_plan_materialization_is_recovered_from_snapshot() {
+    let automation = AutomationV2Spec {
+        automation_id: "auto-approved-plan-test".to_string(),
+        name: "Approved Plan Test".to_string(),
+        description: None,
+        status: AutomationV2Status::Active,
+        schedule: AutomationV2Schedule {
+            schedule_type: AutomationV2ScheduleType::Manual,
+            cron_expression: None,
+            interval_seconds: None,
+            timezone: "UTC".to_string(),
+            misfire_policy: RoutineMisfirePolicy::RunOnce,
+        },
+        agents: Vec::new(),
+        flow: AutomationFlowSpec { nodes: Vec::new() },
+        execution: AutomationExecutionPolicy {
+            max_parallel_agents: Some(1),
+            max_total_runtime_ms: None,
+            max_total_tool_calls: None,
+            max_total_tokens: None,
+            max_total_cost_usd: None,
+        },
+        output_targets: Vec::new(),
+        created_at_ms: 1,
+        updated_at_ms: 1,
+        creator_id: "test".to_string(),
+        workspace_root: Some(".".to_string()),
+        metadata: Some(json!({
+            "plan_package_bundle": {
+                "scope_snapshot": {
+                    "plan_id": "plan-approved-1",
+                    "plan_revision": 4,
+                    "context_objects": [
+                        {
+                            "context_object_id": "ctx:plan:goal",
+                            "name": "Plan goal",
+                            "kind": "mission_goal",
+                            "scope": "mission",
+                            "owner_routine_id": "routine_a",
+                            "declared_consumers": ["routine_a"],
+                            "data_scope_refs": ["mission.goal"],
+                            "validation_status": "pending",
+                            "provenance": {
+                                "plan_id": "plan-approved-1",
+                                "routine_id": "routine_a"
+                            },
+                            "summary": "Plan goal"
+                        }
+                    ],
+                    "credential_envelopes": []
+                }
+            },
+            "approved_plan_materialization": {
+                "plan_id": "plan-approved-1",
+                "plan_revision": 4,
+                "lifecycle_state": "approved",
+                "routine_count": 1,
+                "step_count": 1,
+                "context_object_count": 1,
+                "routines": [
+                    {
+                        "routine_id": "routine_a",
+                        "step_ids": ["step_a"],
+                        "visible_context_object_ids": ["ctx:plan:goal"],
+                        "step_context_bindings": [
+                            {
+                                "step_id": "step_a",
+                                "context_reads": ["ctx:plan:goal"],
+                                "context_writes": []
+                            }
+                        ]
+                    }
+                ]
+            }
+        })),
+        next_fire_at_ms: None,
+        last_fired_at_ms: None,
+    };
+
+    let state = ready_test_state().await;
+    let run = state
+        .create_automation_v2_run(&automation, "manual")
+        .await
+        .expect("create run");
+    let runtime_context = state
+        .automation_v2_runtime_context(&run)
+        .expect("runtime context from approved plan");
+    let snapshot = state
+        .automation_v2_approved_plan_materialization(&run)
+        .expect("approved plan materialization");
+    assert_eq!(snapshot.plan_id, "plan-approved-1");
+    assert_eq!(snapshot.plan_revision, 4);
+    assert_eq!(snapshot.routine_count, 1);
+    assert_eq!(snapshot.step_count, 1);
+    assert_eq!(runtime_context.routines.len(), 1);
+    assert_eq!(
+        runtime_context.routines[0].visible_context_objects[0].context_object_id,
+        "ctx:plan:goal"
+    );
+    assert_eq!(
+        runtime_context.routines[0].step_context_bindings[0].step_id,
+        "step_a"
+    );
+    assert_eq!(
+        automation
+            .approved_plan_materialization()
+            .as_ref()
+            .map(|materialization| materialization.plan_id.as_str()),
+        Some("plan-approved-1")
+    );
 }
 
 #[test]
@@ -3308,7 +4242,7 @@ fn build_automation_attempt_evidence_captures_runtime_websearch_success() {
         "standard",
         false,
     );
-    let attempt_evidence = crate::app::state::automation::build_automation_attempt_evidence(
+    let attempt_evidence = build_automation_attempt_evidence(
         &node,
         1,
         &session,
@@ -3388,7 +4322,7 @@ fn detect_automation_blocker_category_prefers_delivery_category_from_canonical_e
     });
 
     assert_eq!(
-        crate::app::state::automation::detect_automation_blocker_category(
+        detect_automation_blocker_category(
             &node,
             "blocked",
             Some("email delivery to `evan@frumu.ai` was requested but no email draft/send tool executed"),
@@ -3427,6 +4361,90 @@ fn report_generation_objective_does_not_imply_email_delivery_execution() {
     };
 
     assert!(!crate::app::state::automation::automation_node_requires_email_delivery(&node));
+}
+
+#[test]
+fn execute_goal_objective_with_gmail_draft_or_send_requires_email_delivery() {
+    let node = AutomationFlowNode {
+        node_id: "execute_goal".to_string(),
+        agent_id: "operator".to_string(),
+        objective: "Create a Gmail draft or send the final HTML summary email to evan@frumu.ai if mail tools are available.".to_string(),
+        depends_on: Vec::new(),
+        input_refs: Vec::new(),
+        output_contract: Some(AutomationFlowOutputContract {
+            kind: "approval_gate".to_string(),
+            validator: Some(crate::AutomationOutputValidatorKind::ReviewDecision),
+            enforcement: None,
+            schema: None,
+            summary_guidance: None,
+        }),
+        retry_policy: None,
+        timeout_ms: None,
+        stage_kind: None,
+        gate: None,
+        metadata: None,
+    };
+
+    assert!(crate::app::state::automation::automation_node_requires_email_delivery(&node));
+}
+
+#[test]
+fn email_delivery_status_uses_recipient_from_objective_when_metadata_missing() {
+    let node = AutomationFlowNode {
+        node_id: "execute_goal".to_string(),
+        agent_id: "operator".to_string(),
+        objective: "Create a Gmail draft or send the final HTML summary email to evan@frumu.ai if mail tools are available.".to_string(),
+        depends_on: Vec::new(),
+        input_refs: Vec::new(),
+        output_contract: Some(AutomationFlowOutputContract {
+            kind: "approval_gate".to_string(),
+            validator: Some(crate::AutomationOutputValidatorKind::ReviewDecision),
+            enforcement: None,
+            schema: None,
+            summary_guidance: None,
+        }),
+        retry_policy: None,
+        timeout_ms: None,
+        stage_kind: None,
+        gate: None,
+        metadata: None,
+    };
+
+    let (status, reason, approved): (String, Option<String>, Option<bool>) =
+        detect_automation_node_status(
+            &node,
+            "A Gmail draft has been created.\n\n{\"status\":\"completed\",\"approved\":true}",
+            None,
+            &json!({
+                "requested_tools": ["glob", "read", "mcp_list"],
+                "executed_tools": ["read", "glob", "mcp_list"],
+                "tool_call_counts": {"read": 1, "glob": 1, "mcp_list": 1},
+                "workspace_inspection_used": true,
+                "email_delivery_attempted": false,
+                "email_delivery_succeeded": false,
+                "latest_email_delivery_failure": null,
+                "capability_resolution": {
+                    "email_tool_diagnostics": {
+                        "available_tools": ["mcp.composio_1.gmail_send_email", "mcp.composio_1.gmail_create_email_draft"],
+                        "offered_tools": ["mcp.composio_1.gmail_send_email", "mcp.composio_1.gmail_create_email_draft"],
+                        "available_send_tools": ["mcp.composio_1.gmail_send_email"],
+                        "offered_send_tools": ["mcp.composio_1.gmail_send_email"],
+                        "available_draft_tools": ["mcp.composio_1.gmail_create_email_draft"],
+                        "offered_draft_tools": ["mcp.composio_1.gmail_create_email_draft"]
+                    }
+                }
+            }),
+            None,
+        );
+
+    assert_eq!(status, "blocked");
+    assert_eq!(
+        reason.as_deref(),
+        Some(
+            "email delivery to `evan@frumu.ai` was requested but no email draft/send tool executed"
+        )
+    );
+    assert_eq!(approved, Some(true));
 }
 
 #[test]
@@ -3503,7 +4521,8 @@ fn research_workflow_defaults_to_warning_without_strict_source_coverage() {
         metadata: Some(json!({
             "builder": {
                 "output_path": "marketing-brief.md",
-                "web_research_expected": true
+                "web_research_expected": true,
+                "allow_preexisting_output_reuse": true
             }
         })),
     };
@@ -4193,6 +5212,7 @@ fn research_finalize_validation_accepts_upstream_read_evidence() {
                 &node,
                 &session,
                 workspace_root.to_str().expect("workspace root"),
+                None,
                 "",
                 &tool_telemetry,
                 None,
@@ -4401,6 +5421,720 @@ fn publish_node_blocks_when_upstream_editorial_validation_failed() {
 }
 
 #[test]
+fn report_markdown_blocks_when_rich_upstream_evidence_is_reduced_to_generic_summary() {
+    let workspace_root = std::env::temp_dir().join(format!(
+        "tandem-report-upstream-synthesis-{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&workspace_root).expect("create workspace");
+    let snapshot =
+        automation_workspace_root_file_snapshot(workspace_root.to_str().expect("workspace root"));
+    let node = AutomationFlowNode {
+        node_id: "generate_report".to_string(),
+        agent_id: "writer".to_string(),
+        objective: "Create the final report".to_string(),
+        depends_on: vec!["analyze_findings".to_string()],
+        input_refs: vec![AutomationFlowInputRef {
+            from_step_id: "analyze_findings".to_string(),
+            alias: "analysis".to_string(),
+        }],
+        output_contract: Some(AutomationFlowOutputContract {
+            kind: "report_markdown".to_string(),
+            validator: Some(crate::AutomationOutputValidatorKind::GenericArtifact),
+            enforcement: None,
+            schema: None,
+            summary_guidance: None,
+        }),
+        retry_policy: None,
+        timeout_ms: None,
+        stage_kind: None,
+        gate: None,
+        metadata: Some(json!({
+            "builder": {
+                "output_path": "report.md"
+            }
+        })),
+    };
+    let session = Session::new(
+        Some("thin-final-summary".to_string()),
+        Some(workspace_root.to_str().expect("workspace root").to_string()),
+    );
+    let mut session = session;
+    session.messages.push(tandem_types::Message::new(
+        MessageRole::Assistant,
+        vec![MessagePart::ToolInvocation {
+            tool: "write".to_string(),
+            args: json!({
+                "path": "report.md",
+                "content": "# Strategic Summary\n\nTandem is an engineering agent for local execution.\n\n## Positioning\n\nIt connects human intent to repo changes.\n"
+            }),
+            result: Some(json!("ok")),
+            error: None,
+        }],
+    ));
+    let thin_report = "# Strategic Summary\n\nTandem is an engineering agent for local execution.\n\n## Positioning\n\nIt connects human intent to repo changes.\n".to_string();
+    let upstream_evidence = AutomationUpstreamEvidence {
+        read_paths: vec![
+            "README.md".to_string(),
+            "docs/product-capabilities.md".to_string(),
+        ],
+        discovered_relevant_paths: vec![
+            "README.md".to_string(),
+            "docs/product-capabilities.md".to_string(),
+        ],
+        web_research_attempted: true,
+        web_research_succeeded: true,
+        citation_count: 3,
+        citations: vec![
+            "https://example.com/source-1".to_string(),
+            "https://example.com/source-2".to_string(),
+            "https://example.com/source-3".to_string(),
+        ],
+    };
+
+    let (accepted_output, artifact_validation, rejected) =
+        validate_automation_artifact_output_with_upstream(
+            &node,
+            &session,
+            workspace_root.to_str().expect("workspace root"),
+            None,
+            "Completed the report.",
+            &json!({
+                "requested_tools": ["write"],
+                "executed_tools": ["write"],
+                "tool_call_counts": {
+                    "write": 1
+                }
+            }),
+            None,
+            Some(("report.md".to_string(), thin_report)),
+            &snapshot,
+            Some(&upstream_evidence),
+        );
+
+    assert!(accepted_output.is_some());
+    assert_eq!(
+        rejected.as_deref(),
+        Some("final artifact does not adequately synthesize the available upstream evidence")
+    );
+    assert_eq!(
+        artifact_validation
+            .get("semantic_block_reason")
+            .and_then(Value::as_str),
+        Some("final artifact does not adequately synthesize the available upstream evidence")
+    );
+    assert!(artifact_validation
+        .get("unmet_requirements")
+        .and_then(Value::as_array)
+        .is_some_and(|items| items
+            .iter()
+            .any(|value| value.as_str() == Some("upstream_evidence_not_synthesized"))));
+
+    let _ = std::fs::remove_dir_all(&workspace_root);
+}
+
+#[test]
+fn report_markdown_accepts_structured_synthesis_without_inline_citations_when_upstream_is_rich() {
+    let workspace_root = std::env::temp_dir().join(format!(
+        "tandem-report-upstream-synthesis-pass-{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&workspace_root).expect("create workspace");
+    let snapshot =
+        automation_workspace_root_file_snapshot(workspace_root.to_str().expect("workspace root"));
+    let node = AutomationFlowNode {
+        node_id: "analyze_findings".to_string(),
+        agent_id: "analyst".to_string(),
+        objective: "Synthesize findings into a strategy report".to_string(),
+        depends_on: vec!["collect_inputs".to_string(), "research_sources".to_string()],
+        input_refs: vec![
+            AutomationFlowInputRef {
+                from_step_id: "collect_inputs".to_string(),
+                alias: "local_grounding".to_string(),
+            },
+            AutomationFlowInputRef {
+                from_step_id: "research_sources".to_string(),
+                alias: "external_research".to_string(),
+            },
+        ],
+        output_contract: Some(AutomationFlowOutputContract {
+            kind: "report_markdown".to_string(),
+            validator: Some(crate::AutomationOutputValidatorKind::GenericArtifact),
+            enforcement: None,
+            schema: None,
+            summary_guidance: None,
+        }),
+        retry_policy: None,
+        timeout_ms: None,
+        stage_kind: None,
+        gate: None,
+        metadata: Some(json!({
+            "builder": {
+                "output_path": "analyze-findings.md"
+            }
+        })),
+    };
+    let mut session = Session::new(
+        Some("structured-synthesis".to_string()),
+        Some(workspace_root.to_str().expect("workspace root").to_string()),
+    );
+    let report = "# Strategy Analysis Report\n\n## 1. Executive Summary\nThis analysis synthesizes Tandem's core internal product definitions and external research to refine positioning and strategy. Tandem is positioned as a high-autonomy, agentic engineering engine that solves cognitive load and cross-functional orchestration issues, positioning itself firmly against generic code assistants.\n\n## 2. Product Positioning\n*   **Core Identity:** Tandem by Frumu AI\n*   **Market Category:** Agentic Software Development / IDE-Integrated Engineering Tool\n*   **Key Positioning:** Empowering engineers with high-autonomy, context-accurate AI collaboration embedded directly within their development workflow.\n\n## 3. Target Users & Use-Case Wedges\n*   **Primary Users:** Professional engineers and development teams struggling with high cognitive load.\n*   **Use-Case Wedge:** Utilizing workspace-aware code analysis and automated task execution to bridge the gap between documentation and implementation.\n\n## 4. Investor Narrative & Competitive Outlook\n*   **Competitive Standing:** Tandem differentiates itself by being a full-context engineering engine rather than a simple chatbot.\n*   **Narrative Hook:** Stop context-switching and let Tandem handle tooling and documentation synthesis overhead.\n\n## 5. Risks & Proof Gaps\n*   **Market Risk:** Strong competition from well-capitalized code-assistant vendors.\n*   **Proof Gaps:** Need stronger empirical time-saved and throughput metrics.\n\n## 6. Execution Summary\nThe immediate priority is to prove the agentic value proposition with high-utility automation flows such as multi-file updates and refactors.\n\n---\n*Source Verification: Based on `.tandem/artifacts/collect-inputs.json` and `.tandem/artifacts/research-sources.json`.*\n".to_string();
+    session.messages.push(tandem_types::Message::new(
+        MessageRole::Assistant,
+        vec![MessagePart::ToolInvocation {
+            tool: "write".to_string(),
+            args: json!({
+                "path": "analyze-findings.md",
+                "content": report
+            }),
+            result: Some(json!("ok")),
+            error: None,
+        }],
+    ));
+    let upstream_evidence = AutomationUpstreamEvidence {
+        read_paths: vec![
+            ".tandem/artifacts/collect-inputs.json".to_string(),
+            ".tandem/artifacts/research-sources.json".to_string(),
+        ],
+        discovered_relevant_paths: vec![
+            ".tandem/artifacts/collect-inputs.json".to_string(),
+            "README.md".to_string(),
+        ],
+        web_research_attempted: true,
+        web_research_succeeded: true,
+        citation_count: 3,
+        citations: vec![
+            "https://example.com/1".to_string(),
+            "https://example.com/2".to_string(),
+            "https://example.com/3".to_string(),
+        ],
+    };
+
+    let (accepted_output, artifact_validation, rejected) =
+        validate_automation_artifact_output_with_upstream(
+            &node,
+            &session,
+            workspace_root.to_str().expect("workspace root"),
+            None,
+            "Completed the report.",
+            &json!({
+                "requested_tools": ["read", "write"],
+                "executed_tools": ["read", "write"],
+                "tool_call_counts": {
+                    "read": 2,
+                    "write": 1
+                }
+            }),
+            None,
+            Some(("analyze-findings.md".to_string(), report)),
+            &snapshot,
+            Some(&upstream_evidence),
+        );
+
+    assert!(accepted_output.is_some());
+    assert!(rejected.is_none());
+    assert_eq!(
+        artifact_validation
+            .get("semantic_block_reason")
+            .and_then(Value::as_str),
+        None
+    );
+    assert!(!artifact_validation
+        .get("unmet_requirements")
+        .and_then(Value::as_array)
+        .is_some_and(|items| items
+            .iter()
+            .any(|value| value.as_str() == Some("upstream_evidence_not_synthesized"))));
+
+    let _ = std::fs::remove_dir_all(&workspace_root);
+}
+
+#[test]
+fn report_markdown_legacy_quality_mode_allows_generic_synthesis_as_rollback() {
+    let workspace_root = std::env::temp_dir().join(format!(
+        "tandem-report-legacy-quality-{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&workspace_root).expect("create workspace");
+    let snapshot =
+        automation_workspace_root_file_snapshot(workspace_root.to_str().expect("workspace root"));
+    let node = AutomationFlowNode {
+        node_id: "generate_report".to_string(),
+        agent_id: "writer".to_string(),
+        objective: "Create the final report".to_string(),
+        depends_on: vec!["analyze_findings".to_string()],
+        input_refs: vec![AutomationFlowInputRef {
+            from_step_id: "analyze_findings".to_string(),
+            alias: "analysis".to_string(),
+        }],
+        output_contract: Some(AutomationFlowOutputContract {
+            kind: "report_markdown".to_string(),
+            validator: Some(crate::AutomationOutputValidatorKind::GenericArtifact),
+            enforcement: None,
+            schema: None,
+            summary_guidance: None,
+        }),
+        retry_policy: None,
+        timeout_ms: None,
+        stage_kind: None,
+        gate: None,
+        metadata: Some(json!({
+            "quality_mode": "legacy",
+            "builder": {
+                "output_path": "generate-report.md"
+            }
+        })),
+    };
+    let mut session = Session::new(
+        Some("legacy-quality-mode".to_string()),
+        Some(workspace_root.to_str().expect("workspace root").to_string()),
+    );
+    let generic_report = "# Strategic Summary\n\nTandem is an engineering agent for local execution.\n\n## Positioning\n\nIt connects human intent to repo changes.\n".to_string();
+    session.messages.push(tandem_types::Message::new(
+        MessageRole::Assistant,
+        vec![MessagePart::ToolInvocation {
+            tool: "write".to_string(),
+            args: json!({
+                "path": "generate-report.md",
+                "content": generic_report
+            }),
+            result: Some(json!("ok")),
+            error: None,
+        }],
+    ));
+    let upstream_evidence = AutomationUpstreamEvidence {
+        read_paths: vec![
+            ".tandem/artifacts/collect-inputs.json".to_string(),
+            ".tandem/artifacts/research-sources.json".to_string(),
+        ],
+        discovered_relevant_paths: vec![
+            ".tandem/artifacts/collect-inputs.json".to_string(),
+            ".tandem/artifacts/research-sources.json".to_string(),
+        ],
+        web_research_attempted: true,
+        web_research_succeeded: true,
+        citation_count: 3,
+        citations: vec![
+            "https://example.com/legacy-1".to_string(),
+            "https://example.com/legacy-2".to_string(),
+            "https://example.com/legacy-3".to_string(),
+        ],
+    };
+
+    let (accepted_output, artifact_validation, rejected) =
+        validate_automation_artifact_output_with_upstream(
+            &node,
+            &session,
+            workspace_root.to_str().expect("workspace root"),
+            None,
+            "Completed the report.",
+            &json!({
+                "requested_tools": ["read", "write"],
+                "executed_tools": ["read", "write"],
+                "tool_call_counts": {
+                    "read": 2,
+                    "write": 1
+                }
+            }),
+            None,
+            Some(("generate-report.md".to_string(), generic_report)),
+            &snapshot,
+            Some(&upstream_evidence),
+        );
+
+    assert!(accepted_output.is_some());
+    assert!(rejected.is_none());
+    assert!(artifact_validation
+        .get("unmet_requirements")
+        .and_then(Value::as_array)
+        .is_none_or(|items| !items
+            .iter()
+            .any(|value| value.as_str() == Some("upstream_evidence_not_synthesized"))));
+    assert!(artifact_validation
+        .get("semantic_block_reason")
+        .and_then(Value::as_str)
+        .is_none());
+
+    let _ = std::fs::remove_dir_all(&workspace_root);
+}
+
+#[test]
+fn report_markdown_rejects_generic_synthesis_without_evidence_anchors_when_upstream_is_rich() {
+    let workspace_root = std::env::temp_dir().join(format!(
+        "tandem-report-anchor-synthesis-block-{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&workspace_root).expect("create workspace");
+    let snapshot =
+        automation_workspace_root_file_snapshot(workspace_root.to_str().expect("workspace root"));
+    let node = AutomationFlowNode {
+        node_id: "generate_report".to_string(),
+        agent_id: "writer".to_string(),
+        objective: "Create the final report".to_string(),
+        depends_on: vec!["analyze_findings".to_string()],
+        input_refs: vec![AutomationFlowInputRef {
+            from_step_id: "analyze_findings".to_string(),
+            alias: "analysis".to_string(),
+        }],
+        output_contract: Some(AutomationFlowOutputContract {
+            kind: "report_markdown".to_string(),
+            validator: Some(crate::AutomationOutputValidatorKind::GenericArtifact),
+            enforcement: None,
+            schema: None,
+            summary_guidance: None,
+        }),
+        retry_policy: None,
+        timeout_ms: None,
+        stage_kind: None,
+        gate: None,
+        metadata: Some(json!({
+            "builder": {
+                "output_path": "generate-report.md"
+            }
+        })),
+    };
+    let mut session = Session::new(
+        Some("anchor-block-report".to_string()),
+        Some(workspace_root.to_str().expect("workspace root").to_string()),
+    );
+    let generic_report = "# Strategic Summary\n\n## Executive Summary\nThis report synthesizes the available upstream evidence into a concise outlook.\n\n## Key Findings\n* Growth vectors were identified across the workflow.\n* Strategic positioning remains promising.\n\n## Critical Risks\n* Competitive pressure remains a factor.\n\n## Recommendations\n* Continue iterating on the workflow.\n\n## Evidence/Sources\n* Internal documentation and external research informed this summary.\n\n## Next Steps\n* Refine the messaging and validate the next cycle.\n"
+        .to_string();
+    session.messages.push(tandem_types::Message::new(
+        MessageRole::Assistant,
+        vec![MessagePart::ToolInvocation {
+            tool: "write".to_string(),
+            args: json!({
+                "path": "generate-report.md",
+                "content": generic_report
+            }),
+            result: Some(json!("ok")),
+            error: None,
+        }],
+    ));
+    let upstream_evidence = AutomationUpstreamEvidence {
+        read_paths: vec![
+            ".tandem/artifacts/collect-inputs.json".to_string(),
+            ".tandem/artifacts/research-sources.json".to_string(),
+            ".tandem/artifacts/analyze-findings.md".to_string(),
+        ],
+        discovered_relevant_paths: vec![
+            ".tandem/artifacts/collect-inputs.json".to_string(),
+            ".tandem/artifacts/research-sources.json".to_string(),
+            ".tandem/artifacts/analyze-findings.md".to_string(),
+        ],
+        web_research_attempted: true,
+        web_research_succeeded: true,
+        citation_count: 3,
+        citations: vec![
+            "https://example.com/1".to_string(),
+            "https://example.com/2".to_string(),
+            "https://example.com/3".to_string(),
+        ],
+    };
+
+    let (accepted_output, artifact_validation, rejected) =
+        validate_automation_artifact_output_with_upstream(
+            &node,
+            &session,
+            workspace_root.to_str().expect("workspace root"),
+            None,
+            "Completed the report.",
+            &json!({
+                "requested_tools": ["write"],
+                "executed_tools": ["write"],
+                "tool_call_counts": {
+                    "write": 1
+                }
+            }),
+            None,
+            Some(("generate-report.md".to_string(), generic_report)),
+            &snapshot,
+            Some(&upstream_evidence),
+        );
+
+    assert!(accepted_output.is_some());
+    assert_eq!(
+        rejected.as_deref(),
+        Some("final artifact does not adequately synthesize the available upstream evidence")
+    );
+    assert_eq!(
+        artifact_validation
+            .get("semantic_block_reason")
+            .and_then(Value::as_str),
+        Some("final artifact does not adequately synthesize the available upstream evidence")
+    );
+    assert!(artifact_validation
+        .get("unmet_requirements")
+        .and_then(Value::as_array)
+        .is_some_and(|items| items
+            .iter()
+            .any(|value| value.as_str() == Some("upstream_evidence_not_synthesized"))));
+
+    let _ = std::fs::remove_dir_all(&workspace_root);
+}
+
+#[test]
+fn report_markdown_accepts_rich_html_synthesis_when_upstream_is_rich() {
+    let workspace_root = std::env::temp_dir().join(format!(
+        "tandem-report-html-synthesis-pass-{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&workspace_root).expect("create workspace");
+    let snapshot =
+        automation_workspace_root_file_snapshot(workspace_root.to_str().expect("workspace root"));
+    let node = AutomationFlowNode {
+        node_id: "generate_report".to_string(),
+        agent_id: "writer".to_string(),
+        objective: "Create the final report".to_string(),
+        depends_on: vec!["analyze_findings".to_string()],
+        input_refs: vec![AutomationFlowInputRef {
+            from_step_id: "analyze_findings".to_string(),
+            alias: "analysis".to_string(),
+        }],
+        output_contract: Some(AutomationFlowOutputContract {
+            kind: "report_markdown".to_string(),
+            validator: Some(crate::AutomationOutputValidatorKind::GenericArtifact),
+            enforcement: None,
+            schema: None,
+            summary_guidance: None,
+        }),
+        retry_policy: None,
+        timeout_ms: None,
+        stage_kind: None,
+        gate: None,
+        metadata: Some(json!({
+            "builder": {
+                "output_path": "generate-report.md"
+            }
+        })),
+    };
+    let mut session = Session::new(
+        Some("html-report".to_string()),
+        Some(workspace_root.to_str().expect("workspace root").to_string()),
+    );
+    let html_report = r#"
+<html>
+  <body>
+    <h1>Frumu AI Tandem: Strategic Summary</h1>
+    <p>We synthesized the local Tandem docs and the external research into one report.</p>
+    <h3>Core Value Proposition</h3>
+    <p>Tandem is an engine-backed workflow system for local execution and agentic operations.</p>
+    <ul>
+      <li>Local workspace reads and patch-based code execution.</li>
+      <li>Current web research for externally grounded synthesis.</li>
+      <li>Explicit delivery gating for email and other side effects.</li>
+    </ul>
+    <h3>Strategic Outlook</h3>
+    <p>The positioning emphasizes deterministic execution, provenance, and operator control.</p>
+    <p>Sources reviewed: <a href=\".tandem/artifacts/analyze-findings.md\">analysis</a> and <a href=\".tandem/artifacts/research-sources.json\">research</a>.</p>
+  </body>
+</html>
+"#
+    .trim()
+    .to_string();
+    session.messages.push(tandem_types::Message::new(
+        MessageRole::Assistant,
+        vec![MessagePart::ToolInvocation {
+            tool: "write".to_string(),
+            args: json!({
+                "path": "generate-report.md",
+                "content": html_report
+            }),
+            result: Some(json!("ok")),
+            error: None,
+        }],
+    ));
+    let upstream_evidence = AutomationUpstreamEvidence {
+        read_paths: vec![
+            ".tandem/artifacts/collect-inputs.json".to_string(),
+            ".tandem/artifacts/research-sources.json".to_string(),
+            ".tandem/artifacts/analyze-findings.md".to_string(),
+        ],
+        discovered_relevant_paths: vec![
+            ".tandem/artifacts/collect-inputs.json".to_string(),
+            ".tandem/artifacts/research-sources.json".to_string(),
+            ".tandem/artifacts/analyze-findings.md".to_string(),
+        ],
+        web_research_attempted: true,
+        web_research_succeeded: true,
+        citation_count: 3,
+        citations: vec![
+            "https://example.com/1".to_string(),
+            "https://example.com/2".to_string(),
+            "https://example.com/3".to_string(),
+        ],
+    };
+
+    let (accepted_output, artifact_validation, rejected) =
+        validate_automation_artifact_output_with_upstream(
+            &node,
+            &session,
+            workspace_root.to_str().expect("workspace root"),
+            None,
+            "Completed the report.",
+            &json!({
+                "requested_tools": ["write"],
+                "executed_tools": ["write"],
+                "tool_call_counts": {
+                    "write": 1
+                }
+            }),
+            None,
+            Some(("generate-report.md".to_string(), html_report.clone())),
+            &snapshot,
+            Some(&upstream_evidence),
+        );
+
+    assert!(accepted_output.is_some());
+    assert!(rejected.is_none());
+    assert_eq!(
+        artifact_validation
+            .get("semantic_block_reason")
+            .and_then(Value::as_str),
+        None
+    );
+    assert!(!artifact_validation
+        .get("unmet_requirements")
+        .and_then(Value::as_array)
+        .is_some_and(|items| items
+            .iter()
+            .any(|value| value.as_str() == Some("upstream_evidence_not_synthesized"))));
+
+    let _ = std::fs::remove_dir_all(&workspace_root);
+}
+
+#[test]
+fn report_markdown_rejects_generic_html_synthesis_without_evidence_anchors_when_upstream_is_rich() {
+    let workspace_root = std::env::temp_dir().join(format!(
+        "tandem-report-html-anchor-synthesis-block-{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&workspace_root).expect("create workspace");
+    let snapshot =
+        automation_workspace_root_file_snapshot(workspace_root.to_str().expect("workspace root"));
+    let node = AutomationFlowNode {
+        node_id: "generate_report".to_string(),
+        agent_id: "writer".to_string(),
+        objective: "Create the final report".to_string(),
+        depends_on: vec!["analyze_findings".to_string()],
+        input_refs: vec![AutomationFlowInputRef {
+            from_step_id: "analyze_findings".to_string(),
+            alias: "analysis".to_string(),
+        }],
+        output_contract: Some(AutomationFlowOutputContract {
+            kind: "report_markdown".to_string(),
+            validator: Some(crate::AutomationOutputValidatorKind::GenericArtifact),
+            enforcement: None,
+            schema: None,
+            summary_guidance: None,
+        }),
+        retry_policy: None,
+        timeout_ms: None,
+        stage_kind: None,
+        gate: None,
+        metadata: Some(json!({
+            "builder": {
+                "output_path": "generate-report.md"
+            }
+        })),
+    };
+    let mut session = Session::new(
+        Some("html-anchor-block-report".to_string()),
+        Some(workspace_root.to_str().expect("workspace root").to_string()),
+    );
+    let generic_html_report = r#"
+<html>
+  <body>
+    <h1>Investor Summary: Strategic Analysis Report</h1>
+    <p>We synthesized refined market data and findings from our research cycles into key growth vectors and strategic positioning for the target project.</p>
+    <h3>Key Findings</h3>
+    <ul>
+      <li>Market growth vectors are present.</li>
+      <li>Strategic positioning is available.</li>
+    </ul>
+    <h3>Critical Risks &amp; Considerations</h3>
+    <p>Competitive pressure and entry barriers remain relevant.</p>
+    <p>Operational mitigation follows the updated strategy.</p>
+  </body>
+</html>
+"#
+    .trim()
+    .to_string();
+    session.messages.push(tandem_types::Message::new(
+        MessageRole::Assistant,
+        vec![MessagePart::ToolInvocation {
+            tool: "write".to_string(),
+            args: json!({
+                "path": "generate-report.md",
+                "content": generic_html_report
+            }),
+            result: Some(json!("ok")),
+            error: None,
+        }],
+    ));
+    let upstream_evidence = AutomationUpstreamEvidence {
+        read_paths: vec![
+            ".tandem/artifacts/collect-inputs.json".to_string(),
+            ".tandem/artifacts/research-sources.json".to_string(),
+            ".tandem/artifacts/analyze-findings.md".to_string(),
+        ],
+        discovered_relevant_paths: vec![
+            ".tandem/artifacts/collect-inputs.json".to_string(),
+            ".tandem/artifacts/research-sources.json".to_string(),
+            ".tandem/artifacts/analyze-findings.md".to_string(),
+        ],
+        web_research_attempted: true,
+        web_research_succeeded: true,
+        citation_count: 3,
+        citations: vec![
+            "https://example.com/1".to_string(),
+            "https://example.com/2".to_string(),
+            "https://example.com/3".to_string(),
+        ],
+    };
+
+    let (accepted_output, artifact_validation, rejected) =
+        validate_automation_artifact_output_with_upstream(
+            &node,
+            &session,
+            workspace_root.to_str().expect("workspace root"),
+            None,
+            "Completed the report.",
+            &json!({
+                "requested_tools": ["write"],
+                "executed_tools": ["write"],
+                "tool_call_counts": {
+                    "write": 1
+                }
+            }),
+            None,
+            Some(("generate-report.md".to_string(), generic_html_report)),
+            &snapshot,
+            Some(&upstream_evidence),
+        );
+
+    assert!(accepted_output.is_some());
+    assert_eq!(
+        rejected.as_deref(),
+        Some("final artifact does not adequately synthesize the available upstream evidence")
+    );
+    assert_eq!(
+        artifact_validation
+            .get("semantic_block_reason")
+            .and_then(Value::as_str),
+        Some("final artifact does not adequately synthesize the available upstream evidence")
+    );
+    assert!(artifact_validation
+        .get("unmet_requirements")
+        .and_then(Value::as_array)
+        .is_some_and(|items| items
+            .iter()
+            .any(|value| value.as_str() == Some("upstream_evidence_not_synthesized"))));
+
+    let _ = std::fs::remove_dir_all(&workspace_root);
+}
+
+#[test]
 fn execution_policy_reports_workflow_class() {
     let research = AutomationFlowNode {
         node_id: "research".to_string(),
@@ -4489,6 +6223,7 @@ fn workflow_state_events_capture_typed_stability_transitions() {
             lifecycle_history: Vec::new(),
             last_failure: None,
         },
+        runtime_context: None,
         automation_snapshot: None,
         pause_reason: None,
         resume_reason: None,
@@ -4499,6 +6234,7 @@ fn workflow_state_events_capture_typed_stability_transitions() {
         completion_tokens: 0,
         total_tokens: 0,
         estimated_cost_usd: 0.0,
+        scheduler: None,
     };
     let output = json!({
         "status": "blocked",
@@ -4632,13 +6368,14 @@ fn code_workflow_verification_failure_sets_verify_failed_status() {
         "latest_verification_failure": "verification command failed with exit code 101: cargo test"
     });
 
-    let (status, reason, approved) = detect_automation_node_status(
-        &node,
-        "Done\n\n{\"status\":\"completed\"}",
-        None,
-        &tool_telemetry,
-        None,
-    );
+    let (status, reason, approved): (String, Option<String>, Option<bool>) =
+        detect_automation_node_status(
+            &node,
+            "Done\n\n{\"status\":\"completed\"}",
+            None,
+            &tool_telemetry,
+            None,
+        );
 
     assert_eq!(status, "verify_failed");
     assert_eq!(
@@ -4682,13 +6419,14 @@ fn code_workflow_without_verification_run_is_blocked() {
         "verification_failed": false
     });
 
-    let (status, reason, approved) = detect_automation_node_status(
-        &node,
-        "Done\n\n{\"status\":\"completed\"}",
-        None,
-        &tool_telemetry,
-        None,
-    );
+    let (status, reason, approved): (String, Option<String>, Option<bool>) =
+        detect_automation_node_status(
+            &node,
+            "Done\n\n{\"status\":\"completed\"}",
+            None,
+            &tool_telemetry,
+            None,
+        );
 
     assert_eq!(status, "blocked");
     assert_eq!(
@@ -5086,13 +6824,14 @@ fn code_workflow_with_full_verification_plan_reports_done() {
         Some(3)
     );
 
-    let (status, reason, approved) = detect_automation_node_status(
-        &node,
-        "Done\n\n{\"status\":\"completed\"}",
-        None,
-        &tool_telemetry,
-        None,
-    );
+    let (status, reason, approved): (String, Option<String>, Option<bool>) =
+        detect_automation_node_status(
+            &node,
+            "Done\n\n{\"status\":\"completed\"}",
+            None,
+            &tool_telemetry,
+            None,
+        );
 
     assert_eq!(status, "done");
     assert_eq!(reason, None);
@@ -5164,13 +6903,14 @@ fn code_workflow_with_partial_verification_is_blocked() {
         Some("partial")
     );
 
-    let (status, reason, approved) = detect_automation_node_status(
-        &node,
-        "Done\n\n{\"status\":\"completed\"}",
-        None,
-        &tool_telemetry,
-        None,
-    );
+    let (status, reason, approved): (String, Option<String>, Option<bool>) =
+        detect_automation_node_status(
+            &node,
+            "Done\n\n{\"status\":\"completed\"}",
+            None,
+            &tool_telemetry,
+            None,
+        );
 
     assert_eq!(status, "blocked");
     assert_eq!(
@@ -5213,21 +6953,22 @@ fn email_delivery_nodes_block_without_email_tool_execution() {
         })),
     };
 
-    let (status, reason, approved) = detect_automation_node_status(
-        &node,
-        "The report is ready.\n\n{\"status\":\"completed\",\"approved\":true}",
-        None,
-        &json!({
-            "requested_tools": ["*"],
-            "executed_tools": ["read"],
-            "tool_call_counts": {"read": 1},
-            "workspace_inspection_used": true,
-            "email_delivery_attempted": false,
-            "email_delivery_succeeded": false,
-            "latest_email_delivery_failure": null
-        }),
-        None,
-    );
+    let (status, reason, approved): (String, Option<String>, Option<bool>) =
+        detect_automation_node_status(
+            &node,
+            "The report is ready.\n\n{\"status\":\"completed\",\"approved\":true}",
+            None,
+            &json!({
+                "requested_tools": ["*"],
+                "executed_tools": ["read"],
+                "tool_call_counts": {"read": 1},
+                "workspace_inspection_used": true,
+                "email_delivery_attempted": false,
+                "email_delivery_succeeded": false,
+                "latest_email_delivery_failure": null
+            }),
+            None,
+        );
 
     assert_eq!(status, "blocked");
     assert_eq!(
@@ -5315,13 +7056,14 @@ fn email_delivery_nodes_without_email_tools_report_tool_unavailable_with_diagnos
         }
     });
 
-    let (status, reason, approved) = detect_automation_node_status(
-        &node,
-        "I could not verify that an email was sent in this run.",
-        None,
-        &tool_telemetry,
-        None,
-    );
+    let (status, reason, approved): (String, Option<String>, Option<bool>) =
+        detect_automation_node_status(
+            &node,
+            "I could not verify that an email was sent in this run.",
+            None,
+            &tool_telemetry,
+            None,
+        );
 
     assert_eq!(status, "blocked");
     assert!(reason
@@ -5339,7 +7081,7 @@ fn email_delivery_nodes_without_email_tools_report_tool_unavailable_with_diagnos
     )));
     assert_eq!(approved, None);
     assert_eq!(
-        crate::app::state::automation::detect_automation_blocker_category(
+        detect_automation_blocker_category(
             &node,
             &status,
             reason.as_deref(),
@@ -5384,21 +7126,22 @@ fn email_delivery_nodes_complete_after_email_tool_execution() {
         })),
     };
 
-    let (status, reason, approved) = detect_automation_node_status(
-        &node,
-        "Sent the report.\n\n{\"status\":\"completed\",\"approved\":true}",
-        None,
-        &json!({
-            "requested_tools": ["*"],
-            "executed_tools": ["read", "mcp.composio_1.gmail_send_email"],
-            "tool_call_counts": {"read": 1, "mcp.composio_1.gmail_send_email": 1},
-            "workspace_inspection_used": true,
-            "email_delivery_attempted": true,
-            "email_delivery_succeeded": true,
-            "latest_email_delivery_failure": null
-        }),
-        None,
-    );
+    let (status, reason, approved): (String, Option<String>, Option<bool>) =
+        detect_automation_node_status(
+            &node,
+            "Sent the report.\n\n{\"status\":\"completed\",\"approved\":true}",
+            None,
+            &json!({
+                "requested_tools": ["*"],
+                "executed_tools": ["read", "mcp.composio_1.gmail_send_email"],
+                "tool_call_counts": {"read": 1, "mcp.composio_1.gmail_send_email": 1},
+                "workspace_inspection_used": true,
+                "email_delivery_attempted": true,
+                "email_delivery_succeeded": true,
+                "latest_email_delivery_failure": null
+            }),
+            None,
+        );
 
     assert_eq!(status, "completed");
     assert_eq!(reason, None);
@@ -5511,9 +7254,52 @@ fn session_write_candidates_accepts_json_string_tool_args() {
         &session,
         workspace_root.to_str().expect("workspace root string"),
         "brief.md",
+        None,
     );
 
     assert_eq!(candidates, vec!["Draft body".to_string()]);
+}
+
+#[test]
+fn session_write_touched_output_detects_target_path_without_content() {
+    let workspace_root = std::env::temp_dir().join(format!(
+        "tandem-session-write-touched-output-{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&workspace_root).expect("create workspace");
+
+    let mut session = Session::new(
+        Some("write touched output".to_string()),
+        Some(
+            workspace_root
+                .to_str()
+                .expect("workspace root string")
+                .to_string(),
+        ),
+    );
+    session.messages.push(tandem_types::Message::new(
+        MessageRole::Assistant,
+        vec![MessagePart::ToolInvocation {
+            tool: "write".to_string(),
+            args: json!({
+                "output_path": "brief.md"
+            }),
+            result: Some(json!({"ok": true})),
+            error: None,
+        }],
+    ));
+
+    let touched = session_write_touched_output_for_output(
+        &session,
+        workspace_root.to_str().expect("workspace root string"),
+        "brief.md",
+        None,
+    );
+
+    assert!(
+        touched,
+        "write invocation should count as touching declared output path"
+    );
 }
 
 #[test]
@@ -5957,7 +7743,8 @@ fn artifact_validation_restores_substantive_session_write_over_short_completion_
         disk_text.trim(),
         "Marketing brief completed and written to marketing-brief.md."
     );
-    let (status, reason, approved) = detect_automation_node_status(
+    let (status, reason, approved): (String, Option<String>, Option<bool>) =
+        detect_automation_node_status(
         &node,
         "Done — `marketing-brief.md` was written in the workspace.\n\n{\"status\":\"completed\",\"approved\":true}",
         accepted_output.as_ref(),
@@ -6147,22 +7934,128 @@ fn research_validation_does_not_accept_preexisting_output_without_current_attemp
         metadata
             .get("accepted_candidate_source")
             .and_then(Value::as_str),
-        Some("verified_output")
+        Some("current_attempt_missing_output_write")
     );
     assert_eq!(
         rejected.as_deref(),
-        Some("research completed without concrete file reads or required source coverage")
+        Some("required output `marketing-brief.md` was not created in the current attempt")
     );
     assert_eq!(
         metadata
             .get("semantic_block_reason")
             .and_then(Value::as_str),
-        Some("research completed without concrete file reads or required source coverage")
+        Some("required output was not created in the current attempt")
     );
 
     let disk_text = std::fs::read_to_string(workspace_root.join("marketing-brief.md"))
         .expect("read unchanged output");
     assert_eq!(disk_text, current_disk_output);
+
+    let _ = std::fs::remove_dir_all(workspace_root);
+}
+
+#[test]
+fn generic_artifact_validation_rejects_stale_preexisting_output_without_current_session_write() {
+    let workspace_root = std::env::temp_dir().join(format!(
+        "tandem-stale-generic-artifact-{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&workspace_root).expect("create workspace");
+    let snapshot = automation_workspace_root_file_snapshot(
+        workspace_root.to_str().expect("workspace root string"),
+    );
+    let stale_preexisting =
+        "# Report\n\n## Summary\n\nOld generic content.\n\nParagraph two.\n".to_string();
+    std::fs::write(workspace_root.join("report.md"), &stale_preexisting)
+        .expect("seed stale output");
+    let node = AutomationFlowNode {
+        node_id: "generate_report".to_string(),
+        agent_id: "writer".to_string(),
+        objective: "Generate the final report".to_string(),
+        depends_on: Vec::new(),
+        input_refs: Vec::new(),
+        output_contract: Some(AutomationFlowOutputContract {
+            kind: "report_markdown".to_string(),
+            validator: Some(crate::AutomationOutputValidatorKind::GenericArtifact),
+            enforcement: None,
+            schema: None,
+            summary_guidance: None,
+        }),
+        retry_policy: None,
+        timeout_ms: None,
+        stage_kind: None,
+        gate: None,
+        metadata: Some(json!({
+            "builder": {
+                "output_path": "report.md"
+            }
+        })),
+    };
+    let mut session = Session::new(
+        Some("generate-report-stale".to_string()),
+        Some(
+            workspace_root
+                .to_str()
+                .expect("workspace root string")
+                .to_string(),
+        ),
+    );
+    session.messages.push(tandem_types::Message::new(
+        MessageRole::Assistant,
+        vec![MessagePart::ToolInvocation {
+            tool: "read".to_string(),
+            args: json!({
+                "path": "input.md"
+            }),
+            result: Some(json!("source material")),
+            error: None,
+        }],
+    ));
+
+    let (accepted_output, artifact_validation, rejected) = validate_automation_artifact_output(
+        &node,
+        &session,
+        workspace_root.to_str().expect("workspace root string"),
+        "Completed the report.",
+        &json!({
+            "requested_tools": ["read", "write"],
+            "executed_tools": ["read"],
+            "tool_call_counts": {
+                "read": 1
+            }
+        }),
+        Some(&stale_preexisting),
+        Some(("report.md".to_string(), stale_preexisting.clone())),
+        &snapshot,
+    );
+
+    assert!(accepted_output.is_none());
+    assert_eq!(
+        artifact_validation
+            .get("accepted_candidate_source")
+            .and_then(Value::as_str),
+        Some("current_attempt_missing_output_write")
+    );
+    assert_eq!(
+        artifact_validation
+            .get("validation_outcome")
+            .and_then(Value::as_str),
+        Some("blocked")
+    );
+    assert_eq!(
+        rejected.as_deref(),
+        Some("required output `report.md` was not created in the current attempt")
+    );
+    assert_eq!(
+        artifact_validation
+            .get("semantic_block_reason")
+            .and_then(Value::as_str),
+        Some("required output was not created in the current attempt")
+    );
+
+    let disk_text =
+        std::fs::read_to_string(workspace_root.join("report.md")).expect("read stale output");
+    assert_eq!(disk_text, stale_preexisting);
 
     let _ = std::fs::remove_dir_all(workspace_root);
 }
@@ -6482,7 +8375,8 @@ fn completed_brief_without_read_is_blocked_even_if_it_looks_confident() {
         "web_research_used": true
     });
 
-    let (status, reason, approved) = detect_automation_node_status(
+    let (status, reason, approved): (String, Option<String>, Option<bool>) =
+        detect_automation_node_status(
             &node,
             "Done — `marketing-brief.md` was written in the workspace.\n\n{\"status\":\"completed\",\"approved\":true}",
             Some(&(
@@ -6616,7 +8510,8 @@ fn brief_with_timed_out_websearch_is_blocked_when_web_research_is_required() {
         rejected.as_deref(),
         Some("research completed without citation-backed claims")
     );
-    let (status, reason, approved) = detect_automation_node_status(
+    let (status, reason, approved): (String, Option<String>, Option<bool>) =
+        detect_automation_node_status(
         &node,
         "Done — `marketing-brief.md` was written in the workspace.\n\n{\"status\":\"completed\",\"approved\":true}",
         accepted_output.as_ref(),
@@ -6894,13 +8789,14 @@ fn research_brief_without_source_coverage_flag_gets_semantic_block_reason_and_ne
         Some("needs_repair")
     );
 
-    let (status, reason, approved) = detect_automation_node_status(
-        &node,
-        "Done — `marketing-brief.md` was written.",
-        Some(&("marketing-brief.md".to_string(), brief_text)),
-        &tool_telemetry,
-        Some(&artifact_validation),
-    );
+    let (status, reason, approved): (String, Option<String>, Option<bool>) =
+        detect_automation_node_status(
+            &node,
+            "Done — `marketing-brief.md` was written.",
+            Some(&("marketing-brief.md".to_string(), brief_text)),
+            &tool_telemetry,
+            Some(&artifact_validation),
+        );
 
     assert_eq!(status, "needs_repair");
     assert_eq!(
@@ -7004,11 +8900,12 @@ fn research_brief_full_pipeline_overrides_llm_blocked_to_needs_repair_without_so
         Some("research completed without concrete file reads or required source coverage")
     );
 
-    let output = wrap_automation_node_output(
+    let output: Value = wrap_automation_node_output(
         &node,
         &session,
         &requested_tools,
         "sess-research-full-pipeline",
+        Some("run-research-full-pipeline"),
         session_text,
         accepted_output,
         Some(artifact_validation),
@@ -7530,11 +9427,12 @@ fn structured_handoff_missing_is_repairable_even_without_enforcement_metadata() 
             .as_str()
             .is_some_and(|text| text.contains("structured JSON handoff")))));
 
-    let output = wrap_automation_node_output(
+    let output: Value = wrap_automation_node_output(
         &node,
         &session,
         &requested_tools,
         "sess-structured-handoff-defaults",
+        Some("run-structured-handoff-defaults"),
         "I completed project analysis steps using tools, but the model returned no final narrative text.\n\nTool result summary:\nTool `read` result:\n# Sources",
         None,
         Some(artifact_validation),
@@ -7670,11 +9568,12 @@ fn wrap_automation_node_output_includes_parsed_structured_handoff() {
         }],
     ));
 
-    let output = wrap_automation_node_output(
+    let output: Value = wrap_automation_node_output(
         &node,
         &session,
         &["read".to_string()],
         "sess-structured-handoff-wrap",
+        Some("run-structured-handoff-wrap"),
         "Structured handoff ready.\n\n```json\n{\"workspace_inventory_summary\":\"Marketing source bundle found\",\"priority_paths\":[\"tandem-reference/SOURCES.md\"],\"discovered_paths\":[\"tandem-reference/SOURCES.md\"],\"skipped_paths_initial\":[]}\n```\n\n{\"status\":\"completed\"}",
         None,
         Some(json!({})),
@@ -7691,6 +9590,13 @@ fn wrap_automation_node_output_includes_parsed_structured_handoff() {
             .and_then(|value| value.get("workspace_inventory_summary"))
             .and_then(Value::as_str),
         Some("Marketing source bundle found")
+    );
+    assert_eq!(
+        output
+            .get("provenance")
+            .and_then(|value| value.get("run_id"))
+            .and_then(Value::as_str),
+        Some("run-structured-handoff-wrap")
     );
     assert!(output
         .get("content")

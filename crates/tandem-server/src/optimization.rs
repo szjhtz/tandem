@@ -1658,6 +1658,7 @@ mod tests {
                 lifecycle_history: Vec::new(),
                 last_failure: None,
             },
+            runtime_context: None,
             automation_snapshot: Some(workflow.clone()),
             pause_reason: None,
             resume_reason: None,
@@ -1668,6 +1669,7 @@ mod tests {
             completion_tokens: 0,
             total_tokens: 100,
             estimated_cost_usd: 0.5,
+            scheduler: None,
         };
         let metrics = derive_phase1_metrics_from_run(&run, &workflow, &phase1).expect("metrics");
         assert!((metrics.artifact_validator_pass_rate - 0.5).abs() < 1e-9);

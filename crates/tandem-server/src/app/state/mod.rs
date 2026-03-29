@@ -72,6 +72,8 @@ pub struct AppState {
     pub routine_runs: Arc<RwLock<std::collections::HashMap<String, RoutineRunRecord>>>,
     pub automations_v2: Arc<RwLock<std::collections::HashMap<String, AutomationV2Spec>>>,
     pub automation_v2_runs: Arc<RwLock<std::collections::HashMap<String, AutomationV2RunRecord>>>,
+    pub automation_scheduler: Arc<RwLock<automation::AutomationScheduler>>,
+    pub automation_scheduler_stopping: Arc<AtomicBool>,
     pub workflow_plans: Arc<RwLock<std::collections::HashMap<String, WorkflowPlan>>>,
     pub workflow_plan_drafts:
         Arc<RwLock<std::collections::HashMap<String, WorkflowPlanDraftRecord>>>,
@@ -177,6 +179,10 @@ impl AppState {
             routine_runs: Arc::new(RwLock::new(std::collections::HashMap::new())),
             automations_v2: Arc::new(RwLock::new(std::collections::HashMap::new())),
             automation_v2_runs: Arc::new(RwLock::new(std::collections::HashMap::new())),
+            automation_scheduler: Arc::new(RwLock::new(automation::AutomationScheduler::new(
+                config::env::resolve_scheduler_max_concurrent_runs(),
+            ))),
+            automation_scheduler_stopping: Arc::new(AtomicBool::new(false)),
             workflow_plans: Arc::new(RwLock::new(std::collections::HashMap::new())),
             workflow_plan_drafts: Arc::new(RwLock::new(std::collections::HashMap::new())),
             optimization_campaigns: Arc::new(RwLock::new(std::collections::HashMap::new())),
@@ -330,6 +336,12 @@ impl AppState {
             .register_tool(
                 "pack_builder".to_string(),
                 Arc::new(crate::pack_builder::PackBuilderTool::new(self.clone())),
+            )
+            .await;
+        self.tools
+            .register_tool(
+                "mcp_list".to_string(),
+                Arc::new(crate::http::mcp::McpListTool::new(self.clone())),
             )
             .await;
         self.engine_loop
@@ -2553,6 +2565,28 @@ impl AppState {
         self.automations_v2.read().await.get(automation_id).cloned()
     }
 
+    pub fn automation_v2_runtime_context(
+        &self,
+        run: &AutomationV2RunRecord,
+    ) -> Option<AutomationRuntimeContextMaterialization> {
+        run.runtime_context.clone().or_else(|| {
+            run.automation_snapshot.as_ref().and_then(|automation| {
+                automation
+                    .runtime_context_materialization()
+                    .or_else(|| automation.approved_plan_runtime_context_materialization())
+            })
+        })
+    }
+
+    pub(crate) fn automation_v2_approved_plan_materialization(
+        &self,
+        run: &AutomationV2RunRecord,
+    ) -> Option<tandem_plan_compiler::api::ApprovedPlanMaterialization> {
+        run.automation_snapshot
+            .as_ref()
+            .and_then(AutomationV2Spec::approved_plan_materialization)
+    }
+
     pub async fn put_workflow_plan(&self, plan: WorkflowPlan) {
         self.workflow_plans
             .write()
@@ -3953,6 +3987,9 @@ impl AppState {
                 lifecycle_history: Vec::new(),
                 last_failure: None,
             },
+            runtime_context: automation
+                .runtime_context_materialization()
+                .or_else(|| automation.approved_plan_runtime_context_materialization()),
             automation_snapshot: Some(automation.clone()),
             pause_reason: None,
             resume_reason: None,
@@ -3963,6 +4000,62 @@ impl AppState {
             completion_tokens: 0,
             total_tokens: 0,
             estimated_cost_usd: 0.0,
+            scheduler: None,
+        };
+        self.automation_v2_runs
+            .write()
+            .await
+            .insert(run.run_id.clone(), run.clone());
+        self.persist_automation_v2_runs().await?;
+        crate::http::context_runs::sync_automation_v2_run_blackboard(self, automation, &run)
+            .await
+            .map_err(|status| anyhow::anyhow!("failed to sync automation context run: {status}"))?;
+        Ok(run)
+    }
+
+    pub async fn create_automation_v2_dry_run(
+        &self,
+        automation: &AutomationV2Spec,
+        trigger_type: &str,
+    ) -> anyhow::Result<AutomationV2RunRecord> {
+        let now = now_ms();
+        let run = AutomationV2RunRecord {
+            run_id: format!("automation-v2-run-{}", uuid::Uuid::new_v4()),
+            automation_id: automation.automation_id.clone(),
+            trigger_type: format!("{trigger_type}_dry_run"),
+            status: AutomationRunStatus::Completed,
+            created_at_ms: now,
+            updated_at_ms: now,
+            started_at_ms: Some(now),
+            finished_at_ms: Some(now),
+            active_session_ids: Vec::new(),
+            latest_session_id: None,
+            active_instance_ids: Vec::new(),
+            checkpoint: AutomationRunCheckpoint {
+                completed_nodes: Vec::new(),
+                pending_nodes: Vec::new(),
+                node_outputs: std::collections::HashMap::new(),
+                node_attempts: std::collections::HashMap::new(),
+                blocked_nodes: Vec::new(),
+                awaiting_gate: None,
+                gate_history: Vec::new(),
+                lifecycle_history: Vec::new(),
+                last_failure: None,
+            },
+            runtime_context: automation
+                .runtime_context_materialization()
+                .or_else(|| automation.approved_plan_runtime_context_materialization()),
+            automation_snapshot: Some(automation.clone()),
+            pause_reason: None,
+            resume_reason: None,
+            detail: Some("dry_run".to_string()),
+            stop_kind: None,
+            stop_reason: None,
+            prompt_tokens: 0,
+            completion_tokens: 0,
+            total_tokens: 0,
+            estimated_cost_usd: 0.0,
+            scheduler: None,
         };
         self.automation_v2_runs
             .write()
@@ -4003,24 +4096,218 @@ impl AppState {
         rows
     }
 
+    async fn automation_v2_run_workspace_root(
+        &self,
+        run: &AutomationV2RunRecord,
+    ) -> Option<String> {
+        if let Some(root) = run
+            .automation_snapshot
+            .as_ref()
+            .and_then(|automation| automation.workspace_root.as_ref())
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty())
+        {
+            return Some(root.to_string());
+        }
+        self.get_automation_v2(&run.automation_id)
+            .await
+            .and_then(|automation| automation.workspace_root)
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+    }
+
+    async fn sync_automation_scheduler_for_run_transition(
+        &self,
+        previous_status: AutomationRunStatus,
+        run: &AutomationV2RunRecord,
+    ) {
+        let had_capacity = automation_status_uses_scheduler_capacity(&previous_status);
+        let has_capacity = automation_status_uses_scheduler_capacity(&run.status);
+        let had_lock = automation_status_holds_workspace_lock(&previous_status);
+        let has_lock = automation_status_holds_workspace_lock(&run.status);
+        let workspace_root = self.automation_v2_run_workspace_root(run).await;
+        let mut scheduler = self.automation_scheduler.write().await;
+
+        if (had_capacity || had_lock) && !has_capacity && !has_lock {
+            scheduler.release_run(&run.run_id);
+            return;
+        }
+        if had_capacity && !has_capacity {
+            scheduler.release_capacity(&run.run_id);
+        }
+        if had_lock && !has_lock {
+            scheduler.release_workspace(&run.run_id);
+        }
+        if !had_lock && has_lock {
+            if has_capacity {
+                scheduler.admit_run(&run.run_id, workspace_root.as_deref());
+            } else {
+                scheduler.reserve_workspace(&run.run_id, workspace_root.as_deref());
+            }
+            return;
+        }
+        if !had_capacity && has_capacity {
+            scheduler.admit_run(&run.run_id, workspace_root.as_deref());
+        }
+    }
+
+    pub async fn recover_in_flight_runs(&self) -> usize {
+        let runs = self
+            .automation_v2_runs
+            .read()
+            .await
+            .values()
+            .cloned()
+            .collect::<Vec<_>>();
+        let mut recovered = 0usize;
+        for run in runs {
+            match run.status {
+                AutomationRunStatus::Running => {
+                    let detail = "automation run interrupted by server restart".to_string();
+                    if self
+                        .update_automation_v2_run(&run.run_id, |row| {
+                            row.status = AutomationRunStatus::Failed;
+                            row.detail = Some(detail.clone());
+                            row.stop_kind = Some(AutomationStopKind::ServerRestart);
+                            row.stop_reason = Some(detail.clone());
+                            automation::record_automation_lifecycle_event(
+                                row,
+                                "run_failed_server_restart",
+                                Some(detail.clone()),
+                                Some(AutomationStopKind::ServerRestart),
+                            );
+                        })
+                        .await
+                        .is_some()
+                    {
+                        recovered += 1;
+                    }
+                }
+                AutomationRunStatus::Paused
+                | AutomationRunStatus::Pausing
+                | AutomationRunStatus::AwaitingApproval => {
+                    let workspace_root = self.automation_v2_run_workspace_root(&run).await;
+                    let mut scheduler = self.automation_scheduler.write().await;
+                    scheduler.reserve_workspace(&run.run_id, workspace_root.as_deref());
+                    for (node_id, output) in &run.checkpoint.node_outputs {
+                        if let Some((path, content_digest)) =
+                            automation::node_output::automation_output_validated_artifact(output)
+                        {
+                            scheduler.preexisting_registry.register_validated(
+                                &run.run_id,
+                                node_id,
+                                automation::scheduler::ValidatedArtifact {
+                                    path,
+                                    content_digest,
+                                },
+                            );
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        recovered
+    }
+
+    pub fn is_automation_scheduler_stopping(&self) -> bool {
+        self.automation_scheduler_stopping.load(Ordering::Relaxed)
+    }
+
+    pub fn set_automation_scheduler_stopping(&self, stopping: bool) {
+        self.automation_scheduler_stopping
+            .store(stopping, Ordering::Relaxed);
+    }
+
+    pub async fn fail_running_automation_runs_for_shutdown(&self) -> usize {
+        let run_ids = self
+            .automation_v2_runs
+            .read()
+            .await
+            .values()
+            .filter(|run| matches!(run.status, AutomationRunStatus::Running))
+            .map(|run| run.run_id.clone())
+            .collect::<Vec<_>>();
+        let mut failed = 0usize;
+        for run_id in run_ids {
+            let detail = "automation run stopped during server shutdown".to_string();
+            if self
+                .update_automation_v2_run(&run_id, |row| {
+                    row.status = AutomationRunStatus::Failed;
+                    row.detail = Some(detail.clone());
+                    row.stop_kind = Some(AutomationStopKind::Shutdown);
+                    row.stop_reason = Some(detail.clone());
+                    automation::record_automation_lifecycle_event(
+                        row,
+                        "run_failed_shutdown",
+                        Some(detail.clone()),
+                        Some(AutomationStopKind::Shutdown),
+                    );
+                })
+                .await
+                .is_some()
+            {
+                failed += 1;
+            }
+        }
+        failed
+    }
+
     pub async fn claim_next_queued_automation_v2_run(&self) -> Option<AutomationV2RunRecord> {
-        let mut guard = self.automation_v2_runs.write().await;
-        let run_id = guard
+        let run_id = self
+            .automation_v2_runs
+            .read()
+            .await
             .values()
             .filter(|row| row.status == AutomationRunStatus::Queued)
             .min_by(|a, b| a.created_at_ms.cmp(&b.created_at_ms))
             .map(|row| row.run_id.clone())?;
+        self.claim_specific_automation_v2_run(&run_id).await
+    }
+    pub async fn claim_specific_automation_v2_run(
+        &self,
+        run_id: &str,
+    ) -> Option<AutomationV2RunRecord> {
+        let mut guard = self.automation_v2_runs.write().await;
+        let run = guard.get_mut(run_id)?;
+        if run.status != AutomationRunStatus::Queued {
+            return None;
+        }
+        let previous_status = run.status.clone();
         let now = now_ms();
-        let run = guard.get_mut(&run_id)?;
+        if run.runtime_context.is_none() {
+            run.runtime_context = run.automation_snapshot.as_ref().and_then(|automation| {
+                automation
+                    .runtime_context_materialization()
+                    .or_else(|| automation.approved_plan_runtime_context_materialization())
+            });
+        }
+        if run.runtime_context.is_none() {
+            let previous_status = run.status.clone();
+            let now = now_ms();
+            run.status = AutomationRunStatus::Failed;
+            run.updated_at_ms = now;
+            run.finished_at_ms.get_or_insert(now);
+            run.scheduler = None;
+            run.detail = Some("runtime context partition missing for automation run".to_string());
+            let claimed = run.clone();
+            drop(guard);
+            self.sync_automation_scheduler_for_run_transition(previous_status, &claimed)
+                .await;
+            let _ = self.persist_automation_v2_runs().await;
+            return None;
+        }
         run.status = AutomationRunStatus::Running;
         run.updated_at_ms = now;
         run.started_at_ms.get_or_insert(now);
+        run.scheduler = None;
         let claimed = run.clone();
         drop(guard);
+        self.sync_automation_scheduler_for_run_transition(previous_status, &claimed)
+            .await;
         let _ = self.persist_automation_v2_runs().await;
         Some(claimed)
     }
-
     pub async fn update_automation_v2_run(
         &self,
         run_id: &str,
@@ -4028,7 +4315,11 @@ impl AppState {
     ) -> Option<AutomationV2RunRecord> {
         let mut guard = self.automation_v2_runs.write().await;
         let run = guard.get_mut(run_id)?;
+        let previous_status = run.status.clone();
         update(run);
+        if run.status != AutomationRunStatus::Queued {
+            run.scheduler = None;
+        }
         run.updated_at_ms = now_ms();
         if matches!(
             run.status,
@@ -4041,8 +4332,31 @@ impl AppState {
         }
         let out = run.clone();
         drop(guard);
+        self.sync_automation_scheduler_for_run_transition(previous_status, &out)
+            .await;
         let _ = self.persist_automation_v2_runs().await;
         Some(out)
+    }
+
+    pub async fn set_automation_v2_run_scheduler_metadata(
+        &self,
+        run_id: &str,
+        meta: automation::SchedulerMetadata,
+    ) -> Option<AutomationV2RunRecord> {
+        self.update_automation_v2_run(run_id, |row| {
+            row.scheduler = Some(meta);
+        })
+        .await
+    }
+
+    pub async fn clear_automation_v2_run_scheduler_metadata(
+        &self,
+        run_id: &str,
+    ) -> Option<AutomationV2RunRecord> {
+        self.update_automation_v2_run(run_id, |row| {
+            row.scheduler = None;
+        })
+        .await
     }
 
     pub async fn add_automation_v2_session(
@@ -5405,6 +5719,20 @@ pub fn sha256_hex(parts: &[&str]) -> String {
         hasher.update([0u8]);
     }
     format!("{:x}", hasher.finalize())
+}
+
+fn automation_status_uses_scheduler_capacity(status: &AutomationRunStatus) -> bool {
+    matches!(status, AutomationRunStatus::Running)
+}
+
+fn automation_status_holds_workspace_lock(status: &AutomationRunStatus) -> bool {
+    matches!(
+        status,
+        AutomationRunStatus::Running
+            | AutomationRunStatus::Pausing
+            | AutomationRunStatus::Paused
+            | AutomationRunStatus::AwaitingApproval
+    )
 }
 
 pub async fn run_routine_scheduler(state: AppState) {

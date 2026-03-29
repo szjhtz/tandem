@@ -37,11 +37,12 @@ pub use automation_v2::types::{
     AutomationApprovalGate, AutomationExecutionPolicy, AutomationFailureRecord,
     AutomationFlowInputRef, AutomationFlowNode, AutomationFlowOutputContract, AutomationFlowSpec,
     AutomationGateDecisionRecord, AutomationLifecycleRecord, AutomationNodeOutput,
-    AutomationNodeStageKind, AutomationOutputEnforcement, AutomationOutputValidatorKind,
-    AutomationPendingGate, AutomationRunCheckpoint, AutomationRunStatus, AutomationStopKind,
-    AutomationV2RunRecord, AutomationV2Schedule, AutomationV2ScheduleType, AutomationV2Spec,
-    AutomationV2Status, AutomationValidatorSummary, WorkflowPlan, WorkflowPlanChatMessage,
-    WorkflowPlanConversation, WorkflowPlanDraftRecord, WorkflowPlanStep,
+    AutomationNodeOutputFreshness, AutomationNodeOutputProvenance, AutomationNodeStageKind,
+    AutomationOutputEnforcement, AutomationOutputValidatorKind, AutomationPendingGate,
+    AutomationRunCheckpoint, AutomationRunStatus, AutomationStopKind, AutomationV2RunRecord,
+    AutomationV2Schedule, AutomationV2ScheduleType, AutomationV2Spec, AutomationV2Status,
+    AutomationValidatorSummary, WorkflowPlan, WorkflowPlanChatMessage, WorkflowPlanConversation,
+    WorkflowPlanDraftRecord, WorkflowPlanStep,
 };
 #[cfg(feature = "browser")]
 pub use browser::{
@@ -123,13 +124,13 @@ pub use config::webui::normalize_web_ui_prefix;
 pub use config::webui::WebUiConfig;
 
 // Also need normalize_allowed_users_or_wildcard?
+pub use crate::app::state::automation::lifecycle::{
+    automation_lifecycle_event_metadata_for_node, record_automation_lifecycle_event,
+    record_automation_lifecycle_event_with_metadata, record_automation_workflow_state_events,
+};
+pub use crate::app::state::default_model_spec_from_effective_config;
 pub use crate::app::state::extract_persistable_tool_part;
 pub use crate::app::state::run_automation_v2_executor;
-pub use crate::app::state::{
-    automation_lifecycle_event_metadata_for_node, default_model_spec_from_effective_config,
-    record_automation_lifecycle_event, record_automation_lifecycle_event_with_metadata,
-    record_automation_workflow_state_events,
-};
 pub use crate::app::state::{
     automation_node_required_output_path, clear_automation_subtree_outputs,
     collect_automation_descendants, refresh_automation_runtime_state,

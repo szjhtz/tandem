@@ -433,12 +433,30 @@ async fn run_orchestrator_runtime_cancellations(
     })
 }
 
-pub(super) async fn agent_team_templates(State(state): State<AppState>) -> Json<Value> {
+pub(super) async fn agent_team_templates(
+    State(state): State<AppState>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let workspace_root = state.workspace_index.snapshot().await.root;
+    state
+        .agent_teams
+        .ensure_loaded_for_workspace(&workspace_root)
+        .await
+        .map_err(|error| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({
+                    "ok": false,
+                    "code": "TEMPLATE_LOAD_FAILED",
+                    "error": error.to_string(),
+                })),
+            )
+        })?;
+
     let templates = state.agent_teams.list_templates().await;
-    Json(json!({
+    Ok(Json(json!({
         "templates": templates,
         "count": templates.len(),
-    }))
+    })))
 }
 
 pub(super) async fn agent_team_template_create(

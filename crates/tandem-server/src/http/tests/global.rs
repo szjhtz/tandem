@@ -38,6 +38,104 @@ fn init_git_repo() -> std::path::PathBuf {
     repo_root
 }
 
+#[tokio::test]
+async fn create_automation_v2_dry_run_records_completed_audit_run() {
+    let state = test_state().await;
+    let app = app_router(state.clone());
+
+    let create_req = Request::builder()
+        .method("POST")
+        .uri("/automations/v2")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "automation_id": "auto-v2-dry-run",
+                "name": "Dry run workflow",
+                "status": "active",
+                "schedule": {
+                    "type": "manual",
+                    "timezone": "UTC",
+                    "misfire_policy": { "type": "skip" }
+                },
+                "agents": [
+                    {
+                        "agent_id": "agent-a",
+                        "display_name": "Agent A",
+                        "skills": [],
+                        "tool_policy": { "allowlist": ["read"], "denylist": [] },
+                        "mcp_policy": { "allowed_servers": [] }
+                    }
+                ],
+                "flow": {
+                    "nodes": [
+                        {
+                            "node_id": "node-1",
+                            "agent_id": "agent-a",
+                            "objective": "Dry run scope check",
+                            "depends_on": []
+                        }
+                    ]
+                },
+                "execution": { "max_parallel_agents": 1 }
+            })
+            .to_string(),
+        ))
+        .expect("create request");
+    let create_resp = app
+        .clone()
+        .oneshot(create_req)
+        .await
+        .expect("create response");
+    assert_eq!(create_resp.status(), StatusCode::OK);
+
+    let dry_run_req = Request::builder()
+        .method("POST")
+        .uri("/automations/v2/auto-v2-dry-run/run_now")
+        .header("content-type", "application/json")
+        .body(Body::from(json!({"dry_run": true}).to_string()))
+        .expect("dry run request");
+    let dry_run_resp = app
+        .clone()
+        .oneshot(dry_run_req)
+        .await
+        .expect("dry run response");
+    assert_eq!(dry_run_resp.status(), StatusCode::OK);
+    let dry_run_body = to_bytes(dry_run_resp.into_body(), usize::MAX)
+        .await
+        .expect("dry run body");
+    let dry_run_payload: Value = serde_json::from_slice(&dry_run_body).expect("dry run json");
+    assert_eq!(
+        dry_run_payload.get("dry_run").and_then(Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        dry_run_payload
+            .get("run")
+            .and_then(|row| row.get("status"))
+            .and_then(Value::as_str),
+        Some("completed")
+    );
+    assert_eq!(
+        dry_run_payload
+            .get("run")
+            .and_then(|row| row.get("trigger_type"))
+            .and_then(Value::as_str),
+        Some("manual_dry_run")
+    );
+    let run_id = dry_run_payload
+        .get("run")
+        .and_then(|row| row.get("run_id"))
+        .and_then(Value::as_str)
+        .expect("dry run id")
+        .to_string();
+    let stored = state
+        .get_automation_v2_run(&run_id)
+        .await
+        .expect("stored dry run");
+    assert_eq!(stored.status, crate::AutomationRunStatus::Completed);
+    assert_eq!(stored.trigger_type, "manual_dry_run");
+}
+
 async fn insert_test_lease(state: &AppState, lease_id: &str) {
     let now = crate::now_ms();
     state.engine_leases.write().await.insert(
@@ -1350,7 +1448,8 @@ async fn automation_v2_run_get_projects_nodes_into_context_blackboard_tasks() {
     let run_now_req = Request::builder()
         .method("POST")
         .uri("/automations/v2/auto-v2-blackboard-1/run_now")
-        .body(Body::empty())
+        .header("content-type", "application/json")
+        .body(Body::from(json!({}).to_string()))
         .expect("run now request");
     let run_now_resp = app
         .clone()
@@ -2178,7 +2277,8 @@ async fn automations_v2_executor_fails_run_when_workspace_root_missing() {
     let run_now_req = Request::builder()
         .method("POST")
         .uri("/automations/v2/auto-v2-runtime-missing-root/run_now")
-        .body(Body::empty())
+        .header("content-type", "application/json")
+        .body(Body::from(json!({}).to_string()))
         .expect("run now request");
     let run_now_resp = app
         .clone()
@@ -2273,7 +2373,8 @@ async fn automations_v2_executor_fails_run_when_workspace_root_is_file() {
     let run_now_req = Request::builder()
         .method("POST")
         .uri("/automations/v2/auto-v2-runtime-file-root/run_now")
-        .body(Body::empty())
+        .header("content-type", "application/json")
+        .body(Body::from(json!({}).to_string()))
         .expect("run now request");
     let run_now_resp = app
         .clone()
@@ -2834,6 +2935,90 @@ async fn automations_v2_run_recover_on_failed_branch_preserves_completed_sibling
         recover_event.reason.as_deref(),
         Some("retry only the failed draft branch")
     );
+}
+
+#[tokio::test]
+async fn automations_v2_run_recover_uses_failed_node_outputs_when_last_failure_missing() {
+    let state = test_state().await;
+    let app = app_router(state.clone());
+    let automation = create_branched_test_automation_v2(&state, "auto-v2-derive-failure").await;
+    let run = state
+        .create_automation_v2_run(&automation, "manual")
+        .await
+        .expect("run");
+    state
+        .update_automation_v2_run(&run.run_id, |row| {
+            row.status = crate::AutomationRunStatus::Failed;
+            row.checkpoint.completed_nodes = vec![
+                "research".to_string(),
+                "analysis".to_string(),
+                "draft".to_string(),
+            ];
+            row.checkpoint.pending_nodes = vec!["publish".to_string()];
+            row.checkpoint
+                .node_outputs
+                .insert("research".to_string(), json!({"summary":"research"}));
+            row.checkpoint
+                .node_outputs
+                .insert("analysis".to_string(), json!({"summary":"analysis"}));
+            row.checkpoint.node_outputs.insert(
+                "draft".to_string(),
+                json!({
+                    "status": "verify_failed",
+                    "failure_kind": "verification_failed",
+                    "summary": "draft failed verification"
+                }),
+            );
+            row.checkpoint.last_failure = None;
+        })
+        .await
+        .expect("updated run");
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/automations/v2/runs/{}/recover", run.run_id))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({ "reason": "recover from derived failed node" }).to_string(),
+                ))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let recovered = state
+        .get_automation_v2_run(&run.run_id)
+        .await
+        .expect("run after recover");
+    assert_eq!(recovered.status, crate::AutomationRunStatus::Queued);
+    assert!(recovered
+        .checkpoint
+        .completed_nodes
+        .iter()
+        .any(|node_id| node_id == "research"));
+    assert!(recovered
+        .checkpoint
+        .completed_nodes
+        .iter()
+        .any(|node_id| node_id == "analysis"));
+    assert!(!recovered
+        .checkpoint
+        .completed_nodes
+        .iter()
+        .any(|node_id| node_id == "draft"));
+    assert!(recovered
+        .checkpoint
+        .pending_nodes
+        .iter()
+        .any(|node_id| node_id == "draft"));
+    assert!(recovered
+        .checkpoint
+        .pending_nodes
+        .iter()
+        .any(|node_id| node_id == "publish"));
 }
 
 #[tokio::test]

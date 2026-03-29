@@ -1,0 +1,247 @@
+use serde_json::Value;
+use tandem_types::{MessagePart, MessageRole, Session};
+
+pub(crate) fn automation_tool_result_output_value<'a>(
+    result: Option<&'a Value>,
+) -> Option<&'a Value> {
+    let value = result?;
+    let Some(object) = value.as_object() else {
+        return Some(value);
+    };
+    if object.contains_key("output") || object.contains_key("metadata") {
+        object.get("output")
+    } else {
+        Some(value)
+    }
+}
+
+pub(crate) fn automation_tool_result_metadata<'a>(result: Option<&'a Value>) -> Option<&'a Value> {
+    let value = result?;
+    let object = value.as_object()?;
+    if object.contains_key("output") || object.contains_key("metadata") {
+        object.get("metadata")
+    } else {
+        None
+    }
+}
+
+pub(crate) fn automation_tool_result_output_text(result: Option<&Value>) -> Option<String> {
+    let output = automation_tool_result_output_value(result)?;
+    match output {
+        Value::Null => None,
+        Value::String(text) => Some(text.clone()),
+        Value::Array(values) => {
+            let lines = values
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .collect::<Vec<_>>();
+            if lines.is_empty() {
+                serde_json::to_string(output).ok()
+            } else {
+                Some(lines.join("\n"))
+            }
+        }
+        other => serde_json::to_string(other).ok(),
+    }
+}
+
+pub(crate) fn automation_tool_result_output_payload(result: Option<&Value>) -> Option<Value> {
+    let output = automation_tool_result_output_value(result)?;
+    match output {
+        Value::Null => None,
+        Value::String(text) => {
+            let trimmed = text.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                serde_json::from_str::<Value>(trimmed)
+                    .ok()
+                    .or_else(|| Some(Value::String(text.clone())))
+            }
+        }
+        other => Some(other.clone()),
+    }
+}
+
+pub(crate) fn extract_session_text_output(session: &Session) -> String {
+    session
+        .messages
+        .iter()
+        .rev()
+        .find(|message| matches!(message.role, MessageRole::Assistant))
+        .map(|message| {
+            message
+                .parts
+                .iter()
+                .filter_map(|part| match part {
+                    MessagePart::Text { text } | MessagePart::Reasoning { text } => {
+                        Some(text.as_str())
+                    }
+                    MessagePart::ToolInvocation { .. } => None,
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+        .unwrap_or_default()
+}
+
+pub(crate) fn parse_status_json(raw: &str) -> Option<Value> {
+    let trimmed = raw.trim();
+    if trimmed.starts_with('{') && trimmed.ends_with('}') {
+        if let Ok(value) = serde_json::from_str::<Value>(trimmed) {
+            return Some(value);
+        }
+    }
+    for (idx, ch) in trimmed.char_indices().rev() {
+        if ch != '{' {
+            continue;
+        }
+        let candidate = trimmed[idx..].trim();
+        if let Ok(value) = serde_json::from_str::<Value>(candidate) {
+            return Some(value);
+        }
+    }
+    None
+}
+
+pub(crate) fn extract_markdown_json_blocks(text: &str) -> Vec<String> {
+    let mut blocks = Vec::new();
+    let mut remainder = text;
+    while let Some(start) = remainder.find("```") {
+        remainder = &remainder[start + 3..];
+        let Some(line_end) = remainder.find('\n') else {
+            break;
+        };
+        let lang = remainder[..line_end].trim().to_ascii_lowercase();
+        remainder = &remainder[line_end + 1..];
+        let Some(end) = remainder.find("```") else {
+            break;
+        };
+        let block = remainder[..end].trim();
+        if !block.is_empty() && (lang.is_empty() || lang == "json" || lang == "javascript") {
+            blocks.push(block.to_string());
+        }
+        remainder = &remainder[end + 3..];
+    }
+    blocks
+}
+
+pub(crate) fn extract_loose_json_blocks(text: &str) -> Vec<String> {
+    let mut blocks = Vec::new();
+    let mut start = None::<usize>;
+    let mut stack = Vec::<char>::new();
+    let mut in_string = false;
+    let mut escaped = false;
+
+    for (idx, ch) in text.char_indices() {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+
+        match ch {
+            '"' => in_string = true,
+            '{' => {
+                if stack.is_empty() {
+                    start = Some(idx);
+                }
+                stack.push('}');
+            }
+            '[' => {
+                if stack.is_empty() {
+                    start = Some(idx);
+                }
+                stack.push(']');
+            }
+            '}' | ']' => {
+                let Some(expected) = stack.pop() else {
+                    continue;
+                };
+                if ch != expected {
+                    stack.clear();
+                    start = None;
+                    continue;
+                }
+                if stack.is_empty() {
+                    if let Some(begin) = start.take() {
+                        if let Some(block) = text.get(begin..=idx) {
+                            blocks.push(block.trim().to_string());
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    blocks
+}
+
+pub(crate) fn automation_session_text_is_tool_summary_fallback(raw: &str) -> bool {
+    let lowered = raw.trim().to_ascii_lowercase();
+    lowered.contains("model returned no final narrative text")
+        || lowered.contains("tool result summary:")
+}
+
+fn automation_json_looks_like_status_payload(value: &Value) -> bool {
+    let Value::Object(map) = value else {
+        return false;
+    };
+    if !map.contains_key("status") {
+        return false;
+    }
+    map.keys().all(|key| {
+        matches!(
+            key.as_str(),
+            "status"
+                | "approved"
+                | "reason"
+                | "summary"
+                | "failureCode"
+                | "failure_code"
+                | "repairAttempt"
+                | "repairAttemptsRemaining"
+                | "repairExhausted"
+                | "unmetRequirements"
+                | "phase"
+        )
+    })
+}
+
+pub(crate) fn extract_structured_handoff_json(raw: &str) -> Option<Value> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() || automation_session_text_is_tool_summary_fallback(trimmed) {
+        return None;
+    }
+
+    let mut seen = std::collections::BTreeSet::<String>::new();
+    let mut candidates = Vec::<String>::new();
+
+    for candidate in std::iter::once(trimmed.to_string())
+        .chain(extract_markdown_json_blocks(trimmed))
+        .chain(extract_loose_json_blocks(trimmed))
+    {
+        let normalized = candidate.trim().to_string();
+        if normalized.is_empty() || !seen.insert(normalized.clone()) {
+            continue;
+        }
+        candidates.push(normalized);
+    }
+
+    candidates.into_iter().find_map(|candidate| {
+        let value = serde_json::from_str::<Value>(&candidate).ok()?;
+        if automation_json_looks_like_status_payload(&value) {
+            None
+        } else {
+            Some(value)
+        }
+    })
+}

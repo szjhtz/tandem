@@ -681,6 +681,9 @@ pub async fn run_routine_executor(state: AppState) {
 pub async fn run_automation_v2_scheduler(state: AppState) {
     loop {
         tokio::time::sleep(Duration::from_secs(1)).await;
+        if state.is_automation_scheduler_stopping() {
+            break;
+        }
         let startup = state.startup_snapshot().await;
         if !matches!(startup.status, crate::app::startup::StartupStatus::Ready) {
             continue;

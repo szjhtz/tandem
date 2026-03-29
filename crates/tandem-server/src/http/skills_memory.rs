@@ -1,5 +1,6 @@
 use super::context_runs::context_run_engine;
 use super::*;
+use tandem_plan_compiler::api::schedule_from_value;
 use tandem_skills::SkillContent;
 
 #[derive(Debug, Deserialize)]
@@ -506,7 +507,7 @@ fn compile_skill_workflow_plan(
         })
         .unwrap_or_else(|| skill.info.description.clone());
     let schedule = schedule
-        .and_then(super::workflow_planner::schedule_from_value)
+        .and_then(|value| schedule_from_value(value, crate::RoutineMisfirePolicy::RunOnce))
         .unwrap_or(crate::AutomationV2Schedule {
             schedule_type: crate::AutomationV2ScheduleType::Manual,
             cron_expression: None,
@@ -708,13 +709,14 @@ pub(super) async fn skills_compile(
     let workflow_kind = detect_skill_workflow_kind(&skill.base_dir)
         .unwrap_or_else(|| "pack_builder_recipe".to_string());
     let automation_preview = load_skill_workflow_recipe(&skill.base_dir).map(|recipe| {
-        let mut automation = super::workflow_planner::compile_plan_to_automation_v2(
+        let mut automation = super::compile_plan_to_automation_v2(
             &compile_skill_workflow_plan(
                 &skill,
                 &recipe,
                 input.goal.as_deref(),
                 input.schedule.as_ref(),
             ),
+            None,
             "skills_compile",
         );
         if let Some(agent) = automation.agents.first_mut() {
