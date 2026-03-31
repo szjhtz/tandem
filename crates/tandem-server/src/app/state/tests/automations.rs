@@ -2927,8 +2927,11 @@ fn prompt_includes_email_delivery_metadata_for_notify_user() {
     assert!(
         prompt.contains("use the compiled upstream report/body as the email body source of truth")
     );
+    assert!(prompt.contains("Full Synthesis Requirement:"));
     assert!(prompt.contains("Deterministic Delivery Body:"));
-    assert!(prompt.contains("Source artifact: `.tandem/artifacts/generate-report.html`"));
+    assert!(
+        prompt.contains("Source artifact: `.tandem/runs/run-email/artifacts/generate-report.html`")
+    );
     assert!(prompt.contains("<h1>Tandem Strategic Analysis</h1>"));
     assert!(prompt.contains(
         "Do not mark the node completed unless you actually execute an email draft or send tool."
@@ -6483,7 +6486,7 @@ fn report_markdown_accepts_rich_html_synthesis_when_upstream_is_rich() {
     </ul>
     <h3>Strategic Outlook</h3>
     <p>The positioning emphasizes deterministic execution, provenance, and operator control.</p>
-    <p>Sources reviewed: <a href=\".tandem/artifacts/analyze-findings.md\">analysis</a> and <a href=\".tandem/artifacts/research-sources.json\">research</a>.</p>
+    <p>Sources reviewed: <a href=\".tandem/runs/run-123/artifacts/analyze-findings.md\">analysis</a> and <a href=\".tandem/runs/run-123/artifacts/research-sources.json\">research</a>.</p>
   </body>
 </html>
 "#
@@ -8660,7 +8663,7 @@ fn report_markdown_validation_accepts_updated_verified_output_without_session_wr
     </ul>
     <h3>Strategic Outlook</h3>
     <p>The positioning emphasizes deterministic execution, provenance, and operator control.</p>
-    <p>Sources reviewed: <a href=".tandem/artifacts/analyze-findings.md">analysis</a> and <a href=".tandem/artifacts/research-sources.json">research</a>.</p>
+    <p>Sources reviewed: <a href=".tandem/runs/run-456/artifacts/analyze-findings.md">analysis</a> and <a href=".tandem/runs/run-456/artifacts/research-sources.json">research</a>.</p>
   </body>
 </html>
 "#
@@ -8790,6 +8793,143 @@ fn report_markdown_validation_accepts_updated_verified_output_without_session_wr
     );
 
     let _ = std::fs::remove_dir_all(workspace_root);
+}
+
+#[test]
+fn report_markdown_validation_rejects_bare_relative_artifact_hrefs() {
+    let workspace_root = std::env::temp_dir().join(format!(
+        "tandem-report-bare-href-block-{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&workspace_root).expect("create workspace");
+    let snapshot = automation_workspace_root_file_snapshot(
+        workspace_root.to_str().expect("workspace root string"),
+    );
+    let report = r#"
+<html>
+  <body>
+    <h1>Frumu AI Tandem: Strategic Summary</h1>
+    <p>We synthesized the upstream research into one report.</p>
+    <h3>Core Value Proposition</h3>
+    <p>Tandem is an engine-backed workflow system for local execution and agentic operations.</p>
+    <ul>
+      <li>Local workspace reads and patch-based code execution.</li>
+      <li>Current web research for externally grounded synthesis.</li>
+      <li>Explicit delivery gating for email and other side effects.</li>
+    </ul>
+    <h3>Strategic Outlook</h3>
+    <p>The positioning emphasizes deterministic execution, provenance, and operator control.</p>
+    <p>Sources reviewed: <a href=".tandem/artifacts/analyze-findings.md">analysis</a> and <a href=".tandem/artifacts/research-sources.json">research</a>.</p>
+  </body>
+</html>
+"#
+    .trim()
+    .to_string();
+    let node = AutomationFlowNode {
+        node_id: "generate_report".to_string(),
+        agent_id: "writer".to_string(),
+        objective: "Create the final report".to_string(),
+        depends_on: vec!["analyze_findings".to_string()],
+        input_refs: vec![AutomationFlowInputRef {
+            from_step_id: "analyze_findings".to_string(),
+            alias: "analysis".to_string(),
+        }],
+        output_contract: Some(AutomationFlowOutputContract {
+            kind: "report_markdown".to_string(),
+            validator: Some(crate::AutomationOutputValidatorKind::GenericArtifact),
+            enforcement: None,
+            schema: None,
+            summary_guidance: None,
+        }),
+        retry_policy: None,
+        timeout_ms: None,
+        stage_kind: None,
+        gate: None,
+        metadata: Some(json!({
+            "builder": {
+                "output_path": "generate-report.md"
+            }
+        })),
+    };
+    let mut session = Session::new(
+        Some("bare-href-block".to_string()),
+        Some(workspace_root.to_str().expect("workspace root").to_string()),
+    );
+    session.messages.push(tandem_types::Message::new(
+        MessageRole::Assistant,
+        vec![MessagePart::ToolInvocation {
+            tool: "write".to_string(),
+            args: json!({
+                "path": "generate-report.md",
+                "content": report
+            }),
+            result: Some(json!("ok")),
+            error: None,
+        }],
+    ));
+    let upstream_evidence = AutomationUpstreamEvidence {
+        read_paths: vec![
+            ".tandem/artifacts/collect-inputs.json".to_string(),
+            ".tandem/artifacts/research-sources.json".to_string(),
+            ".tandem/artifacts/analyze-findings.md".to_string(),
+        ],
+        discovered_relevant_paths: vec![
+            ".tandem/artifacts/collect-inputs.json".to_string(),
+            ".tandem/artifacts/research-sources.json".to_string(),
+            ".tandem/artifacts/analyze-findings.md".to_string(),
+        ],
+        web_research_attempted: true,
+        web_research_succeeded: true,
+        citation_count: 3,
+        citations: vec![
+            "https://example.com/1".to_string(),
+            "https://example.com/2".to_string(),
+            "https://example.com/3".to_string(),
+        ],
+    };
+
+    let (_accepted_output, artifact_validation, _rejected) =
+        validate_automation_artifact_output_with_upstream(
+            &node,
+            &session,
+            workspace_root.to_str().expect("workspace root"),
+            None,
+            "Completed the report.",
+            &json!({
+                "requested_tools": ["write"],
+                "executed_tools": ["write"],
+                "tool_call_counts": {
+                    "write": 1
+                }
+            }),
+            None,
+            Some(("generate-report.md".to_string(), report.clone())),
+            &snapshot,
+            Some(&upstream_evidence),
+        );
+
+    assert_eq!(
+        artifact_validation
+            .get("semantic_block_reason")
+            .and_then(Value::as_str),
+        Some(
+            "final artifact contains a bare relative artifact href; use a canonical run-scoped link or plain text instead"
+        )
+    );
+    assert!(artifact_validation
+        .get("unmet_requirements")
+        .and_then(Value::as_array)
+        .is_some_and(|items| items
+            .iter()
+            .any(|value| value.as_str() == Some("bare_relative_artifact_href"))));
+    assert_eq!(
+        artifact_validation
+            .get("validation_outcome")
+            .and_then(Value::as_str),
+        Some("blocked")
+    );
+
+    let _ = std::fs::remove_dir_all(&workspace_root);
 }
 
 #[test]

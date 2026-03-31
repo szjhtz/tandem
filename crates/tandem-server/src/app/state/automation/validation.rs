@@ -105,3 +105,10 @@ pub(crate) fn extract_markdown_section_paths(text: &str, heading: &str) -> Vec<S
     paths.dedup();
     paths
 }
+
+pub(crate) fn contains_bare_tandem_artifact_href(text: &str) -> bool {
+    let lowered = text.to_ascii_lowercase();
+    lowered.contains("href=\".tandem/artifacts/")
+        || lowered.contains("href='.tandem/artifacts/")
+        || lowered.contains("href=.tandem/artifacts/")
+}

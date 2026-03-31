@@ -201,6 +201,45 @@ fn report_markdown_preserves_full_upstream_inputs() {
     let node = report_markdown_node();
     assert!(automation_node_preserves_full_upstream_inputs(&node));
 
+    let mut email_delivery = email_delivery_node();
+    email_delivery.depends_on = vec!["generate_report".to_string()];
+    email_delivery.input_refs = vec![AutomationFlowInputRef {
+        from_step_id: "generate_report".to_string(),
+        alias: "report_body".to_string(),
+    }];
+    assert!(automation_node_preserves_full_upstream_inputs(
+        &email_delivery
+    ));
+
+    let mut execute_goal = bare_node();
+    execute_goal.node_id = "execute_goal".to_string();
+    execute_goal.objective =
+        "Create a Gmail draft or send the final HTML summary email to evan@frumu.ai if mail tools are available.".to_string();
+    execute_goal.output_contract = Some(AutomationFlowOutputContract {
+        kind: "approval_gate".to_string(),
+        validator: Some(crate::AutomationOutputValidatorKind::ReviewDecision),
+        enforcement: None,
+        schema: None,
+        summary_guidance: None,
+    });
+    execute_goal.depends_on = vec!["generate_report".to_string()];
+    execute_goal.input_refs = vec![AutomationFlowInputRef {
+        from_step_id: "generate_report".to_string(),
+        alias: "report_body".to_string(),
+    }];
+    execute_goal.metadata = Some(json!({
+        "delivery": {
+            "method": "email",
+            "to": "evan@frumu.ai",
+            "content_type": "text/html",
+            "inline_body_only": true,
+            "attachments": false
+        }
+    }));
+    assert!(automation_node_preserves_full_upstream_inputs(
+        &execute_goal
+    ));
+
     let mut text_summary = bare_node();
     text_summary.output_contract = Some(AutomationFlowOutputContract {
         kind: "text_summary".to_string(),

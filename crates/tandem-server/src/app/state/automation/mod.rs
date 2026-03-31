@@ -905,7 +905,7 @@ fn automation_node_preserves_full_upstream_inputs(node: &AutomationFlowNode) -> 
             .map(|contract| contract.kind.trim().to_ascii_lowercase())
             .as_deref(),
         Some("report_markdown" | "text_summary")
-    )
+    ) || automation_node_requires_email_delivery(node)
 }
 
 fn automation_node_builder_priority(node: &AutomationFlowNode) -> i32 {
@@ -1053,6 +1053,7 @@ fn render_research_finalize_upstream_summary(upstream_inputs: &[Value]) -> Optio
 fn render_upstream_synthesis_guidance(
     node: &AutomationFlowNode,
     upstream_inputs: &[Value],
+    run_id: &str,
 ) -> Option<String> {
     if upstream_inputs.is_empty() || !automation_node_uses_upstream_validation_evidence(node) {
         return None;
@@ -1070,6 +1071,7 @@ fn render_upstream_synthesis_guidance(
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_string)
+        .map(|path| automation_run_scoped_output_path(run_id, &path).unwrap_or(path))
         .collect::<Vec<_>>();
     let artifact_paths = truncate_path_list_for_prompt(artifact_paths, 8);
     let artifact_paths_summary = if artifact_paths.is_empty() {
@@ -1087,6 +1089,7 @@ fn render_upstream_synthesis_guidance(
         "- Treat the upstream inputs as the full source of truth for this step.".to_string(),
         "- Carry forward the concrete terminology, proof points, objections, risks, and citations already present upstream; do not collapse them into a vague generic recap.".to_string(),
         "- If an upstream input includes a concrete artifact path, read that artifact before finalizing whenever you need the full body, exact wording, or strongest evidence.".to_string(),
+        "- If you link to an artifact, use a canonical run-scoped path; if a safe href cannot be produced, render the path as plain text instead of a bare relative link.".to_string(),
         format!("Upstream artifact paths:\n{}", artifact_paths_summary),
     ];
     if automation_node_requires_email_delivery(node) {
@@ -1102,6 +1105,9 @@ fn render_upstream_synthesis_guidance(
     ) {
         lines.push("- For final report synthesis, preserve the upstream terminology, named entities, metrics, objections, and proof points; do not collapse them into a generic strategic summary.".to_string());
         lines.push("- When the upstream evidence is rich, the final report should read like a synthesis of those artifacts, not a high-level position statement detached from them.".to_string());
+    }
+    if automation_node_preserves_full_upstream_inputs(node) {
+        lines.push("- The final deliverable body itself must remain substantive and complete; the concise requirement applies only to the wrapper response, not the report or email body.".to_string());
     }
     Some(lines.join("\n"))
 }
@@ -1121,8 +1127,30 @@ fn automation_prompt_html_escape(text: &str) -> String {
     escaped
 }
 
-fn automation_prompt_render_canonical_html_body(text: &str) -> String {
+fn automation_prompt_canonicalize_artifact_hrefs(text: &str, run_id: &str) -> String {
     let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    let canonical_root = automation_run_scoped_output_path(run_id, ".tandem/artifacts/")
+        .unwrap_or_else(|| ".tandem/runs/unknown/artifacts".to_string())
+        .trim_end_matches('/')
+        .to_string();
+    let canonical_prefix = format!("{canonical_root}/");
+    trimmed
+        .replace(
+            "href=\".tandem/artifacts/",
+            &format!("href=\"{canonical_prefix}"),
+        )
+        .replace(
+            "href='.tandem/artifacts/",
+            &format!("href='{canonical_prefix}"),
+        )
+        .replace(".tandem/artifacts/", &canonical_prefix)
+}
+
+fn automation_prompt_render_canonical_html_body(text: &str, run_id: &str) -> String {
+    let trimmed = automation_prompt_canonicalize_artifact_hrefs(text, run_id);
     if trimmed.is_empty() {
         return "<p></p>".to_string();
     }
@@ -1192,7 +1220,7 @@ fn automation_prompt_render_canonical_html_body(text: &str) -> String {
     }
 }
 
-fn render_deterministic_delivery_body(upstream_inputs: &[Value]) -> Option<String> {
+fn render_deterministic_delivery_body(upstream_inputs: &[Value], run_id: &str) -> Option<String> {
     let mut best = upstream_inputs
         .iter()
         .filter_map(|input| {
@@ -1220,7 +1248,9 @@ fn render_deterministic_delivery_body(upstream_inputs: &[Value]) -> Option<Strin
         .collect::<Vec<_>>();
     best.sort_by(|left, right| right.0.len().cmp(&left.0.len()).then(left.1.cmp(&right.1)));
     let (text, source_path) = best.into_iter().next()?;
-    let rendered_html = automation_prompt_render_canonical_html_body(&text);
+    let source_path =
+        automation_run_scoped_output_path(run_id, &source_path).unwrap_or(source_path);
+    let rendered_html = automation_prompt_render_canonical_html_body(&text, run_id);
     Some(format!(
         "Deterministic Delivery Body:\n- Source artifact: `{}`\n- Canonical HTML body:\n{}\n- Use this exact body as the delivery source of truth.\n- Do not rewrite the body into a shorter teaser or substitute a fresh summary.",
         source_path,
@@ -1832,6 +1862,8 @@ fn render_automation_v2_prompt_with_options(
             normalized_input
         })
         .collect::<Vec<_>>();
+    let preserve_full_upstream_inputs = automation_node_preserves_full_upstream_inputs(node);
+    let summary_only_upstream = options.summary_only_upstream && !preserve_full_upstream_inputs;
     let mut sections = Vec::new();
     if let Some(system_prompt) = template_system_prompt
         .map(str::trim)
@@ -1929,6 +1961,12 @@ fn render_automation_v2_prompt_with_options(
                 .collect::<Vec<_>>()
                 .join("\n")
         ));
+    }
+    if preserve_full_upstream_inputs {
+        sections.push(
+            "Full Synthesis Requirement:\n- Preserve the upstream evidence in the final deliverable body.\n- The wrapper response may stay concise, but the artifact or email body itself must be a full synthesis, not a teaser.\n- Carry forward named entities, concrete facts, citations, source audit details, and explicit uncertainties when they matter.\n- If you need to link an artifact, prefer a canonical run-scoped path; if a safe href cannot be produced, use plain text instead of a bare relative link."
+                .to_string(),
+        );
     }
     let execution_mode = automation_node_execution_mode(node, workspace_root);
     sections.push(format!(
@@ -2056,7 +2094,7 @@ fn render_automation_v2_prompt_with_options(
             let output = input
                 .get("output")
                 .map(|value| {
-                    compact_automation_prompt_output_with_mode(value, options.summary_only_upstream)
+                    compact_automation_prompt_output_with_mode(value, summary_only_upstream)
                 })
                 .unwrap_or(Value::Null);
             let rendered =
@@ -2081,7 +2119,9 @@ fn render_automation_v2_prompt_with_options(
             prompt.push_str(&summary);
         }
     }
-    if let Some(summary) = render_upstream_synthesis_guidance(node, &normalized_upstream_inputs) {
+    if let Some(summary) =
+        render_upstream_synthesis_guidance(node, &normalized_upstream_inputs, run_id)
+    {
         prompt.push_str("\n\n");
         prompt.push_str(&summary);
     }
@@ -2090,7 +2130,7 @@ fn render_automation_v2_prompt_with_options(
             "\n\nDelivery rules:\n- Prefer inline email body delivery by default.\n- Only include an email attachment when upstream inputs contain a concrete attachment artifact with a non-empty s3key or upload result.\n- Never send an attachment parameter with an empty or null s3key.\n- If no attachment artifact exists, omit the attachment parameter entirely.",
         );
         if let Some(deterministic_body) =
-            render_deterministic_delivery_body(&normalized_upstream_inputs)
+            render_deterministic_delivery_body(&normalized_upstream_inputs, run_id)
         {
             prompt.push_str("\n\n");
             prompt.push_str(&deterministic_body);
@@ -3135,6 +3175,11 @@ fn semantic_block_reason_for_requirements(unmet_requirements: &[String]) -> Opti
     } else if has_unmet("files_reviewed_missing") || has_unmet("files_reviewed_not_backed_by_read")
     {
         Some("research completed without a source-backed files reviewed section".to_string())
+    } else if has_unmet("bare_relative_artifact_href") {
+        Some(
+            "final artifact contains a bare relative artifact href; use a canonical run-scoped link or plain text instead"
+                .to_string(),
+        )
     } else if has_unmet("upstream_evidence_not_synthesized") {
         Some(
             "final artifact does not adequately synthesize the available upstream evidence"
@@ -5080,6 +5125,11 @@ pub(crate) fn validate_automation_artifact_output_with_upstream(
                             || assessment.citation_count >= 1
                             || assessment.web_sources_reviewed_present)
                 });
+            let bare_relative_artifact_href =
+                matches!(contract_kind.as_str(), "report_markdown" | "text_summary")
+                    && selected.as_ref().is_some_and(|assessment| {
+                        contains_bare_tandem_artifact_href(&assessment.text)
+                    });
             if missing_editorial_substance {
                 unmet_requirements.push("editorial_substance_missing".to_string());
             }
@@ -5089,16 +5139,23 @@ pub(crate) fn validate_automation_artifact_output_with_upstream(
             if missing_upstream_synthesis {
                 unmet_requirements.push("upstream_evidence_not_synthesized".to_string());
             }
+            if bare_relative_artifact_href {
+                unmet_requirements.push("bare_relative_artifact_href".to_string());
+            }
             if semantic_block_reason.is_none()
                 && (missing_editorial_substance
                     || missing_markdown_structure
-                    || missing_upstream_synthesis)
+                    || missing_upstream_synthesis
+                    || bare_relative_artifact_href)
             {
                 semantic_block_reason = Some(if missing_upstream_synthesis {
                     "final artifact does not adequately synthesize the available upstream evidence"
                         .to_string()
                 } else if missing_markdown_structure {
                     "editorial artifact is missing expected markdown structure".to_string()
+                } else if bare_relative_artifact_href {
+                    "final artifact contains a bare relative artifact href; use a canonical run-scoped link or plain text instead"
+                        .to_string()
                 } else {
                     "editorial artifact is too weak or placeholder-like".to_string()
                 });
@@ -6781,6 +6838,7 @@ pub(crate) async fn execute_automation_v2_node(
             None
         },
     );
+    let preserve_full_upstream_inputs = automation_node_preserves_full_upstream_inputs(node);
     let mut preflight = build_automation_prompt_preflight(
         &prompt,
         &effective_offered_tools,
@@ -6791,37 +6849,49 @@ pub(crate) async fn execute_automation_v2_node(
         false,
     );
     if automation_preflight_should_degrade(&preflight) && !upstream_inputs.is_empty() {
-        prompt = render_automation_v2_prompt_with_options(
-            automation,
-            &workspace_root,
-            run_id,
-            node,
-            attempt,
-            agent,
-            &upstream_inputs,
-            &requested_tools,
-            template
-                .as_ref()
-                .and_then(|value| value.system_prompt.as_deref()),
-            standup_report_path.as_deref(),
-            if is_agent_standup_automation(automation) {
-                Some(project_id.as_str())
-            } else {
-                None
-            },
-            AutomationPromptRenderOptions {
-                summary_only_upstream: true,
-            },
-        );
-        preflight = build_automation_prompt_preflight(
-            &prompt,
-            &effective_offered_tools,
-            &offered_tool_schemas,
-            execution_mode,
-            &capability_resolution,
-            "summary_only_upstream",
-            true,
-        );
+        if preserve_full_upstream_inputs {
+            preflight = build_automation_prompt_preflight(
+                &prompt,
+                &effective_offered_tools,
+                &offered_tool_schemas,
+                execution_mode,
+                &capability_resolution,
+                "full_upstream_preserved",
+                true,
+            );
+        } else {
+            prompt = render_automation_v2_prompt_with_options(
+                automation,
+                &workspace_root,
+                run_id,
+                node,
+                attempt,
+                agent,
+                &upstream_inputs,
+                &requested_tools,
+                template
+                    .as_ref()
+                    .and_then(|value| value.system_prompt.as_deref()),
+                standup_report_path.as_deref(),
+                if is_agent_standup_automation(automation) {
+                    Some(project_id.as_str())
+                } else {
+                    None
+                },
+                AutomationPromptRenderOptions {
+                    summary_only_upstream: true,
+                },
+            );
+            preflight = build_automation_prompt_preflight(
+                &prompt,
+                &effective_offered_tools,
+                &offered_tool_schemas,
+                execution_mode,
+                &capability_resolution,
+                "summary_only_upstream",
+                true,
+            );
+        }
     }
     if let Some(repair_brief) = render_automation_repair_brief(
         node,
