@@ -57,7 +57,17 @@ fn merge_automation_agent_allowlist(
     allowlist
 }
 
-fn automation_node_output_extension(node: &AutomationFlowNode) -> Option<String> {
+pub(crate) fn automation_node_builder_priority(node: &AutomationFlowNode) -> i32 {
+    node.metadata
+        .as_ref()
+        .and_then(|metadata| metadata.get("builder"))
+        .and_then(|builder| builder.get("priority"))
+        .and_then(Value::as_i64)
+        .and_then(|value| i32::try_from(value).ok())
+        .unwrap_or(0)
+}
+
+pub(crate) fn automation_node_output_extension(node: &AutomationFlowNode) -> Option<String> {
     automation_node_required_output_path(node)
         .as_deref()
         .and_then(|value| std::path::Path::new(value).extension())
@@ -65,13 +75,13 @@ fn automation_node_output_extension(node: &AutomationFlowNode) -> Option<String>
         .map(|value| value.to_ascii_lowercase())
 }
 
-fn automation_node_task_kind(node: &AutomationFlowNode) -> Option<String> {
+pub(crate) fn automation_node_task_kind(node: &AutomationFlowNode) -> Option<String> {
     automation_node_builder_metadata(node, "task_kind")
         .map(|value| value.trim().to_ascii_lowercase())
         .filter(|value| !value.is_empty())
 }
 
-fn automation_node_projects_backlog_tasks(node: &AutomationFlowNode) -> bool {
+pub(crate) fn automation_node_projects_backlog_tasks(node: &AutomationFlowNode) -> bool {
     node.metadata
         .as_ref()
         .and_then(|metadata| metadata.get("builder"))
@@ -81,43 +91,43 @@ fn automation_node_projects_backlog_tasks(node: &AutomationFlowNode) -> bool {
         .unwrap_or(false)
 }
 
-fn automation_node_task_id(node: &AutomationFlowNode) -> Option<String> {
+pub(crate) fn automation_node_task_id(node: &AutomationFlowNode) -> Option<String> {
     automation_node_builder_metadata(node, "task_id")
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
 }
 
-fn automation_node_repo_root(node: &AutomationFlowNode) -> Option<String> {
+pub(crate) fn automation_node_repo_root(node: &AutomationFlowNode) -> Option<String> {
     automation_node_builder_metadata(node, "repo_root")
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
 }
 
-fn automation_node_write_scope(node: &AutomationFlowNode) -> Option<String> {
+pub(crate) fn automation_node_write_scope(node: &AutomationFlowNode) -> Option<String> {
     automation_node_builder_metadata(node, "write_scope")
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
 }
 
-fn automation_node_acceptance_criteria(node: &AutomationFlowNode) -> Option<String> {
+pub(crate) fn automation_node_acceptance_criteria(node: &AutomationFlowNode) -> Option<String> {
     automation_node_builder_metadata(node, "acceptance_criteria")
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
 }
 
-fn automation_node_task_dependencies(node: &AutomationFlowNode) -> Option<String> {
+pub(crate) fn automation_node_task_dependencies(node: &AutomationFlowNode) -> Option<String> {
     automation_node_builder_metadata(node, "task_dependencies")
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
 }
 
-fn automation_node_task_owner(node: &AutomationFlowNode) -> Option<String> {
+pub(crate) fn automation_node_task_owner(node: &AutomationFlowNode) -> Option<String> {
     automation_node_builder_metadata(node, "task_owner")
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
 }
 
-fn automation_node_is_code_workflow(node: &AutomationFlowNode) -> bool {
+pub(crate) fn automation_node_is_code_workflow(node: &AutomationFlowNode) -> bool {
     if automation_node_task_kind(node)
         .as_deref()
         .is_some_and(|kind| matches!(kind, "code_change" | "repo_fix" | "implementation"))
@@ -158,6 +168,55 @@ pub(crate) fn automation_output_validator_kind(
         Some("structured_json") => crate::AutomationOutputValidatorKind::StructuredJson,
         _ => crate::AutomationOutputValidatorKind::GenericArtifact,
     }
+}
+
+fn automation_routine_for_node<'a>(
+    plan: &'a compiler_api::PlanPackage,
+    node_id: &str,
+) -> Option<&'a compiler_api::RoutinePackage> {
+    plan.routine_graph
+        .iter()
+        .find(|routine| routine.steps.iter().any(|step| step.step_id == node_id))
+}
+
+fn routine_is_complete(
+    routine: &compiler_api::RoutinePackage,
+    completed_nodes: &HashSet<String>,
+) -> bool {
+    routine
+        .steps
+        .iter()
+        .all(|step| completed_nodes.contains(&step.step_id))
+}
+
+pub(crate) fn automation_node_routine_dependencies_blocked(
+    automation: &AutomationV2Spec,
+    run: &AutomationV2RunRecord,
+    node: &AutomationFlowNode,
+) -> bool {
+    let Some(plan) = automation_plan_package(automation) else {
+        return false;
+    };
+    let Some(routine) = automation_routine_for_node(&plan, &node.node_id) else {
+        return false;
+    };
+    let completed_nodes = run
+        .checkpoint
+        .completed_nodes
+        .iter()
+        .cloned()
+        .collect::<HashSet<_>>();
+    routine.dependencies.iter().any(|dependency| {
+        if !matches!(dependency.mode, compiler_api::DependencyMode::Hard) {
+            return false;
+        }
+        plan.routine_graph
+            .iter()
+            .find(|candidate_routine| candidate_routine.routine_id == dependency.routine_id)
+            .is_some_and(|candidate_routine| {
+                !routine_is_complete(candidate_routine, &completed_nodes)
+            })
+    })
 }
 
 fn path_looks_like_source_file(path: &str) -> bool {
@@ -220,7 +279,10 @@ fn workspace_has_git_repo(workspace_root: &str) -> bool {
         .unwrap_or(false)
 }
 
-fn automation_node_execution_mode(node: &AutomationFlowNode, workspace_root: &str) -> &'static str {
+pub(crate) fn automation_node_execution_mode(
+    node: &AutomationFlowNode,
+    workspace_root: &str,
+) -> &'static str {
     if !automation_node_is_code_workflow(node) {
         return "artifact_write";
     }
@@ -286,7 +348,7 @@ pub(crate) fn normalize_automation_requested_tools(
     normalized
 }
 
-fn automation_node_delivery_method(node: &AutomationFlowNode) -> Option<String> {
+pub(crate) fn automation_node_delivery_method(node: &AutomationFlowNode) -> Option<String> {
     node.metadata
         .as_ref()
         .and_then(|value| {
@@ -300,7 +362,7 @@ fn automation_node_delivery_method(node: &AutomationFlowNode) -> Option<String> 
         .map(str::to_ascii_lowercase)
 }
 
-fn automation_node_delivery_target(node: &AutomationFlowNode) -> Option<String> {
+pub(crate) fn automation_node_delivery_target(node: &AutomationFlowNode) -> Option<String> {
     node.metadata
         .as_ref()
         .and_then(|value| {
@@ -345,7 +407,7 @@ fn extract_email_address_from_text(text: &str) -> Option<String> {
     })
 }
 
-fn automation_node_email_content_type(node: &AutomationFlowNode) -> Option<String> {
+pub(crate) fn automation_node_email_content_type(node: &AutomationFlowNode) -> Option<String> {
     node.metadata
         .as_ref()
         .and_then(|value| {
@@ -359,7 +421,7 @@ fn automation_node_email_content_type(node: &AutomationFlowNode) -> Option<Strin
         .map(str::to_string)
 }
 
-fn automation_node_inline_body_only(node: &AutomationFlowNode) -> Option<bool> {
+pub(crate) fn automation_node_inline_body_only(node: &AutomationFlowNode) -> Option<bool> {
     node.metadata
         .as_ref()
         .and_then(|value| {
@@ -370,7 +432,7 @@ fn automation_node_inline_body_only(node: &AutomationFlowNode) -> Option<bool> {
         .and_then(Value::as_bool)
 }
 
-fn automation_node_allows_attachments(node: &AutomationFlowNode) -> Option<bool> {
+pub(crate) fn automation_node_allows_attachments(node: &AutomationFlowNode) -> Option<bool> {
     node.metadata
         .as_ref()
         .and_then(|value| {
@@ -677,7 +739,7 @@ pub(crate) fn write_automation_inline_artifact(
     Ok((output_path.to_string(), file_text))
 }
 
-fn automation_node_declared_output_path(node: &AutomationFlowNode) -> Option<String> {
+pub(crate) fn automation_node_declared_output_path(node: &AutomationFlowNode) -> Option<String> {
     node.metadata
         .as_ref()
         .and_then(|metadata| metadata.get("builder"))
@@ -704,7 +766,7 @@ pub fn automation_node_required_output_path(node: &AutomationFlowNode) -> Option
     automation_node_required_output_path_for_run(node, None)
 }
 
-fn automation_node_default_output_path(node: &AutomationFlowNode) -> Option<String> {
+pub(crate) fn automation_node_default_output_path(node: &AutomationFlowNode) -> Option<String> {
     let extension = match node
         .output_contract
         .as_ref()
@@ -760,7 +822,7 @@ fn automation_node_default_output_path(node: &AutomationFlowNode) -> Option<Stri
     Some(format!(".tandem/artifacts/{slug}.{extension}"))
 }
 
-fn automation_node_web_research_expected(node: &AutomationFlowNode) -> bool {
+pub(crate) fn automation_node_web_research_expected(node: &AutomationFlowNode) -> bool {
     enforcement_requires_external_sources(&automation_node_output_enforcement(node))
 }
 

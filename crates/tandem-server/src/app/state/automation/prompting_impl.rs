@@ -173,7 +173,7 @@ pub(crate) fn render_automation_v2_prompt(
     )
 }
 
-fn render_automation_v2_prompt_with_options(
+pub(crate) fn render_automation_v2_prompt_with_options(
     automation: &AutomationV2Spec,
     workspace_root: &str,
     run_id: &str,
@@ -430,7 +430,9 @@ fn render_automation_v2_prompt_with_options(
             prompt.push_str(&summary);
         }
     }
-    if let Some(summary) = render_upstream_synthesis_guidance(node, &normalized_upstream_inputs) {
+    if let Some(summary) =
+        render_upstream_synthesis_guidance(node, &normalized_upstream_inputs, run_id)
+    {
         prompt.push_str("\n\n");
         prompt.push_str(&summary);
     }

@@ -3,11 +3,15 @@ use std::path::{Component, PathBuf};
 use std::time::Duration;
 
 pub(crate) mod assessment;
+pub(crate) mod capability_impl;
 pub(crate) mod enforcement;
 pub(crate) mod extraction;
+pub(crate) mod legacy_defaults;
 pub(crate) mod lifecycle;
 pub(crate) mod node_output;
+pub(crate) mod node_runtime_impl;
 pub(crate) mod path_hygiene;
+pub(crate) mod prompting_impl;
 pub(crate) mod rate_limit;
 pub(crate) mod receipts;
 pub(crate) mod scheduler;
@@ -19,6 +23,14 @@ mod workflow_impl;
 use assessment::*;
 use enforcement::*;
 use extraction::*;
+pub(crate) use legacy_defaults::{
+    automation_node_allows_attachments, automation_node_builder_metadata,
+    automation_node_delivery_method, automation_node_delivery_target,
+    automation_node_email_content_type, automation_node_inline_body_only,
+    automation_node_is_outbound_action, automation_node_is_research_finalize,
+    automation_node_preserves_full_upstream_inputs, automation_node_requires_email_delivery,
+    automation_node_uses_upstream_validation_evidence,
+};
 use lifecycle::*;
 pub use lifecycle::{record_automation_lifecycle_event, record_automation_workflow_state_events};
 pub(crate) use node_output::enrich_automation_node_output_for_contract;
@@ -40,6 +52,10 @@ pub fn automation_node_output_enforcement(
     node: &AutomationFlowNode,
 ) -> crate::AutomationOutputEnforcement {
     enforcement::automation_node_output_enforcement(node)
+}
+
+pub(crate) fn automation_node_research_stage(node: &AutomationFlowNode) -> Option<String> {
+    legacy_defaults::automation_node_research_stage(node)
 }
 
 use serde_json::{json, Value};
@@ -105,7 +121,7 @@ const AUTOMATION_TOOL_SCHEMA_WARNING_CHARS: u64 = 18_000;
 const AUTOMATION_TOOL_SCHEMA_HIGH_CHARS: u64 = 26_000;
 
 #[derive(Clone, Copy, Debug, Default)]
-struct AutomationPromptRenderOptions {
+pub(crate) struct AutomationPromptRenderOptions {
     summary_only_upstream: bool,
 }
 
@@ -814,7 +830,7 @@ async fn sync_automation_allowed_mcp_servers(
 }
 
 fn automation_node_delivery_method_value(node: &AutomationFlowNode) -> String {
-    automation_node_delivery_method(node).unwrap_or_else(|| "none".to_string())
+    node_runtime_impl::automation_node_delivery_method(node).unwrap_or_else(|| "none".to_string())
 }
 
 pub(crate) fn automation_output_session_id(output: &Value) -> Option<String> {
@@ -852,70 +868,6 @@ pub(crate) fn build_automation_pending_gate(
         requested_at_ms: now_ms(),
         upstream_node_ids: node.depends_on.clone(),
     })
-}
-
-fn automation_node_builder_metadata(node: &AutomationFlowNode, key: &str) -> Option<String> {
-    node.metadata
-        .as_ref()
-        .and_then(|metadata| metadata.get("builder"))
-        .and_then(|builder| builder.get(key))
-        .and_then(Value::as_str)
-        .map(str::to_string)
-}
-
-pub(crate) fn automation_node_research_stage(node: &AutomationFlowNode) -> Option<String> {
-    automation_node_builder_metadata(node, "research_stage")
-        .map(|value| value.trim().to_ascii_lowercase())
-        .filter(|value| !value.is_empty())
-}
-
-fn automation_node_is_research_finalize(node: &AutomationFlowNode) -> bool {
-    automation_node_research_stage(node).as_deref() == Some("research_finalize")
-}
-
-fn automation_node_uses_upstream_validation_evidence(node: &AutomationFlowNode) -> bool {
-    if automation_node_is_research_finalize(node) {
-        return true;
-    }
-    let has_upstream_inputs = !node.input_refs.is_empty() || !node.depends_on.is_empty();
-    if !has_upstream_inputs {
-        return false;
-    }
-    if automation_node_requires_email_delivery(node) {
-        return true;
-    }
-    let contract_kind = node
-        .output_contract
-        .as_ref()
-        .map(|contract| contract.kind.trim().to_ascii_lowercase())
-        .unwrap_or_default();
-    matches!(
-        contract_kind.as_str(),
-        "brief" | "report_markdown" | "text_summary" | "review_summary" | "approval_gate"
-    )
-}
-
-fn automation_node_preserves_full_upstream_inputs(node: &AutomationFlowNode) -> bool {
-    if !automation_node_uses_upstream_validation_evidence(node) {
-        return false;
-    }
-    matches!(
-        node.output_contract
-            .as_ref()
-            .map(|contract| contract.kind.trim().to_ascii_lowercase())
-            .as_deref(),
-        Some("report_markdown" | "text_summary")
-    ) || automation_node_requires_email_delivery(node)
-}
-
-fn automation_node_builder_priority(node: &AutomationFlowNode) -> i32 {
-    node.metadata
-        .as_ref()
-        .and_then(|metadata| metadata.get("builder"))
-        .and_then(|builder| builder.get("priority"))
-        .and_then(Value::as_i64)
-        .and_then(|value| i32::try_from(value).ok())
-        .unwrap_or(0)
 }
 
 fn truncate_path_list_for_prompt(paths: Vec<String>, limit: usize) -> Vec<String> {
@@ -1370,7 +1322,7 @@ pub(crate) fn automation_node_sort_key(
     (
         open_phase_bias,
         phase_order,
-        -automation_node_builder_priority(node),
+        -node_runtime_impl::automation_node_builder_priority(node),
         node.node_id.clone(),
     )
 }
@@ -1411,55 +1363,6 @@ fn automation_plan_package(automation: &AutomationV2Spec) -> Option<compiler_api
         .and_then(|value| serde_json::from_value(value).ok())
 }
 
-fn automation_routine_for_node<'a>(
-    plan: &'a compiler_api::PlanPackage,
-    node_id: &str,
-) -> Option<&'a compiler_api::RoutinePackage> {
-    plan.routine_graph
-        .iter()
-        .find(|routine| routine.steps.iter().any(|step| step.step_id == node_id))
-}
-
-fn routine_is_complete(
-    routine: &compiler_api::RoutinePackage,
-    completed_nodes: &HashSet<String>,
-) -> bool {
-    routine
-        .steps
-        .iter()
-        .all(|step| completed_nodes.contains(&step.step_id))
-}
-
-fn automation_node_routine_dependencies_blocked(
-    automation: &AutomationV2Spec,
-    run: &AutomationV2RunRecord,
-    node: &AutomationFlowNode,
-) -> bool {
-    let Some(plan) = automation_plan_package(automation) else {
-        return false;
-    };
-    let Some(routine) = automation_routine_for_node(&plan, &node.node_id) else {
-        return false;
-    };
-    let completed_nodes = run
-        .checkpoint
-        .completed_nodes
-        .iter()
-        .cloned()
-        .collect::<HashSet<_>>();
-    routine.dependencies.iter().any(|dependency| {
-        if !matches!(dependency.mode, compiler_api::DependencyMode::Hard) {
-            return false;
-        }
-        plan.routine_graph
-            .iter()
-            .find(|candidate_routine| candidate_routine.routine_id == dependency.routine_id)
-            .is_some_and(|candidate_routine| {
-                !routine_is_complete(candidate_routine, &completed_nodes)
-            })
-    })
-}
-
 pub(crate) fn automation_filter_runnable_by_routine_dependencies(
     automation: &AutomationV2Spec,
     run: &AutomationV2RunRecord,
@@ -1467,7 +1370,9 @@ pub(crate) fn automation_filter_runnable_by_routine_dependencies(
 ) -> Vec<AutomationFlowNode> {
     runnable
         .into_iter()
-        .filter(|node| !automation_node_routine_dependencies_blocked(automation, run, node))
+        .filter(|node| {
+            !node_runtime_impl::automation_node_routine_dependencies_blocked(automation, run, node)
+        })
         .collect()
 }
 
@@ -1570,7 +1475,9 @@ pub(crate) fn automation_blocked_nodes(
             if missing_deps {
                 return Some(node.node_id.clone());
             }
-            if automation_node_routine_dependencies_blocked(automation, run, node) {
+            if node_runtime_impl::automation_node_routine_dependencies_blocked(
+                automation, run, node,
+            ) {
                 return Some(node.node_id.clone());
             }
             let Some((_, open_rank, mode)) = current_open_phase.as_ref() else {
@@ -1808,7 +1715,7 @@ pub(crate) fn render_automation_v2_prompt(
     standup_report_path: Option<&str>,
     memory_project_id: Option<&str>,
 ) -> String {
-    render_automation_v2_prompt_with_options(
+    prompting_impl::render_automation_v2_prompt(
         automation,
         workspace_root,
         run_id,
@@ -1820,11 +1727,10 @@ pub(crate) fn render_automation_v2_prompt(
         template_system_prompt,
         standup_report_path,
         memory_project_id,
-        AutomationPromptRenderOptions::default(),
     )
 }
 
-fn render_automation_v2_prompt_with_options(
+pub(crate) fn render_automation_v2_prompt_with_options(
     automation: &AutomationV2Spec,
     workspace_root: &str,
     run_id: &str,
@@ -1838,490 +1744,20 @@ fn render_automation_v2_prompt_with_options(
     memory_project_id: Option<&str>,
     options: AutomationPromptRenderOptions,
 ) -> String {
-    let contract_kind = node
-        .output_contract
-        .as_ref()
-        .map(|contract| contract.kind.as_str())
-        .unwrap_or("structured_json");
-    let normalized_upstream_inputs = upstream_inputs
-        .iter()
-        .map(|input| {
-            let mut normalized_input = input.clone();
-            if let Some(output) = input.get("output") {
-                if let Some(object) = normalized_input.as_object_mut() {
-                    object.insert(
-                        "output".to_string(),
-                        normalize_upstream_research_output_paths(
-                            workspace_root,
-                            Some(run_id),
-                            output,
-                        ),
-                    );
-                }
-            }
-            normalized_input
-        })
-        .collect::<Vec<_>>();
-    let preserve_full_upstream_inputs = automation_node_preserves_full_upstream_inputs(node);
-    let summary_only_upstream = options.summary_only_upstream && !preserve_full_upstream_inputs;
-    let mut sections = Vec::new();
-    if let Some(system_prompt) = template_system_prompt
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        sections.push(format!("Template system prompt:\n{}", system_prompt));
-    }
-    if let Some(mission) = automation
-        .metadata
-        .as_ref()
-        .and_then(|value| value.get("mission"))
-    {
-        let mission_title = mission
-            .get("title")
-            .and_then(Value::as_str)
-            .unwrap_or(automation.name.as_str());
-        let mission_goal = mission
-            .get("goal")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
-        let success_criteria = mission
-            .get("success_criteria")
-            .and_then(Value::as_array)
-            .map(|rows| {
-                rows.iter()
-                    .filter_map(Value::as_str)
-                    .map(|row| format!("- {}", row.trim()))
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            })
-            .unwrap_or_default();
-        let shared_context = mission
-            .get("shared_context")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
-        sections.push(format!(
-            "Mission Brief:\nTitle: {mission_title}\nGoal: {mission_goal}\nShared context: {shared_context}\nSuccess criteria:\n{}",
-            if success_criteria.is_empty() {
-                "- none provided".to_string()
-            } else {
-                success_criteria
-            }
-        ));
-    }
-    sections.push(format!(
-        "Automation ID: {}\nRun ID: {}\nNode ID: {}\nAgent: {}\nObjective: {}\nOutput contract kind: {}",
-        automation.automation_id, run_id, node.node_id, agent.display_name, node.objective, contract_kind
-    ));
-    if let Some(contract) = node.output_contract.as_ref() {
-        let schema = contract
-            .schema
-            .as_ref()
-            .map(|value| serde_json::to_string_pretty(value).unwrap_or_else(|_| value.to_string()))
-            .unwrap_or_else(|| "none".to_string());
-        let guidance = contract.summary_guidance.as_deref().unwrap_or("none");
-        sections.push(format!(
-            "Output Contract:\nKind: {}\nSummary guidance: {}\nSchema:\n{}",
-            contract.kind, guidance, schema
-        ));
-    }
-    if let Some(builder) = node
-        .metadata
-        .as_ref()
-        .and_then(|metadata| metadata.get("builder"))
-        .and_then(Value::as_object)
-    {
-        let local_title = builder
-            .get("title")
-            .and_then(Value::as_str)
-            .unwrap_or(node.node_id.as_str());
-        let local_prompt = builder
-            .get("prompt")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
-        let local_role = builder
-            .get("role")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
-        sections.push(format!(
-            "Local Assignment:\nTitle: {local_title}\nRole: {local_role}\nInstructions: {local_prompt}"
-        ));
-    }
-    if let Some(inputs) = node
-        .metadata
-        .as_ref()
-        .and_then(|metadata| metadata.get("inputs"))
-        .filter(|value| !value.is_null())
-    {
-        let rendered = serde_json::to_string_pretty(inputs).unwrap_or_else(|_| inputs.to_string());
-        sections.push(format!(
-            "Node Inputs:\n- Use these values directly when they satisfy the objective.\n- Do not search `/tmp`, shell history, or undeclared temp files for duplicate copies of these inputs.\n{}",
-            rendered
-                .lines()
-                .map(|line| format!("  {}", line))
-                .collect::<Vec<_>>()
-                .join("\n")
-        ));
-    }
-    if preserve_full_upstream_inputs {
-        sections.push(
-            "Full Synthesis Requirement:\n- Preserve the upstream evidence in the final deliverable body.\n- The wrapper response may stay concise, but the artifact or email body itself must be a full synthesis, not a teaser.\n- Carry forward named entities, concrete facts, citations, source audit details, and explicit uncertainties when they matter.\n- If you need to link an artifact, prefer a canonical run-scoped path; if a safe href cannot be produced, use plain text instead of a bare relative link."
-                .to_string(),
-        );
-    }
-    let execution_mode = automation_node_execution_mode(node, workspace_root);
-    sections.push(format!(
-        "Execution Policy:\n- Mode: `{}`.\n- Use only declared workflow artifact paths.\n- Keep status and blocker notes in the response JSON, not as placeholder file contents.",
-        execution_mode
-    ));
-    let quality_mode_resolution = enforcement::automation_node_quality_mode_resolution(node);
-    let quality_mode = quality_mode_resolution.effective;
-    let quality_mode_rollover_line = if quality_mode_resolution.legacy_rollback_enabled {
-        "Emergency rollback: `enabled`; metadata may opt into legacy mode for short-term recovery."
-    } else {
-        "Emergency rollback: `disabled`; legacy metadata requests are forced back to strict mode."
-    };
-    sections.push(format!(
-        "Workflow Quality Mode:\n- Mode: `{}`.\n- Requested mode: `{}`.\n- Strict mode enforces evidence-backed synthesis and deterministic delivery bodies.\n- Legacy mode is a rollback path that relaxes the newest synthesis gates.\n- {}",
-        quality_mode.stable_key(),
-        quality_mode_resolution
-            .requested
-            .unwrap_or(quality_mode)
-            .stable_key(),
-        quality_mode_rollover_line,
-    ));
-    if automation_node_is_code_workflow(node) {
-        let task_kind =
-            automation_node_task_kind(node).unwrap_or_else(|| "code_change".to_string());
-        let project_backlog_tasks = automation_node_projects_backlog_tasks(node);
-        let task_id = automation_node_task_id(node).unwrap_or_else(|| "unassigned".to_string());
-        let repo_root = automation_node_repo_root(node).unwrap_or_else(|| ".".to_string());
-        let write_scope =
-            automation_node_write_scope(node).unwrap_or_else(|| "repo-scoped edits".to_string());
-        let acceptance_criteria = automation_node_acceptance_criteria(node)
-            .unwrap_or_else(|| "satisfy the declared coding task acceptance criteria".to_string());
-        let task_dependencies =
-            automation_node_task_dependencies(node).unwrap_or_else(|| "none declared".to_string());
-        let verification_state =
-            automation_node_verification_state(node).unwrap_or_else(|| "pending".to_string());
-        let task_owner =
-            automation_node_task_owner(node).unwrap_or_else(|| "unclaimed".to_string());
-        let verification_command =
-            automation_node_verification_command(node).unwrap_or_else(|| {
-                "run the most relevant repo-local build, test, or lint commands".to_string()
-            });
-        sections.push(format!(
-            "Coding Task Context:\n- Task id: `{}`.\n- Task kind: `{}`.\n- Repo root: `{}`.\n- Declared write scope: {}.\n- Acceptance criteria: {}.\n- Backlog dependencies: {}.\n- Verification state: {}.\n- Preferred owner: {}.\n- Verification expectation: {}.\n- Projects backlog tasks: {}.\n- Prefer repository edits plus a concise handoff artifact, not placeholder file rewrites.\n- Use `bash` for verification commands when tool access allows it.",
-            task_id, task_kind, repo_root, write_scope, acceptance_criteria, task_dependencies, verification_state, task_owner, verification_command, if project_backlog_tasks { "yes" } else { "no" }
-        ));
-        sections.push(
-            "Code Agent Contract:\n- Follow the deterministic loop: inspect -> patch -> apply -> test -> repair -> finalize.\n- Read before editing, prefer diffs for existing files, and keep changes within the declared write scope.\n- Use `apply_patch` for multi-line edits and `edit` for localized replacements whenever available; use `write` only for brand-new files or when a diff cannot express the change.\n- Run the declared verification command after applying changes. If it fails, read the failure output and repair the smallest root cause before retrying.\n- Do not claim completion until the patch has been applied and verification has succeeded or been explicitly waived by the runtime."
-                .to_string(),
-        );
-    }
-    let artifact_output_path = automation_node_required_output_path_for_run(node, Some(run_id));
-    if let Some(output_path) = artifact_output_path.as_deref() {
-        let output_rules = match execution_mode {
-            "git_patch" => format!(
-                "Required Workspace Output:\n- Create or update `{}` relative to the workspace root.\n- Use `glob` to discover candidate paths and `read` only for concrete file paths.\n- Prefer `apply_patch` for multi-line source edits and `edit` for localized replacements.\n- Use `write` only for brand-new files or when patch/edit cannot express the change.\n- Do not replace an existing source file with a status note, preservation note, or placeholder summary.\n- Only write declared workflow artifact files.\n- Do not report success unless this file exists in the workspace when the stage ends.",
-                output_path
-            ),
-            "filesystem_patch" => format!(
-                "Required Workspace Output:\n- Create or update `{}` relative to the workspace root.\n- Use `glob` to discover candidate paths and `read` only for concrete file paths.\n- Prefer `edit` for existing-file changes.\n- Use `write` for brand-new files or as a last resort when an edit cannot express the change.\n- Do not replace an existing file with a status note, preservation note, or placeholder summary.\n- Only write declared workflow artifact files.\n- Do not report success unless this file exists in the workspace when the stage ends.",
-                output_path
-            ),
-            _ => format!(
-                "Required Workspace Output:\n- Create or update `{}` relative to the workspace root.\n- Use `glob` to discover candidate paths and `read` only for concrete file paths.\n- Use the `write` tool to create the full file contents.\n- Only write declared workflow artifact files; do not create auxiliary touch files, status files, marker files, or placeholder preservation notes.\n- Overwrite the declared output with the actual artifact contents for this run instead of preserving a prior placeholder.\n- Do not report success unless this file exists in the workspace when the stage ends.",
-                output_path
-            ),
-        };
-        sections.push(output_rules);
-    }
-    if node.node_id == "collect_inputs" {
-        let collect_inputs_output_path =
-            automation_run_scoped_output_path(run_id, ".tandem/artifacts/collect-inputs.json")
-                .unwrap_or_else(|| ".tandem/artifacts/collect-inputs.json".to_string());
-        sections.push(
-            format!(
-                "Collect Inputs Contract:\n- Use `glob` to discover the workspace shape, but do not stop after discovery.\n- Read concrete workspace files that ground the project identity, product terminology, capabilities, proof points, and source corpus.\n- Write the grounded result to `{}` before finishing.\n- The final brief must reflect the current run's reads and discovery, not a generic recap or a reused placeholder.",
-                collect_inputs_output_path
-            ),
-        );
-    }
-    if automation_node_web_research_expected(node) {
-        let requested_has_websearch = requested_tools.iter().any(|tool| tool == "websearch");
-        let requested_has_webfetch = requested_tools
-            .iter()
-            .any(|tool| matches!(tool.as_str(), "webfetch" | "webfetch_html"));
-        if requested_has_websearch {
-            sections.push(
-                "External Research Expectation:\n- Use `websearch` for current external evidence before finalizing the output file.\n- Use `webfetch` on concrete result URLs when search snippets are not enough.\n- Include only evidence you can support from local files or current web findings.\n- If `websearch` returns an authorization-required or unavailable result, treat external research as unavailable for this run, continue with local file reads, and note the web-research limitation instead of stopping."
-                    .to_string(),
-            );
-        } else if requested_has_webfetch {
-            sections.push(
-                "External Research Expectation:\n- `websearch` is not available in this run.\n- Use `webfetch` only for concrete URLs already present in local sources or upstream handoffs.\n- If you cannot validate externally without search, record that limitation in the structured handoff and finish the node.\n- Do not ask the user for clarification or permission to continue; return the required JSON handoff for this run."
-                    .to_string(),
-            );
-        } else {
-            sections.push(
-                "External Research Expectation:\n- No web research tool is available in this run.\n- Record the web-research limitation clearly in the structured handoff, continue with any allowed local reads, and finish without asking follow-up questions."
-                    .to_string(),
-            );
-        }
-    }
-    let validator_kind = automation_output_validator_kind(node);
-    let handoff_only_structured_json = validator_kind
-        == crate::AutomationOutputValidatorKind::StructuredJson
-        && automation_node_required_output_path(node).is_none();
-    if handoff_only_structured_json {
-        sections.push(
-            "Structured Handoff Expectation:\n- Return the requested structured JSON handoff in the final response body.\n- The final response body should contain JSON only: the handoff JSON, then the final compact JSON status object.\n- Do not include headings, bullets, markdown fences, prose explanations, or follow-up questions.\n- Do not stop after tool calls alone; include a machine-readable JSON object or array with the requested fields."
-                .to_string(),
-        );
-    }
-    let mut prompt = sections.join("\n\n");
-    if !normalized_upstream_inputs.is_empty() {
-        prompt.push_str("\n\nUpstream Inputs:");
-        for input in &normalized_upstream_inputs {
-            let alias = input
-                .get("alias")
-                .and_then(Value::as_str)
-                .unwrap_or("input");
-            let from_step_id = input
-                .get("from_step_id")
-                .and_then(Value::as_str)
-                .unwrap_or("unknown");
-            let output = input
-                .get("output")
-                .map(|value| {
-                    compact_automation_prompt_output_with_mode(value, summary_only_upstream)
-                })
-                .unwrap_or(Value::Null);
-            let rendered =
-                serde_json::to_string_pretty(&output).unwrap_or_else(|_| output.to_string());
-            prompt.push_str(&format!(
-                "\n- {}\n  from_step_id: {}\n  output:\n{}",
-                alias,
-                from_step_id,
-                rendered
-                    .lines()
-                    .map(|line| format!("    {}", line))
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            ));
-        }
-    }
-    if automation_node_is_research_finalize(node) {
-        if let Some(summary) =
-            render_research_finalize_upstream_summary(&normalized_upstream_inputs)
-        {
-            prompt.push_str("\n\n");
-            prompt.push_str(&summary);
-        }
-    }
-    if let Some(summary) =
-        render_upstream_synthesis_guidance(node, &normalized_upstream_inputs, run_id)
-    {
-        prompt.push_str("\n\n");
-        prompt.push_str(&summary);
-    }
-    if automation_node_requires_email_delivery(node) {
-        prompt.push_str(
-            "\n\nDelivery rules:\n- Prefer inline email body delivery by default.\n- Only include an email attachment when upstream inputs contain a concrete attachment artifact with a non-empty s3key or upload result.\n- Never send an attachment parameter with an empty or null s3key.\n- If no attachment artifact exists, omit the attachment parameter entirely.",
-        );
-        if let Some(deterministic_body) =
-            render_deterministic_delivery_body(&normalized_upstream_inputs, run_id)
-        {
-            prompt.push_str("\n\n");
-            prompt.push_str(&deterministic_body);
-        }
-        let delivery_target =
-            automation_node_delivery_target(node).unwrap_or_else(|| "missing".to_string());
-        let content_type =
-            automation_node_email_content_type(node).unwrap_or_else(|| "text/html".to_string());
-        let inline_body_only = automation_node_inline_body_only(node).unwrap_or(true);
-        let attachments_allowed = automation_node_allows_attachments(node).unwrap_or(false);
-        prompt.push_str(&format!(
-            "\n\nDelivery target:\n- Method: `email`\n- Recipient: `{}`\n- Content-Type: `{}`\n- Inline body only: `{}`\n- Attachments allowed: `{}`\n- Treat this delivery target as authoritative for this run.\n- Do not say the recipient is missing when it is listed above.\n- Do not mark the node completed unless you actually execute an email draft or send tool.",
-            delivery_target,
-            content_type,
-            inline_body_only,
-            attachments_allowed
-        ));
-    }
-    if let Some(report_path) = standup_report_path
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        prompt.push_str(&format!(
-            "\n\nStandup report path:\n- Write the final markdown report to `{}` relative to the workspace root.\n- Use the `write` tool for the report.\n- The report must remain inside the workspace.",
-            report_path
-        ));
-    }
-    if let Some(project_id) = memory_project_id
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        prompt.push_str(&format!(
-            "\n\nMemory search scope:\n- `memory_search` defaults to the current session, current project, and global memory.\n- Current project_id: `{}`.\n- Use `tier: \"project\"` when you need recall limited to this workspace.\n- Use workspace files via `glob`, `grep`, and `read` when memory is sparse or stale.",
-            project_id
-        ));
-    }
-    let enforce_completed_first_attempt = (validator_kind
-        == crate::AutomationOutputValidatorKind::ResearchBrief
-        || !automation_node_required_tools(node).is_empty()
-        || handoff_only_structured_json)
-        && attempt <= 1;
-    if enforce_completed_first_attempt {
-        if automation_node_required_output_path(node).is_some() {
-            prompt.push_str(
-                "\n\nFinal response requirements:\n- Return a concise completion.\n- Include a final compact JSON object in the response body with `status` set to `completed`.\n- Do not declare the output blocked while the required workflow tools remain available; use them first and finish the work.\n- Do not claim success unless the write tool actually created the output file.",
-            );
-        } else {
-            prompt.push_str(
-                "\n\nFinal response requirements:\n- Return a concise completion.\n- Include a final compact JSON object in the response body with `status` set to `completed`.\n- Do not declare the output blocked while the required workflow tools remain available; use them first and finish the work.\n- Do not claim success unless the required structured handoff was actually returned in the final response.",
-            );
-        }
-    } else {
-        if handoff_only_structured_json {
-            prompt.push_str(
-                "\n\nFinal response requirements:\n- Return a concise completion.\n- Include the required structured handoff JSON in the response body before the final compact status object.\n- Include a final compact JSON object in the response body with at least `status` (`completed` or `blocked`).\n- For review-style nodes, also include `approved` (`true` or `false`).\n- If blocked, include a short `reason`.\n- Do not claim success unless the required structured handoff was actually returned in the final response.\n- Do not claim semantic success if the output is blocked or not approved.",
-            );
-        } else {
-            prompt.push_str(
-                "\n\nFinal response requirements:\n- Return a concise completion.\n- Include a final compact JSON object in the response body with at least `status` (`completed` or `blocked`).\n- For review-style nodes, also include `approved` (`true` or `false`).\n- If blocked, include a short `reason`.\n- Do not claim semantic success if the output is blocked or not approved.",
-            );
-        }
-    }
-    prompt
-}
-
-fn truncate_automation_prompt_text(raw: &str, max_chars: usize) -> String {
-    let trimmed = raw.trim();
-    if trimmed.chars().count() <= max_chars {
-        return trimmed.to_string();
-    }
-    let truncated = trimmed.chars().take(max_chars).collect::<String>();
-    format!("{truncated}...")
-}
-
-fn compact_automation_prompt_content(content: &Value, summary_only: bool) -> Value {
-    let Some(object) = content.as_object() else {
-        return content.clone();
-    };
-    let mut compact = serde_json::Map::new();
-    if let Some(path) = object.get("path").cloned().filter(|value| !value.is_null()) {
-        compact.insert("path".to_string(), path);
-    }
-    if let Some(handoff) = object
-        .get("structured_handoff")
-        .cloned()
-        .filter(|value| !value.is_null())
-    {
-        compact.insert("structured_handoff".to_string(), handoff);
-        return Value::Object(compact);
-    }
-    let candidate_text = object
-        .get("text")
-        .and_then(Value::as_str)
-        .or_else(|| object.get("raw_text").and_then(Value::as_str))
-        .map(str::trim)
-        .filter(|value| !value.is_empty());
-    if let Some(text) = candidate_text {
-        if let Ok(parsed) = serde_json::from_str::<Value>(text) {
-            if summary_only {
-                compact.insert("data_summary".to_string(), summarize_json_keys(&parsed));
-            } else {
-                compact.insert("data".to_string(), parsed);
-            }
-        } else {
-            compact.insert(
-                "text".to_string(),
-                json!(truncate_automation_prompt_text(
-                    text,
-                    if summary_only { 800 } else { 4000 }
-                )),
-            );
-        }
-    }
-    Value::Object(compact)
-}
-
-fn compact_automation_prompt_output_with_mode(output: &Value, summary_only: bool) -> Value {
-    let Some(object) = output.as_object() else {
-        return output.clone();
-    };
-    let mut compact = serde_json::Map::new();
-    for key in [
-        "status",
-        "phase",
-        "contract_kind",
-        "summary",
-        "blocked_reason",
-        "workflow_class",
-    ] {
-        if let Some(value) = object.get(key).cloned().filter(|value| !value.is_null()) {
-            compact.insert(key.to_string(), value);
-        }
-    }
-    if let Some(validator_summary) = object.get("validator_summary").and_then(Value::as_object) {
-        let mut validator = serde_json::Map::new();
-        for key in [
-            "kind",
-            "outcome",
-            "warning_count",
-            "warning_requirements",
-            "unmet_requirements",
-            "validation_basis",
-        ] {
-            if let Some(value) = validator_summary
-                .get(key)
-                .cloned()
-                .filter(|value| !value.is_null())
-            {
-                validator.insert(key.to_string(), value);
-            }
-        }
-        if !validator.is_empty() {
-            compact.insert("validator_summary".to_string(), Value::Object(validator));
-        }
-    }
-    if let Some(artifact_validation) = object.get("artifact_validation").and_then(Value::as_object)
-    {
-        let mut validation = serde_json::Map::new();
-        for key in [
-            "accepted_artifact_path",
-            "accepted_candidate_source",
-            "validation_outcome",
-            "validation_profile",
-            "warning_count",
-            "warning_requirements",
-            "unmet_requirements",
-            "semantic_block_reason",
-            "rejected_artifact_reason",
-        ] {
-            if let Some(value) = artifact_validation
-                .get(key)
-                .cloned()
-                .filter(|value| !value.is_null())
-            {
-                validation.insert(key.to_string(), value);
-            }
-        }
-        if !validation.is_empty() {
-            compact.insert("artifact_validation".to_string(), Value::Object(validation));
-        }
-    }
-    if let Some(content) = object.get("content") {
-        let compact_content = compact_automation_prompt_content(content, summary_only);
-        if compact_content
-            .as_object()
-            .is_some_and(|value| !value.is_empty())
-        {
-            compact.insert("content".to_string(), compact_content);
-        }
-    }
-    Value::Object(compact)
+    prompting_impl::render_automation_v2_prompt_with_options(
+        automation,
+        workspace_root,
+        run_id,
+        node,
+        attempt,
+        agent,
+        upstream_inputs,
+        requested_tools,
+        template_system_prompt,
+        standup_report_path,
+        memory_project_id,
+        options,
+    )
 }
 
 pub(crate) fn render_automation_repair_brief(
@@ -2843,144 +2279,6 @@ pub(crate) fn normalize_automation_requested_tools(
     normalized.sort();
     normalized.dedup();
     normalized
-}
-
-fn automation_node_delivery_method(node: &AutomationFlowNode) -> Option<String> {
-    node.metadata
-        .as_ref()
-        .and_then(|value| {
-            value
-                .pointer("/delivery/method")
-                .or_else(|| value.pointer("/builder/delivery/method"))
-        })
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_ascii_lowercase)
-}
-
-fn automation_node_delivery_target(node: &AutomationFlowNode) -> Option<String> {
-    node.metadata
-        .as_ref()
-        .and_then(|value| {
-            value
-                .pointer("/delivery/to")
-                .or_else(|| value.pointer("/builder/delivery/to"))
-        })
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string)
-        .or_else(|| extract_email_address_from_text(&node.objective))
-}
-
-fn extract_email_address_from_text(text: &str) -> Option<String> {
-    text.split_whitespace().find_map(|token| {
-        let candidate = token
-            .trim_matches(|ch: char| {
-                ch.is_ascii_punctuation() && ch != '@' && ch != '.' && ch != '_' && ch != '-'
-            })
-            .trim();
-        if candidate.is_empty()
-            || !candidate.contains('@')
-            || candidate.starts_with('@')
-            || candidate.ends_with('@')
-        {
-            return None;
-        }
-        let mut parts = candidate.split('@');
-        let local = parts.next()?.trim();
-        let domain = parts.next()?.trim();
-        if parts.next().is_some()
-            || local.is_empty()
-            || domain.is_empty()
-            || !domain.contains('.')
-            || domain.starts_with('.')
-            || domain.ends_with('.')
-        {
-            return None;
-        }
-        Some(candidate.to_string())
-    })
-}
-
-fn automation_node_email_content_type(node: &AutomationFlowNode) -> Option<String> {
-    node.metadata
-        .as_ref()
-        .and_then(|value| {
-            value
-                .pointer("/delivery/content_type")
-                .or_else(|| value.pointer("/builder/delivery/content_type"))
-        })
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string)
-}
-
-fn automation_node_inline_body_only(node: &AutomationFlowNode) -> Option<bool> {
-    node.metadata
-        .as_ref()
-        .and_then(|value| {
-            value
-                .pointer("/delivery/inline_body_only")
-                .or_else(|| value.pointer("/builder/delivery/inline_body_only"))
-        })
-        .and_then(Value::as_bool)
-}
-
-fn automation_node_allows_attachments(node: &AutomationFlowNode) -> Option<bool> {
-    node.metadata
-        .as_ref()
-        .and_then(|value| {
-            value
-                .pointer("/delivery/attachments")
-                .or_else(|| value.pointer("/builder/delivery/attachments"))
-        })
-        .and_then(Value::as_bool)
-}
-
-pub(crate) fn automation_node_requires_email_delivery(node: &AutomationFlowNode) -> bool {
-    if automation_node_delivery_method(node)
-        .as_deref()
-        .is_some_and(|method| method == "email")
-    {
-        return true;
-    }
-    if !automation_node_is_outbound_action(node) {
-        return false;
-    }
-    let objective = node.objective.to_ascii_lowercase();
-    let contains_phrase = [
-        "send email",
-        "send the email",
-        "send by email",
-        "send the report by email",
-        "email the ",
-        "email report",
-        "draft email",
-        "draft the email",
-        "gmail draft",
-        "gmail_send",
-        "notify by email",
-        "notify the operator by email",
-    ]
-    .iter()
-    .any(|needle| objective.contains(needle));
-    if contains_phrase {
-        return true;
-    }
-
-    let mentions_email_channel = objective.contains("email")
-        || objective.contains("gmail")
-        || objective.contains("mail tool")
-        || objective.contains("mail tools");
-    let mentions_delivery_action = objective.contains("send")
-        || objective.contains("draft")
-        || objective.contains("notify")
-        || objective.contains("deliver");
-
-    mentions_email_channel && mentions_delivery_action
 }
 
 fn automation_tool_name_is_email_delivery(tool_name: &str) -> bool {
@@ -6196,24 +5494,6 @@ fn automation_attempt_uses_legacy_fallback(
     ]
     .iter()
     .any(|marker| lowered.contains(marker))
-}
-
-fn automation_node_is_outbound_action(node: &AutomationFlowNode) -> bool {
-    if node
-        .metadata
-        .as_ref()
-        .and_then(|value| value.pointer("/builder/role"))
-        .and_then(Value::as_str)
-        .is_some_and(|role| role.eq_ignore_ascii_case("publisher"))
-    {
-        return true;
-    }
-    let objective = node.objective.to_ascii_lowercase();
-    [
-        "publish", "post ", "send ", "notify", "deliver", "submit", "share",
-    ]
-    .iter()
-    .any(|needle| objective.contains(needle))
 }
 
 pub(crate) fn automation_publish_editorial_block_reason(

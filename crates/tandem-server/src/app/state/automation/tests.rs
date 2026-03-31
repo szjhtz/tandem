@@ -75,7 +75,7 @@ fn email_delivery_node() -> AutomationFlowNode {
     node.metadata = Some(json!({
         "delivery": {
             "method": "email",
-            "to": "evan@frumu.ai",
+            "to": "recipient@example.com",
             "content_type": "text/html",
             "inline_body_only": true,
             "attachments": false
@@ -214,7 +214,7 @@ fn report_markdown_preserves_full_upstream_inputs() {
     let mut execute_goal = bare_node();
     execute_goal.node_id = "execute_goal".to_string();
     execute_goal.objective =
-        "Create a Gmail draft or send the final HTML summary email to evan@frumu.ai if mail tools are available.".to_string();
+        "Create a Gmail draft or send the final HTML summary email to recipient@example.com if mail tools are available.".to_string();
     execute_goal.output_contract = Some(AutomationFlowOutputContract {
         kind: "approval_gate".to_string(),
         validator: Some(crate::AutomationOutputValidatorKind::ReviewDecision),
@@ -230,7 +230,7 @@ fn report_markdown_preserves_full_upstream_inputs() {
     execute_goal.metadata = Some(json!({
         "delivery": {
             "method": "email",
-            "to": "evan@frumu.ai",
+            "to": "recipient@example.com",
             "content_type": "text/html",
             "inline_body_only": true,
             "attachments": false
