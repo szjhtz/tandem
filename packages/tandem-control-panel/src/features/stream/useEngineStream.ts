@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { subscribeSse } from "../../services/sse.js";
 
 export function useEngineStream(
@@ -6,10 +6,16 @@ export function useEngineStream(
   onMessage: (event: MessageEvent<string>) => void,
   options: { enabled?: boolean; withCredentials?: boolean } = {}
 ) {
+  const onMessageRef = useRef(onMessage);
+
+  useEffect(() => {
+    onMessageRef.current = onMessage;
+  }, [onMessage]);
+
   useEffect(() => {
     if (!options.enabled || !url) return;
-    return subscribeSse(url, onMessage, {
+    return subscribeSse(url, (event) => onMessageRef.current(event), {
       withCredentials: options.withCredentials,
     });
-  }, [onMessage, options.enabled, options.withCredentials, url]);
+  }, [options.enabled, options.withCredentials, url]);
 }
