@@ -38,6 +38,11 @@ tandem-engine serve --api-token $(tandem-engine token generate)
     href="../engine-authentication-for-agents/"
     description="Get an engine token and authenticate SDK or HTTP calls safely."
   />
+  <LinkCard
+    title="Choosing Providers And Models For Agents"
+    href="../choosing-providers-and-models-for-agents/"
+    description="Choose stable defaults and per-agent overrides without baking model choice into prompts."
+  />
 </CardGrid>
 
 ## Common event types

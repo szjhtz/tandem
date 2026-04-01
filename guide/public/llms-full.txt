@@ -36,6 +36,7 @@
 
 - /mcp-automated-agents/ - Automated agent workflows and MCP integration.
 - /agent-workflow-mission-quickstart/ - Compact checklist for agents creating and operating Tandem workflows or missions.
+- /choosing-providers-and-models-for-agents/ - Provider and model selection guide for agents and staged workflows.
 - /prompting-workflows-and-missions/ - Prompting guide for workflows, missions, and staged recurring operations.
 - /creating-and-running-workflows-and-missions/ - Operational guide for choosing and running workflows, missions, and automations.
 - /engine-authentication-for-agents/ - Engine token and authenticated SDK/HTTP usage guide.
@@ -74,6 +75,7 @@
 - If it needs to reason about agents, use `/agents-and-sessions/` and `/agent-teams/`.
 - If it needs integration guidance, use `/mcp-automated-agents/`, `/webmcp-for-agents/`, and the SDK pages.
 - If it needs the shortest actionable checklist, use `/agent-workflow-mission-quickstart/`.
+- If it needs provider or model policy guidance, use `/choosing-providers-and-models-for-agents/`.
 - If it needs to generate a mission or workflow from human intent, use `/prompting-workflows-and-missions/`.
 - If it needs to choose the correct runtime path, use `/creating-and-running-workflows-and-missions/`.
 - If it needs engine auth or token handling, use `/engine-authentication-for-agents/`.

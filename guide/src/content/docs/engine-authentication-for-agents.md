@@ -223,6 +223,7 @@ For agents that need to create and run workflows or missions:
 ## See also
 
 - [Agent Workflow And Mission Quickstart](./agent-workflow-mission-quickstart/)
+- [Choosing Providers And Models For Agents](./choosing-providers-and-models-for-agents/)
 - [Creating And Running Workflows And Missions](./creating-and-running-workflows-and-missions/)
 - [Prompting Workflows And Missions](./prompting-workflows-and-missions/)
 - [Headless Service](./headless-service/)

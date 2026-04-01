@@ -118,6 +118,7 @@ If an agent is asked to “set this up for me,” the default safe sequence is:
 ## Best starting docs
 
 - [Engine Authentication For Agents](./engine-authentication-for-agents/)
+- [Choosing Providers And Models For Agents](./choosing-providers-and-models-for-agents/)
 - [Creating And Running Workflows And Missions](./creating-and-running-workflows-and-missions/)
 - [Prompting Workflows And Missions](./prompting-workflows-and-missions/)
 - [Scheduling Workflows And Automations](./sdk/scheduling-automations/)

@@ -10,6 +10,8 @@ For the operational path after prompting, use [Creating And Running Workflows An
 
 If you want the shortest end-to-end checklist for an agent, start with [Agent Workflow And Mission Quickstart](./agent-workflow-mission-quickstart/).
 
+For provider and model routing choices, use [Choosing Providers And Models For Agents](./choosing-providers-and-models-for-agents/).
+
 ## What You Get
 
 - MCP connector lifecycle: add, enable/disable, connect, refresh

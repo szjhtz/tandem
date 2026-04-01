@@ -41,6 +41,7 @@ _You want to build custom clients, connect external tools via MCP, or programmat
 - **[Building Automated Agents](./mcp-automated-agents/)** — Trigger agent pipelines automatically.
 - **[Prompting Workflows And Missions](./prompting-workflows-and-missions/)** — Turn human intent into strong staged workflows and missions.
 - **[Agent Workflow And Mission Quickstart](./agent-workflow-mission-quickstart/)** — Minimal checklist for agents creating and running Tandem systems.
+- **[Choosing Providers And Models For Agents](./choosing-providers-and-models-for-agents/)** — Pick stable defaults and targeted overrides without burying model choices in prompts.
 - **[Creating And Running Workflows And Missions](./creating-and-running-workflows-and-missions/)** — Choose the right Tandem path and operate it correctly.
 - **[Engine Authentication For Agents](./engine-authentication-for-agents/)** — Get the token, authorize calls, and connect agents safely.
 - **[Autonomous Coding Agents with GitHub Projects](./autonomous-coding-agents-github-projects/)** — Build coding agents on Tandem's engine-native GitHub MCP path.

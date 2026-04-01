@@ -282,12 +282,14 @@ The most useful combination is:
 That gives you:
 
 - the token and auth path
+- the provider and model selection path
 - the authoring rules
 - the runtime scheduling path
 
 ## See also
 
 - [Agent Workflow And Mission Quickstart](./agent-workflow-mission-quickstart/)
+- [Choosing Providers And Models For Agents](./choosing-providers-and-models-for-agents/)
 - [Prompting Workflows And Missions](./prompting-workflows-and-missions/)
 - [Control Panel (Web Admin)](./control-panel/)
 - [MCP Automated Agents](./mcp-automated-agents/)
