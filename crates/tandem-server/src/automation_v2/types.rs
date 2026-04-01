@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use tandem_orchestrator::KnowledgeBinding;
 use tandem_plan_compiler::api::{
     ContextObject, PlanScopeSnapshot, PlanValidationReport,
     ProjectedAutomationContextMaterialization, ProjectedRoutineContextPartition,
@@ -140,6 +141,8 @@ pub struct AutomationFlowNode {
     pub agent_id: String,
     pub objective: String,
     #[serde(default)]
+    pub knowledge: KnowledgeBinding,
+    #[serde(default)]
     pub depends_on: Vec<String>,
     #[serde(default)]
     pub input_refs: Vec<AutomationFlowInputRef>,
@@ -163,10 +166,40 @@ where
     O: Into<AutomationFlowOutputContract>,
 {
     fn from(value: tandem_plan_compiler::api::ProjectedAutomationNode<I, O>) -> Self {
+        fn knowledge_from_metadata(metadata: Option<&Value>, objective: &str) -> KnowledgeBinding {
+            let mut binding = KnowledgeBinding::default();
+            if let Some(parsed) = metadata
+                .and_then(|metadata| metadata.get("builder"))
+                .and_then(Value::as_object)
+                .and_then(|builder| builder.get("knowledge"))
+                .cloned()
+                .and_then(|value| serde_json::from_value::<KnowledgeBinding>(value).ok())
+            {
+                binding = parsed;
+            }
+            if binding
+                .subject
+                .as_deref()
+                .map(str::trim)
+                .unwrap_or("")
+                .is_empty()
+            {
+                let subject = objective.trim();
+                if !subject.is_empty() {
+                    binding.subject = Some(subject.to_string());
+                }
+            }
+            binding
+        }
+
+        let objective = value.objective;
+        let knowledge = knowledge_from_metadata(value.metadata.as_ref(), &objective);
+
         Self {
             node_id: value.node_id,
             agent_id: value.agent_id,
-            objective: value.objective,
+            objective,
+            knowledge,
             depends_on: value.depends_on,
             input_refs: value.input_refs.into_iter().map(Into::into).collect(),
             output_contract: value.output_contract.map(Into::into),
@@ -405,6 +438,8 @@ pub struct AutomationV2Spec {
     pub status: AutomationV2Status,
     pub schedule: AutomationV2Schedule,
     #[serde(default)]
+    pub knowledge: KnowledgeBinding,
+    #[serde(default)]
     pub agents: Vec<AutomationAgentProfile>,
     pub flow: AutomationFlowSpec,
     pub execution: AutomationExecutionPolicy,
@@ -450,6 +485,8 @@ pub struct AutomationNodeOutput {
     pub tool_telemetry: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub preflight: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub knowledge_preflight: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub capability_resolution: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -664,4 +701,50 @@ pub struct AutomationV2RunRecord {
     pub estimated_cost_usd: f64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scheduler: Option<crate::app::state::automation::scheduler::SchedulerMetadata>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use tandem_orchestrator::{KnowledgeReuseMode, KnowledgeTrustLevel};
+    use tandem_plan_compiler::api::{
+        OutputContractSeed, ProjectedAutomationNode, ProjectedMissionInputRef,
+    };
+
+    #[test]
+    fn projected_node_metadata_lifts_knowledge_binding() {
+        let projected = ProjectedAutomationNode::<ProjectedMissionInputRef, OutputContractSeed> {
+            node_id: "node-a".to_string(),
+            agent_id: "agent-a".to_string(),
+            objective: "Map the topic".to_string(),
+            depends_on: vec![],
+            input_refs: vec![],
+            output_contract: None,
+            retry_policy: None,
+            timeout_ms: None,
+            stage_kind: None,
+            gate: None,
+            metadata: Some(json!({
+                "builder": {
+                    "knowledge": {
+                        "enabled": true,
+                        "reuse_mode": "preflight",
+                        "trust_floor": "promoted",
+                        "read_spaces": [{"scope": "project"}],
+                        "promote_spaces": [{"scope": "project"}],
+                        "subject": "Topic map"
+                    }
+                }
+            })),
+        };
+
+        let node = AutomationFlowNode::from(projected);
+        assert!(node.knowledge.enabled);
+        assert_eq!(node.knowledge.reuse_mode, KnowledgeReuseMode::Preflight);
+        assert_eq!(node.knowledge.trust_floor, KnowledgeTrustLevel::Promoted);
+        assert_eq!(node.knowledge.subject.as_deref(), Some("Topic map"));
+        assert_eq!(node.knowledge.read_spaces.len(), 1);
+        assert_eq!(node.knowledge.promote_spaces.len(), 1);
+    }
 }

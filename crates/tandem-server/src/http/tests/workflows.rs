@@ -13,14 +13,14 @@ struct RecordingTool {
 #[async_trait]
 impl tandem_tools::Tool for RecordingTool {
     fn schema(&self) -> tandem_types::ToolSchema {
-        tandem_types::ToolSchema {
-            name: self.name.clone(),
-            description: format!("Recording tool for {}", self.name),
-            input_schema: json!({
+        tandem_types::ToolSchema::new(
+            self.name.clone(),
+            format!("Recording tool for {}", self.name),
+            json!({
                 "type": "object",
                 "additionalProperties": true,
             }),
-        }
+        )
     }
 
     async fn execute(&self, args: Value) -> anyhow::Result<tandem_types::ToolResult> {

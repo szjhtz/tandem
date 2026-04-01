@@ -21,6 +21,11 @@ fn extract_event_session_id(properties: &Value) -> Option<String> {
         .or_else(|| properties.get("id"))
         .or_else(|| {
             properties
+                .get("record")
+                .and_then(|record| record.get("session_id"))
+        })
+        .or_else(|| {
+            properties
                 .get("part")
                 .and_then(|part| part.get("sessionID"))
         })
@@ -108,7 +113,165 @@ fn session_context_run_event_input(event: &EngineEvent) -> Option<ContextRunEven
                 }),
             })
         }
+        "tool.effect.recorded" => {
+            let record = event.properties.get("record")?;
+            let tool = record
+                .get("tool")
+                .and_then(|value| value.as_str())
+                .unwrap_or("tool");
+            let status = record
+                .get("status")
+                .and_then(|value| value.as_str())
+                .unwrap_or("started");
+            let phase = record
+                .get("phase")
+                .and_then(|value| value.as_str())
+                .unwrap_or("invocation");
+            let summary = match status {
+                "succeeded" => format!("tool `{tool}` {phase} succeeded"),
+                "failed" => format!("tool `{tool}` {phase} failed"),
+                "blocked" => format!("tool `{tool}` {phase} blocked"),
+                _ => format!("tool `{tool}` {phase} started"),
+            };
+            Some(ContextRunEventAppendInput {
+                event_type: "tool_effect_recorded".to_string(),
+                status: ContextRunStatus::Running,
+                step_id: Some("session-run".to_string()),
+                payload: serde_json::json!({
+                    "sessionID": event.properties.get("sessionID").cloned().unwrap_or(Value::Null),
+                    "messageID": event.properties.get("messageID").cloned().unwrap_or(Value::Null),
+                    "tool": event.properties.get("tool").cloned().unwrap_or(Value::Null),
+                    "record": record.clone(),
+                    "why_next_step": summary,
+                    "step_status": if matches!(status, "failed" | "blocked") {
+                        "blocked"
+                    } else {
+                        "in_progress"
+                    },
+                }),
+            })
+        }
+        "mutation.checkpoint.recorded" => {
+            let record = event.properties.get("record")?;
+            let tool = record
+                .get("tool")
+                .and_then(|value| value.as_str())
+                .unwrap_or("tool");
+            let outcome = record
+                .get("outcome")
+                .and_then(|value| value.as_str())
+                .unwrap_or("succeeded");
+            let changed_file_count = record
+                .get("changed_file_count")
+                .and_then(|value| value.as_u64())
+                .unwrap_or(0);
+            Some(ContextRunEventAppendInput {
+                event_type: "mutation_checkpoint_recorded".to_string(),
+                status: ContextRunStatus::Running,
+                step_id: Some("session-run".to_string()),
+                payload: serde_json::json!({
+                    "sessionID": event.properties.get("sessionID").cloned().unwrap_or(Value::Null),
+                    "messageID": event.properties.get("messageID").cloned().unwrap_or(Value::Null),
+                    "tool": event.properties.get("tool").cloned().unwrap_or(Value::Null),
+                    "record": record.clone(),
+                    "why_next_step": format!(
+                        "mutation checkpoint for `{tool}` recorded with outcome `{outcome}` and {changed_file_count} changed files"
+                    ),
+                    "step_status": if matches!(outcome, "failed" | "blocked") {
+                        "blocked"
+                    } else {
+                        "in_progress"
+                    },
+                }),
+            })
+        }
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn session_context_run_event_input_maps_tool_effect_events() {
+        let input = session_context_run_event_input(&EngineEvent::new(
+            "tool.effect.recorded",
+            serde_json::json!({
+                "sessionID": "session-1",
+                "messageID": "message-1",
+                "tool": "write",
+                "record": {
+                    "session_id": "session-1",
+                    "message_id": "message-1",
+                    "tool": "write",
+                    "phase": "outcome",
+                    "status": "succeeded",
+                    "args_summary": {"path": "src/lib.rs"}
+                }
+            }),
+        ))
+        .expect("tool effect append input");
+
+        assert_eq!(input.event_type, "tool_effect_recorded");
+        assert_eq!(input.status, ContextRunStatus::Running);
+        assert_eq!(
+            input.payload.get("tool").and_then(Value::as_str),
+            Some("write")
+        );
+        assert_eq!(
+            input
+                .payload
+                .get("record")
+                .and_then(|value| value.get("status"))
+                .and_then(Value::as_str),
+            Some("succeeded")
+        );
+    }
+
+    #[test]
+    fn session_context_run_event_input_maps_mutation_checkpoint_events() {
+        let input = session_context_run_event_input(&EngineEvent::new(
+            "mutation.checkpoint.recorded",
+            serde_json::json!({
+                "sessionID": "session-1",
+                "messageID": "message-1",
+                "tool": "write",
+                "record": {
+                    "session_id": "session-1",
+                    "message_id": "message-1",
+                    "tool": "write",
+                    "outcome": "succeeded",
+                    "file_count": 1,
+                    "changed_file_count": 1,
+                    "files": [{
+                        "path": "src/lib.rs",
+                        "resolved_path": "/workspace/src/lib.rs",
+                        "existed_before": false,
+                        "existed_after": true,
+                        "changed": true,
+                        "rollback_snapshot": {
+                            "status": "not_needed"
+                        }
+                    }]
+                }
+            }),
+        ))
+        .expect("mutation checkpoint append input");
+
+        assert_eq!(input.event_type, "mutation_checkpoint_recorded");
+        assert_eq!(
+            input.payload.get("tool").and_then(Value::as_str),
+            Some("write")
+        );
+        assert_eq!(
+            input
+                .payload
+                .get("record")
+                .and_then(|value| value.get("changed_file_count"))
+                .and_then(Value::as_u64),
+            Some(1)
+        );
     }
 }
 

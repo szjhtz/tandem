@@ -40,6 +40,11 @@ use crate::{
     tool_name_matches_policy, AgentDefinition, AgentRegistry, CancellationRegistry, EventBus,
     PermissionAction, PermissionManager, PluginRegistry, Storage,
 };
+use crate::{
+    build_tool_effect_ledger_record, finalize_mutation_checkpoint_record,
+    mutation_checkpoint_event, prepare_mutation_checkpoint, tool_effect_ledger_event,
+    MutationCheckpointOutcome, ToolEffectLedgerPhase, ToolEffectLedgerStatus,
+};
 use tokio::sync::RwLock;
 
 #[derive(Default)]
@@ -2211,6 +2216,27 @@ impl EngineLoop {
     ) -> anyhow::Result<Option<String>> {
         let tool = normalize_tool_name(&tool);
         let raw_args = args.clone();
+        let publish_tool_effect = |tool_call_id: Option<&str>,
+                                   phase: ToolEffectLedgerPhase,
+                                   status: ToolEffectLedgerStatus,
+                                   args: &Value,
+                                   metadata: Option<&Value>,
+                                   output: Option<&str>,
+                                   error: Option<&str>| {
+            self.event_bus
+                .publish(tool_effect_ledger_event(build_tool_effect_ledger_record(
+                    session_id,
+                    message_id,
+                    tool_call_id,
+                    &tool,
+                    phase,
+                    status,
+                    args,
+                    metadata,
+                    output,
+                    error,
+                )));
+        };
         let normalized = normalize_tool_args_with_mode(
             &tool,
             args,
@@ -2314,12 +2340,32 @@ impl EngineLoop {
                 "message.part.updated",
                 json!({"part": failed_part}),
             ));
+            publish_tool_effect(
+                None,
+                ToolEffectLedgerPhase::Outcome,
+                ToolEffectLedgerStatus::Blocked,
+                &normalized.args,
+                None,
+                None,
+                Some(&surfaced_reason),
+            );
             return Ok(Some(surfaced_reason));
         }
 
         let args = match enforce_skill_scope(&tool, normalized.args, equipped_skills) {
             Ok(args) => args,
-            Err(message) => return Ok(Some(message)),
+            Err(message) => {
+                publish_tool_effect(
+                    None,
+                    ToolEffectLedgerPhase::Outcome,
+                    ToolEffectLedgerStatus::Blocked,
+                    &raw_args,
+                    None,
+                    None,
+                    Some(&message),
+                );
+                return Ok(Some(message));
+            }
         };
         if let Some(allowed_tools) = self
             .session_allowed_tools
@@ -2329,7 +2375,17 @@ impl EngineLoop {
             .cloned()
         {
             if !allowed_tools.is_empty() && !any_policy_matches(&allowed_tools, &tool) {
-                return Ok(Some(format!("Tool `{tool}` is not allowed for this run.")));
+                let reason = format!("Tool `{tool}` is not allowed for this run.");
+                publish_tool_effect(
+                    None,
+                    ToolEffectLedgerPhase::Outcome,
+                    ToolEffectLedgerStatus::Blocked,
+                    &args,
+                    None,
+                    None,
+                    Some(&reason),
+                );
+                return Ok(Some(reason));
             }
         }
         if let Some(hook) = self.tool_policy_hook.read().await.clone() {
@@ -2358,6 +2414,15 @@ impl EngineLoop {
                     "message.part.updated",
                     json!({"part": blocked_part}),
                 ));
+                publish_tool_effect(
+                    None,
+                    ToolEffectLedgerPhase::Outcome,
+                    ToolEffectLedgerStatus::Blocked,
+                    &args,
+                    None,
+                    None,
+                    Some(&reason),
+                );
                 return Ok(Some(reason));
             }
         }
@@ -2379,6 +2444,15 @@ impl EngineLoop {
                 "message.part.updated",
                 json!({"part": blocked_part}),
             ));
+            publish_tool_effect(
+                tool_call_id.as_deref(),
+                ToolEffectLedgerPhase::Outcome,
+                ToolEffectLedgerStatus::Blocked,
+                &args,
+                None,
+                None,
+                Some(&violation),
+            );
             return Ok(Some(violation));
         }
         let rule = self
@@ -2387,9 +2461,17 @@ impl EngineLoop {
             .await
             .unwrap_or(self.permissions.evaluate(&tool, &tool).await);
         if matches!(rule, PermissionAction::Deny) {
-            return Ok(Some(format!(
-                "Permission denied for tool `{tool}` by policy."
-            )));
+            let reason = format!("Permission denied for tool `{tool}` by policy.");
+            publish_tool_effect(
+                tool_call_id.as_deref(),
+                ToolEffectLedgerPhase::Outcome,
+                ToolEffectLedgerStatus::Blocked,
+                &args,
+                None,
+                None,
+                Some(&reason),
+            );
+            return Ok(Some(reason));
         }
 
         let mut effective_args = args.clone();
@@ -2479,6 +2561,18 @@ impl EngineLoop {
                         "message.part.updated",
                         json!({"part": timeout_part}),
                     ));
+                    let timeout_reason = format!(
+                        "Permission request for tool `{tool}` timed out after {timeout_ms} ms."
+                    );
+                    publish_tool_effect(
+                        tool_call_id.as_deref(),
+                        ToolEffectLedgerPhase::Outcome,
+                        ToolEffectLedgerStatus::Blocked,
+                        &args,
+                        None,
+                        None,
+                        Some(&timeout_reason),
+                    );
                     return Ok(Some(format!(
                         "Permission request for tool `{tool}` timed out after {timeout_ms} ms."
                     )));
@@ -2499,6 +2593,16 @@ impl EngineLoop {
                         "message.part.updated",
                         json!({"part": denied_part}),
                     ));
+                    let denied_reason = format!("Permission denied for tool `{tool}` by user.");
+                    publish_tool_effect(
+                        tool_call_id.as_deref(),
+                        ToolEffectLedgerPhase::Outcome,
+                        ToolEffectLedgerStatus::Blocked,
+                        &args,
+                        None,
+                        None,
+                        Some(&denied_reason),
+                    );
                     return Ok(Some(format!(
                         "Permission denied for tool `{tool}` by user."
                     )));
@@ -2567,6 +2671,30 @@ impl EngineLoop {
             json!({"part": invoke_part}),
         ));
         let args_for_side_events = args.clone();
+        let mutation_checkpoint = prepare_mutation_checkpoint(&tool, &args_for_side_events);
+        publish_tool_effect(
+            invoke_part_id.as_deref(),
+            ToolEffectLedgerPhase::Invocation,
+            ToolEffectLedgerStatus::Started,
+            &args_for_side_events,
+            None,
+            None,
+            None,
+        );
+        let publish_mutation_checkpoint =
+            |tool_call_id: Option<&str>, outcome: MutationCheckpointOutcome| {
+                if let Some(baseline) = mutation_checkpoint.as_ref() {
+                    self.event_bus.publish(mutation_checkpoint_event(
+                        finalize_mutation_checkpoint_record(
+                            session_id,
+                            message_id,
+                            tool_call_id,
+                            baseline,
+                            outcome,
+                        ),
+                    ));
+                }
+            };
         if tool == "spawn_agent" {
             let hook = self.spawn_agent_hook.read().await.clone();
             if let Some(hook) = hook {
@@ -2601,11 +2729,24 @@ impl EngineLoop {
                     Some(args_for_side_events.clone()),
                     json!(output.clone()),
                 );
-                result_part.id = invoke_part_id;
+                result_part.id = invoke_part_id.clone();
                 self.event_bus.publish(EngineEvent::new(
                     "message.part.updated",
                     json!({"part": result_part}),
                 ));
+                publish_tool_effect(
+                    invoke_part_id.as_deref(),
+                    ToolEffectLedgerPhase::Outcome,
+                    ToolEffectLedgerStatus::Succeeded,
+                    &args_for_side_events,
+                    Some(&spawned.metadata),
+                    Some(&output),
+                    None,
+                );
+                publish_mutation_checkpoint(
+                    invoke_part_id.as_deref(),
+                    MutationCheckpointOutcome::Succeeded,
+                );
                 return Ok(Some(truncate_text(
                     &format!("Tool `{tool}` result:\n{output}"),
                     16_000,
@@ -2626,6 +2767,19 @@ impl EngineLoop {
                 "message.part.updated",
                 json!({"part": failed_part}),
             ));
+            publish_tool_effect(
+                invoke_part_id.as_deref(),
+                ToolEffectLedgerPhase::Outcome,
+                ToolEffectLedgerStatus::Failed,
+                &args_for_side_events,
+                None,
+                None,
+                Some(output),
+            );
+            publish_mutation_checkpoint(
+                invoke_part_id.as_deref(),
+                MutationCheckpointOutcome::Failed,
+            );
             return Ok(Some(output.to_string()));
         }
         let result = match self
@@ -2654,6 +2808,19 @@ impl EngineLoop {
                         "message.part.updated",
                         json!({"part": failed_part}),
                     ));
+                    publish_tool_effect(
+                        invoke_part_id.as_deref(),
+                        ToolEffectLedgerPhase::Outcome,
+                        ToolEffectLedgerStatus::Failed,
+                        &args_for_side_events,
+                        None,
+                        None,
+                        Some(&timeout_output),
+                    );
+                    publish_mutation_checkpoint(
+                        invoke_part_id.as_deref(),
+                        MutationCheckpointOutcome::Failed,
+                    );
                     return Ok(Some(timeout_output));
                 }
                 if let Some(auth) = extract_mcp_auth_required_from_error_text(&tool, &err_text) {
@@ -2685,6 +2852,19 @@ impl EngineLoop {
                         "message.part.updated",
                         json!({"part": result_part}),
                     ));
+                    publish_tool_effect(
+                        invoke_part_id.as_deref(),
+                        ToolEffectLedgerPhase::Outcome,
+                        ToolEffectLedgerStatus::Blocked,
+                        &args_for_side_events,
+                        None,
+                        Some(&auth_output),
+                        Some(&auth.message),
+                    );
+                    publish_mutation_checkpoint(
+                        invoke_part_id.as_deref(),
+                        MutationCheckpointOutcome::Blocked,
+                    );
                     return Ok(Some(truncate_text(
                         &format!("Tool `{tool}` result:\n{auth_output}"),
                         16_000,
@@ -2704,6 +2884,19 @@ impl EngineLoop {
                     "message.part.updated",
                     json!({"part": failed_part}),
                 ));
+                publish_tool_effect(
+                    invoke_part_id.as_deref(),
+                    ToolEffectLedgerPhase::Outcome,
+                    ToolEffectLedgerStatus::Failed,
+                    &args_for_side_events,
+                    None,
+                    None,
+                    Some(&err_text),
+                );
+                publish_mutation_checkpoint(
+                    invoke_part_id.as_deref(),
+                    MutationCheckpointOutcome::Failed,
+                );
                 return Err(err);
             }
         };
@@ -2767,11 +2960,24 @@ impl EngineLoop {
             Some(args_for_side_events.clone()),
             json!(output.clone()),
         );
-        result_part.id = invoke_part_id;
+        result_part.id = invoke_part_id.clone();
         self.event_bus.publish(EngineEvent::new(
             "message.part.updated",
             json!({"part": result_part}),
         ));
+        publish_tool_effect(
+            invoke_part_id.as_deref(),
+            ToolEffectLedgerPhase::Outcome,
+            ToolEffectLedgerStatus::Succeeded,
+            &args_for_side_events,
+            Some(&result.metadata),
+            Some(&output),
+            None,
+        );
+        publish_mutation_checkpoint(
+            invoke_part_id.as_deref(),
+            MutationCheckpointOutcome::Succeeded,
+        );
         Ok(Some(truncate_text(
             &format!("Tool `{tool}` result:\n{output}"),
             16_000,
@@ -8428,16 +8634,8 @@ Call: todowrite(task_id=3, status="in_progress")
     #[test]
     fn email_tool_detector_finds_mcp_gmail_tools() {
         let schemas = vec![
-            ToolSchema {
-                name: "read".to_string(),
-                description: String::new(),
-                input_schema: json!({}),
-            },
-            ToolSchema {
-                name: "mcp.composio.gmail_send_email".to_string(),
-                description: String::new(),
-                input_schema: json!({}),
-            },
+            ToolSchema::new("read", "", json!({})),
+            ToolSchema::new("mcp.composio.gmail_send_email", "", json!({})),
         ];
         assert!(has_email_action_tools(&schemas));
     }

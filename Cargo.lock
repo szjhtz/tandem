@@ -7498,6 +7498,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "sqlite-vec",
+ "tandem-orchestrator",
  "tandem-providers",
  "tempfile",
  "thiserror 1.0.69",
@@ -7730,6 +7731,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml",
+ "tandem-orchestrator",
  "tempfile",
 ]
 

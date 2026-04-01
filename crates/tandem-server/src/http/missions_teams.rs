@@ -8,8 +8,8 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tandem_orchestrator::{
-    AgentInstanceStatus, DefaultMissionReducer, MissionEvent, MissionReducer, MissionSpec,
-    NoopMissionReducer, SpawnRequest, SpawnSource, WorkItem, WorkItemStatus,
+    AgentInstanceStatus, DefaultMissionReducer, KnowledgeBinding, MissionEvent, MissionReducer,
+    MissionSpec, NoopMissionReducer, SpawnRequest, SpawnSource, WorkItem, WorkItemStatus,
 };
 use tandem_types::EngineEvent;
 use uuid::Uuid;
@@ -762,6 +762,7 @@ pub(super) async fn agent_standup_compose(
                     .as_deref()
                     .unwrap_or(template.template_id.as_str()),
             ),
+            knowledge: KnowledgeBinding::default(),
             depends_on: Vec::new(),
             input_refs: Vec::new(),
             output_contract: Some(crate::AutomationFlowOutputContract {
@@ -806,6 +807,7 @@ pub(super) async fn agent_standup_compose(
         node_id: "standup_synthesis".to_string(),
         agent_id: coordinator_agent_id,
         objective: standup_synthesis_objective(&report_path_template),
+        knowledge: KnowledgeBinding::default(),
         depends_on: participant_node_ids.clone(),
         input_refs: participant_node_ids
             .iter()
@@ -834,6 +836,7 @@ pub(super) async fn agent_standup_compose(
         description: Some("Agent standup automation".to_string()),
         status: crate::AutomationV2Status::Draft,
         schedule: input.schedule,
+        knowledge: KnowledgeBinding::default(),
         agents,
         flow: crate::AutomationFlowSpec { nodes },
         execution: crate::AutomationExecutionPolicy {

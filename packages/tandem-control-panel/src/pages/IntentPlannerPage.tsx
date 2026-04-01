@@ -34,6 +34,8 @@ import {
 } from "../features/planner/plannerDraftStorage";
 import {
   buildPlannerProviderOptions,
+  buildDefaultKnowledgeOperatorPreferences,
+  buildKnowledgeRolloutGuidance,
   normalizePlannerConversationMessages,
   type PlannerProviderOption,
 } from "../features/planner/plannerShared";
@@ -158,6 +160,7 @@ function plannerPromptFromBrief(brief: IntentBriefDraft) {
       ? `Expected outputs:\n${safeString(brief.outputExpectations)}`
       : "",
     safeString(brief.constraints) ? `Constraints:\n${safeString(brief.constraints)}` : "",
+    "Default knowledge behavior: project-scoped preflight reuse with promoted trust floor.",
     "Use clarifying questions instead of guessing when important details are missing.",
     "Prefer multi-agent decomposition, milestones, and timeline-aware work waves when appropriate.",
     "Return a workflow plan that can later be handed off to Automations, Coding, or Orchestrator.",
@@ -488,6 +491,8 @@ export function IntentPlannerPage({
           constraints: safeString(brief.constraints),
           planner_provider: safeString(brief.plannerProvider),
           planner_model: safeString(brief.plannerModel),
+          ...buildDefaultKnowledgeOperatorPreferences(intent),
+          ...buildKnowledgeRolloutGuidance(intent),
         },
       });
       const responseAny = response as any;

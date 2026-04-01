@@ -19,20 +19,24 @@ flowchart LR
     E --> S[Session + Run APIs]
     E --> M[Mission Runtime]
     E --> AT[Agent Team Runtime]
-    E --> R[Routine Scheduler]
-    E --> P[Provider Gateway]
-    E --> TOOLS[Tool Router]
-    E --> MEM[Memory Runtime]
-    E --> BB[(Blackboard)]
-    E --> WT[Git Worktrees]
+  E --> R[Routine Scheduler]
+  E --> P[Provider Gateway]
+  E --> TOOLS[Tool Router]
+  E --> MEM[Memory Runtime]
+  E --> K[Knowledge Registry + Preflight]
+  E --> BB[(Blackboard)]
+  E --> WT[Git Worktrees]
   end
 
   TOOLS --> FS[Workspace / Shell / Web / MCP Tools]
   AT --> S[Spawn Policy + Template Registry]
   MEM --> DB[(memory.sqlite)]
+  K --> DB
   BB <--> AT
   P --> LLM[(LLM Providers)]
 ```
+
+Tandem keeps **run-scoped working state** in the blackboard and run artifacts, then promotes validated outcomes into **project-scoped reusable knowledge**. The knowledge registry and preflight layer decide when prior work should be reused, when it should be refreshed, and when raw intermediate output should stay local instead of becoming shared truth.
 
 ## Request Lifecycle
 

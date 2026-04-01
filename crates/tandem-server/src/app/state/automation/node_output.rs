@@ -1650,6 +1650,7 @@ pub(crate) fn wrap_automation_node_output(
         failure_kind,
         tool_telemetry: Some(tool_telemetry),
         preflight,
+        knowledge_preflight: None,
         capability_resolution,
         attempt_evidence: final_attempt_evidence,
         blocker_category,

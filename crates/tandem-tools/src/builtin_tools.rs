@@ -401,10 +401,10 @@ async fn run_bash_command(
 #[async_trait]
 impl Tool for BashTool {
     fn schema(&self) -> ToolSchema {
-        ToolSchema {
-            name: "bash".to_string(),
-            description: "Run shell command".to_string(),
-            input_schema: json!({
+        tool_schema_with_capabilities(
+            "bash",
+            "Run shell command",
+            json!({
                 "type":"object",
                 "properties":{
                     "command":{"type":"string"},
@@ -412,7 +412,8 @@ impl Tool for BashTool {
                 },
                 "required":["command"]
             }),
-        }
+            shell_execution_capabilities(),
+        )
     }
 
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
@@ -461,10 +462,10 @@ fn document_limits_from_args(args: &Value) -> tandem_document::ExtractLimits {
 #[async_trait]
 impl Tool for ReadTool {
     fn schema(&self) -> ToolSchema {
-        ToolSchema {
-            name: "read".to_string(),
-            description: "Read file contents, including plain text and common documents (PDF, DOCX, PPTX, spreadsheets, RTF).".to_string(),
-            input_schema: json!({
+        tool_schema_with_capabilities(
+            "read",
+            "Read file contents, including plain text and common documents (PDF, DOCX, PPTX, spreadsheets, RTF).",
+            json!({
                 "type": "object",
                 "properties": {
                     "path": {
@@ -482,7 +483,8 @@ impl Tool for ReadTool {
                 },
                 "required": ["path"]
             }),
-        }
+            workspace_read_capabilities(),
+        )
     }
 
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {

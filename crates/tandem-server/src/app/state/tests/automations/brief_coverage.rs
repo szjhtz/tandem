@@ -19,6 +19,7 @@ fn brief_with_unreviewed_discovered_files_is_blocked_with_structured_metadata() 
         workspace_root.to_str().expect("workspace root string"),
     );
     let node = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
         node_id: "research".to_string(),
         agent_id: "agent-a".to_string(),
         objective: "Research".to_string(),
@@ -130,6 +131,7 @@ fn research_brief_without_source_coverage_flag_gets_semantic_block_reason_and_ne
             .to_string();
     std::fs::write(workspace_root.join("marketing-brief.md"), &brief_text).expect("seed brief");
     let node = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
         node_id: "research-brief".to_string(),
         agent_id: "researcher".to_string(),
         objective: "Write marketing brief".to_string(),

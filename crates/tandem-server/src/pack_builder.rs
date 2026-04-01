@@ -322,6 +322,7 @@ fn build_pack_builder_automation(
             &plan.routine_template.schedule,
             &plan.routine_template.timezone,
         ),
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
         agents: vec![crate::AutomationAgentProfile {
             agent_id: "pack_builder_agent".to_string(),
             template_id: None,
@@ -347,6 +348,7 @@ fn build_pack_builder_automation(
                     "Execute the installed pack `{}` for this goal: {}",
                     plan.pack_name, plan.goal
                 ),
+                knowledge: Default::default(),
                 depends_on: Vec::new(),
                 input_refs: Vec::new(),
                 output_contract: Some(crate::AutomationFlowOutputContract {
@@ -448,10 +450,10 @@ impl Tool for McpBridgeTool {
 #[async_trait]
 impl Tool for PackBuilderTool {
     fn schema(&self) -> ToolSchema {
-        ToolSchema {
-            name: "pack_builder".to_string(),
-            description: "MCP-first Tandem pack builder with preview/apply phases".to_string(),
-            input_schema: json!({
+        ToolSchema::new(
+            "pack_builder",
+            "MCP-first Tandem pack builder with preview/apply phases",
+            json!({
                 "type": "object",
                 "properties": {
                     "mode": {"type": "string", "enum": ["preview", "apply", "cancel", "pending"]},
@@ -481,7 +483,7 @@ impl Tool for PackBuilderTool {
                 },
                 "required": ["mode"]
             }),
-        }
+        )
     }
 
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
@@ -2367,15 +2369,15 @@ async fn sync_mcp_tools_for_server(state: &AppState, name: &str) -> usize {
     state.tools.unregister_by_prefix(&prefix).await;
     let tools = state.mcp.server_tools(name).await;
     for tool in &tools {
-        let schema = ToolSchema {
-            name: tool.namespaced_name.clone(),
-            description: if tool.description.trim().is_empty() {
+        let schema = ToolSchema::new(
+            tool.namespaced_name.clone(),
+            if tool.description.trim().is_empty() {
                 format!("MCP tool {} from {}", tool.tool_name, tool.server_name)
             } else {
                 tool.description.clone()
             },
-            input_schema: tool.input_schema.clone(),
-        };
+            tool.input_schema.clone(),
+        );
         state
             .tools
             .register_tool(

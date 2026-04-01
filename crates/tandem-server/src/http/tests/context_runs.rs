@@ -75,6 +75,74 @@ async fn context_run_create_append_event_and_get() {
         .expect("event response");
     assert_eq!(event_resp.status(), StatusCode::OK);
 
+    let ledger_event_req = Request::builder()
+        .method("POST")
+        .uri("/context/runs/ctx-run-1/events")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "type": "tool_effect_recorded",
+                "status": "running",
+                "payload": {
+                    "record": {
+                        "session_id": "session-1",
+                        "message_id": "message-1",
+                        "tool": "read",
+                        "phase": "invocation",
+                        "status": "started",
+                        "args_summary": {"type":"object","field_count":1,"keys":["path"]},
+                    }
+                }
+            })
+            .to_string(),
+        ))
+        .expect("ledger event request");
+    let ledger_event_resp = app
+        .clone()
+        .oneshot(ledger_event_req)
+        .await
+        .expect("ledger event response");
+    assert_eq!(ledger_event_resp.status(), StatusCode::OK);
+
+    let mutation_event_req = Request::builder()
+        .method("POST")
+        .uri("/context/runs/ctx-run-1/events")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "type": "mutation_checkpoint_recorded",
+                "status": "running",
+                "payload": {
+                    "record": {
+                        "session_id": "session-1",
+                        "message_id": "message-2",
+                        "tool": "write",
+                        "outcome": "succeeded",
+                        "file_count": 1,
+                        "changed_file_count": 1,
+                        "files": [{
+                            "path": "src/lib.rs",
+                            "resolved_path": "/workspace/src/lib.rs",
+                            "existed_before": false,
+                            "existed_after": true,
+                            "changed": true,
+                            "rollback_snapshot": {
+                                "status": "not_needed"
+                            }
+                        }]
+                    }
+                }
+            })
+            .to_string(),
+        ))
+        .expect("mutation event request");
+    let mutation_event_resp = app
+        .clone()
+        .oneshot(mutation_event_req)
+        .await
+        .expect("mutation event response");
+    assert_eq!(mutation_event_resp.status(), StatusCode::OK);
+
     let list_events_req = Request::builder()
         .method("GET")
         .uri("/context/runs/ctx-run-1/events?since_seq=0")
@@ -96,7 +164,7 @@ async fn context_run_create_append_event_and_get() {
             .get("events")
             .and_then(|v| v.as_array())
             .map(|rows| rows.len()),
-        Some(1)
+        Some(3)
     );
 
     let get_run_req = Request::builder()
@@ -119,7 +187,7 @@ async fn context_run_create_append_event_and_get() {
             .get("run")
             .and_then(|run| run.get("status"))
             .and_then(Value::as_str),
-        Some("awaiting_approval")
+        Some("running")
     );
     assert_eq!(
         get_run_payload
@@ -134,6 +202,50 @@ async fn context_run_create_append_event_and_get() {
             .and_then(|run| run.get("model_id"))
             .and_then(Value::as_str),
         Some("google/gemini-3-flash-preview")
+    );
+    assert_eq!(
+        get_run_payload
+            .get("ledger_summary")
+            .and_then(|summary| summary.get("record_count"))
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        get_run_payload
+            .get("ledger_summary")
+            .and_then(|summary| summary.get("by_tool"))
+            .and_then(|tools| tools.get("read"))
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        get_run_payload
+            .get("mutation_checkpoint_summary")
+            .and_then(|summary| summary.get("record_count"))
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        get_run_payload
+            .get("mutation_checkpoint_summary")
+            .and_then(|summary| summary.get("by_tool"))
+            .and_then(|tools| tools.get("write"))
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        get_run_payload
+            .get("rollback_preview_summary")
+            .and_then(|summary| summary.get("executable"))
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        get_run_payload
+            .get("rollback_preview_summary")
+            .and_then(|summary| summary.get("step_count"))
+            .and_then(Value::as_u64),
+        Some(1)
     );
 }
 

@@ -50,6 +50,7 @@ where
         description,
         status,
         schedule,
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
         agents,
         flow: crate::AutomationFlowSpec { nodes },
         execution: execution.into(),

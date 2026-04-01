@@ -3,8 +3,9 @@
 
 use crate::types::{
     ClearFileIndexResult, GlobalMemoryRecord, GlobalMemorySearchHit, GlobalMemoryWriteResult,
-    MemoryChunk, MemoryConfig, MemoryError, MemoryResult, MemoryStats, MemoryTier,
-    ProjectMemoryStats, DEFAULT_EMBEDDING_DIMENSION,
+    KnowledgeCoverageRecord, KnowledgeItemRecord, KnowledgeItemStatus, KnowledgePromotionRequest,
+    KnowledgePromotionResult, KnowledgeSpaceRecord, MemoryChunk, MemoryConfig, MemoryError,
+    MemoryResult, MemoryStats, MemoryTier, ProjectMemoryStats, DEFAULT_EMBEDDING_DIMENSION,
 };
 use chrono::{DateTime, Utc};
 use rusqlite::{ffi::sqlite3_auto_extension, params, Connection, OptionalExtension, Row};
@@ -405,6 +406,86 @@ impl MemoryDatabase {
                 hash TEXT NOT NULL,
                 indexed_at TEXT NOT NULL
             )",
+            [],
+        )?;
+
+        // Knowledge registry tables (scoped reusable knowledge, separate from raw memory)
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS knowledge_spaces (
+                id TEXT PRIMARY KEY,
+                scope TEXT NOT NULL,
+                project_id TEXT,
+                namespace TEXT,
+                title TEXT,
+                description TEXT,
+                trust_level TEXT NOT NULL,
+                metadata TEXT,
+                created_at_ms INTEGER NOT NULL,
+                updated_at_ms INTEGER NOT NULL
+            )",
+            [],
+        )?;
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_knowledge_spaces_scope_project_namespace
+                ON knowledge_spaces(scope, IFNULL(project_id, ''), IFNULL(namespace, ''))",
+            [],
+        )?;
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS knowledge_items (
+                id TEXT PRIMARY KEY,
+                space_id TEXT NOT NULL,
+                coverage_key TEXT NOT NULL,
+                dedupe_key TEXT NOT NULL,
+                item_type TEXT NOT NULL,
+                title TEXT NOT NULL,
+                summary TEXT,
+                payload TEXT NOT NULL,
+                trust_level TEXT NOT NULL,
+                status TEXT NOT NULL,
+                run_id TEXT,
+                artifact_refs TEXT NOT NULL,
+                source_memory_ids TEXT NOT NULL,
+                freshness_expires_at_ms INTEGER,
+                metadata TEXT,
+                created_at_ms INTEGER NOT NULL,
+                updated_at_ms INTEGER NOT NULL,
+                FOREIGN KEY(space_id) REFERENCES knowledge_spaces(id)
+            )",
+            [],
+        )?;
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_knowledge_items_space_dedupe
+                ON knowledge_items(space_id, dedupe_key)",
+            [],
+        )?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_knowledge_items_space_coverage
+                ON knowledge_items(space_id, coverage_key)",
+            [],
+        )?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_knowledge_items_space_created
+                ON knowledge_items(space_id, created_at_ms DESC)",
+            [],
+        )?;
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS knowledge_coverage (
+                coverage_key TEXT NOT NULL,
+                space_id TEXT NOT NULL,
+                latest_item_id TEXT,
+                latest_dedupe_key TEXT,
+                last_seen_at_ms INTEGER NOT NULL,
+                last_promoted_at_ms INTEGER,
+                freshness_expires_at_ms INTEGER,
+                metadata TEXT,
+                PRIMARY KEY(coverage_key, space_id),
+                FOREIGN KEY(space_id) REFERENCES knowledge_spaces(id)
+            )",
+            [],
+        )?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_knowledge_coverage_space_seen
+                ON knowledge_coverage(space_id, last_seen_at_ms DESC)",
             [],
         )?;
 
@@ -1308,6 +1389,383 @@ impl MemoryDatabase {
         )?;
 
         Ok(())
+    }
+
+    /// Insert or update a reusable knowledge space.
+    pub async fn upsert_knowledge_space(&self, space: &KnowledgeSpaceRecord) -> MemoryResult<()> {
+        let conn = self.conn.lock().await;
+        conn.execute(
+            "INSERT OR REPLACE INTO knowledge_spaces
+             (id, scope, project_id, namespace, title, description, trust_level, metadata, created_at_ms, updated_at_ms)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            params![
+                space.id,
+                space.scope.to_string(),
+                space.project_id,
+                space.namespace,
+                space.title,
+                space.description,
+                space.trust_level.to_string(),
+                space.metadata.as_ref().map(|value| value.to_string()),
+                space.created_at_ms as i64,
+                space.updated_at_ms as i64,
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Fetch a knowledge space by ID.
+    pub async fn get_knowledge_space(
+        &self,
+        id: &str,
+    ) -> MemoryResult<Option<KnowledgeSpaceRecord>> {
+        let conn = self.conn.lock().await;
+        Ok(
+            conn.query_row(
+                "SELECT id, scope, project_id, namespace, title, description, trust_level, metadata, created_at_ms, updated_at_ms
+                 FROM knowledge_spaces WHERE id = ?1",
+                params![id],
+                row_to_knowledge_space,
+            )
+            .optional()?,
+        )
+    }
+
+    /// List knowledge spaces, optionally filtered by project.
+    pub async fn list_knowledge_spaces(
+        &self,
+        project_id: Option<&str>,
+    ) -> MemoryResult<Vec<KnowledgeSpaceRecord>> {
+        let conn = self.conn.lock().await;
+        let mut stmt = if project_id.is_some() {
+            conn.prepare(
+                "SELECT id, scope, project_id, namespace, title, description, trust_level, metadata, created_at_ms, updated_at_ms
+                 FROM knowledge_spaces WHERE project_id = ?1 ORDER BY updated_at_ms DESC",
+            )?
+        } else {
+            conn.prepare(
+                "SELECT id, scope, project_id, namespace, title, description, trust_level, metadata, created_at_ms, updated_at_ms
+                 FROM knowledge_spaces ORDER BY updated_at_ms DESC",
+            )?
+        };
+        let rows = if let Some(project_id) = project_id {
+            stmt.query_map(params![project_id], row_to_knowledge_space)?
+        } else {
+            stmt.query_map([], row_to_knowledge_space)?
+        };
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
+    /// Insert or update a reusable knowledge item.
+    pub async fn upsert_knowledge_item(&self, item: &KnowledgeItemRecord) -> MemoryResult<()> {
+        let conn = self.conn.lock().await;
+        conn.execute(
+            "INSERT OR REPLACE INTO knowledge_items
+             (id, space_id, coverage_key, dedupe_key, item_type, title, summary, payload, trust_level, status, run_id, artifact_refs, source_memory_ids, freshness_expires_at_ms, metadata, created_at_ms, updated_at_ms)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
+            params![
+                item.id,
+                item.space_id,
+                item.coverage_key,
+                item.dedupe_key,
+                item.item_type,
+                item.title,
+                item.summary,
+                item.payload.to_string(),
+                item.trust_level.to_string(),
+                item.status.to_string(),
+                item.run_id,
+                serde_json::to_string(&item.artifact_refs)?,
+                serde_json::to_string(&item.source_memory_ids)?,
+                item.freshness_expires_at_ms.map(|value| value as i64),
+                item.metadata.as_ref().map(|value| value.to_string()),
+                item.created_at_ms as i64,
+                item.updated_at_ms as i64,
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// List knowledge items for a knowledge space.
+    pub async fn list_knowledge_items(
+        &self,
+        space_id: &str,
+        coverage_key: Option<&str>,
+    ) -> MemoryResult<Vec<KnowledgeItemRecord>> {
+        let conn = self.conn.lock().await;
+        let mut stmt = if coverage_key.is_some() {
+            conn.prepare(
+                "SELECT id, space_id, coverage_key, dedupe_key, item_type, title, summary, payload, trust_level, status, run_id, artifact_refs, source_memory_ids, freshness_expires_at_ms, metadata, created_at_ms, updated_at_ms
+                 FROM knowledge_items WHERE space_id = ?1 AND coverage_key = ?2 ORDER BY created_at_ms DESC",
+            )?
+        } else {
+            conn.prepare(
+                "SELECT id, space_id, coverage_key, dedupe_key, item_type, title, summary, payload, trust_level, status, run_id, artifact_refs, source_memory_ids, freshness_expires_at_ms, metadata, created_at_ms, updated_at_ms
+                 FROM knowledge_items WHERE space_id = ?1 ORDER BY created_at_ms DESC",
+            )?
+        };
+        let rows = if let Some(coverage_key) = coverage_key {
+            stmt.query_map(params![space_id, coverage_key], row_to_knowledge_item)?
+        } else {
+            stmt.query_map(params![space_id], row_to_knowledge_item)?
+        };
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
+    /// Fetch a knowledge item by ID.
+    pub async fn get_knowledge_item(&self, id: &str) -> MemoryResult<Option<KnowledgeItemRecord>> {
+        let conn = self.conn.lock().await;
+        Ok(
+            conn.query_row(
+                "SELECT id, space_id, coverage_key, dedupe_key, item_type, title, summary, payload, trust_level, status, run_id, artifact_refs, source_memory_ids, freshness_expires_at_ms, metadata, created_at_ms, updated_at_ms
+                 FROM knowledge_items WHERE id = ?1",
+                params![id],
+                row_to_knowledge_item,
+            )
+            .optional()?,
+        )
+    }
+
+    /// Promote or retire a knowledge item and update its coverage record atomically.
+    pub async fn promote_knowledge_item(
+        &self,
+        request: &KnowledgePromotionRequest,
+    ) -> MemoryResult<Option<KnowledgePromotionResult>> {
+        let mut conn = self.conn.lock().await;
+        let tx = conn.transaction()?;
+
+        let Some(mut item) = tx
+            .query_row(
+                "SELECT id, space_id, coverage_key, dedupe_key, item_type, title, summary, payload, trust_level, status, run_id, artifact_refs, source_memory_ids, freshness_expires_at_ms, metadata, created_at_ms, updated_at_ms
+                 FROM knowledge_items WHERE id = ?1",
+                params![request.item_id],
+                row_to_knowledge_item,
+            )
+            .optional()? else {
+            return Ok(None);
+        };
+
+        let previous_status = item.status;
+        let previous_trust_level = item.trust_level;
+
+        if previous_status == KnowledgeItemStatus::Deprecated
+            && request.target_status != KnowledgeItemStatus::Deprecated
+        {
+            return Err(crate::types::MemoryError::InvalidConfig(
+                "cannot promote a deprecated knowledge item".to_string(),
+            ));
+        }
+
+        let next_status = request.target_status;
+        match (previous_status, next_status) {
+            (KnowledgeItemStatus::Working, KnowledgeItemStatus::Promoted)
+            | (KnowledgeItemStatus::Promoted, KnowledgeItemStatus::Promoted)
+            | (KnowledgeItemStatus::Promoted, KnowledgeItemStatus::ApprovedDefault)
+            | (KnowledgeItemStatus::ApprovedDefault, KnowledgeItemStatus::ApprovedDefault)
+            | (KnowledgeItemStatus::Working, KnowledgeItemStatus::Deprecated)
+            | (KnowledgeItemStatus::Promoted, KnowledgeItemStatus::Deprecated)
+            | (KnowledgeItemStatus::ApprovedDefault, KnowledgeItemStatus::Deprecated) => {}
+            (KnowledgeItemStatus::Working, KnowledgeItemStatus::ApprovedDefault) => {
+                return Err(crate::types::MemoryError::InvalidConfig(
+                    "approved_default requires an intermediate promoted item".to_string(),
+                ));
+            }
+            (KnowledgeItemStatus::ApprovedDefault, KnowledgeItemStatus::Promoted) => {
+                return Err(crate::types::MemoryError::InvalidConfig(
+                    "approved_default items do not downgrade back to promoted".to_string(),
+                ));
+            }
+            (KnowledgeItemStatus::Promoted, KnowledgeItemStatus::Working)
+            | (KnowledgeItemStatus::ApprovedDefault, KnowledgeItemStatus::Working) => {
+                return Err(crate::types::MemoryError::InvalidConfig(
+                    "knowledge items cannot be demoted back to working".to_string(),
+                ));
+            }
+            (KnowledgeItemStatus::Working, KnowledgeItemStatus::Working) => {}
+            (KnowledgeItemStatus::Deprecated, _) => {}
+        }
+
+        if next_status == KnowledgeItemStatus::ApprovedDefault
+            && (request.reviewer_id.is_none() || request.approval_id.is_none())
+        {
+            return Err(crate::types::MemoryError::InvalidConfig(
+                "approved_default promotion requires reviewer_id and approval_id".to_string(),
+            ));
+        }
+
+        let promoted = next_status.is_active()
+            && (previous_status != next_status || request.freshness_expires_at_ms.is_some());
+
+        let mut metadata_obj = item
+            .metadata
+            .clone()
+            .and_then(|value| value.as_object().cloned())
+            .unwrap_or_default();
+        metadata_obj.insert(
+            "promotion".to_string(),
+            serde_json::json!({
+                "from_status": previous_status.to_string(),
+                "to_status": next_status.to_string(),
+                "promoted_at_ms": request.promoted_at_ms,
+                "reason": request.reason,
+                "reviewer_id": request.reviewer_id,
+                "approval_id": request.approval_id,
+                "freshness_expires_at_ms": request.freshness_expires_at_ms,
+            }),
+        );
+
+        item.status = next_status;
+        if let Some(next_trust) = next_status.as_trust_level() {
+            item.trust_level = next_trust;
+        }
+        if let Some(freshness_expires_at_ms) = request.freshness_expires_at_ms {
+            item.freshness_expires_at_ms = Some(freshness_expires_at_ms);
+        }
+        item.metadata = Some(serde_json::Value::Object(metadata_obj));
+        item.updated_at_ms = request.promoted_at_ms;
+        let persisted_item = item.clone();
+        let item_id = persisted_item.id.clone();
+        let space_id = persisted_item.space_id.clone();
+        let coverage_key = persisted_item.coverage_key.clone();
+        let dedupe_key = persisted_item.dedupe_key.clone();
+
+        tx.execute(
+            "INSERT OR REPLACE INTO knowledge_items
+             (id, space_id, coverage_key, dedupe_key, item_type, title, summary, payload, trust_level, status, run_id, artifact_refs, source_memory_ids, freshness_expires_at_ms, metadata, created_at_ms, updated_at_ms)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
+            params![
+                persisted_item.id,
+                persisted_item.space_id,
+                persisted_item.coverage_key,
+                persisted_item.dedupe_key,
+                persisted_item.item_type,
+                persisted_item.title,
+                persisted_item.summary,
+                persisted_item.payload.to_string(),
+                persisted_item.trust_level.to_string(),
+                persisted_item.status.to_string(),
+                persisted_item.run_id,
+                serde_json::to_string(&persisted_item.artifact_refs)?,
+                serde_json::to_string(&persisted_item.source_memory_ids)?,
+                persisted_item.freshness_expires_at_ms.map(|value| value as i64),
+                persisted_item.metadata.as_ref().map(|value| value.to_string()),
+                persisted_item.created_at_ms as i64,
+                persisted_item.updated_at_ms as i64,
+            ],
+        )?;
+
+        let mut coverage = tx
+            .query_row(
+                "SELECT coverage_key, space_id, latest_item_id, latest_dedupe_key, last_seen_at_ms, last_promoted_at_ms, freshness_expires_at_ms, metadata
+                 FROM knowledge_coverage WHERE coverage_key = ?1 AND space_id = ?2",
+                params![coverage_key.as_str(), space_id.as_str()],
+                row_to_knowledge_coverage,
+            )
+            .optional()?
+            .unwrap_or(KnowledgeCoverageRecord {
+                coverage_key: coverage_key.clone(),
+                space_id: space_id.clone(),
+                latest_item_id: None,
+                latest_dedupe_key: None,
+                last_seen_at_ms: request.promoted_at_ms,
+                last_promoted_at_ms: None,
+                freshness_expires_at_ms: None,
+                metadata: None,
+            });
+        coverage.latest_item_id = Some(item_id.clone());
+        coverage.latest_dedupe_key = Some(dedupe_key.clone());
+        coverage.last_seen_at_ms = request.promoted_at_ms;
+        if next_status.is_active() {
+            coverage.last_promoted_at_ms = Some(request.promoted_at_ms);
+        }
+        if let Some(freshness_expires_at_ms) = request.freshness_expires_at_ms {
+            coverage.freshness_expires_at_ms = Some(freshness_expires_at_ms);
+        }
+        let mut coverage_metadata = coverage
+            .metadata
+            .clone()
+            .and_then(|value| value.as_object().cloned())
+            .unwrap_or_default();
+        coverage_metadata.insert(
+            "promotion".to_string(),
+            serde_json::json!({
+                "item_id": item_id,
+                "from_status": previous_status.to_string(),
+                "to_status": next_status.to_string(),
+                "promoted_at_ms": request.promoted_at_ms,
+                "reason": request.reason,
+                "reviewer_id": request.reviewer_id,
+                "approval_id": request.approval_id,
+            }),
+        );
+        coverage.metadata = Some(serde_json::Value::Object(coverage_metadata));
+
+        tx.execute(
+            "INSERT OR REPLACE INTO knowledge_coverage
+             (coverage_key, space_id, latest_item_id, latest_dedupe_key, last_seen_at_ms, last_promoted_at_ms, freshness_expires_at_ms, metadata)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![
+                coverage.coverage_key,
+                coverage.space_id,
+                coverage.latest_item_id,
+                coverage.latest_dedupe_key,
+                coverage.last_seen_at_ms as i64,
+                coverage.last_promoted_at_ms.map(|value| value as i64),
+                coverage.freshness_expires_at_ms.map(|value| value as i64),
+                coverage.metadata.as_ref().map(|value| value.to_string()),
+            ],
+        )?;
+
+        tx.commit()?;
+        Ok(Some(KnowledgePromotionResult {
+            previous_status,
+            previous_trust_level,
+            promoted,
+            item: persisted_item,
+            coverage,
+        }))
+    }
+
+    /// Insert or update a coverage record for a reusable knowledge key.
+    pub async fn upsert_knowledge_coverage(
+        &self,
+        coverage: &KnowledgeCoverageRecord,
+    ) -> MemoryResult<()> {
+        let conn = self.conn.lock().await;
+        conn.execute(
+            "INSERT OR REPLACE INTO knowledge_coverage
+             (coverage_key, space_id, latest_item_id, latest_dedupe_key, last_seen_at_ms, last_promoted_at_ms, freshness_expires_at_ms, metadata)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![
+                coverage.coverage_key,
+                coverage.space_id,
+                coverage.latest_item_id,
+                coverage.latest_dedupe_key,
+                coverage.last_seen_at_ms as i64,
+                coverage.last_promoted_at_ms.map(|value| value as i64),
+                coverage.freshness_expires_at_ms.map(|value| value as i64),
+                coverage.metadata.as_ref().map(|value| value.to_string()),
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Fetch a coverage row for a key and space.
+    pub async fn get_knowledge_coverage(
+        &self,
+        coverage_key: &str,
+        space_id: &str,
+    ) -> MemoryResult<Option<KnowledgeCoverageRecord>> {
+        let conn = self.conn.lock().await;
+        Ok(
+            conn.query_row(
+                "SELECT coverage_key, space_id, latest_item_id, latest_dedupe_key, last_seen_at_ms, last_promoted_at_ms, freshness_expires_at_ms, metadata
+                 FROM knowledge_coverage WHERE coverage_key = ?1 AND space_id = ?2",
+                params![coverage_key, space_id],
+                row_to_knowledge_coverage,
+            )
+            .optional()?,
+        )
     }
 
     /// Get memory statistics
@@ -2659,6 +3117,96 @@ impl MemoryDatabase {
     }
 }
 
+fn row_to_knowledge_space(row: &Row) -> Result<KnowledgeSpaceRecord, rusqlite::Error> {
+    let scope = row
+        .get::<_, String>(1)?
+        .parse()
+        .unwrap_or(tandem_orchestrator::KnowledgeScope::Project);
+    let trust_level = row
+        .get::<_, String>(6)?
+        .parse()
+        .unwrap_or(tandem_orchestrator::KnowledgeTrustLevel::Promoted);
+    let metadata = row
+        .get::<_, Option<String>>(7)?
+        .and_then(|raw| serde_json::from_str(&raw).ok());
+    Ok(KnowledgeSpaceRecord {
+        id: row.get(0)?,
+        scope,
+        project_id: row.get(2)?,
+        namespace: row.get(3)?,
+        title: row.get(4)?,
+        description: row.get(5)?,
+        trust_level,
+        metadata,
+        created_at_ms: row.get::<_, i64>(8)? as u64,
+        updated_at_ms: row.get::<_, i64>(9)? as u64,
+    })
+}
+
+fn row_to_knowledge_item(row: &Row) -> Result<KnowledgeItemRecord, rusqlite::Error> {
+    let trust_level = row
+        .get::<_, String>(8)?
+        .parse()
+        .unwrap_or(tandem_orchestrator::KnowledgeTrustLevel::Promoted);
+    let status = row
+        .get::<_, String>(9)?
+        .parse()
+        .unwrap_or(KnowledgeItemStatus::Working);
+    let payload = row
+        .get::<_, String>(7)
+        .ok()
+        .and_then(|raw| serde_json::from_str(&raw).ok())
+        .unwrap_or(serde_json::Value::Null);
+    let artifact_refs = row
+        .get::<_, String>(11)
+        .ok()
+        .and_then(|raw| serde_json::from_str(&raw).ok())
+        .unwrap_or_default();
+    let source_memory_ids = row
+        .get::<_, String>(12)
+        .ok()
+        .and_then(|raw| serde_json::from_str(&raw).ok())
+        .unwrap_or_default();
+    let metadata = row
+        .get::<_, Option<String>>(14)?
+        .and_then(|raw| serde_json::from_str(&raw).ok());
+    Ok(KnowledgeItemRecord {
+        id: row.get(0)?,
+        space_id: row.get(1)?,
+        coverage_key: row.get(2)?,
+        dedupe_key: row.get(3)?,
+        item_type: row.get(4)?,
+        title: row.get(5)?,
+        summary: row.get(6)?,
+        payload,
+        trust_level,
+        status,
+        run_id: row.get(10)?,
+        artifact_refs,
+        source_memory_ids,
+        freshness_expires_at_ms: row.get::<_, Option<i64>>(13)?.map(|value| value as u64),
+        metadata,
+        created_at_ms: row.get::<_, i64>(15)? as u64,
+        updated_at_ms: row.get::<_, i64>(16)? as u64,
+    })
+}
+
+fn row_to_knowledge_coverage(row: &Row) -> Result<KnowledgeCoverageRecord, rusqlite::Error> {
+    let metadata = row
+        .get::<_, Option<String>>(7)?
+        .and_then(|raw| serde_json::from_str(&raw).ok());
+    Ok(KnowledgeCoverageRecord {
+        coverage_key: row.get(0)?,
+        space_id: row.get(1)?,
+        latest_item_id: row.get(2)?,
+        latest_dedupe_key: row.get(3)?,
+        last_seen_at_ms: row.get::<_, i64>(4)? as u64,
+        last_promoted_at_ms: row.get::<_, Option<i64>>(5)?.map(|value| value as u64),
+        freshness_expires_at_ms: row.get::<_, Option<i64>>(6)?.map(|value| value as u64),
+        metadata,
+    })
+}
+
 fn truncate_string(s: &str, max_len: usize) -> String {
     if s.len() <= max_len {
         s.to_string()
@@ -2690,6 +3238,8 @@ fn build_fts_query(query: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::Value;
+    use tandem_orchestrator::{KnowledgeScope, KnowledgeTrustLevel};
     use tempfile::TempDir;
 
     async fn setup_test_db() -> (MemoryDatabase, TempDir) {
@@ -2705,6 +3255,75 @@ mod tests {
         // If we get here, schema was initialized successfully
         let stats = db.get_stats().await.unwrap();
         assert_eq!(stats.total_chunks, 0);
+    }
+
+    #[tokio::test]
+    async fn test_knowledge_registry_roundtrip() {
+        let (db, _temp) = setup_test_db().await;
+
+        let space = KnowledgeSpaceRecord {
+            id: "space-1".to_string(),
+            scope: tandem_orchestrator::KnowledgeScope::Project,
+            project_id: Some("project-1".to_string()),
+            namespace: Some("support".to_string()),
+            title: Some("Support Knowledge".to_string()),
+            description: Some("Reusable support guidance".to_string()),
+            trust_level: tandem_orchestrator::KnowledgeTrustLevel::Promoted,
+            metadata: Some(serde_json::json!({"owner": "ops"})),
+            created_at_ms: 1,
+            updated_at_ms: 2,
+        };
+        db.upsert_knowledge_space(&space).await.unwrap();
+
+        let item = KnowledgeItemRecord {
+            id: "item-1".to_string(),
+            space_id: space.id.clone(),
+            coverage_key: "project-1/support/debugging/slow-start".to_string(),
+            dedupe_key: "dedupe-1".to_string(),
+            item_type: "decision".to_string(),
+            title: "Restart service before retry".to_string(),
+            summary: Some("When the service is stale, restart before retrying.".to_string()),
+            payload: serde_json::json!({"action": "restart"}),
+            trust_level: tandem_orchestrator::KnowledgeTrustLevel::Promoted,
+            status: KnowledgeItemStatus::Promoted,
+            run_id: Some("run-1".to_string()),
+            artifact_refs: vec!["artifact://run-1/report".to_string()],
+            source_memory_ids: vec!["memory-1".to_string()],
+            freshness_expires_at_ms: Some(10),
+            metadata: Some(serde_json::json!({"source": "run"})),
+            created_at_ms: 3,
+            updated_at_ms: 4,
+        };
+        db.upsert_knowledge_item(&item).await.unwrap();
+
+        let coverage = KnowledgeCoverageRecord {
+            coverage_key: item.coverage_key.clone(),
+            space_id: space.id.clone(),
+            latest_item_id: Some(item.id.clone()),
+            latest_dedupe_key: Some(item.dedupe_key.clone()),
+            last_seen_at_ms: 5,
+            last_promoted_at_ms: Some(6),
+            freshness_expires_at_ms: Some(10),
+            metadata: Some(serde_json::json!({"coverage": true})),
+        };
+        db.upsert_knowledge_coverage(&coverage).await.unwrap();
+
+        let loaded_space = db.get_knowledge_space(&space.id).await.unwrap().unwrap();
+        assert_eq!(loaded_space.namespace.as_deref(), Some("support"));
+
+        let loaded_items = db
+            .list_knowledge_items(&space.id, Some(&item.coverage_key))
+            .await
+            .unwrap();
+        assert_eq!(loaded_items.len(), 1);
+        assert_eq!(loaded_items[0].title, item.title);
+
+        let loaded_coverage = db
+            .get_knowledge_coverage(&item.coverage_key, &space.id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(loaded_coverage.latest_item_id.as_deref(), Some("item-1"));
     }
 
     #[tokio::test]
@@ -2855,5 +3474,639 @@ mod tests {
             .unwrap();
         assert!(!hits.is_empty());
         assert_eq!(hits[0].record.id, "gm-1");
+    }
+
+    #[tokio::test]
+    async fn test_knowledge_registry_round_trip() {
+        let (db, _temp) = setup_test_db().await;
+        let now = chrono::Utc::now().timestamp_millis() as u64;
+
+        let space = KnowledgeSpaceRecord {
+            id: "space-1".to_string(),
+            scope: KnowledgeScope::Project,
+            project_id: Some("project-1".to_string()),
+            namespace: Some("marketing/positioning".to_string()),
+            title: Some("Marketing positioning".to_string()),
+            description: Some("Reusable positioning guidance".to_string()),
+            trust_level: KnowledgeTrustLevel::ApprovedDefault,
+            metadata: Some(serde_json::json!({"owner":"marketing"})),
+            created_at_ms: now,
+            updated_at_ms: now,
+        };
+        db.upsert_knowledge_space(&space).await.unwrap();
+
+        let loaded_space = db.get_knowledge_space("space-1").await.unwrap().unwrap();
+        assert_eq!(loaded_space.id, "space-1");
+        assert_eq!(loaded_space.scope, KnowledgeScope::Project);
+        assert_eq!(loaded_space.project_id.as_deref(), Some("project-1"));
+        assert_eq!(
+            loaded_space.namespace.as_deref(),
+            Some("marketing/positioning")
+        );
+
+        let item = KnowledgeItemRecord {
+            id: "item-1".to_string(),
+            space_id: "space-1".to_string(),
+            coverage_key: "project-1::marketing/positioning::strategy::pricing".to_string(),
+            dedupe_key: "item-1-dedupe".to_string(),
+            item_type: "evidence".to_string(),
+            title: "Pricing sensitivity observation".to_string(),
+            summary: Some("Customers reacted to annual pricing changes".to_string()),
+            payload: serde_json::json!({"claim":"Annual pricing changes created friction"}),
+            trust_level: KnowledgeTrustLevel::Promoted,
+            status: KnowledgeItemStatus::Promoted,
+            run_id: Some("run-1".to_string()),
+            artifact_refs: vec!["artifact://run-1/research-sources".to_string()],
+            source_memory_ids: vec!["memory-1".to_string()],
+            freshness_expires_at_ms: Some(now + 86_400_000),
+            metadata: Some(serde_json::json!({"source_kind":"web"})),
+            created_at_ms: now,
+            updated_at_ms: now,
+        };
+        db.upsert_knowledge_item(&item).await.unwrap();
+
+        let loaded_item = db.get_knowledge_item("item-1").await.unwrap().unwrap();
+        assert_eq!(loaded_item.id, "item-1");
+        assert_eq!(loaded_item.space_id, "space-1");
+        assert_eq!(
+            loaded_item.coverage_key,
+            "project-1::marketing/positioning::strategy::pricing"
+        );
+        assert_eq!(loaded_item.status, KnowledgeItemStatus::Promoted);
+        assert_eq!(
+            loaded_item.artifact_refs,
+            vec!["artifact://run-1/research-sources".to_string()]
+        );
+
+        let by_space = db.list_knowledge_items("space-1", None).await.unwrap();
+        assert_eq!(by_space.len(), 1);
+        let by_coverage = db
+            .list_knowledge_items(
+                "space-1",
+                Some("project-1::marketing/positioning::strategy::pricing"),
+            )
+            .await
+            .unwrap();
+        assert_eq!(by_coverage.len(), 1);
+
+        let coverage = KnowledgeCoverageRecord {
+            coverage_key: "project-1::marketing/positioning::strategy::pricing".to_string(),
+            space_id: "space-1".to_string(),
+            latest_item_id: Some("item-1".to_string()),
+            latest_dedupe_key: Some("item-1-dedupe".to_string()),
+            last_seen_at_ms: now,
+            last_promoted_at_ms: Some(now),
+            freshness_expires_at_ms: Some(now + 86_400_000),
+            metadata: Some(serde_json::json!({"reuse_reason":"same topic"})),
+        };
+        db.upsert_knowledge_coverage(&coverage).await.unwrap();
+
+        let loaded_coverage = db
+            .get_knowledge_coverage(
+                "project-1::marketing/positioning::strategy::pricing",
+                "space-1",
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(loaded_coverage.space_id, "space-1");
+        assert_eq!(loaded_coverage.latest_item_id.as_deref(), Some("item-1"));
+        assert_eq!(
+            loaded_coverage.latest_dedupe_key.as_deref(),
+            Some("item-1-dedupe")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_knowledge_promotion_working_to_promoted_updates_coverage() {
+        let (db, _temp) = setup_test_db().await;
+        let now = chrono::Utc::now().timestamp_millis() as u64;
+
+        let space = KnowledgeSpaceRecord {
+            id: "space-promote-1".to_string(),
+            scope: KnowledgeScope::Project,
+            project_id: Some("project-1".to_string()),
+            namespace: Some("engineering/debugging".to_string()),
+            title: Some("Engineering debugging".to_string()),
+            description: Some("Reusable debugging guidance".to_string()),
+            trust_level: KnowledgeTrustLevel::Promoted,
+            metadata: None,
+            created_at_ms: now,
+            updated_at_ms: now,
+        };
+        db.upsert_knowledge_space(&space).await.unwrap();
+
+        let item = KnowledgeItemRecord {
+            id: "item-promote-1".to_string(),
+            space_id: space.id.clone(),
+            coverage_key: "project-1::engineering/debugging::startup::race".to_string(),
+            dedupe_key: "dedupe-promote-1".to_string(),
+            item_type: "decision".to_string(),
+            title: "Delay startup-dependent retries".to_string(),
+            summary: Some("Retry only after startup completed.".to_string()),
+            payload: serde_json::json!({"action":"delay_retry"}),
+            trust_level: KnowledgeTrustLevel::Working,
+            status: KnowledgeItemStatus::Working,
+            run_id: Some("run-1".to_string()),
+            artifact_refs: vec!["artifact://run-1/debug".to_string()],
+            source_memory_ids: vec!["memory-1".to_string()],
+            freshness_expires_at_ms: None,
+            metadata: None,
+            created_at_ms: now,
+            updated_at_ms: now,
+        };
+        db.upsert_knowledge_item(&item).await.unwrap();
+
+        let promote = KnowledgePromotionRequest {
+            item_id: item.id.clone(),
+            target_status: KnowledgeItemStatus::Promoted,
+            promoted_at_ms: now + 10,
+            freshness_expires_at_ms: Some(now + 86_400_000),
+            reviewer_id: None,
+            approval_id: None,
+            reason: Some("validated in workflow".to_string()),
+        };
+
+        let result = db.promote_knowledge_item(&promote).await.unwrap().unwrap();
+        assert!(result.promoted);
+        assert_eq!(result.item.status, KnowledgeItemStatus::Promoted);
+        assert_eq!(result.item.trust_level, KnowledgeTrustLevel::Promoted);
+        assert_eq!(
+            result.coverage.latest_item_id.as_deref(),
+            Some("item-promote-1")
+        );
+        assert_eq!(
+            result.coverage.latest_dedupe_key.as_deref(),
+            Some("dedupe-promote-1")
+        );
+        assert_eq!(result.coverage.last_promoted_at_ms, Some(now + 10));
+    }
+
+    #[tokio::test]
+    async fn test_knowledge_promotion_promoted_to_approved_default_requires_review() {
+        let (db, _temp) = setup_test_db().await;
+        let now = chrono::Utc::now().timestamp_millis() as u64;
+
+        let space = KnowledgeSpaceRecord {
+            id: "space-promote-2".to_string(),
+            scope: KnowledgeScope::Project,
+            project_id: Some("project-1".to_string()),
+            namespace: Some("marketing/positioning".to_string()),
+            title: Some("Marketing positioning".to_string()),
+            description: Some("Reusable positioning guidance".to_string()),
+            trust_level: KnowledgeTrustLevel::Promoted,
+            metadata: None,
+            created_at_ms: now,
+            updated_at_ms: now,
+        };
+        db.upsert_knowledge_space(&space).await.unwrap();
+
+        let item = KnowledgeItemRecord {
+            id: "item-promote-2".to_string(),
+            space_id: space.id.clone(),
+            coverage_key: "project-1::marketing/positioning::strategy::pricing".to_string(),
+            dedupe_key: "dedupe-promote-2".to_string(),
+            item_type: "evidence".to_string(),
+            title: "Pricing observation".to_string(),
+            summary: Some("Annual pricing changes created friction".to_string()),
+            payload: serde_json::json!({"claim":"pricing friction"}),
+            trust_level: KnowledgeTrustLevel::Promoted,
+            status: KnowledgeItemStatus::Promoted,
+            run_id: Some("run-2".to_string()),
+            artifact_refs: vec!["artifact://run-2/research".to_string()],
+            source_memory_ids: vec!["memory-2".to_string()],
+            freshness_expires_at_ms: None,
+            metadata: None,
+            created_at_ms: now,
+            updated_at_ms: now,
+        };
+        db.upsert_knowledge_item(&item).await.unwrap();
+
+        let promote = KnowledgePromotionRequest {
+            item_id: item.id.clone(),
+            target_status: KnowledgeItemStatus::ApprovedDefault,
+            promoted_at_ms: now + 5,
+            freshness_expires_at_ms: None,
+            reviewer_id: None,
+            approval_id: None,
+            reason: Some("should require review".to_string()),
+        };
+
+        let err = db.promote_knowledge_item(&promote).await.unwrap_err();
+        match err {
+            MemoryError::InvalidConfig(_) => {}
+            other => panic!("unexpected error: {}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_knowledge_promotion_promoted_to_approved_default_updates_coverage() {
+        let (db, _temp) = setup_test_db().await;
+        let now = chrono::Utc::now().timestamp_millis() as u64;
+
+        let space = KnowledgeSpaceRecord {
+            id: "space-promote-3".to_string(),
+            scope: KnowledgeScope::Project,
+            project_id: Some("project-1".to_string()),
+            namespace: Some("support/runbooks".to_string()),
+            title: Some("Support runbooks".to_string()),
+            description: Some("Reusable runbook guidance".to_string()),
+            trust_level: KnowledgeTrustLevel::Promoted,
+            metadata: None,
+            created_at_ms: now,
+            updated_at_ms: now,
+        };
+        db.upsert_knowledge_space(&space).await.unwrap();
+
+        let item = KnowledgeItemRecord {
+            id: "item-promote-3".to_string(),
+            space_id: space.id.clone(),
+            coverage_key: "project-1::support/runbooks::oncall::restart".to_string(),
+            dedupe_key: "dedupe-promote-3".to_string(),
+            item_type: "runbook".to_string(),
+            title: "Restart service and verify".to_string(),
+            summary: Some("Restart then validate health endpoint.".to_string()),
+            payload: serde_json::json!({"steps":["restart","healthcheck"]}),
+            trust_level: KnowledgeTrustLevel::Promoted,
+            status: KnowledgeItemStatus::Promoted,
+            run_id: Some("run-3".to_string()),
+            artifact_refs: vec!["artifact://run-3/runbook".to_string()],
+            source_memory_ids: vec!["memory-3".to_string()],
+            freshness_expires_at_ms: None,
+            metadata: None,
+            created_at_ms: now,
+            updated_at_ms: now,
+        };
+        db.upsert_knowledge_item(&item).await.unwrap();
+
+        let promote = KnowledgePromotionRequest {
+            item_id: item.id.clone(),
+            target_status: KnowledgeItemStatus::ApprovedDefault,
+            promoted_at_ms: now + 12,
+            freshness_expires_at_ms: Some(now + 172_800_000),
+            reviewer_id: Some("reviewer-1".to_string()),
+            approval_id: Some("approval-1".to_string()),
+            reason: Some("reviewed by ops".to_string()),
+        };
+
+        let result = db.promote_knowledge_item(&promote).await.unwrap().unwrap();
+        assert!(result.promoted);
+        assert_eq!(result.item.status, KnowledgeItemStatus::ApprovedDefault);
+        assert_eq!(
+            result.item.trust_level,
+            KnowledgeTrustLevel::ApprovedDefault
+        );
+        assert_eq!(result.coverage.last_promoted_at_ms, Some(now + 12));
+        assert_eq!(
+            result.coverage.latest_item_id.as_deref(),
+            Some("item-promote-3")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_knowledge_promotion_rejects_deprecated() {
+        let (db, _temp) = setup_test_db().await;
+        let now = chrono::Utc::now().timestamp_millis() as u64;
+
+        let space = KnowledgeSpaceRecord {
+            id: "space-promote-4".to_string(),
+            scope: KnowledgeScope::Project,
+            project_id: Some("project-1".to_string()),
+            namespace: Some("ops".to_string()),
+            title: Some("Ops knowledge".to_string()),
+            description: Some("Reusable ops knowledge".to_string()),
+            trust_level: KnowledgeTrustLevel::Promoted,
+            metadata: None,
+            created_at_ms: now,
+            updated_at_ms: now,
+        };
+        db.upsert_knowledge_space(&space).await.unwrap();
+
+        let item = KnowledgeItemRecord {
+            id: "item-promote-4".to_string(),
+            space_id: space.id.clone(),
+            coverage_key: "project-1::ops::incident::latency".to_string(),
+            dedupe_key: "dedupe-promote-4".to_string(),
+            item_type: "decision".to_string(),
+            title: "Ignore deprecated item".to_string(),
+            summary: None,
+            payload: serde_json::json!({"decision":"deprecated"}),
+            trust_level: KnowledgeTrustLevel::Promoted,
+            status: KnowledgeItemStatus::Deprecated,
+            run_id: Some("run-4".to_string()),
+            artifact_refs: vec![],
+            source_memory_ids: vec![],
+            freshness_expires_at_ms: None,
+            metadata: None,
+            created_at_ms: now,
+            updated_at_ms: now,
+        };
+        db.upsert_knowledge_item(&item).await.unwrap();
+
+        let promote = KnowledgePromotionRequest {
+            item_id: item.id.clone(),
+            target_status: KnowledgeItemStatus::Promoted,
+            promoted_at_ms: now + 1,
+            freshness_expires_at_ms: None,
+            reviewer_id: None,
+            approval_id: None,
+            reason: None,
+        };
+
+        let err = db.promote_knowledge_item(&promote).await.unwrap_err();
+        match err {
+            MemoryError::InvalidConfig(_) => {}
+            other => panic!("unexpected error: {}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_knowledge_promotion_idempotent_updates_coverage() {
+        let (db, _temp) = setup_test_db().await;
+        let now = chrono::Utc::now().timestamp_millis() as u64;
+
+        let space = KnowledgeSpaceRecord {
+            id: "space-promote-5".to_string(),
+            scope: KnowledgeScope::Project,
+            project_id: Some("project-1".to_string()),
+            namespace: Some("engineering/ops".to_string()),
+            title: Some("Engineering ops".to_string()),
+            description: None,
+            trust_level: KnowledgeTrustLevel::Promoted,
+            metadata: None,
+            created_at_ms: now,
+            updated_at_ms: now,
+        };
+        db.upsert_knowledge_space(&space).await.unwrap();
+
+        let item = KnowledgeItemRecord {
+            id: "item-promote-5".to_string(),
+            space_id: space.id.clone(),
+            coverage_key: "project-1::engineering/ops::deploy::guardrails".to_string(),
+            dedupe_key: "dedupe-promote-5".to_string(),
+            item_type: "pattern".to_string(),
+            title: "Deploy guardrails".to_string(),
+            summary: None,
+            payload: serde_json::json!({"pattern":"guardrails"}),
+            trust_level: KnowledgeTrustLevel::Promoted,
+            status: KnowledgeItemStatus::Promoted,
+            run_id: Some("run-5".to_string()),
+            artifact_refs: vec![],
+            source_memory_ids: vec![],
+            freshness_expires_at_ms: None,
+            metadata: None,
+            created_at_ms: now,
+            updated_at_ms: now,
+        };
+        db.upsert_knowledge_item(&item).await.unwrap();
+
+        let promote = KnowledgePromotionRequest {
+            item_id: item.id.clone(),
+            target_status: KnowledgeItemStatus::Promoted,
+            promoted_at_ms: now + 20,
+            freshness_expires_at_ms: None,
+            reviewer_id: None,
+            approval_id: None,
+            reason: None,
+        };
+
+        let result = db.promote_knowledge_item(&promote).await.unwrap().unwrap();
+        assert!(!result.promoted);
+        assert_eq!(result.coverage.last_promoted_at_ms, Some(now + 20));
+        assert_eq!(
+            result.coverage.latest_item_id.as_deref(),
+            Some("item-promote-5")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_knowledge_item_promotion_updates_coverage() {
+        let (db, _temp) = setup_test_db().await;
+        let now = chrono::Utc::now().timestamp_millis() as u64;
+
+        let space = KnowledgeSpaceRecord {
+            id: "space-promote".to_string(),
+            scope: KnowledgeScope::Project,
+            project_id: Some("project-1".to_string()),
+            namespace: Some("engineering/debugging".to_string()),
+            title: Some("Engineering debugging".to_string()),
+            description: Some("Reusable debugging guidance".to_string()),
+            trust_level: KnowledgeTrustLevel::Promoted,
+            metadata: None,
+            created_at_ms: now,
+            updated_at_ms: now,
+        };
+        db.upsert_knowledge_space(&space).await.unwrap();
+
+        let item = KnowledgeItemRecord {
+            id: "item-promote".to_string(),
+            space_id: space.id.clone(),
+            coverage_key: "project-1::engineering/debugging::startup::race".to_string(),
+            dedupe_key: "dedupe-promote".to_string(),
+            item_type: "decision".to_string(),
+            title: "Delay startup-dependent retries".to_string(),
+            summary: Some("Retry only after startup completes.".to_string()),
+            payload: serde_json::json!({"action": "delay_retry"}),
+            trust_level: KnowledgeTrustLevel::Working,
+            status: KnowledgeItemStatus::Working,
+            run_id: Some("run-promote".to_string()),
+            artifact_refs: vec!["artifact://run-promote/report".to_string()],
+            source_memory_ids: vec!["memory-promote".to_string()],
+            freshness_expires_at_ms: None,
+            metadata: Some(serde_json::json!({"source_kind":"run"})),
+            created_at_ms: now,
+            updated_at_ms: now,
+        };
+        db.upsert_knowledge_item(&item).await.unwrap();
+
+        let request = KnowledgePromotionRequest {
+            item_id: item.id.clone(),
+            target_status: KnowledgeItemStatus::Promoted,
+            promoted_at_ms: now + 10,
+            freshness_expires_at_ms: Some(now + 86_400_000),
+            reviewer_id: None,
+            approval_id: None,
+            reason: Some("validated".to_string()),
+        };
+        let promoted = db
+            .promote_knowledge_item(&request)
+            .await
+            .unwrap()
+            .expect("promotion result");
+        assert_eq!(promoted.previous_status, KnowledgeItemStatus::Working);
+        assert!(promoted.promoted);
+        assert_eq!(promoted.item.status, KnowledgeItemStatus::Promoted);
+        assert_eq!(promoted.item.trust_level, KnowledgeTrustLevel::Promoted);
+        assert_eq!(
+            promoted.item.freshness_expires_at_ms,
+            Some(now + 86_400_000)
+        );
+        assert_eq!(
+            promoted
+                .item
+                .metadata
+                .as_ref()
+                .and_then(|value| value.get("promotion"))
+                .and_then(|value| value.get("to_status"))
+                .and_then(Value::as_str),
+            Some("promoted")
+        );
+        assert_eq!(
+            promoted.coverage.latest_item_id.as_deref(),
+            Some("item-promote")
+        );
+        assert_eq!(
+            promoted.coverage.latest_dedupe_key.as_deref(),
+            Some("dedupe-promote")
+        );
+        assert_eq!(promoted.coverage.last_promoted_at_ms, Some(now + 10));
+        assert_eq!(
+            promoted.coverage.freshness_expires_at_ms,
+            Some(now + 86_400_000)
+        );
+
+        let loaded = db
+            .get_knowledge_item("item-promote")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(loaded.status, KnowledgeItemStatus::Promoted);
+        assert_eq!(
+            loaded
+                .metadata
+                .as_ref()
+                .and_then(|value| value.get("promotion"))
+                .and_then(|value| value.get("from_status"))
+                .and_then(Value::as_str),
+            Some("working")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_knowledge_item_approved_default_requires_review() {
+        let (db, _temp) = setup_test_db().await;
+        let now = chrono::Utc::now().timestamp_millis() as u64;
+
+        let space = KnowledgeSpaceRecord {
+            id: "space-approved".to_string(),
+            scope: KnowledgeScope::Project,
+            project_id: Some("project-1".to_string()),
+            namespace: Some("marketing/positioning".to_string()),
+            title: Some("Marketing positioning".to_string()),
+            description: Some("Reusable positioning guidance".to_string()),
+            trust_level: KnowledgeTrustLevel::Promoted,
+            metadata: None,
+            created_at_ms: now,
+            updated_at_ms: now,
+        };
+        db.upsert_knowledge_space(&space).await.unwrap();
+
+        let item = KnowledgeItemRecord {
+            id: "item-approved".to_string(),
+            space_id: space.id.clone(),
+            coverage_key: "project-1::marketing/positioning::strategy::pricing".to_string(),
+            dedupe_key: "dedupe-approved".to_string(),
+            item_type: "evidence".to_string(),
+            title: "Pricing sensitivity observation".to_string(),
+            summary: Some("Customers reacted to annual pricing changes".to_string()),
+            payload: serde_json::json!({"claim":"Annual pricing changes created friction"}),
+            trust_level: KnowledgeTrustLevel::Promoted,
+            status: KnowledgeItemStatus::Promoted,
+            run_id: Some("run-approved".to_string()),
+            artifact_refs: vec!["artifact://run-approved/research".to_string()],
+            source_memory_ids: vec!["memory-approved".to_string()],
+            freshness_expires_at_ms: Some(now + 1234),
+            metadata: None,
+            created_at_ms: now,
+            updated_at_ms: now,
+        };
+        db.upsert_knowledge_item(&item).await.unwrap();
+
+        let request = KnowledgePromotionRequest {
+            item_id: item.id.clone(),
+            target_status: KnowledgeItemStatus::ApprovedDefault,
+            promoted_at_ms: now + 20,
+            freshness_expires_at_ms: Some(now + 90_000_000),
+            reviewer_id: Some("reviewer-1".to_string()),
+            approval_id: Some("approval-1".to_string()),
+            reason: Some("approved as default guidance".to_string()),
+        };
+        let promoted = db
+            .promote_knowledge_item(&request)
+            .await
+            .unwrap()
+            .expect("promotion result");
+        assert_eq!(promoted.previous_status, KnowledgeItemStatus::Promoted);
+        assert_eq!(promoted.item.status, KnowledgeItemStatus::ApprovedDefault);
+        assert_eq!(
+            promoted.item.trust_level,
+            KnowledgeTrustLevel::ApprovedDefault
+        );
+        assert_eq!(promoted.coverage.last_promoted_at_ms, Some(now + 20));
+        assert_eq!(
+            promoted
+                .item
+                .metadata
+                .as_ref()
+                .and_then(|value| value.get("promotion"))
+                .and_then(|value| value.get("approval_id"))
+                .and_then(Value::as_str),
+            Some("approval-1")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_knowledge_item_promotion_rejects_invalid_transition() {
+        let (db, _temp) = setup_test_db().await;
+        let now = chrono::Utc::now().timestamp_millis() as u64;
+
+        let space = KnowledgeSpaceRecord {
+            id: "space-invalid".to_string(),
+            scope: KnowledgeScope::Project,
+            project_id: Some("project-1".to_string()),
+            namespace: Some("support".to_string()),
+            title: Some("Support".to_string()),
+            description: Some("Support guidance".to_string()),
+            trust_level: KnowledgeTrustLevel::Promoted,
+            metadata: None,
+            created_at_ms: now,
+            updated_at_ms: now,
+        };
+        db.upsert_knowledge_space(&space).await.unwrap();
+
+        let item = KnowledgeItemRecord {
+            id: "item-invalid".to_string(),
+            space_id: space.id.clone(),
+            coverage_key: "project-1::support::workflow::triage".to_string(),
+            dedupe_key: "dedupe-invalid".to_string(),
+            item_type: "decision".to_string(),
+            title: "Triage first".to_string(),
+            summary: None,
+            payload: serde_json::json!({"action":"triage"}),
+            trust_level: KnowledgeTrustLevel::Working,
+            status: KnowledgeItemStatus::Working,
+            run_id: Some("run-invalid".to_string()),
+            artifact_refs: vec![],
+            source_memory_ids: vec![],
+            freshness_expires_at_ms: None,
+            metadata: None,
+            created_at_ms: now,
+            updated_at_ms: now,
+        };
+        db.upsert_knowledge_item(&item).await.unwrap();
+
+        let request = KnowledgePromotionRequest {
+            item_id: item.id.clone(),
+            target_status: KnowledgeItemStatus::ApprovedDefault,
+            promoted_at_ms: now + 1,
+            freshness_expires_at_ms: None,
+            reviewer_id: Some("reviewer-1".to_string()),
+            approval_id: Some("approval-1".to_string()),
+            reason: Some("should fail".to_string()),
+        };
+        let err = db.promote_knowledge_item(&request).await.unwrap_err();
+        assert!(matches!(err, MemoryError::InvalidConfig(_)));
+        let loaded = db.get_knowledge_item(&item.id).await.unwrap().unwrap();
+        assert_eq!(loaded.status, KnowledgeItemStatus::Working);
     }
 }

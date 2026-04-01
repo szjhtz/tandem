@@ -47,6 +47,8 @@ Cron uses the same shape with `type: "cron"` and `cron_expression`.
 
 This is the same payload family the control panel sends for planner-created and V2 automations.
 
+Automation plans and V2 DAG workflows can also carry `knowledge` bindings, which lets the engine preflight project-scoped reusable knowledge before a node runs. In practice, that means the workflow can start from promoted knowledge, keep raw working notes local, and only refresh prior work when the configured freshness policy says it is stale.
+
 ## Default Recommendation
 
 For new scheduled automation work, prefer `automationsV2` / `automations_v2`.
@@ -55,6 +57,7 @@ Reasons:
 
 - It matches the control panel's current automation model.
 - It supports explicit multi-agent DAG flows.
+- It can carry knowledge reuse bindings and preflight guidance per workflow or node.
 - It uses the richer schedule object the planner and UI already produce.
 - It is the best fit when another agent will generate or revise automations from requirements.
 

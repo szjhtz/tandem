@@ -3,6 +3,7 @@ use super::*;
 #[test]
 fn output_validator_defaults_follow_existing_runtime_heuristics() {
     let code = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
         node_id: "code".to_string(),
         agent_id: "agent-a".to_string(),
         objective: "Implement fix".to_string(),
@@ -27,6 +28,7 @@ fn output_validator_defaults_follow_existing_runtime_heuristics() {
         })),
     };
     let brief = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
         node_id: "brief".to_string(),
         agent_id: "agent-b".to_string(),
         objective: "Draft research brief".to_string(),
@@ -46,6 +48,7 @@ fn output_validator_defaults_follow_existing_runtime_heuristics() {
         metadata: None,
     };
     let review = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
         node_id: "review".to_string(),
         agent_id: "agent-c".to_string(),
         objective: "Approve draft".to_string(),
@@ -82,6 +85,7 @@ fn output_validator_defaults_follow_existing_runtime_heuristics() {
 #[test]
 fn output_validator_explicit_override_wins() {
     let node = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
         node_id: "report".to_string(),
         agent_id: "agent-a".to_string(),
         objective: "Write report".to_string(),
@@ -110,6 +114,7 @@ fn output_validator_explicit_override_wins() {
 #[test]
 fn enrich_automation_node_output_overwrites_stale_validator_metadata() {
     let node = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
         node_id: "brief".to_string(),
         agent_id: "agent-a".to_string(),
         objective: "Draft research brief".to_string(),
@@ -195,6 +200,7 @@ fn placeholder_artifact_text_is_rejected() {
 #[test]
 fn artifact_validation_rejection_blocks_node_status() {
     let node = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
         node_id: "research".to_string(),
         agent_id: "agent-a".to_string(),
         objective: "Research".to_string(),
@@ -252,6 +258,7 @@ fn artifact_validation_rejection_blocks_node_status() {
 #[test]
 fn research_workflow_failure_kind_is_typed_from_unmet_requirements() {
     let node = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
         node_id: "research".to_string(),
         agent_id: "agent-a".to_string(),
         objective: "Research".to_string(),
@@ -326,6 +333,7 @@ fn research_workflow_failure_kind_is_typed_from_unmet_requirements() {
 #[test]
 fn research_workflow_status_is_needs_repair_before_repair_budget_is_exhausted() {
     let node = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
         node_id: "research".to_string(),
         agent_id: "agent-a".to_string(),
         objective: "Research".to_string(),
@@ -391,6 +399,7 @@ fn research_workflow_status_is_needs_repair_before_repair_budget_is_exhausted() 
 #[test]
 fn research_workflow_status_blocks_after_repair_budget_is_exhausted() {
     let node = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
         node_id: "research".to_string(),
         agent_id: "agent-a".to_string(),
         objective: "Research".to_string(),
@@ -454,6 +463,7 @@ fn research_workflow_status_blocks_after_repair_budget_is_exhausted() {
 #[test]
 fn research_workflow_status_ignores_llm_blocked_when_validation_is_repairable() {
     let node = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
         node_id: "research".to_string(),
         agent_id: "agent-a".to_string(),
         objective: "Research".to_string(),
@@ -512,6 +522,7 @@ fn research_workflow_status_ignores_llm_blocked_when_validation_is_repairable() 
 #[test]
 fn research_workflow_status_keeps_blocked_when_repair_is_exhausted_even_if_llm_declares_blocked() {
     let node = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
         node_id: "research".to_string(),
         agent_id: "agent-a".to_string(),
         objective: "Research".to_string(),
@@ -566,6 +577,7 @@ fn research_workflow_status_keeps_blocked_when_repair_is_exhausted_even_if_llm_d
 #[test]
 fn render_automation_repair_brief_summarizes_previous_research_miss() {
     let node = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
         node_id: "research-brief".to_string(),
         agent_id: "research".to_string(),
         objective: "Write marketing-brief.md".to_string(),
@@ -642,6 +654,7 @@ fn render_automation_repair_brief_summarizes_previous_research_miss() {
 #[test]
 fn code_patch_repair_brief_mentions_patch_apply_test_loop() {
     let node = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
         node_id: "code_patch".to_string(),
         agent_id: "agent-a".to_string(),
         objective: "Patch the code and verify the change.".to_string(),
@@ -700,6 +713,7 @@ fn code_patch_repair_brief_mentions_patch_apply_test_loop() {
 #[test]
 fn automation_output_enforcement_prefers_contract_over_legacy_builder_metadata() {
     let node = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
         node_id: "research".to_string(),
         agent_id: "agent-a".to_string(),
         objective: "Research".to_string(),
@@ -747,6 +761,7 @@ fn automation_output_enforcement_prefers_contract_over_legacy_builder_metadata()
 #[test]
 fn automation_output_enforcement_backfills_research_contract_from_legacy_builder_metadata() {
     let node = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
         node_id: "research".to_string(),
         agent_id: "agent-a".to_string(),
         objective: "Research".to_string(),
@@ -791,6 +806,7 @@ fn automation_output_enforcement_backfills_research_contract_from_legacy_builder
 #[test]
 fn research_nodes_default_to_five_attempts() {
     let node = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
         node_id: "research-brief".to_string(),
         agent_id: "research".to_string(),
         objective: "Write marketing-brief.md".to_string(),

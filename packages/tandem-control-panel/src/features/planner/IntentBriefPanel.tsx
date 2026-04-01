@@ -2,6 +2,10 @@ import { useState } from "react";
 import { Badge } from "../../ui/index.tsx";
 import { ProviderModelSelector } from "../../components/ProviderModelSelector";
 import { WorkspaceDirectoryPicker } from "../../components/WorkspaceDirectoryPicker";
+import {
+  buildDefaultKnowledgeOperatorPreferences,
+  buildKnowledgeRolloutGuidance,
+} from "./plannerShared";
 
 export type PlannerTargetSurface = "automation" | "mission" | "coding" | "orchestrator";
 export type PlannerHorizon = "same_day" | "multi_day" | "weekly" | "monthly" | "mixed";
@@ -87,6 +91,10 @@ function toggleSelected(values: string[], nextValue: string) {
     : [...values, nextValue].sort((left, right) => left.localeCompare(right));
 }
 
+function safeString(value: unknown) {
+  return String(value || "").trim();
+}
+
 export function IntentBriefPanel({
   draft,
   onChange,
@@ -140,6 +148,9 @@ export function IntentBriefPanel({
   const [showAdvanced, setShowAdvanced] = useState(false);
   const selectedTarget = TARGET_SURFACE_OPTIONS.find((option) => option.id === draft.targetSurface);
   const selectedHorizon = HORIZON_OPTIONS.find((option) => option.id === draft.planningHorizon);
+  const knowledgeDefaults = buildDefaultKnowledgeOperatorPreferences(draft.goal).knowledge;
+  const knowledgeRollout = buildKnowledgeRolloutGuidance(draft.goal).rollout;
+  const knowledgeSubject = safeString(knowledgeDefaults.subject || draft.goal);
 
   return (
     <div className="grid gap-4 min-h-0">
@@ -153,6 +164,36 @@ export function IntentBriefPanel({
         <p className="tcp-subtle mt-2 text-xs">
           The planner will infer target surface, cadence, and constraints from your intent.
         </p>
+      </div>
+
+      <div className="rounded-2xl border border-cyan-500/10 bg-cyan-500/5 p-3">
+        <div className="text-xs uppercase tracking-wide text-cyan-200/80">Knowledge defaults</div>
+        <div className="mt-2 flex flex-wrap gap-2">
+          <Badge tone="info">project scope</Badge>
+          <Badge tone="info">preflight reuse</Badge>
+          <Badge tone="info">promoted trust floor</Badge>
+          <Badge tone={knowledgeSubject ? "ok" : "warn"}>
+            {knowledgeSubject ? `subject: ${knowledgeSubject}` : "subject inferred later"}
+          </Badge>
+        </div>
+        <p className="tcp-subtle mt-2 text-xs">
+          The planner will start from project-scoped promoted knowledge and reuse prior work before
+          it recomputes. Raw working notes stay local unless they are promoted later.
+        </p>
+      </div>
+
+      <div className="rounded-2xl border border-amber-500/15 bg-amber-500/5 p-3">
+        <div className="text-xs uppercase tracking-wide text-amber-200/80">Rollout guardrails</div>
+        <div className="mt-2 flex flex-wrap gap-2">
+          <Badge tone="warn">project-first pilot</Badge>
+          <Badge tone="warn">promoted only</Badge>
+          <Badge tone="warn">approved_default rare</Badge>
+        </div>
+        <ul className="tcp-subtle mt-2 space-y-1 text-xs">
+          {knowledgeRollout.guardrails.map((item: string) => (
+            <li key={item}>• {item}</li>
+          ))}
+        </ul>
       </div>
 
       <WorkspaceDirectoryPicker

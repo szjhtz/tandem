@@ -61,12 +61,17 @@ fn automation_v2_node_repair_guidance(output: &Value) -> Option<Value> {
         .and_then(|value| value.get("validation_basis"))
         .cloned()
         .filter(|value| !value.is_null());
+    let knowledge_preflight = output
+        .get("knowledge_preflight")
+        .cloned()
+        .filter(|value| !value.is_null());
 
     if required_next_tool_actions.is_empty()
         && validator_reason.is_none()
         && unmet_requirements.is_empty()
         && blocking_classification.is_none()
         && validation_basis.is_none()
+        && knowledge_preflight.is_none()
     {
         return None;
     }
@@ -79,6 +84,10 @@ fn automation_v2_node_repair_guidance(output: &Value) -> Option<Value> {
         "blockingClassification": blocking_classification,
         "requiredNextToolActions": required_next_tool_actions,
         "validationBasis": validation_basis,
+        "knowledgePreflight": knowledge_preflight,
+        "knowledgeReuseReason": knowledge_preflight.as_ref().and_then(|value| value.get("reuse_reason")).and_then(Value::as_str),
+        "knowledgeSkipReason": knowledge_preflight.as_ref().and_then(|value| value.get("skip_reason")).and_then(Value::as_str),
+        "knowledgeFreshnessReason": knowledge_preflight.as_ref().and_then(|value| value.get("freshness_reason")).and_then(Value::as_str),
         "repairAttempt": artifact_validation
             .and_then(|value| value.get("repair_attempt"))
             .and_then(Value::as_u64),
@@ -2169,6 +2178,7 @@ pub(super) async fn automations_v2_create(
         description: input.description,
         status: input.status.unwrap_or(AutomationV2Status::Draft),
         schedule: input.schedule,
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
         agents: input
             .agents
             .into_iter()
@@ -3963,4 +3973,47 @@ pub(super) async fn automations_v2_events(
         Err(_) => None,
     });
     Sse::new(ready.chain(live)).keep_alive(KeepAlive::new().interval(Duration::from_secs(10)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn automation_v2_node_repair_guidance_includes_knowledge_preflight_reasons() {
+        let output = json!({
+            "status": "needs_repair",
+            "failure_kind": "knowledge_refresh_required",
+            "knowledge_preflight": {
+                "decision": "refresh_required",
+                "coverage_key": "project::ops::workflow::incident-response",
+                "reuse_reason": null,
+                "skip_reason": "prior knowledge exists but is not fresh enough to reuse",
+                "freshness_reason": "coverage `project::ops::workflow::incident-response` in space `project-default` expired at 1234",
+                "items": []
+            }
+        });
+
+        let guidance = automation_v2_node_repair_guidance(&output).expect("guidance");
+
+        assert_eq!(
+            guidance
+                .get("knowledgePreflight")
+                .and_then(|value| value.get("coverage_key"))
+                .and_then(Value::as_str),
+            Some("project::ops::workflow::incident-response")
+        );
+        assert_eq!(
+            guidance.get("knowledgeSkipReason").and_then(Value::as_str),
+            Some("prior knowledge exists but is not fresh enough to reuse")
+        );
+        assert_eq!(
+            guidance
+                .get("knowledgeFreshnessReason")
+                .and_then(Value::as_str),
+            Some(
+                "coverage `project::ops::workflow::incident-response` in space `project-default` expired at 1234"
+            )
+        );
+    }
 }

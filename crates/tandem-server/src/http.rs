@@ -56,6 +56,7 @@ mod channels_api;
 mod coder;
 mod config_providers;
 mod context_run_ledger;
+mod context_run_mutation_checkpoints;
 pub(crate) mod context_runs;
 pub(crate) mod context_types;
 mod external_actions;
@@ -111,6 +112,7 @@ mod workflows;
 
 use capabilities::*;
 use context_run_ledger::*;
+use context_run_mutation_checkpoints::*;
 use context_runs::*;
 use context_types::*;
 use mcp::*;

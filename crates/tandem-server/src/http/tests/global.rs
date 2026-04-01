@@ -732,6 +732,7 @@ async fn create_test_automation_v2(
             timezone: "UTC".to_string(),
             misfire_policy: crate::RoutineMisfirePolicy::RunOnce,
         },
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
         agents: vec![crate::AutomationAgentProfile {
             agent_id: "agent-a".to_string(),
             template_id: Some("template-a".to_string()),
@@ -754,6 +755,7 @@ async fn create_test_automation_v2(
         flow: crate::AutomationFlowSpec {
             nodes: vec![
                 crate::AutomationFlowNode {
+                    knowledge: tandem_orchestrator::KnowledgeBinding::default(),
                     node_id: "draft".to_string(),
                     agent_id: "agent-a".to_string(),
                     objective: "Create draft".to_string(),
@@ -773,6 +775,7 @@ async fn create_test_automation_v2(
                     })),
                 },
                 crate::AutomationFlowNode {
+                    knowledge: tandem_orchestrator::KnowledgeBinding::default(),
                     node_id: "review".to_string(),
                     agent_id: "agent-a".to_string(),
                     objective: "Review draft".to_string(),
@@ -795,6 +798,7 @@ async fn create_test_automation_v2(
                     })),
                 },
                 crate::AutomationFlowNode {
+                    knowledge: tandem_orchestrator::KnowledgeBinding::default(),
                     node_id: "approval".to_string(),
                     agent_id: "agent-a".to_string(),
                     objective: "Approve output".to_string(),
@@ -875,6 +879,7 @@ async fn create_branched_test_automation_v2(
             timezone: "UTC".to_string(),
             misfire_policy: crate::RoutineMisfirePolicy::RunOnce,
         },
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
         agents: vec![crate::AutomationAgentProfile {
             agent_id: "agent-a".to_string(),
             template_id: Some("template-a".to_string()),
@@ -897,6 +902,7 @@ async fn create_branched_test_automation_v2(
         flow: crate::AutomationFlowSpec {
             nodes: vec![
                 crate::AutomationFlowNode {
+                    knowledge: tandem_orchestrator::KnowledgeBinding::default(),
                     node_id: "research".to_string(),
                     agent_id: "agent-a".to_string(),
                     objective: "Research inputs".to_string(),
@@ -916,6 +922,7 @@ async fn create_branched_test_automation_v2(
                     })),
                 },
                 crate::AutomationFlowNode {
+                    knowledge: tandem_orchestrator::KnowledgeBinding::default(),
                     node_id: "analysis".to_string(),
                     agent_id: "agent-a".to_string(),
                     objective: "Analyze research".to_string(),
@@ -938,6 +945,7 @@ async fn create_branched_test_automation_v2(
                     })),
                 },
                 crate::AutomationFlowNode {
+                    knowledge: tandem_orchestrator::KnowledgeBinding::default(),
                     node_id: "draft".to_string(),
                     agent_id: "agent-a".to_string(),
                     objective: "Draft output".to_string(),
@@ -960,6 +968,7 @@ async fn create_branched_test_automation_v2(
                     })),
                 },
                 crate::AutomationFlowNode {
+                    knowledge: tandem_orchestrator::KnowledgeBinding::default(),
                     node_id: "publish".to_string(),
                     agent_id: "agent-a".to_string(),
                     objective: "Publish final output".to_string(),
@@ -1717,6 +1726,7 @@ async fn automation_v2_run_projects_backlog_tasks_into_context_blackboard() {
             timezone: "UTC".to_string(),
             misfire_policy: crate::RoutineMisfirePolicy::RunOnce,
         },
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
         agents: vec![crate::AutomationAgentProfile {
             agent_id: "repo-planner".to_string(),
             template_id: None,
@@ -1736,6 +1746,7 @@ async fn automation_v2_run_projects_backlog_tasks_into_context_blackboard() {
         }],
         flow: crate::AutomationFlowSpec {
             nodes: vec![crate::AutomationFlowNode {
+                knowledge: tandem_orchestrator::KnowledgeBinding::default(),
                 node_id: "plan-backlog-task".to_string(),
                 agent_id: "repo-planner".to_string(),
                 objective: "Inspect the repository and write the coding backlog plan.".to_string(),
@@ -1888,6 +1899,7 @@ async fn automation_v2_backlog_task_claim_and_requeue_routes_work() {
             timezone: "UTC".to_string(),
             misfire_policy: crate::RoutineMisfirePolicy::RunOnce,
         },
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
         agents: vec![crate::AutomationAgentProfile {
             agent_id: "repo-planner".to_string(),
             template_id: None,
@@ -1907,6 +1919,7 @@ async fn automation_v2_backlog_task_claim_and_requeue_routes_work() {
         }],
         flow: crate::AutomationFlowSpec {
             nodes: vec![crate::AutomationFlowNode {
+                knowledge: tandem_orchestrator::KnowledgeBinding::default(),
                 node_id: "plan-backlog-task".to_string(),
                 agent_id: "repo-planner".to_string(),
                 objective: "Inspect the repository and write the coding backlog plan.".to_string(),
@@ -3961,6 +3974,7 @@ async fn automation_v2_research_workflow_smoke_exposes_blocked_artifact_state() 
             timezone: "UTC".to_string(),
             misfire_policy: crate::RoutineMisfirePolicy::RunOnce,
         },
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
         agents: vec![crate::AutomationAgentProfile {
             agent_id: "researcher".to_string(),
             template_id: None,
@@ -3986,6 +4000,7 @@ async fn automation_v2_research_workflow_smoke_exposes_blocked_artifact_state() 
         flow: crate::AutomationFlowSpec {
             nodes: vec![
                 crate::AutomationFlowNode {
+                    knowledge: tandem_orchestrator::KnowledgeBinding::default(),
                     node_id: "research-brief".to_string(),
                     agent_id: "researcher".to_string(),
                     objective: "Write the marketing brief".to_string(),
@@ -4012,6 +4027,7 @@ async fn automation_v2_research_workflow_smoke_exposes_blocked_artifact_state() 
                     })),
                 },
                 crate::AutomationFlowNode {
+                    knowledge: tandem_orchestrator::KnowledgeBinding::default(),
                     node_id: "draft-copy".to_string(),
                     agent_id: "researcher".to_string(),
                     objective: "Draft the post".to_string(),
@@ -4099,6 +4115,17 @@ async fn automation_v2_research_workflow_smoke_exposes_blocked_artifact_state() 
                         "repair_attempt": 1,
                         "repair_attempts_remaining": 4,
                         "unmet_requirements": ["concrete_read_required", "coverage_mode"]
+                    },
+                    "knowledge_preflight": {
+                        "project_id": "proj-research-smoke",
+                        "task_family": "research-brief",
+                        "subject": "Produce a research brief with citations",
+                        "coverage_key": "proj-research-smoke::research-brief::produce-a-research-brief-with-citations",
+                        "decision": "no_prior_knowledge",
+                        "reuse_reason": null,
+                        "skip_reason": "no active promoted knowledge matched this coverage key",
+                        "freshness_reason": null,
+                        "items": []
                     },
                     "content": {
                         "path": "marketing-brief.md",
@@ -4224,12 +4251,26 @@ async fn automation_v2_research_workflow_smoke_exposes_blocked_artifact_state() 
         Some(true)
     );
     assert_eq!(
+        repair_guidance
+            .get("knowledgePreflight")
+            .and_then(|value| value.get("decision"))
+            .and_then(Value::as_str),
+        Some("no_prior_knowledge")
+    );
+    assert_eq!(
         research_output
             .get("artifact_validation")
             .and_then(|value| value.get("validation_basis"))
             .and_then(|value| value.get("authority"))
             .and_then(Value::as_str),
         Some("filesystem_and_receipts")
+    );
+    assert_eq!(
+        research_output
+            .get("knowledge_preflight")
+            .and_then(|value| value.get("skip_reason"))
+            .and_then(Value::as_str),
+        Some("no active promoted knowledge matched this coverage key")
     );
     assert_eq!(
         research_output.get("quality_mode").and_then(Value::as_str),
@@ -4290,6 +4331,7 @@ async fn automation_v2_research_workflow_smoke_exposes_citation_validation_state
             timezone: "UTC".to_string(),
             misfire_policy: crate::RoutineMisfirePolicy::RunOnce,
         },
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
         agents: vec![crate::AutomationAgentProfile {
             agent_id: "researcher".to_string(),
             template_id: None,
@@ -4314,6 +4356,7 @@ async fn automation_v2_research_workflow_smoke_exposes_citation_validation_state
         }],
         flow: crate::AutomationFlowSpec {
             nodes: vec![crate::AutomationFlowNode {
+                knowledge: tandem_orchestrator::KnowledgeBinding::default(),
                 node_id: "research-brief".to_string(),
                 agent_id: "researcher".to_string(),
                 objective: "Produce a research brief with citations".to_string(),
@@ -4582,6 +4625,7 @@ async fn automation_v2_code_workflow_smoke_exposes_verify_failed_state() {
             timezone: "UTC".to_string(),
             misfire_policy: crate::RoutineMisfirePolicy::RunOnce,
         },
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
         agents: vec![crate::AutomationAgentProfile {
             agent_id: "coder".to_string(),
             template_id: None,
@@ -4608,6 +4652,7 @@ async fn automation_v2_code_workflow_smoke_exposes_verify_failed_state() {
         }],
         flow: crate::AutomationFlowSpec {
             nodes: vec![crate::AutomationFlowNode {
+                knowledge: tandem_orchestrator::KnowledgeBinding::default(),
                 node_id: "implement-fix".to_string(),
                 agent_id: "coder".to_string(),
                 objective: "Implement the repo fix and verify it".to_string(),
@@ -4767,6 +4812,7 @@ async fn automation_v2_editorial_workflow_smoke_exposes_quality_validation_state
             timezone: "UTC".to_string(),
             misfire_policy: crate::RoutineMisfirePolicy::RunOnce,
         },
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
         agents: vec![crate::AutomationAgentProfile {
             agent_id: "writer".to_string(),
             template_id: None,
@@ -4786,6 +4832,7 @@ async fn automation_v2_editorial_workflow_smoke_exposes_quality_validation_state
         }],
         flow: crate::AutomationFlowSpec {
             nodes: vec![crate::AutomationFlowNode {
+                knowledge: tandem_orchestrator::KnowledgeBinding::default(),
                 node_id: "draft-report".to_string(),
                 agent_id: "writer".to_string(),
                 objective: "Draft the final markdown report".to_string(),
@@ -4947,6 +4994,7 @@ async fn automation_v2_publish_block_smoke_skips_external_action_receipts() {
             timezone: "UTC".to_string(),
             misfire_policy: crate::RoutineMisfirePolicy::RunOnce,
         },
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
         agents: vec![crate::AutomationAgentProfile {
             agent_id: "publisher".to_string(),
             template_id: None,
@@ -4967,6 +5015,7 @@ async fn automation_v2_publish_block_smoke_skips_external_action_receipts() {
         flow: crate::AutomationFlowSpec {
             nodes: vec![
                 crate::AutomationFlowNode {
+                    knowledge: tandem_orchestrator::KnowledgeBinding::default(),
                     node_id: "draft-report".to_string(),
                     agent_id: "publisher".to_string(),
                     objective: "Draft the final markdown report".to_string(),
@@ -4991,6 +5040,7 @@ async fn automation_v2_publish_block_smoke_skips_external_action_receipts() {
                     })),
                 },
                 crate::AutomationFlowNode {
+                    knowledge: tandem_orchestrator::KnowledgeBinding::default(),
                     node_id: "publish-report".to_string(),
                     agent_id: "publisher".to_string(),
                     objective: "Publish the final report to Slack".to_string(),

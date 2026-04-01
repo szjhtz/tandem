@@ -1911,19 +1911,15 @@ fn wait_condition_schema() -> Value {
 
 fn tool_schema(kind: BrowserToolKind) -> ToolSchema {
     match kind {
-        BrowserToolKind::Status => ToolSchema {
-            name: "browser_status".to_string(),
-            description:
-                "Check browser automation readiness and install guidance. Call this first when browser tools may be unavailable."
-                    .to_string(),
-            input_schema: json!({ "type": "object", "properties": {} }),
-        },
-        BrowserToolKind::Open => ToolSchema {
-            name: "browser_open".to_string(),
-            description:
-                "Open a URL in a browser session. Only http/https are allowed. Omit profile_id for an ephemeral session."
-                    .to_string(),
-            input_schema: json!({
+        BrowserToolKind::Status => ToolSchema::new(
+            "browser_status",
+            "Check browser automation readiness and install guidance. Call this first when browser tools may be unavailable.",
+            json!({ "type": "object", "properties": {} }),
+        ),
+        BrowserToolKind::Open => ToolSchema::new(
+            "browser_open",
+            "Open a URL in a browser session. Only http/https are allowed. Omit profile_id for an ephemeral session.",
+            json!({
                 "type": "object",
                 "properties": {
                     "url": { "type": "string" },
@@ -1934,11 +1930,11 @@ fn tool_schema(kind: BrowserToolKind) -> ToolSchema {
                 },
                 "required": ["url"]
             }),
-        },
-        BrowserToolKind::Navigate => ToolSchema {
-            name: "browser_navigate".to_string(),
-            description: "Navigate an existing browser session to a new URL.".to_string(),
-            input_schema: json!({
+        ),
+        BrowserToolKind::Navigate => ToolSchema::new(
+            "browser_navigate",
+            "Navigate an existing browser session to a new URL.",
+            json!({
                 "type": "object",
                 "properties": {
                     "session_id": { "type": "string" },
@@ -1947,13 +1943,11 @@ fn tool_schema(kind: BrowserToolKind) -> ToolSchema {
                 },
                 "required": ["session_id", "url"]
             }),
-        },
-        BrowserToolKind::Snapshot => ToolSchema {
-            name: "browser_snapshot".to_string(),
-            description:
-                "Capture a bounded page summary with stable element_id values. Call this before click/type on a new page or after navigation."
-                    .to_string(),
-            input_schema: json!({
+        ),
+        BrowserToolKind::Snapshot => ToolSchema::new(
+            "browser_snapshot",
+            "Capture a bounded page summary with stable element_id values. Call this before click/type on a new page or after navigation.",
+            json!({
                 "type": "object",
                 "properties": {
                     "session_id": { "type": "string" },
@@ -1962,13 +1956,11 @@ fn tool_schema(kind: BrowserToolKind) -> ToolSchema {
                 },
                 "required": ["session_id"]
             }),
-        },
-        BrowserToolKind::Click => ToolSchema {
-            name: "browser_click".to_string(),
-            description:
-                "Click a visible page element by element_id when possible. Use wait_for to make navigation and selector waits race-free."
-                    .to_string(),
-            input_schema: json!({
+        ),
+        BrowserToolKind::Click => ToolSchema::new(
+            "browser_click",
+            "Click a visible page element by element_id when possible. Use wait_for to make navigation and selector waits race-free.",
+            json!({
                 "type": "object",
                 "properties": {
                     "session_id": { "type": "string" },
@@ -1979,13 +1971,11 @@ fn tool_schema(kind: BrowserToolKind) -> ToolSchema {
                 },
                 "required": ["session_id"]
             }),
-        },
-        BrowserToolKind::Type => ToolSchema {
-            name: "browser_type".to_string(),
-            description:
-                "Type text into an element. Prefer secret_ref over text for credentials; secret_ref resolves from the host environment and is redacted from logs."
-                    .to_string(),
-            input_schema: json!({
+        ),
+        BrowserToolKind::Type => ToolSchema::new(
+            "browser_type",
+            "Type text into an element. Prefer secret_ref over text for credentials; secret_ref resolves from the host environment and is redacted from logs.",
+            json!({
                 "type": "object",
                 "properties": {
                     "session_id": { "type": "string" },
@@ -1999,11 +1989,11 @@ fn tool_schema(kind: BrowserToolKind) -> ToolSchema {
                 },
                 "required": ["session_id"]
             }),
-        },
-        BrowserToolKind::Press => ToolSchema {
-            name: "browser_press".to_string(),
-            description: "Dispatch a key press in the active page context.".to_string(),
-            input_schema: json!({
+        ),
+        BrowserToolKind::Press => ToolSchema::new(
+            "browser_press",
+            "Dispatch a key press in the active page context.",
+            json!({
                 "type": "object",
                 "properties": {
                     "session_id": { "type": "string" },
@@ -2013,11 +2003,11 @@ fn tool_schema(kind: BrowserToolKind) -> ToolSchema {
                 },
                 "required": ["session_id", "key"]
             }),
-        },
-        BrowserToolKind::Wait => ToolSchema {
-            name: "browser_wait".to_string(),
-            description: "Wait for a selector, text, URL fragment, navigation, or network idle.".to_string(),
-            input_schema: json!({
+        ),
+        BrowserToolKind::Wait => ToolSchema::new(
+            "browser_wait",
+            "Wait for a selector, text, URL fragment, navigation, or network idle.",
+            json!({
                 "type": "object",
                 "properties": {
                     "session_id": { "type": "string" },
@@ -2051,13 +2041,11 @@ fn tool_schema(kind: BrowserToolKind) -> ToolSchema {
                     { "required": ["url"] }
                 ]
             }),
-        },
-        BrowserToolKind::Extract => ToolSchema {
-            name: "browser_extract".to_string(),
-            description:
-                "Extract page content as visible_text, markdown, or html. Prefer this over screenshots when you need text."
-                    .to_string(),
-            input_schema: json!({
+        ),
+        BrowserToolKind::Extract => ToolSchema::new(
+            "browser_extract",
+            "Extract page content as visible_text, markdown, or html. Prefer this over screenshots when you need text.",
+            json!({
                 "type": "object",
                 "properties": {
                     "session_id": { "type": "string" },
@@ -2066,11 +2054,11 @@ fn tool_schema(kind: BrowserToolKind) -> ToolSchema {
                 },
                 "required": ["session_id", "format"]
             }),
-        },
-        BrowserToolKind::Screenshot => ToolSchema {
-            name: "browser_screenshot".to_string(),
-            description: "Capture a screenshot and store it as a browser artifact.".to_string(),
-            input_schema: json!({
+        ),
+        BrowserToolKind::Screenshot => ToolSchema::new(
+            "browser_screenshot",
+            "Capture a screenshot and store it as a browser artifact.",
+            json!({
                 "type": "object",
                 "properties": {
                     "session_id": { "type": "string" },
@@ -2079,18 +2067,18 @@ fn tool_schema(kind: BrowserToolKind) -> ToolSchema {
                 },
                 "required": ["session_id"]
             }),
-        },
-        BrowserToolKind::Close => ToolSchema {
-            name: "browser_close".to_string(),
-            description: "Close a browser session and release its resources.".to_string(),
-            input_schema: json!({
+        ),
+        BrowserToolKind::Close => ToolSchema::new(
+            "browser_close",
+            "Close a browser session and release its resources.",
+            json!({
                 "type": "object",
                 "properties": {
                     "session_id": { "type": "string" }
                 },
                 "required": ["session_id"]
             }),
-        },
+        ),
     }
 }
 

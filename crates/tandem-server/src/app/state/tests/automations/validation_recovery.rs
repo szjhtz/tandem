@@ -16,6 +16,7 @@ fn code_workflow_rejects_unsafe_raw_source_rewrites() {
         "Detailed implementation summary. ".repeat(20)
     );
     let node = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
         node_id: "implement".to_string(),
         agent_id: "agent-a".to_string(),
         objective: "Research".to_string(),
@@ -81,6 +82,7 @@ fn code_workflow_rejects_unsafe_raw_source_rewrites() {
 #[test]
 fn summarize_automation_tool_activity_counts_auth_failed_websearch_as_attempted() {
     let node = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
         node_id: "research".to_string(),
         agent_id: "agent-a".to_string(),
         objective: "Research".to_string(),
@@ -143,6 +145,7 @@ fn summarize_automation_tool_activity_counts_auth_failed_websearch_as_attempted(
 #[test]
 fn summarize_automation_tool_activity_treats_backend_unavailable_websearch_as_unavailable() {
     let node = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
         node_id: "research".to_string(),
         agent_id: "agent-a".to_string(),
         objective: "Research".to_string(),
@@ -203,6 +206,7 @@ fn summarize_automation_tool_activity_treats_backend_unavailable_websearch_as_un
 #[test]
 fn summarize_automation_tool_activity_treats_partial_websearch_with_results_as_success() {
     let node = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
         node_id: "research".to_string(),
         agent_id: "agent-a".to_string(),
         objective: "Research".to_string(),
@@ -275,6 +279,7 @@ fn summarize_automation_tool_activity_treats_partial_websearch_with_results_as_s
 #[test]
 fn summarize_automation_tool_activity_treats_runtime_websearch_string_result_as_success() {
     let node = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
         node_id: "research".to_string(),
         agent_id: "agent-a".to_string(),
         objective: "Research".to_string(),
@@ -391,6 +396,7 @@ fn automation_prompt_preflight_marks_warning_for_large_prompt() {
 #[test]
 fn build_automation_attempt_evidence_captures_runtime_websearch_success() {
     let node = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
         node_id: "research_sources".to_string(),
         agent_id: "agent-a".to_string(),
         objective: "Research".to_string(),
@@ -516,6 +522,7 @@ fn build_automation_attempt_evidence_captures_runtime_websearch_success() {
 #[test]
 fn detect_automation_blocker_category_prefers_delivery_category_from_canonical_evidence() {
     let node = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
         node_id: "notify_user".to_string(),
         agent_id: "agent-committer".to_string(),
         objective: "Send the report by email.".to_string(),
@@ -571,6 +578,7 @@ fn detect_automation_blocker_category_prefers_delivery_category_from_canonical_e
 #[test]
 fn report_generation_objective_does_not_imply_email_delivery_execution() {
     let node = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
         node_id: "generate_report".to_string(),
         agent_id: "writer".to_string(),
         objective: "Draft the report in simple HTML suitable for email body delivery.".to_string(),
@@ -600,6 +608,7 @@ fn report_generation_objective_does_not_imply_email_delivery_execution() {
 #[test]
 fn execute_goal_objective_with_gmail_draft_or_send_requires_email_delivery() {
     let node = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
         node_id: "execute_goal".to_string(),
         agent_id: "operator".to_string(),
         objective: "Create a Gmail draft or send the final HTML summary email to evan@frumu.ai if mail tools are available.".to_string(),
@@ -625,6 +634,7 @@ fn execute_goal_objective_with_gmail_draft_or_send_requires_email_delivery() {
 #[test]
 fn email_delivery_status_uses_recipient_from_objective_when_metadata_missing() {
     let node = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
         node_id: "execute_goal".to_string(),
         agent_id: "operator".to_string(),
         objective: "Create a Gmail draft or send the final HTML summary email to evan@frumu.ai if mail tools are available.".to_string(),
@@ -684,6 +694,7 @@ fn email_delivery_status_uses_recipient_from_objective_when_metadata_missing() {
 #[test]
 fn research_workflow_failure_kind_detects_missing_citations() {
     let node = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
         node_id: "research".to_string(),
         agent_id: "agent-a".to_string(),
         objective: "Research".to_string(),
@@ -736,6 +747,7 @@ fn research_workflow_failure_kind_detects_missing_citations() {
 #[test]
 fn research_workflow_defaults_to_warning_without_strict_source_coverage() {
     let node = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
         node_id: "research".to_string(),
         agent_id: "agent-a".to_string(),
         objective: "Research".to_string(),
@@ -816,6 +828,7 @@ fn artifact_validation_uses_structured_repair_exhaustion_state_from_session_text
         .expect("seed input file");
 
     let node = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
         node_id: "research".to_string(),
         agent_id: "agent-a".to_string(),
         objective: "Research".to_string(),
@@ -906,6 +919,7 @@ fn research_artifact_validation_requires_citations_and_web_sources_reviewed() {
         .expect("seed input file");
 
     let node = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
         node_id: "research".to_string(),
         agent_id: "agent-a".to_string(),
         objective: "Research".to_string(),
@@ -1030,6 +1044,7 @@ fn research_citations_validation_accepts_external_research_without_files_reviewe
         .expect("seed input file");
 
     let node = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
         node_id: "research_sources".to_string(),
         agent_id: "researcher".to_string(),
         objective: "Research current web sources".to_string(),
@@ -1142,6 +1157,7 @@ fn marketing_template_automation_migrates_to_split_research_flow() {
             timezone: "UTC".to_string(),
             misfire_policy: RoutineMisfirePolicy::RunOnce,
         },
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
         agents: vec![
             AutomationAgentProfile {
                 agent_id: "research".to_string(),
@@ -1186,6 +1202,7 @@ fn marketing_template_automation_migrates_to_split_research_flow() {
         flow: AutomationFlowSpec {
             nodes: vec![
                 AutomationFlowNode {
+                    knowledge: tandem_orchestrator::KnowledgeBinding::default(),
                     node_id: "research-brief".to_string(),
                     agent_id: "research".to_string(),
                     objective: "Legacy research".to_string(),
@@ -1215,6 +1232,7 @@ fn marketing_template_automation_migrates_to_split_research_flow() {
                     })),
                 },
                 AutomationFlowNode {
+                    knowledge: tandem_orchestrator::KnowledgeBinding::default(),
                     node_id: "draft-copy".to_string(),
                     agent_id: "copywriter".to_string(),
                     objective: "Draft copy".to_string(),

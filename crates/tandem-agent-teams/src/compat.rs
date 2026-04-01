@@ -95,36 +95,36 @@ pub struct TaskInput {
 
 pub fn compat_tool_schemas() -> Vec<ToolSchema> {
     vec![
-        ToolSchema {
-            name: "TeamCreate".to_string(),
-            description: "Create a coordinated team and shared task context.".to_string(),
-            input_schema: team_create_schema(),
-        },
-        ToolSchema {
-            name: "SendMessage".to_string(),
-            description: "Send teammate messages and coordination protocol responses.".to_string(),
-            input_schema: send_message_schema(),
-        },
-        ToolSchema {
-            name: "TaskCreate".to_string(),
-            description: "Create a task in the shared team task list.".to_string(),
-            input_schema: task_create_schema(),
-        },
-        ToolSchema {
-            name: "TaskUpdate".to_string(),
-            description: "Update ownership/state/dependencies of a shared task.".to_string(),
-            input_schema: task_update_schema(),
-        },
-        ToolSchema {
-            name: "TaskList".to_string(),
-            description: "List tasks from the shared task list.".to_string(),
-            input_schema: task_list_schema(),
-        },
-        ToolSchema {
-            name: "Task".to_string(),
-            description: "Spawn a teammate task, optionally scoped to a team_name.".to_string(),
-            input_schema: task_schema(),
-        },
+        ToolSchema::new(
+            "TeamCreate",
+            "Create a coordinated team and shared task context.",
+            team_create_schema(),
+        ),
+        ToolSchema::new(
+            "SendMessage",
+            "Send teammate messages and coordination protocol responses.",
+            send_message_schema(),
+        ),
+        ToolSchema::new(
+            "TaskCreate",
+            "Create a task in the shared team task list.",
+            task_create_schema(),
+        ),
+        ToolSchema::new(
+            "TaskUpdate",
+            "Update ownership/state/dependencies of a shared task.",
+            task_update_schema(),
+        ),
+        ToolSchema::new(
+            "TaskList",
+            "List tasks from the shared task list.",
+            task_list_schema(),
+        ),
+        ToolSchema::new(
+            "Task",
+            "Spawn a teammate task, optionally scoped to a team_name.",
+            task_schema(),
+        ),
     ]
 }
 

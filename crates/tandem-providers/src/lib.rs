@@ -2066,16 +2066,8 @@ mod tests {
     #[test]
     fn build_openai_tool_aliases_preserves_roundtrip_and_uniqueness() {
         let tools = vec![
-            ToolSchema {
-                name: "mcp.arcade.gmail.send".to_string(),
-                description: "a".to_string(),
-                input_schema: json!({"type":"object"}),
-            },
-            ToolSchema {
-                name: "mcp_arcade_gmail_send".to_string(),
-                description: "b".to_string(),
-                input_schema: json!({"type":"object"}),
-            },
+            ToolSchema::new("mcp.arcade.gmail.send", "a", json!({"type":"object"})),
+            ToolSchema::new("mcp_arcade_gmail_send", "b", json!({"type":"object"})),
         ];
         let (forward, reverse) = build_openai_tool_aliases(&tools);
         let alias_a = forward

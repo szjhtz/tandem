@@ -7,13 +7,21 @@ use crate::context_uri::ContextUri;
 use crate::db::MemoryDatabase;
 use crate::embeddings::EmbeddingService;
 use crate::types::{
-    CleanupLogEntry, DirectoryListing, EmbeddingHealth, LayerType, MemoryChunk, MemoryConfig,
-    MemoryContext, MemoryError, MemoryLayer, MemoryNode, MemoryResult, MemoryRetrievalMeta,
-    MemorySearchResult, MemoryStats, MemoryTier, NodeType, StoreMessageRequest, TreeNode,
+    CleanupLogEntry, DirectoryListing, EmbeddingHealth, KnowledgeCoverageRecord,
+    KnowledgeItemRecord, KnowledgePromotionRequest, KnowledgePromotionResult, KnowledgeSpaceRecord,
+    LayerType, MemoryChunk, MemoryConfig, MemoryContext, MemoryError, MemoryLayer, MemoryNode,
+    MemoryResult, MemoryRetrievalMeta, MemorySearchResult, MemoryStats, MemoryTier, NodeType,
+    StoreMessageRequest, TreeNode,
 };
 use chrono::Utc;
+use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Arc;
+use tandem_orchestrator::{
+    build_knowledge_coverage_key, normalize_knowledge_segment, KnowledgeBinding, KnowledgePackItem,
+    KnowledgePreflightRequest, KnowledgePreflightResult, KnowledgeReuseDecision,
+    KnowledgeReuseMode, KnowledgeScope, KnowledgeTrustLevel,
+};
 use tandem_providers::{MemoryConsolidationConfig, ProviderRegistry};
 use tokio::sync::Mutex;
 
@@ -23,6 +31,8 @@ pub struct MemoryManager {
     embedding_service: Arc<Mutex<EmbeddingService>>,
     tokenizer: Tokenizer,
 }
+
+const MAX_KNOWLEDGE_PACK_ITEMS: usize = 3;
 
 impl MemoryManager {
     fn is_malformed_database_error(err: &crate::types::MemoryError) -> bool {
@@ -256,6 +266,441 @@ impl MemoryManager {
         results.truncate(effective_limit as usize);
 
         Ok(results)
+    }
+
+    pub async fn upsert_knowledge_space(&self, space: &KnowledgeSpaceRecord) -> MemoryResult<()> {
+        self.db.upsert_knowledge_space(space).await
+    }
+
+    pub async fn get_knowledge_space(
+        &self,
+        id: &str,
+    ) -> MemoryResult<Option<KnowledgeSpaceRecord>> {
+        self.db.get_knowledge_space(id).await
+    }
+
+    pub async fn list_knowledge_spaces(
+        &self,
+        project_id: Option<&str>,
+    ) -> MemoryResult<Vec<KnowledgeSpaceRecord>> {
+        self.db.list_knowledge_spaces(project_id).await
+    }
+
+    pub async fn upsert_knowledge_item(&self, item: &KnowledgeItemRecord) -> MemoryResult<()> {
+        self.db.upsert_knowledge_item(item).await
+    }
+
+    pub async fn get_knowledge_item(&self, id: &str) -> MemoryResult<Option<KnowledgeItemRecord>> {
+        self.db.get_knowledge_item(id).await
+    }
+
+    pub async fn list_knowledge_items(
+        &self,
+        space_id: &str,
+        coverage_key: Option<&str>,
+    ) -> MemoryResult<Vec<KnowledgeItemRecord>> {
+        self.db.list_knowledge_items(space_id, coverage_key).await
+    }
+
+    pub async fn upsert_knowledge_coverage(
+        &self,
+        coverage: &KnowledgeCoverageRecord,
+    ) -> MemoryResult<()> {
+        self.db.upsert_knowledge_coverage(coverage).await
+    }
+
+    pub async fn get_knowledge_coverage(
+        &self,
+        coverage_key: &str,
+        space_id: &str,
+    ) -> MemoryResult<Option<KnowledgeCoverageRecord>> {
+        self.db.get_knowledge_coverage(coverage_key, space_id).await
+    }
+
+    pub async fn promote_knowledge_item(
+        &self,
+        request: &KnowledgePromotionRequest,
+    ) -> MemoryResult<Option<KnowledgePromotionResult>> {
+        self.db.promote_knowledge_item(request).await
+    }
+
+    fn space_matches_ref(
+        space: &KnowledgeSpaceRecord,
+        space_ref: &tandem_orchestrator::KnowledgeSpaceRef,
+        project_id: &str,
+    ) -> bool {
+        if space.scope != space_ref.scope {
+            return false;
+        }
+        match space_ref.scope {
+            KnowledgeScope::Project | KnowledgeScope::Run => {
+                let target_project = space_ref.project_id.as_deref().unwrap_or(project_id);
+                if space.project_id.as_deref() != Some(target_project) {
+                    return false;
+                }
+            }
+            KnowledgeScope::Global => {}
+        }
+        if let Some(namespace) = space_ref.namespace.as_deref() {
+            if space.namespace.as_deref() != Some(namespace) {
+                return false;
+            }
+        }
+        true
+    }
+
+    fn select_preflight_namespace(
+        binding: &KnowledgeBinding,
+        spaces: &[KnowledgeSpaceRecord],
+    ) -> Option<String> {
+        if let Some(namespace) = binding.namespace.clone() {
+            return Some(namespace);
+        }
+        if binding.read_spaces.len() == 1 {
+            if let Some(namespace) = binding.read_spaces[0].namespace.clone() {
+                return Some(namespace);
+            }
+        }
+        if spaces.len() == 1 {
+            return spaces[0].namespace.clone();
+        }
+        let mut unique = HashSet::new();
+        for space in spaces {
+            if let Some(namespace) = space.namespace.as_ref() {
+                unique.insert(namespace);
+            }
+        }
+        if unique.len() == 1 {
+            unique.into_iter().next().map(|value| value.to_string())
+        } else {
+            None
+        }
+    }
+
+    fn binding_uses_explicit_spaces(binding: &KnowledgeBinding) -> bool {
+        !binding.read_spaces.is_empty() || !binding.promote_spaces.is_empty()
+    }
+
+    fn namespace_matches(space_namespace: Option<&str>, binding_namespace: Option<&str>) -> bool {
+        match (space_namespace, binding_namespace) {
+            (None, None) => true,
+            (Some(space), Some(binding)) => {
+                normalize_knowledge_segment(space) == normalize_knowledge_segment(binding)
+            }
+            _ => false,
+        }
+    }
+
+    fn is_fresh_enough(
+        freshness_expires_at_ms: Option<u64>,
+        freshness_policy_ms: Option<u64>,
+        coverage_last_promoted_at_ms: Option<u64>,
+        item_created_at_ms: u64,
+        now_ms: u64,
+    ) -> bool {
+        if let Some(expires_at_ms) = freshness_expires_at_ms {
+            return expires_at_ms > now_ms;
+        }
+        let Some(policy_ms) = freshness_policy_ms else {
+            return true;
+        };
+        let basis_ms = coverage_last_promoted_at_ms.unwrap_or(item_created_at_ms);
+        now_ms.saturating_sub(basis_ms) <= policy_ms
+    }
+
+    async fn resolve_preflight_spaces(
+        &self,
+        request: &KnowledgePreflightRequest,
+        _coverage_key: &str,
+    ) -> MemoryResult<Vec<KnowledgeSpaceRecord>> {
+        let binding = &request.binding;
+        let mut spaces = Vec::new();
+        let mut seen_space_ids = HashSet::new();
+
+        let push_space = |space: KnowledgeSpaceRecord,
+                          spaces: &mut Vec<KnowledgeSpaceRecord>,
+                          seen_space_ids: &mut HashSet<String>| {
+            if seen_space_ids.insert(space.id.clone()) {
+                spaces.push(space);
+            }
+        };
+
+        if Self::binding_uses_explicit_spaces(binding) {
+            for space_ref in binding
+                .read_spaces
+                .iter()
+                .chain(binding.promote_spaces.iter())
+            {
+                if let Some(space_id) = space_ref.space_id.as_deref() {
+                    if let Some(space) = self.get_knowledge_space(space_id).await? {
+                        push_space(space, &mut spaces, &mut seen_space_ids);
+                    }
+                    continue;
+                }
+
+                match space_ref.scope {
+                    KnowledgeScope::Run => {}
+                    KnowledgeScope::Project => {
+                        let candidate_project_id = space_ref
+                            .project_id
+                            .as_deref()
+                            .unwrap_or(&request.project_id);
+                        let project_spaces = self
+                            .list_knowledge_spaces(Some(candidate_project_id))
+                            .await?;
+                        for space in project_spaces.into_iter().filter(|space| {
+                            Self::space_matches_ref(space, space_ref, &request.project_id)
+                        }) {
+                            push_space(space, &mut spaces, &mut seen_space_ids);
+                        }
+                    }
+                    KnowledgeScope::Global => {
+                        let global_spaces = self.list_knowledge_spaces(None).await?;
+                        for space in global_spaces.into_iter().filter(|space| {
+                            Self::space_matches_ref(space, space_ref, &request.project_id)
+                        }) {
+                            push_space(space, &mut spaces, &mut seen_space_ids);
+                        }
+                    }
+                }
+            }
+            return Ok(spaces);
+        }
+
+        if request.project_id.trim().is_empty() {
+            return Ok(spaces);
+        }
+
+        let project_spaces = self
+            .list_knowledge_spaces(Some(&request.project_id))
+            .await?;
+        let requested_namespace = if binding.namespace.is_some() {
+            binding.namespace.clone()
+        } else {
+            Self::select_preflight_namespace(binding, &project_spaces)
+        };
+        let Some(requested_namespace) = requested_namespace else {
+            return Ok(spaces);
+        };
+
+        for space in project_spaces.into_iter().filter(|space| {
+            space.scope == KnowledgeScope::Project
+                && Self::namespace_matches(
+                    space.namespace.as_deref(),
+                    Some(requested_namespace.as_str()),
+                )
+        }) {
+            push_space(space, &mut spaces, &mut seen_space_ids);
+        }
+        Ok(spaces)
+    }
+
+    pub async fn preflight_knowledge(
+        &self,
+        request: &KnowledgePreflightRequest,
+    ) -> MemoryResult<KnowledgePreflightResult> {
+        let binding = &request.binding;
+        let project_spaces = if request.project_id.trim().is_empty() {
+            Vec::new()
+        } else {
+            self.list_knowledge_spaces(Some(&request.project_id))
+                .await?
+        };
+        let namespace = binding
+            .namespace
+            .clone()
+            .or_else(|| Self::select_preflight_namespace(binding, &project_spaces));
+        let coverage_key = build_knowledge_coverage_key(
+            &request.project_id,
+            namespace.as_deref(),
+            &request.task_family,
+            &request.subject,
+        );
+
+        if !binding.enabled || binding.reuse_mode == KnowledgeReuseMode::Disabled {
+            return Ok(KnowledgePreflightResult {
+                project_id: request.project_id.clone(),
+                namespace,
+                task_family: request.task_family.clone(),
+                subject: request.subject.clone(),
+                coverage_key,
+                decision: KnowledgeReuseDecision::Disabled,
+                reuse_reason: None,
+                skip_reason: Some("knowledge reuse is disabled for this binding".to_string()),
+                freshness_reason: None,
+                items: Vec::new(),
+            });
+        }
+
+        let spaces = self
+            .resolve_preflight_spaces(request, &coverage_key)
+            .await?;
+        if spaces.is_empty() {
+            return Ok(KnowledgePreflightResult {
+                project_id: request.project_id.clone(),
+                namespace,
+                task_family: request.task_family.clone(),
+                subject: request.subject.clone(),
+                coverage_key,
+                decision: KnowledgeReuseDecision::NoPriorKnowledge,
+                reuse_reason: None,
+                skip_reason: Some("no reusable knowledge spaces were found".to_string()),
+                freshness_reason: None,
+                items: Vec::new(),
+            });
+        }
+
+        let now_ms = chrono::Utc::now().timestamp_millis().max(0) as u64;
+        let mut fresh_items = Vec::new();
+        let mut stale_items = Vec::new();
+        let mut freshest_reason = None;
+
+        for space in &spaces {
+            let items = self
+                .list_knowledge_items(&space.id, Some(&coverage_key))
+                .await?;
+            let coverage = self
+                .get_knowledge_coverage(&coverage_key, &space.id)
+                .await?;
+            for item in items {
+                if !item.status.is_active() {
+                    continue;
+                }
+                let Some(trust_level) = item.status.as_trust_level() else {
+                    continue;
+                };
+                if !trust_level.meets_floor(binding.trust_floor) {
+                    continue;
+                }
+                let freshness_expires_at_ms = item.freshness_expires_at_ms.or_else(|| {
+                    coverage
+                        .as_ref()
+                        .and_then(|coverage| coverage.freshness_expires_at_ms)
+                });
+                let pack_item = KnowledgePackItem {
+                    item_id: item.id.clone(),
+                    space_id: space.id.clone(),
+                    coverage_key: item.coverage_key.clone(),
+                    title: item.title.clone(),
+                    summary: item.summary.clone(),
+                    trust_level,
+                    status: item.status.to_string(),
+                    artifact_refs: item.artifact_refs.clone(),
+                    source_memory_ids: item.source_memory_ids.clone(),
+                    freshness_expires_at_ms,
+                };
+                if Self::is_fresh_enough(
+                    freshness_expires_at_ms,
+                    binding.freshness_ms,
+                    coverage
+                        .as_ref()
+                        .and_then(|coverage| coverage.last_promoted_at_ms),
+                    item.created_at_ms,
+                    now_ms,
+                ) {
+                    fresh_items.push(pack_item);
+                } else {
+                    freshest_reason = Some(match freshness_expires_at_ms {
+                        Some(expires_at_ms) => format!(
+                            "coverage `{}` in space `{}` expired at {}",
+                            coverage_key, space.id, expires_at_ms
+                        ),
+                        None => format!(
+                            "coverage `{}` in space `{}` lacks freshness metadata",
+                            coverage_key, space.id
+                        ),
+                    });
+                    stale_items.push(pack_item);
+                }
+            }
+        }
+
+        fresh_items.sort_by(|left, right| {
+            right
+                .trust_level
+                .rank()
+                .cmp(&left.trust_level.rank())
+                .then_with(|| {
+                    right
+                        .freshness_expires_at_ms
+                        .unwrap_or(0)
+                        .cmp(&left.freshness_expires_at_ms.unwrap_or(0))
+                })
+                .then_with(|| left.title.cmp(&right.title))
+        });
+        stale_items.sort_by(|left, right| {
+            right
+                .trust_level
+                .rank()
+                .cmp(&left.trust_level.rank())
+                .then_with(|| left.title.cmp(&right.title))
+        });
+
+        if let Some(freshest_trust_level) = fresh_items.first().map(|item| item.trust_level) {
+            let selected = fresh_items
+                .into_iter()
+                .take(MAX_KNOWLEDGE_PACK_ITEMS)
+                .collect::<Vec<_>>();
+            let decision = match freshest_trust_level {
+                KnowledgeTrustLevel::ApprovedDefault => {
+                    KnowledgeReuseDecision::ReuseApprovedDefault
+                }
+                _ => KnowledgeReuseDecision::ReusePromoted,
+            };
+            let selected_count = selected.len();
+            return Ok(KnowledgePreflightResult {
+                project_id: request.project_id.clone(),
+                namespace,
+                task_family: request.task_family.clone(),
+                subject: request.subject.clone(),
+                coverage_key,
+                decision,
+                reuse_reason: Some(format!(
+                    "reusing {} promoted knowledge item(s) from {} space(s)",
+                    selected_count,
+                    spaces.len()
+                )),
+                skip_reason: None,
+                freshness_reason: None,
+                items: selected,
+            });
+        }
+
+        if !stale_items.is_empty() {
+            let selected = stale_items
+                .into_iter()
+                .take(MAX_KNOWLEDGE_PACK_ITEMS)
+                .collect::<Vec<_>>();
+            return Ok(KnowledgePreflightResult {
+                project_id: request.project_id.clone(),
+                namespace,
+                task_family: request.task_family.clone(),
+                subject: request.subject.clone(),
+                coverage_key,
+                decision: KnowledgeReuseDecision::RefreshRequired,
+                reuse_reason: None,
+                skip_reason: Some(
+                    "prior knowledge exists but is not fresh enough to reuse".to_string(),
+                ),
+                freshness_reason: freshest_reason.or_else(|| {
+                    Some("matching knowledge exists but freshness policy rejected it".to_string())
+                }),
+                items: selected,
+            });
+        }
+
+        Ok(KnowledgePreflightResult {
+            project_id: request.project_id.clone(),
+            namespace,
+            task_family: request.task_family.clone(),
+            subject: request.subject.clone(),
+            coverage_key,
+            decision: KnowledgeReuseDecision::NoPriorKnowledge,
+            reuse_reason: None,
+            skip_reason: Some("no active promoted knowledge matched this coverage key".to_string()),
+            freshness_reason: None,
+            items: Vec::new(),
+        })
     }
 
     /// Retrieve context for a message
@@ -803,6 +1248,10 @@ pub async fn create_memory_manager(app_data_dir: &Path) -> MemoryResult<MemoryMa
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tandem_orchestrator::{
+        KnowledgeBinding, KnowledgePreflightRequest, KnowledgeReuseDecision, KnowledgeReuseMode,
+        KnowledgeScope, KnowledgeTrustLevel,
+    };
     use tempfile::TempDir;
 
     fn is_embeddings_disabled(err: &crate::types::MemoryError) -> bool {
@@ -958,5 +1407,632 @@ mod tests {
         let updated = manager.get_config("project-1").await.unwrap();
         assert_eq!(updated.max_chunks, 5000);
         assert_eq!(updated.retrieval_k, 10);
+    }
+
+    #[tokio::test]
+    async fn test_knowledge_registry_roundtrip_via_manager() {
+        let (manager, _temp) = setup_test_manager().await;
+        let now = chrono::Utc::now().timestamp_millis() as u64;
+
+        let space = KnowledgeSpaceRecord {
+            id: "space-1".to_string(),
+            scope: tandem_orchestrator::KnowledgeScope::Project,
+            project_id: Some("project-1".to_string()),
+            namespace: Some("engineering/debugging".to_string()),
+            title: Some("Engineering debugging".to_string()),
+            description: Some("Reusable debugging guidance".to_string()),
+            trust_level: tandem_orchestrator::KnowledgeTrustLevel::Promoted,
+            metadata: Some(serde_json::json!({"owner":"eng"})),
+            created_at_ms: now,
+            updated_at_ms: now,
+        };
+        manager.upsert_knowledge_space(&space).await.unwrap();
+
+        let item = KnowledgeItemRecord {
+            id: "item-1".to_string(),
+            space_id: "space-1".to_string(),
+            coverage_key: "project-1::engineering/debugging::startup::race".to_string(),
+            dedupe_key: "item-1-dedupe".to_string(),
+            item_type: "decision".to_string(),
+            title: "Delay startup-dependent retries".to_string(),
+            summary: Some("Retry only after startup has completed.".to_string()),
+            payload: serde_json::json!({"action":"delay_retry"}),
+            trust_level: tandem_orchestrator::KnowledgeTrustLevel::Promoted,
+            status: crate::types::KnowledgeItemStatus::Promoted,
+            run_id: Some("run-1".to_string()),
+            artifact_refs: vec!["artifact://run-1/startup-note".to_string()],
+            source_memory_ids: vec!["memory-1".to_string()],
+            freshness_expires_at_ms: Some(now + 86_400_000),
+            metadata: Some(serde_json::json!({"source_kind":"run"})),
+            created_at_ms: now,
+            updated_at_ms: now,
+        };
+        manager.upsert_knowledge_item(&item).await.unwrap();
+
+        let loaded_space = manager
+            .get_knowledge_space("space-1")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            loaded_space.namespace.as_deref(),
+            Some("engineering/debugging")
+        );
+
+        let loaded_item = manager.get_knowledge_item("item-1").await.unwrap().unwrap();
+        assert_eq!(loaded_item.space_id, "space-1");
+        assert_eq!(
+            loaded_item.coverage_key,
+            "project-1::engineering/debugging::startup::race"
+        );
+
+        let items = manager
+            .list_knowledge_items(
+                "space-1",
+                Some("project-1::engineering/debugging::startup::race"),
+            )
+            .await
+            .unwrap();
+        assert_eq!(items.len(), 1);
+
+        let coverage = KnowledgeCoverageRecord {
+            coverage_key: "project-1::engineering/debugging::startup::race".to_string(),
+            space_id: "space-1".to_string(),
+            latest_item_id: Some("item-1".to_string()),
+            latest_dedupe_key: Some("item-1-dedupe".to_string()),
+            last_seen_at_ms: now,
+            last_promoted_at_ms: Some(now),
+            freshness_expires_at_ms: Some(now + 86_400_000),
+            metadata: Some(serde_json::json!({"reuse_reason":"same issue"})),
+        };
+        manager.upsert_knowledge_coverage(&coverage).await.unwrap();
+
+        let loaded_coverage = manager
+            .get_knowledge_coverage("project-1::engineering/debugging::startup::race", "space-1")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(loaded_coverage.space_id, "space-1");
+        assert_eq!(loaded_coverage.latest_item_id.as_deref(), Some("item-1"));
+    }
+
+    #[tokio::test]
+    async fn test_knowledge_promotion_via_manager() {
+        let (manager, _temp) = setup_test_manager().await;
+        let now = chrono::Utc::now().timestamp_millis() as u64;
+
+        let space = KnowledgeSpaceRecord {
+            id: "space-2".to_string(),
+            scope: tandem_orchestrator::KnowledgeScope::Project,
+            project_id: Some("project-2".to_string()),
+            namespace: Some("ops/runbooks".to_string()),
+            title: Some("Ops runbooks".to_string()),
+            description: Some("Reusable operational guidance".to_string()),
+            trust_level: tandem_orchestrator::KnowledgeTrustLevel::Promoted,
+            metadata: None,
+            created_at_ms: now,
+            updated_at_ms: now,
+        };
+        manager.upsert_knowledge_space(&space).await.unwrap();
+
+        let item = KnowledgeItemRecord {
+            id: "item-2".to_string(),
+            space_id: space.id.clone(),
+            coverage_key: "project-2::ops/runbooks::restarts::stale-service".to_string(),
+            dedupe_key: "dedupe-2".to_string(),
+            item_type: "runbook".to_string(),
+            title: "Restart stale service".to_string(),
+            summary: Some("Restart the service before retrying.".to_string()),
+            payload: serde_json::json!({"action":"restart"}),
+            trust_level: tandem_orchestrator::KnowledgeTrustLevel::Working,
+            status: crate::types::KnowledgeItemStatus::Working,
+            run_id: Some("run-2".to_string()),
+            artifact_refs: vec!["artifact://run-2/runbook".to_string()],
+            source_memory_ids: vec!["memory-2".to_string()],
+            freshness_expires_at_ms: None,
+            metadata: None,
+            created_at_ms: now,
+            updated_at_ms: now,
+        };
+        manager.upsert_knowledge_item(&item).await.unwrap();
+
+        let result = manager
+            .promote_knowledge_item(&crate::types::KnowledgePromotionRequest {
+                item_id: item.id.clone(),
+                target_status: crate::types::KnowledgeItemStatus::Promoted,
+                promoted_at_ms: now + 5,
+                freshness_expires_at_ms: Some(now + 86_400_000),
+                reviewer_id: None,
+                approval_id: None,
+                reason: Some("manager wrapper".to_string()),
+            })
+            .await
+            .unwrap()
+            .expect("promotion result");
+        assert_eq!(
+            result.item.status,
+            crate::types::KnowledgeItemStatus::Promoted
+        );
+        assert_eq!(result.coverage.latest_item_id.as_deref(), Some("item-2"));
+    }
+
+    #[tokio::test]
+    async fn test_preflight_knowledge_disabled() {
+        let (manager, _temp) = setup_test_manager().await;
+
+        let request = KnowledgePreflightRequest {
+            project_id: "project-1".to_string(),
+            task_family: "debugging".to_string(),
+            subject: "startup race".to_string(),
+            binding: KnowledgeBinding {
+                enabled: false,
+                ..Default::default()
+            },
+        };
+
+        let result = manager.preflight_knowledge(&request).await.unwrap();
+        assert_eq!(result.decision, KnowledgeReuseDecision::Disabled);
+        assert!(result.skip_reason.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_preflight_knowledge_reuses_promoted_item() {
+        let (manager, _temp) = setup_test_manager().await;
+        let now = chrono::Utc::now().timestamp_millis() as u64;
+
+        let space = KnowledgeSpaceRecord {
+            id: "space-preflight-1".to_string(),
+            scope: KnowledgeScope::Project,
+            project_id: Some("project-1".to_string()),
+            namespace: Some("engineering/debugging".to_string()),
+            title: Some("Engineering debugging".to_string()),
+            description: Some("Reusable debugging guidance".to_string()),
+            trust_level: KnowledgeTrustLevel::Promoted,
+            metadata: None,
+            created_at_ms: now,
+            updated_at_ms: now,
+        };
+        manager.upsert_knowledge_space(&space).await.unwrap();
+
+        let item = KnowledgeItemRecord {
+            id: "item-preflight-1".to_string(),
+            space_id: space.id.clone(),
+            coverage_key: tandem_orchestrator::build_knowledge_coverage_key(
+                "project-1",
+                Some("engineering/debugging"),
+                "startup",
+                "race",
+            ),
+            dedupe_key: "dedupe-preflight-1".to_string(),
+            item_type: "decision".to_string(),
+            title: "Delay startup-dependent retries".to_string(),
+            summary: Some("Retry after startup completes.".to_string()),
+            payload: serde_json::json!({"action":"delay_retry"}),
+            trust_level: KnowledgeTrustLevel::Promoted,
+            status: crate::types::KnowledgeItemStatus::Promoted,
+            run_id: Some("run-1".to_string()),
+            artifact_refs: vec!["artifact://run-1/debug".to_string()],
+            source_memory_ids: vec![],
+            freshness_expires_at_ms: Some(now + 86_400_000),
+            metadata: None,
+            created_at_ms: now,
+            updated_at_ms: now,
+        };
+        manager.upsert_knowledge_item(&item).await.unwrap();
+
+        let request = KnowledgePreflightRequest {
+            project_id: "project-1".to_string(),
+            task_family: "startup".to_string(),
+            subject: "race".to_string(),
+            binding: KnowledgeBinding {
+                namespace: Some("engineering/debugging".to_string()),
+                freshness_ms: Some(10_000),
+                ..Default::default()
+            },
+        };
+
+        let result = manager.preflight_knowledge(&request).await.unwrap();
+        assert_eq!(result.decision, KnowledgeReuseDecision::ReusePromoted);
+        assert_eq!(result.items.len(), 1);
+        assert!(result.reuse_reason.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_preflight_knowledge_stale_requires_refresh() {
+        let (manager, _temp) = setup_test_manager().await;
+        let now = chrono::Utc::now().timestamp_millis() as u64;
+
+        let space = KnowledgeSpaceRecord {
+            id: "space-preflight-2".to_string(),
+            scope: KnowledgeScope::Project,
+            project_id: Some("project-1".to_string()),
+            namespace: Some("ops/runbooks".to_string()),
+            title: Some("Ops runbooks".to_string()),
+            description: Some("Reusable ops guidance".to_string()),
+            trust_level: KnowledgeTrustLevel::Promoted,
+            metadata: None,
+            created_at_ms: now,
+            updated_at_ms: now,
+        };
+        manager.upsert_knowledge_space(&space).await.unwrap();
+
+        let item = KnowledgeItemRecord {
+            id: "item-preflight-2".to_string(),
+            space_id: space.id.clone(),
+            coverage_key: tandem_orchestrator::build_knowledge_coverage_key(
+                "project-1",
+                Some("ops/runbooks"),
+                "restart",
+                "stale service",
+            ),
+            dedupe_key: "dedupe-preflight-2".to_string(),
+            item_type: "runbook".to_string(),
+            title: "Restart stale service".to_string(),
+            summary: Some("Restart and verify health.".to_string()),
+            payload: serde_json::json!({"action":"restart"}),
+            trust_level: KnowledgeTrustLevel::Promoted,
+            status: crate::types::KnowledgeItemStatus::Promoted,
+            run_id: Some("run-2".to_string()),
+            artifact_refs: vec![],
+            source_memory_ids: vec![],
+            freshness_expires_at_ms: Some(now - 1000),
+            metadata: None,
+            created_at_ms: now,
+            updated_at_ms: now,
+        };
+        manager.upsert_knowledge_item(&item).await.unwrap();
+
+        let request = KnowledgePreflightRequest {
+            project_id: "project-1".to_string(),
+            task_family: "restart".to_string(),
+            subject: "stale service".to_string(),
+            binding: KnowledgeBinding {
+                namespace: Some("ops/runbooks".to_string()),
+                freshness_ms: Some(10_000),
+                ..Default::default()
+            },
+        };
+
+        let result = manager.preflight_knowledge(&request).await.unwrap();
+        assert_eq!(result.decision, KnowledgeReuseDecision::RefreshRequired);
+        assert!(result.freshness_reason.is_some());
+        assert!(!result.items.is_empty());
+        assert!(!result.is_reusable());
+    }
+
+    #[tokio::test]
+    async fn test_preflight_knowledge_no_prior_knowledge() {
+        let (manager, _temp) = setup_test_manager().await;
+
+        let request = KnowledgePreflightRequest {
+            project_id: "project-1".to_string(),
+            task_family: "support".to_string(),
+            subject: "triage".to_string(),
+            binding: KnowledgeBinding {
+                reuse_mode: KnowledgeReuseMode::Preflight,
+                ..Default::default()
+            },
+        };
+
+        let result = manager.preflight_knowledge(&request).await.unwrap();
+        assert_eq!(result.decision, KnowledgeReuseDecision::NoPriorKnowledge);
+        assert!(result.skip_reason.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_preflight_knowledge_requires_explicit_namespace_when_project_has_many() {
+        let (manager, _temp) = setup_test_manager().await;
+        let now = chrono::Utc::now().timestamp_millis() as u64;
+
+        let spaces = [
+            ("space-alpha", "engineering/debugging", "Delay retries"),
+            ("space-beta", "ops/runbooks", "Restart safely"),
+        ];
+        for (id, namespace, title) in spaces {
+            manager
+                .upsert_knowledge_space(&KnowledgeSpaceRecord {
+                    id: id.to_string(),
+                    scope: KnowledgeScope::Project,
+                    project_id: Some("project-1".to_string()),
+                    namespace: Some(namespace.to_string()),
+                    title: Some(title.to_string()),
+                    description: None,
+                    trust_level: KnowledgeTrustLevel::Promoted,
+                    metadata: None,
+                    created_at_ms: now,
+                    updated_at_ms: now,
+                })
+                .await
+                .unwrap();
+        }
+
+        let result = manager
+            .preflight_knowledge(&KnowledgePreflightRequest {
+                project_id: "project-1".to_string(),
+                task_family: "debugging".to_string(),
+                subject: "startup race".to_string(),
+                binding: KnowledgeBinding::default(),
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(result.decision, KnowledgeReuseDecision::NoPriorKnowledge);
+        assert!(result.items.is_empty());
+        assert!(result
+            .skip_reason
+            .as_deref()
+            .is_some_and(|reason| reason.contains("no reusable knowledge spaces")));
+    }
+
+    #[tokio::test]
+    async fn test_preflight_knowledge_infers_single_project_namespace() {
+        let (manager, _temp) = setup_test_manager().await;
+        let now = chrono::Utc::now().timestamp_millis() as u64;
+
+        let space = KnowledgeSpaceRecord {
+            id: "space-single-namespace".to_string(),
+            scope: KnowledgeScope::Project,
+            project_id: Some("project-1".to_string()),
+            namespace: Some("engineering/debugging".to_string()),
+            title: Some("Engineering debugging".to_string()),
+            description: None,
+            trust_level: KnowledgeTrustLevel::Promoted,
+            metadata: None,
+            created_at_ms: now,
+            updated_at_ms: now,
+        };
+        manager.upsert_knowledge_space(&space).await.unwrap();
+
+        let item = KnowledgeItemRecord {
+            id: "item-single-namespace".to_string(),
+            space_id: space.id.clone(),
+            coverage_key: tandem_orchestrator::build_knowledge_coverage_key(
+                "project-1",
+                Some("engineering/debugging"),
+                "debugging",
+                "startup race",
+            ),
+            dedupe_key: "dedupe-single-namespace".to_string(),
+            item_type: "decision".to_string(),
+            title: "Delay startup retries".to_string(),
+            summary: Some("Wait for startup completion.".to_string()),
+            payload: serde_json::json!({"action":"delay_retry"}),
+            trust_level: KnowledgeTrustLevel::Promoted,
+            status: crate::types::KnowledgeItemStatus::Promoted,
+            run_id: Some("run-single-namespace".to_string()),
+            artifact_refs: vec![],
+            source_memory_ids: vec![],
+            freshness_expires_at_ms: Some(now + 86_400_000),
+            metadata: None,
+            created_at_ms: now,
+            updated_at_ms: now,
+        };
+        manager.upsert_knowledge_item(&item).await.unwrap();
+
+        let result = manager
+            .preflight_knowledge(&KnowledgePreflightRequest {
+                project_id: "project-1".to_string(),
+                task_family: "debugging".to_string(),
+                subject: "startup race".to_string(),
+                binding: KnowledgeBinding::default(),
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(result.decision, KnowledgeReuseDecision::ReusePromoted);
+        assert_eq!(result.namespace.as_deref(), Some("engineering/debugging"));
+        assert_eq!(result.items.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_knowledge_preflight_disabled_binding_returns_disabled() {
+        let (manager, _temp) = setup_test_manager().await;
+        let result = manager
+            .preflight_knowledge(&KnowledgePreflightRequest {
+                project_id: "project-1".to_string(),
+                task_family: "debugging".to_string(),
+                subject: "startup race".to_string(),
+                binding: tandem_orchestrator::KnowledgeBinding {
+                    enabled: false,
+                    ..Default::default()
+                },
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            result.decision,
+            tandem_orchestrator::KnowledgeReuseDecision::Disabled
+        );
+        assert!(result.items.is_empty());
+        assert!(result
+            .skip_reason
+            .as_deref()
+            .is_some_and(|reason| reason.contains("disabled")));
+    }
+
+    #[tokio::test]
+    async fn test_knowledge_preflight_fresh_item_is_reusable() {
+        let (manager, _temp) = setup_test_manager().await;
+        let now = chrono::Utc::now().timestamp_millis() as u64;
+
+        let space = KnowledgeSpaceRecord {
+            id: "space-preflight-1".to_string(),
+            scope: tandem_orchestrator::KnowledgeScope::Project,
+            project_id: Some("project-1".to_string()),
+            namespace: Some("engineering/debugging".to_string()),
+            title: Some("Engineering debugging".to_string()),
+            description: None,
+            trust_level: tandem_orchestrator::KnowledgeTrustLevel::Promoted,
+            metadata: None,
+            created_at_ms: now,
+            updated_at_ms: now,
+        };
+        manager.upsert_knowledge_space(&space).await.unwrap();
+
+        let item = KnowledgeItemRecord {
+            id: "item-preflight-1".to_string(),
+            space_id: space.id.clone(),
+            coverage_key: tandem_orchestrator::build_knowledge_coverage_key(
+                "project-1",
+                Some("engineering/debugging"),
+                "debugging",
+                "startup race",
+            ),
+            dedupe_key: "dedupe-preflight-1".to_string(),
+            item_type: "decision".to_string(),
+            title: "Delay startup retries".to_string(),
+            summary: Some("Wait for startup completion before retrying.".to_string()),
+            payload: serde_json::json!({"action":"delay_retry"}),
+            trust_level: tandem_orchestrator::KnowledgeTrustLevel::Promoted,
+            status: crate::types::KnowledgeItemStatus::Promoted,
+            run_id: Some("run-preflight-1".to_string()),
+            artifact_refs: vec!["artifact://run-preflight-1/report".to_string()],
+            source_memory_ids: vec!["memory-preflight-1".to_string()],
+            freshness_expires_at_ms: Some(now + 86_400_000),
+            metadata: None,
+            created_at_ms: now,
+            updated_at_ms: now,
+        };
+        manager.upsert_knowledge_item(&item).await.unwrap();
+
+        let coverage = KnowledgeCoverageRecord {
+            coverage_key: item.coverage_key.clone(),
+            space_id: space.id.clone(),
+            latest_item_id: Some(item.id.clone()),
+            latest_dedupe_key: Some(item.dedupe_key.clone()),
+            last_seen_at_ms: now,
+            last_promoted_at_ms: Some(now),
+            freshness_expires_at_ms: Some(now + 86_400_000),
+            metadata: None,
+        };
+        manager.upsert_knowledge_coverage(&coverage).await.unwrap();
+
+        let result = manager
+            .preflight_knowledge(&KnowledgePreflightRequest {
+                project_id: "project-1".to_string(),
+                task_family: "debugging".to_string(),
+                subject: "startup race".to_string(),
+                binding: tandem_orchestrator::KnowledgeBinding {
+                    namespace: Some("engineering/debugging".to_string()),
+                    ..Default::default()
+                },
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            result.decision,
+            tandem_orchestrator::KnowledgeReuseDecision::ReusePromoted
+        );
+        assert!(result.is_reusable());
+        assert!(!result.items.is_empty());
+        assert!(result
+            .reuse_reason
+            .as_deref()
+            .is_some_and(|reason| reason.contains("reusing")));
+    }
+
+    #[tokio::test]
+    async fn test_knowledge_preflight_stale_item_requests_refresh() {
+        let (manager, _temp) = setup_test_manager().await;
+        let now = chrono::Utc::now().timestamp_millis() as u64;
+
+        let space = KnowledgeSpaceRecord {
+            id: "space-preflight-2".to_string(),
+            scope: tandem_orchestrator::KnowledgeScope::Project,
+            project_id: Some("project-2".to_string()),
+            namespace: Some("support/runbooks".to_string()),
+            title: Some("Support runbooks".to_string()),
+            description: None,
+            trust_level: tandem_orchestrator::KnowledgeTrustLevel::Promoted,
+            metadata: None,
+            created_at_ms: now,
+            updated_at_ms: now,
+        };
+        manager.upsert_knowledge_space(&space).await.unwrap();
+
+        let item = KnowledgeItemRecord {
+            id: "item-preflight-2".to_string(),
+            space_id: space.id.clone(),
+            coverage_key: tandem_orchestrator::build_knowledge_coverage_key(
+                "project-2",
+                Some("support/runbooks"),
+                "runbooks",
+                "restart service",
+            ),
+            dedupe_key: "dedupe-preflight-2".to_string(),
+            item_type: "runbook".to_string(),
+            title: "Restart stale service".to_string(),
+            summary: Some("Restart before retrying.".to_string()),
+            payload: serde_json::json!({"action":"restart"}),
+            trust_level: tandem_orchestrator::KnowledgeTrustLevel::Promoted,
+            status: crate::types::KnowledgeItemStatus::Promoted,
+            run_id: Some("run-preflight-2".to_string()),
+            artifact_refs: vec![],
+            source_memory_ids: vec![],
+            freshness_expires_at_ms: Some(now.saturating_sub(1)),
+            metadata: None,
+            created_at_ms: now.saturating_sub(86_400_000),
+            updated_at_ms: now,
+        };
+        manager.upsert_knowledge_item(&item).await.unwrap();
+
+        let coverage = KnowledgeCoverageRecord {
+            coverage_key: item.coverage_key.clone(),
+            space_id: space.id.clone(),
+            latest_item_id: Some(item.id.clone()),
+            latest_dedupe_key: Some(item.dedupe_key.clone()),
+            last_seen_at_ms: now,
+            last_promoted_at_ms: Some(now.saturating_sub(1)),
+            freshness_expires_at_ms: Some(now.saturating_sub(1)),
+            metadata: None,
+        };
+        manager.upsert_knowledge_coverage(&coverage).await.unwrap();
+
+        let result = manager
+            .preflight_knowledge(&KnowledgePreflightRequest {
+                project_id: "project-2".to_string(),
+                task_family: "runbooks".to_string(),
+                subject: "restart service".to_string(),
+                binding: tandem_orchestrator::KnowledgeBinding {
+                    namespace: Some("support/runbooks".to_string()),
+                    freshness_ms: Some(86_400_000),
+                    ..Default::default()
+                },
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            result.decision,
+            tandem_orchestrator::KnowledgeReuseDecision::RefreshRequired
+        );
+        assert!(!result.is_reusable());
+        assert!(result.items.is_empty() || result.freshness_reason.is_some());
+        assert!(result
+            .freshness_reason
+            .as_deref()
+            .is_some_and(|reason| reason.contains("expired") || reason.contains("freshness")));
+    }
+
+    #[tokio::test]
+    async fn test_knowledge_preflight_no_prior_knowledge_returns_no_prior() {
+        let (manager, _temp) = setup_test_manager().await;
+        let result = manager
+            .preflight_knowledge(&KnowledgePreflightRequest {
+                project_id: "project-3".to_string(),
+                task_family: "ops".to_string(),
+                subject: "incident triage".to_string(),
+                binding: Default::default(),
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            result.decision,
+            tandem_orchestrator::KnowledgeReuseDecision::NoPriorKnowledge
+        );
+        assert!(result.items.is_empty());
+        assert!(result
+            .skip_reason
+            .as_deref()
+            .is_some_and(|reason| reason.contains("no active promoted knowledge")));
     }
 }

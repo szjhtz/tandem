@@ -1,97 +1,9 @@
 use super::*;
+use std::collections::HashMap;
+use tandem_core::{tool_name_matches_profile, tool_schema_matches_profile, ToolCapabilityProfile};
+use tandem_types::ToolSchema;
 
-fn automation_tool_name_is_workspace_read(tool_name: &str) -> bool {
-    tool_name.trim().eq_ignore_ascii_case("read")
-}
-
-fn automation_tool_name_is_workspace_discover(tool_name: &str) -> bool {
-    matches!(
-        tool_name
-            .trim()
-            .to_ascii_lowercase()
-            .replace('-', "_")
-            .as_str(),
-        "glob" | "search" | "grep" | "codesearch" | "ls" | "list"
-    )
-}
-
-fn automation_tool_name_is_artifact_write(tool_name: &str) -> bool {
-    matches!(
-        tool_name
-            .trim()
-            .to_ascii_lowercase()
-            .replace('-', "_")
-            .as_str(),
-        "write" | "edit" | "apply_patch"
-    )
-}
-
-fn automation_tool_name_is_web_research(tool_name: &str) -> bool {
-    matches!(
-        tool_name
-            .trim()
-            .to_ascii_lowercase()
-            .replace('-', "_")
-            .as_str(),
-        "websearch" | "webfetch" | "webfetch_html"
-    )
-}
-
-fn automation_tool_name_is_verify_command(tool_name: &str) -> bool {
-    tool_name.trim().eq_ignore_ascii_case("bash")
-}
-
-fn automation_tool_name_tokens(tool_name: &str) -> Vec<String> {
-    tool_name
-        .trim()
-        .to_ascii_lowercase()
-        .chars()
-        .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { ' ' })
-        .collect::<String>()
-        .split_whitespace()
-        .map(str::to_string)
-        .collect::<Vec<_>>()
-}
-
-fn automation_tool_name_contains_token(tokens: &[String], needle: &str) -> bool {
-    tokens.iter().any(|token| token == needle)
-}
-
-fn automation_tool_name_compact(tool_name: &str) -> String {
-    tool_name
-        .trim()
-        .to_ascii_lowercase()
-        .chars()
-        .filter(|ch| ch.is_ascii_alphanumeric())
-        .collect::<String>()
-}
-
-fn automation_tool_name_is_email_send(tool_name: &str) -> bool {
-    let tokens = automation_tool_name_tokens(tool_name);
-    let compact = automation_tool_name_compact(tool_name);
-    automation_tool_name_is_email_delivery(tool_name)
-        && (automation_tool_name_contains_token(&tokens, "send")
-            || automation_tool_name_contains_token(&tokens, "deliver")
-            || automation_tool_name_contains_token(&tokens, "reply")
-            || compact.contains("sendemail")
-            || compact.contains("emailsend")
-            || compact.contains("replyemail")
-            || compact.contains("emailreply"))
-}
-
-fn automation_tool_name_is_email_draft(tool_name: &str) -> bool {
-    let tokens = automation_tool_name_tokens(tool_name);
-    let compact = automation_tool_name_compact(tool_name);
-    automation_tool_name_is_email_delivery(tool_name)
-        && (automation_tool_name_contains_token(&tokens, "draft")
-            || automation_tool_name_contains_token(&tokens, "compose")
-            || compact.contains("draftemail")
-            || compact.contains("emaildraft")
-            || compact.contains("composeemail")
-            || compact.contains("emailcompose"))
-}
-
-fn automation_expand_effective_offered_tools(
+pub(crate) fn automation_expand_effective_offered_tools(
     offered_tools: &[String],
     available_tool_names: &HashSet<String>,
 ) -> Vec<String> {
@@ -123,7 +35,23 @@ fn automation_expand_effective_offered_tools(
     effective
 }
 
-fn automation_discovered_tools_for_predicate<F>(
+pub(crate) fn automation_tool_name_tokens(tool_name: &str) -> Vec<String> {
+    tool_name
+        .trim()
+        .to_ascii_lowercase()
+        .chars()
+        .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { ' ' })
+        .collect::<String>()
+        .split_whitespace()
+        .map(str::to_string)
+        .collect::<Vec<_>>()
+}
+
+pub(crate) fn automation_tool_name_is_email_delivery(tool_name: &str) -> bool {
+    tool_name_matches_profile(tool_name, ToolCapabilityProfile::EmailDelivery)
+}
+
+pub(crate) fn automation_discovered_tools_for_predicate<F>(
     tools: impl IntoIterator<Item = String>,
     predicate: F,
 ) -> Vec<String>
@@ -155,7 +83,10 @@ fn automation_tool_schema_chars<T: serde::Serialize>(schemas: &[T]) -> u64 {
         .sum()
 }
 
-fn automation_tool_capability_ids(node: &AutomationFlowNode, execution_mode: &str) -> Vec<String> {
+pub(crate) fn automation_tool_capability_ids(
+    node: &AutomationFlowNode,
+    execution_mode: &str,
+) -> Vec<String> {
     let mut capabilities = Vec::new();
     if !node.input_refs.is_empty()
         || automation_node_required_tools(node)
@@ -190,41 +121,97 @@ fn automation_tool_capability_ids(node: &AutomationFlowNode, execution_mode: &st
     capabilities
 }
 
-fn automation_capability_matches_tool(capability_id: &str, tool_name: &str) -> bool {
+pub(crate) fn automation_tool_name_is_email_send(tool_name: &str) -> bool {
+    tool_name_matches_profile(tool_name, ToolCapabilityProfile::EmailSend)
+}
+
+pub(crate) fn automation_tool_name_is_email_draft(tool_name: &str) -> bool {
+    tool_name_matches_profile(tool_name, ToolCapabilityProfile::EmailDraft)
+}
+
+fn automation_capability_profile(capability_id: &str) -> Option<ToolCapabilityProfile> {
     match capability_id {
-        "workspace_read" => automation_tool_name_is_workspace_read(tool_name),
-        "workspace_discover" => automation_tool_name_is_workspace_discover(tool_name),
-        "artifact_write" => automation_tool_name_is_artifact_write(tool_name),
-        "web_research" => automation_tool_name_is_web_research(tool_name),
-        "email_send" => automation_tool_name_is_email_send(tool_name),
-        "email_draft" => automation_tool_name_is_email_draft(tool_name),
-        "verify_command" => automation_tool_name_is_verify_command(tool_name),
-        _ => false,
+        "workspace_read" => Some(ToolCapabilityProfile::WorkspaceRead),
+        "workspace_discover" => Some(ToolCapabilityProfile::WorkspaceDiscover),
+        "artifact_write" => Some(ToolCapabilityProfile::ArtifactWrite),
+        "web_research" => Some(ToolCapabilityProfile::WebResearch),
+        "email_send" => Some(ToolCapabilityProfile::EmailSend),
+        "email_draft" => Some(ToolCapabilityProfile::EmailDraft),
+        "email_delivery" => Some(ToolCapabilityProfile::EmailDelivery),
+        "verify_command" => Some(ToolCapabilityProfile::VerifyCommand),
+        _ => None,
     }
 }
 
-fn automation_resolve_capabilities(
+fn automation_capability_matches_tool_name(capability_id: &str, tool_name: &str) -> bool {
+    automation_capability_profile(capability_id)
+        .is_some_and(|profile| tool_name_matches_profile(tool_name, profile))
+}
+
+pub(crate) fn automation_capability_matches_tool(capability_id: &str, tool_name: &str) -> bool {
+    automation_capability_matches_tool_name(capability_id, tool_name)
+}
+
+fn automation_capability_matches_schema(capability_id: &str, schema: &ToolSchema) -> bool {
+    automation_capability_profile(capability_id)
+        .is_some_and(|profile| tool_schema_matches_profile(schema, profile))
+}
+
+fn automation_matching_tool_names(
+    tools: impl IntoIterator<Item = String>,
+    available_tool_schemas_by_name: &HashMap<String, &ToolSchema>,
+    capability_id: &str,
+) -> Vec<String> {
+    automation_discovered_tools_for_predicate(tools, |tool_name| {
+        available_tool_schemas_by_name
+            .get(tool_name)
+            .map(|schema| automation_capability_matches_schema(capability_id, schema))
+            .unwrap_or_else(|| automation_capability_matches_tool_name(capability_id, tool_name))
+    })
+}
+
+pub(crate) fn automation_resolve_capabilities(
     node: &AutomationFlowNode,
     execution_mode: &str,
     offered_tools: &[String],
     available_tool_names: &HashSet<String>,
 ) -> Value {
+    automation_resolve_capabilities_with_schemas(
+        node,
+        execution_mode,
+        offered_tools,
+        available_tool_names,
+        &[],
+    )
+}
+
+pub(crate) fn automation_resolve_capabilities_with_schemas(
+    node: &AutomationFlowNode,
+    execution_mode: &str,
+    offered_tools: &[String],
+    available_tool_names: &HashSet<String>,
+    available_tool_schemas: &[ToolSchema],
+) -> Value {
     let effective_offered_tools =
         automation_expand_effective_offered_tools(offered_tools, available_tool_names);
     let required_capabilities = automation_tool_capability_ids(node, execution_mode);
+    let available_tool_schemas_by_name = available_tool_schemas
+        .iter()
+        .map(|schema| (schema.name.clone(), schema))
+        .collect::<HashMap<_, _>>();
     let mut resolved = serde_json::Map::new();
     let mut missing = Vec::new();
     for capability_id in &required_capabilities {
-        let available_matches = available_tool_names
-            .iter()
-            .filter(|tool_name| automation_capability_matches_tool(capability_id, tool_name))
-            .cloned()
-            .collect::<Vec<_>>();
-        let offered_matches = effective_offered_tools
-            .iter()
-            .filter(|tool_name| automation_capability_matches_tool(capability_id, tool_name))
-            .cloned()
-            .collect::<Vec<_>>();
+        let available_matches = automation_matching_tool_names(
+            available_tool_names.iter().cloned(),
+            &available_tool_schemas_by_name,
+            capability_id,
+        );
+        let offered_matches = automation_matching_tool_names(
+            effective_offered_tools.clone(),
+            &available_tool_schemas_by_name,
+            capability_id,
+        );
         let status = if !offered_matches.is_empty() {
             "resolved"
         } else if !available_matches.is_empty() {
@@ -252,29 +239,35 @@ fn automation_resolve_capabilities(
     output.insert("resolved".to_string(), json!(resolved));
     output.insert("missing_capabilities".to_string(), json!(missing));
     if automation_node_requires_email_delivery(node) {
-        let available_email_like_tools = automation_discovered_tools_for_predicate(
-            available_tool_names.iter().cloned().collect::<Vec<_>>(),
-            automation_tool_name_is_email_delivery,
+        let available_email_like_tools = automation_matching_tool_names(
+            available_tool_names.iter().cloned(),
+            &available_tool_schemas_by_name,
+            "email_delivery",
         );
-        let offered_email_like_tools = automation_discovered_tools_for_predicate(
+        let offered_email_like_tools = automation_matching_tool_names(
             effective_offered_tools.clone(),
-            automation_tool_name_is_email_delivery,
+            &available_tool_schemas_by_name,
+            "email_delivery",
         );
-        let available_send_tools = automation_discovered_tools_for_predicate(
-            available_tool_names.iter().cloned().collect::<Vec<_>>(),
-            automation_tool_name_is_email_send,
+        let available_send_tools = automation_matching_tool_names(
+            available_tool_names.iter().cloned(),
+            &available_tool_schemas_by_name,
+            "email_send",
         );
-        let offered_send_tools = automation_discovered_tools_for_predicate(
+        let offered_send_tools = automation_matching_tool_names(
             effective_offered_tools.clone(),
-            automation_tool_name_is_email_send,
+            &available_tool_schemas_by_name,
+            "email_send",
         );
-        let available_draft_tools = automation_discovered_tools_for_predicate(
-            available_tool_names.iter().cloned().collect::<Vec<_>>(),
-            automation_tool_name_is_email_draft,
+        let available_draft_tools = automation_matching_tool_names(
+            available_tool_names.iter().cloned(),
+            &available_tool_schemas_by_name,
+            "email_draft",
         );
-        let offered_draft_tools = automation_discovered_tools_for_predicate(
+        let offered_draft_tools = automation_matching_tool_names(
             effective_offered_tools.clone(),
-            automation_tool_name_is_email_draft,
+            &available_tool_schemas_by_name,
+            "email_draft",
         );
         output.insert(
             "email_tool_diagnostics".to_string(),
@@ -327,14 +320,14 @@ pub(crate) fn build_automation_prompt_preflight<T: serde::Serialize>(
     })
 }
 
-fn automation_preflight_should_degrade(preflight: &Value) -> bool {
+pub(crate) fn automation_preflight_should_degrade(preflight: &Value) -> bool {
     preflight
         .get("budget_status")
         .and_then(Value::as_str)
         .is_some_and(|status| matches!(status, "warning" | "high"))
 }
 
-fn summarize_json_keys(value: &Value) -> Value {
+pub(crate) fn summarize_json_keys(value: &Value) -> Value {
     match value {
         Value::Object(map) => {
             let mut keys = map.keys().cloned().collect::<Vec<_>>();

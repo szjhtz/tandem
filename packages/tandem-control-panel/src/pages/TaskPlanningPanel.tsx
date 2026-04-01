@@ -9,6 +9,8 @@ import { renderMarkdownSafe } from "../lib/markdown";
 import { PlannerDiagnosticsPanel } from "../features/planner/PlannerDiagnosticsPanel";
 import {
   buildPlannerProviderOptions,
+  buildDefaultKnowledgeOperatorPreferences,
+  buildKnowledgeRolloutGuidance,
   normalizePlannerConversationMessages,
   type PlannerProviderOption,
 } from "../features/planner/plannerShared";
@@ -460,6 +462,9 @@ function plannerOperatorPreferences(options: {
       },
     };
   }
+
+  Object.assign(payload, buildDefaultKnowledgeOperatorPreferences(options.goal));
+  Object.assign(payload, buildKnowledgeRolloutGuidance(options.goal));
 
   return payload;
 }

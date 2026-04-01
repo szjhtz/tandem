@@ -3,6 +3,7 @@ use super::*;
 #[test]
 fn standard_workflow_nodes_receive_default_workspace_output_paths() {
     let node = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
         node_id: "research_sources".to_string(),
         agent_id: "researcher".to_string(),
         objective: "Research sources".to_string(),
@@ -43,6 +44,7 @@ fn report_markdown_retries_accept_html_sibling_outputs() {
     .expect("write html artifact");
 
     let node = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
         node_id: "generate_report".to_string(),
         agent_id: "writer".to_string(),
         objective: "Draft the report in simple HTML suitable for email body delivery.".to_string(),
@@ -124,6 +126,7 @@ fn automation_resolve_verified_output_path_accepts_file_path_schema_with_dot_seg
     std::fs::write(&artifact_path, "report body").expect("write artifact");
 
     let node = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
         node_id: "generate_report".to_string(),
         agent_id: "writer".to_string(),
         objective: "Draft the report in simple HTML suitable for email body delivery.".to_string(),
@@ -185,6 +188,7 @@ fn automation_resolve_verified_output_path_accepts_file_path_schema_with_dot_seg
 #[test]
 fn citations_nodes_do_not_require_files_reviewed_sections_by_default() {
     let node = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
         node_id: "research_sources".to_string(),
         agent_id: "researcher".to_string(),
         objective: "Research sources".to_string(),
@@ -233,6 +237,7 @@ fn citations_nodes_do_not_require_files_reviewed_sections_by_default() {
 #[test]
 fn collect_inputs_nodes_write_deterministic_inline_artifacts() {
     let node = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
         node_id: "collect_inputs".to_string(),
         agent_id: "planner".to_string(),
         objective: "Gather workflow inputs".to_string(),

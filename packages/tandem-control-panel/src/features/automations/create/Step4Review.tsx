@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { describeScheduleValue } from "../scheduleBuilder";
 import { renderMarkdownSafe } from "../../../lib/markdown";
+import { buildKnowledgeRolloutGuidance } from "../../planner/plannerShared";
 
 function normalizeAllowedTools(raw: string[]) {
   const seen = new Set<string>();
@@ -21,6 +22,10 @@ function parseCustomToolText(raw: string) {
       .map((value) => String(value || "").trim())
       .filter(Boolean)
   );
+}
+
+function safeString(value: unknown) {
+  return String(value || "").trim();
 }
 
 type ExecutionMode = "single" | "team" | "swarm";
@@ -99,6 +104,8 @@ export function Step4Review({
     planPreview && typeof planPreview === "object"
       ? planPreview.operator_preferences || planPreview.operatorPreferences || {}
       : {};
+  const planKnowledge = (planOperatorPreferences as any)?.knowledge || {};
+  const knowledgeRollout = buildKnowledgeRolloutGuidance(wizard.goal).rollout;
   const effectiveMode = String(
     (planOperatorPreferences as any)?.execution_mode || wizard.mode || "team"
   ).trim() as ExecutionMode;
@@ -239,6 +246,42 @@ export function Step4Review({
             </span>
           </div>
         ) : null}
+        <div className="grid gap-2 rounded-lg border border-cyan-500/10 bg-cyan-500/5 p-3">
+          <span className="text-xs uppercase tracking-wide text-cyan-200/80">
+            Knowledge defaults
+          </span>
+          <div className="flex flex-wrap gap-1">
+            <span className="tcp-badge-info">
+              reuse: {safeString(planKnowledge.reuse_mode || "preflight")}
+            </span>
+            <span className="tcp-badge-info">
+              trust: {safeString(planKnowledge.trust_floor || "promoted")}
+            </span>
+            <span className="tcp-badge-info">scope: project</span>
+            <span className="tcp-badge-info">
+              subject: {safeString(planKnowledge.subject || wizard.goal || "inferred")}
+            </span>
+          </div>
+          <div className="tcp-subtle text-xs">
+            The wizard starts from project-scoped promoted knowledge, then promotes reusable
+            outcomes only after validation.
+          </div>
+        </div>
+        <div className="grid gap-2 rounded-lg border border-amber-500/15 bg-amber-500/5 p-3">
+          <span className="text-xs uppercase tracking-wide text-amber-200/80">
+            Rollout guardrails
+          </span>
+          <div className="flex flex-wrap gap-1">
+            <span className="tcp-badge-warn">project-first pilot</span>
+            <span className="tcp-badge-warn">promoted only</span>
+            <span className="tcp-badge-warn">approved_default rare</span>
+          </div>
+          <ul className="space-y-1 text-xs text-slate-300">
+            {knowledgeRollout.guardrails.map((item: string) => (
+              <li key={item}>• {item}</li>
+            ))}
+          </ul>
+        </div>
         <div className="grid gap-1">
           <span className="text-xs uppercase tracking-wide text-slate-500">Workspace Root</span>
           <code className="rounded bg-slate-800/60 px-2 py-1 text-xs text-slate-300">

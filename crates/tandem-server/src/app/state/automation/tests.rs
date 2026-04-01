@@ -1,6 +1,7 @@
 use super::*;
 use crate::automation_v2::types::{AutomationFlowInputRef, AutomationFlowNode};
 use serde_json::json;
+use tandem_types::{ToolCapabilities, ToolDomain, ToolEffect, ToolSchema};
 
 // ---------------------------------------------------------------------------
 // Phase-0 smoke tests — regression safety net for module extraction.
@@ -17,6 +18,7 @@ use serde_json::json;
 
 fn bare_node() -> AutomationFlowNode {
     AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
         node_id: "n1".to_string(),
         agent_id: "a1".to_string(),
         objective: "do something".to_string(),
@@ -46,6 +48,28 @@ fn code_workflow_node() -> AutomationFlowNode {
     node.metadata = Some(json!({
         "builder": { "task_kind": "code_change" }
     }));
+    node
+}
+
+fn repo_fix_workflow_node() -> AutomationFlowNode {
+    let mut node = bare_node();
+    node.node_id = "repo_fix_task".to_string();
+    node.metadata = Some(json!({
+        "builder": { "task_kind": "repo_fix" }
+    }));
+    node
+}
+
+fn research_brief_node() -> AutomationFlowNode {
+    let mut node = bare_node();
+    node.node_id = "research_brief_task".to_string();
+    node.output_contract = Some(AutomationFlowOutputContract {
+        kind: "research_brief".to_string(),
+        validator: Some(crate::AutomationOutputValidatorKind::ResearchBrief),
+        enforcement: None,
+        schema: None,
+        summary_guidance: None,
+    });
     node
 }
 
@@ -115,6 +139,48 @@ fn local_citations_contract_node() -> AutomationFlowNode {
         }
     }));
     node
+}
+
+#[test]
+fn knowledge_task_family_prefers_explicit_override() {
+    let mut node = bare_node();
+    node.metadata = Some(json!({
+        "builder": {
+            "task_family": "Support / Ops"
+        }
+    }));
+
+    assert_eq!(automation_node_knowledge_task_family(&node), "support-ops");
+}
+
+#[test]
+fn knowledge_task_family_groups_equivalent_code_workflows() {
+    let code = code_workflow_node();
+    let repo_fix = repo_fix_workflow_node();
+
+    assert_eq!(automation_node_knowledge_task_family(&code), "code");
+    assert_eq!(automation_node_knowledge_task_family(&repo_fix), "code");
+
+    let code_key = tandem_orchestrator::build_knowledge_coverage_key(
+        "project-1",
+        Some("engineering/debugging"),
+        &automation_node_knowledge_task_family(&code),
+        "startup race",
+    );
+    let repo_fix_key = tandem_orchestrator::build_knowledge_coverage_key(
+        "project-1",
+        Some("engineering/debugging"),
+        &automation_node_knowledge_task_family(&repo_fix),
+        "startup race",
+    );
+
+    assert_eq!(code_key, repo_fix_key);
+}
+
+#[test]
+fn knowledge_task_family_uses_workflow_class_for_research_briefs() {
+    let research = research_brief_node();
+    assert_eq!(automation_node_knowledge_task_family(&research), "research");
 }
 
 #[test]
@@ -552,6 +618,66 @@ fn capability_resolution_expands_wildcard_offered_email_tools() {
         .any(|value| { value.as_str() == Some("mcp.composio_1.gmail_create_email_draft") }));
 }
 
+#[test]
+fn capability_resolution_uses_metadata_for_unknown_tool_names() {
+    let node = code_patch_contract_node();
+    let available_tool_schemas = vec![
+        ToolSchema::new("workspace_inspector", "", json!({})).with_capabilities(
+            ToolCapabilities::new()
+                .effect(ToolEffect::Read)
+                .domain(ToolDomain::Workspace)
+                .reads_workspace(),
+        ),
+        ToolSchema::new("workspace_searcher", "", json!({})).with_capabilities(
+            ToolCapabilities::new()
+                .effect(ToolEffect::Search)
+                .domain(ToolDomain::Workspace)
+                .reads_workspace()
+                .preferred_for_discovery(),
+        ),
+        ToolSchema::new("workspace_writer", "", json!({})).with_capabilities(
+            ToolCapabilities::new()
+                .effect(ToolEffect::Write)
+                .domain(ToolDomain::Workspace)
+                .writes_workspace()
+                .requires_verification(),
+        ),
+        ToolSchema::new("run_local_checks", "", json!({})).with_capabilities(
+            ToolCapabilities::new()
+                .effect(ToolEffect::Execute)
+                .domain(ToolDomain::Shell),
+        ),
+    ];
+    let available_tool_names = available_tool_schemas
+        .iter()
+        .map(|schema| schema.name.clone())
+        .collect::<std::collections::HashSet<_>>();
+    let resolution = automation_resolve_capabilities_with_schemas(
+        &node,
+        "git_patch",
+        &available_tool_names.iter().cloned().collect::<Vec<_>>(),
+        &available_tool_names,
+        &available_tool_schemas,
+    );
+
+    assert_eq!(
+        resolution["resolved"]["workspace_read"]["status"].as_str(),
+        Some("resolved")
+    );
+    assert_eq!(
+        resolution["resolved"]["workspace_discover"]["status"].as_str(),
+        Some("resolved")
+    );
+    assert_eq!(
+        resolution["resolved"]["artifact_write"]["status"].as_str(),
+        Some("resolved")
+    );
+    assert_eq!(
+        resolution["resolved"]["verify_command"]["status"].as_str(),
+        Some("resolved")
+    );
+}
+
 // -----------------------------------------------------------------------
 // normalize_upstream_research_output_paths
 // -----------------------------------------------------------------------
@@ -731,6 +857,7 @@ async fn reconcile_verified_output_path_waits_for_late_file_visibility() {
         workspace_root.to_str().expect("workspace root"),
         run_id,
         &AutomationFlowNode {
+            knowledge: tandem_orchestrator::KnowledgeBinding::default(),
             node_id: "generate_report".to_string(),
             agent_id: "writer".to_string(),
             objective: "Generate report".to_string(),
@@ -782,6 +909,7 @@ async fn reconcile_verified_output_path_times_out_when_file_never_appears() {
         workspace_root.to_str().expect("workspace root"),
         run_id,
         &AutomationFlowNode {
+            knowledge: tandem_orchestrator::KnowledgeBinding::default(),
             node_id: "generate_report".to_string(),
             agent_id: "writer".to_string(),
             objective: "Generate report".to_string(),
@@ -839,6 +967,7 @@ async fn reconcile_verified_output_path_recovers_json_artifact_from_session_text
         workspace_root.to_str().expect("workspace root"),
         run_id,
         &AutomationFlowNode {
+            knowledge: tandem_orchestrator::KnowledgeBinding::default(),
             node_id: "research_sources".to_string(),
             agent_id: "researcher".to_string(),
             objective: "Find and record local sources".to_string(),
@@ -912,6 +1041,7 @@ async fn reconcile_verified_output_path_promotes_legacy_workspace_artifact_into_
         workspace_root.to_str().expect("workspace root"),
         run_id,
         &AutomationFlowNode {
+            knowledge: tandem_orchestrator::KnowledgeBinding::default(),
             node_id: "research_sources".to_string(),
             agent_id: "researcher".to_string(),
             objective: "Find and record sources".to_string(),
@@ -988,6 +1118,7 @@ async fn reconcile_verified_output_path_does_not_promote_unrelated_workspace_fil
         workspace_root.to_str().expect("workspace root"),
         run_id,
         &AutomationFlowNode {
+            knowledge: tandem_orchestrator::KnowledgeBinding::default(),
             node_id: "research_sources".to_string(),
             agent_id: "researcher".to_string(),
             objective: "Find and record sources".to_string(),
@@ -1046,6 +1177,7 @@ fn publish_verified_output_snapshot_replace_copies_into_workspace_target() {
             timezone: "UTC".to_string(),
             misfire_policy: crate::RoutineMisfirePolicy::RunOnce,
         },
+        knowledge: Default::default(),
         agents: Vec::new(),
         flow: crate::AutomationFlowSpec { nodes: Vec::new() },
         execution: crate::AutomationExecutionPolicy {
@@ -1119,6 +1251,7 @@ fn publish_verified_output_snapshot_replace_copies_into_global_target() {
             timezone: "UTC".to_string(),
             misfire_policy: crate::RoutineMisfirePolicy::RunOnce,
         },
+        knowledge: Default::default(),
         agents: Vec::new(),
         flow: crate::AutomationFlowSpec { nodes: Vec::new() },
         execution: crate::AutomationExecutionPolicy {
@@ -1202,6 +1335,7 @@ fn publish_verified_output_append_jsonl_appends_records() {
             timezone: "UTC".to_string(),
             misfire_policy: crate::RoutineMisfirePolicy::RunOnce,
         },
+        knowledge: Default::default(),
         agents: Vec::new(),
         flow: crate::AutomationFlowSpec { nodes: Vec::new() },
         execution: crate::AutomationExecutionPolicy {
@@ -1296,6 +1430,7 @@ fn publish_verified_output_rejects_workspace_target_outside_workspace() {
             timezone: "UTC".to_string(),
             misfire_policy: crate::RoutineMisfirePolicy::RunOnce,
         },
+        knowledge: Default::default(),
         agents: Vec::new(),
         flow: crate::AutomationFlowSpec { nodes: Vec::new() },
         execution: crate::AutomationExecutionPolicy {

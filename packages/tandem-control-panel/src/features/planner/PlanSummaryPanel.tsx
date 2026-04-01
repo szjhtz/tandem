@@ -1,5 +1,6 @@
 import { Badge, PanelCard } from "../../ui/index.tsx";
 import type { IntentBriefDraft } from "./IntentBriefPanel";
+import { buildKnowledgeRolloutGuidance } from "./plannerShared";
 import { PlannerMetricGrid, PlannerSubsection } from "./plannerPrimitives";
 
 function safeString(value: unknown) {
@@ -10,6 +11,32 @@ function asObject(value: unknown): Record<string, any> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, any>)
     : {};
+}
+
+function extractKnowledge(step: any) {
+  const fromNode = asObject(step?.knowledge);
+  if (Object.keys(fromNode).length) return fromNode;
+  const metadata = asObject(step?.metadata);
+  const builder = asObject(metadata.builder);
+  const knowledge = asObject(builder.knowledge);
+  return Object.keys(knowledge).length ? knowledge : null;
+}
+
+function safeListLabel(values: unknown, fallback = "n/a") {
+  const rows = Array.isArray(values)
+    ? values
+        .map((entry) => {
+          if (entry && typeof entry === "object") {
+            const scope = safeString((entry as any).scope);
+            const namespace = safeString((entry as any).namespace);
+            if (scope && namespace) return `${scope}:${namespace}`;
+            if (scope) return scope;
+          }
+          return safeString(entry);
+        })
+        .filter(Boolean)
+    : [];
+  return rows.length ? rows.join(", ") : fallback;
 }
 
 export function PlanSummaryPanel({
@@ -29,6 +56,8 @@ export function PlanSummaryPanel({
     planPackageBundle?.scope_snapshot || planPackageBundle?.scopeSnapshot
   );
   const outputRoots = asObject(bundleSnapshot.output_roots || bundleSnapshot.outputRoots);
+  const knowledgeDefaults = steps.map(extractKnowledge).find(Boolean) || null;
+  const knowledgeRollout = buildKnowledgeRolloutGuidance(brief.goal).rollout;
 
   return (
     <PanelCard
@@ -73,6 +102,65 @@ export function PlanSummaryPanel({
           <PlannerSubsection title="Description">
             <div className="text-slate-200">
               {safeString(planPreview?.description) || "No description returned yet."}
+            </div>
+          </PlannerSubsection>
+
+          <PlannerSubsection
+            title="Knowledge defaults"
+            description="The compiler now carries reusable knowledge defaults alongside each step."
+          >
+            {knowledgeDefaults ? (
+              <div className="grid gap-2 text-xs text-slate-200">
+                <div className="flex flex-wrap gap-2">
+                  <Badge tone={knowledgeDefaults.enabled === false ? "warn" : "ok"}>
+                    {knowledgeDefaults.enabled === false ? "knowledge off" : "knowledge on"}
+                  </Badge>
+                  <Badge tone="info">
+                    reuse: {safeString(knowledgeDefaults.reuse_mode || "preflight")}
+                  </Badge>
+                  <Badge tone="info">
+                    trust: {safeString(knowledgeDefaults.trust_floor || "promoted")}
+                  </Badge>
+                </div>
+                <div className="tcp-subtle text-xs">
+                  subject:{" "}
+                  {safeString(knowledgeDefaults.subject || planPreview?.original_prompt || "n/a")}
+                </div>
+                <div className="tcp-subtle text-xs">
+                  reads: {safeListLabel(knowledgeDefaults.read_spaces, "project")}
+                </div>
+                <div className="tcp-subtle text-xs">
+                  promotes: {safeListLabel(knowledgeDefaults.promote_spaces, "project")}
+                </div>
+              </div>
+            ) : (
+              <div className="tcp-subtle text-xs">
+                No knowledge defaults surfaced yet; the plan compiler may not have normalized the
+                step metadata.
+              </div>
+            )}
+          </PlannerSubsection>
+
+          <PlannerSubsection
+            title="Rollout guardrails"
+            description="Use these checks when expanding reusable knowledge across workflows."
+          >
+            <div className="grid gap-2 text-xs text-slate-200">
+              <div className="flex flex-wrap gap-2">
+                <Badge tone="warn">project-first pilot</Badge>
+                <Badge tone="warn">promoted only</Badge>
+                <Badge tone="warn">approved_default rare</Badge>
+              </div>
+              <div className="tcp-subtle">
+                {knowledgeRollout.rollout_mode === "project_first_pilot"
+                  ? "Run a project-scoped pilot first, then widen only after the reuse path is stable."
+                  : "Rollout guidance is missing or incomplete."}
+              </div>
+              <ul className="space-y-1">
+                {knowledgeRollout.guardrails.map((item: string) => (
+                  <li key={item}>• {item}</li>
+                ))}
+              </ul>
             </div>
           </PlannerSubsection>
 
@@ -144,6 +232,24 @@ export function PlanSummaryPanel({
                         ? step.depends_on.join(", ")
                         : "none"}
                     </div>
+                    {extractKnowledge(step) ? (
+                      <div className="mt-2 flex flex-wrap gap-2 text-[11px]">
+                        <Badge tone={extractKnowledge(step)?.enabled === false ? "warn" : "ok"}>
+                          {extractKnowledge(step)?.enabled === false
+                            ? "knowledge off"
+                            : "knowledge on"}
+                        </Badge>
+                        <Badge tone="info">
+                          reuse: {safeString(extractKnowledge(step)?.reuse_mode || "preflight")}
+                        </Badge>
+                        <Badge tone="info">
+                          trust: {safeString(extractKnowledge(step)?.trust_floor || "promoted")}
+                        </Badge>
+                        <span className="tcp-subtle text-[11px]">
+                          subject: {safeString(extractKnowledge(step)?.subject || "inferred")}
+                        </span>
+                      </div>
+                    ) : null}
                   </div>
                 ))
               ) : (

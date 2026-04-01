@@ -42,6 +42,44 @@ export function buildPlannerProviderOptions(options: {
   return mapped;
 }
 
+export function buildDefaultKnowledgeOperatorPreferences(subject: string) {
+  const cleanSubject = safeString(subject);
+  return {
+    knowledge: {
+      enabled: true,
+      reuse_mode: "preflight",
+      trust_floor: "promoted",
+      read_spaces: [{ scope: "project" }],
+      promote_spaces: [{ scope: "project" }],
+      ...(cleanSubject ? { subject: cleanSubject } : {}),
+    },
+  };
+}
+
+export function buildKnowledgeRolloutGuidance(subject: string) {
+  const cleanSubject = safeString(subject);
+  return {
+    rollout: {
+      rollout_mode: "project_first_pilot",
+      guardrails: [
+        "Start in one project space before widening scope.",
+        "Keep reuse_mode at preflight and trust_floor at promoted by default.",
+        "Promote only validated outcomes; do not treat raw run output as shared truth.",
+        "Use approved_default sparingly, only for reviewed default guidance.",
+        "Watch reuse_reason, skip_reason, and freshness_reason during the pilot.",
+        "Expand namespaces only after the pilot demonstrates stable reuse.",
+      ],
+      recommended_sequence: [
+        "Run one workflow once to seed working knowledge.",
+        "Promote validated outcomes into the project knowledge space.",
+        "Run a second workflow with the same subject to verify reuse.",
+        "Check that unrelated workflows still miss the same knowledge key.",
+      ],
+      subject: cleanSubject || null,
+    },
+  };
+}
+
 export function normalizePlannerConversationMessages(
   conversation: any,
   markdown = true

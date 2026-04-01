@@ -101,6 +101,7 @@ fn research_required_next_tool_actions_surface_generic_websearch_unavailability(
 #[test]
 fn summarize_automation_tool_activity_recovers_tools_from_synthetic_summary() {
     let node = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
         node_id: "research".to_string(),
         agent_id: "agent-a".to_string(),
         objective: "Research".to_string(),
@@ -166,6 +167,7 @@ fn summarize_automation_tool_activity_recovers_tools_from_synthetic_summary() {
 #[test]
 fn summarize_automation_tool_activity_counts_auth_failed_websearch_as_attempted() {
     let node = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
         node_id: "research".to_string(),
         agent_id: "agent-a".to_string(),
         objective: "Research".to_string(),
@@ -228,6 +230,7 @@ fn summarize_automation_tool_activity_counts_auth_failed_websearch_as_attempted(
 #[test]
 fn summarize_automation_tool_activity_treats_backend_unavailable_websearch_as_unavailable() {
     let node = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
         node_id: "research".to_string(),
         agent_id: "agent-a".to_string(),
         objective: "Research".to_string(),
@@ -288,6 +291,7 @@ fn summarize_automation_tool_activity_treats_backend_unavailable_websearch_as_un
 #[test]
 fn summarize_automation_tool_activity_treats_partial_websearch_with_results_as_success() {
     let node = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
         node_id: "research".to_string(),
         agent_id: "agent-a".to_string(),
         objective: "Research".to_string(),
@@ -360,6 +364,7 @@ fn summarize_automation_tool_activity_treats_partial_websearch_with_results_as_s
 #[test]
 fn summarize_automation_tool_activity_treats_runtime_websearch_string_result_as_success() {
     let node = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
         node_id: "research".to_string(),
         agent_id: "agent-a".to_string(),
         objective: "Research".to_string(),
@@ -476,6 +481,7 @@ fn automation_prompt_preflight_marks_warning_for_large_prompt() {
 #[test]
 fn build_automation_attempt_evidence_captures_runtime_websearch_success() {
     let node = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
         node_id: "research_sources".to_string(),
         agent_id: "agent-a".to_string(),
         objective: "Research".to_string(),
@@ -601,6 +607,7 @@ fn build_automation_attempt_evidence_captures_runtime_websearch_success() {
 #[test]
 fn detect_automation_blocker_category_prefers_delivery_category_from_canonical_evidence() {
     let node = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
         node_id: "notify_user".to_string(),
         agent_id: "agent-committer".to_string(),
         objective: "Send the report by email.".to_string(),

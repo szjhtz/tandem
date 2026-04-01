@@ -1,5 +1,8 @@
 use std::collections::HashSet;
 
+use crate::tool_capabilities::{
+    canonical_tool_name, tool_schema_matches_profile, ToolCapabilityProfile,
+};
 use tandem_types::ToolSchema;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -240,7 +243,7 @@ pub fn select_tool_subset(
         if !include_mcp && norm.starts_with("mcp.") && !explicitly_allowed {
             continue;
         }
-        if !tool_matches_intent(intent, &norm) && !explicitly_allowed {
+        if !tool_matches_intent(intent, &schema) && !explicitly_allowed {
             continue;
         }
         if seen.insert(norm) {
@@ -258,46 +261,39 @@ pub fn default_mode_name() -> &'static str {
     "auto"
 }
 
-fn tool_matches_intent(intent: ToolIntent, name: &str) -> bool {
+fn tool_matches_intent(intent: ToolIntent, schema: &ToolSchema) -> bool {
+    let name = normalize_tool_name(&schema.name);
     match intent {
         ToolIntent::Chitchat | ToolIntent::Knowledge => false,
-        ToolIntent::WorkspaceRead => matches!(
-            name,
-            "glob"
-                | "read"
-                | "grep"
-                | "search"
-                | "codesearch"
-                | "lsp"
-                | "list"
-                | "ls"
-                | "webfetch"
-                | "webfetch_html"
-        ),
-        ToolIntent::WorkspaceWrite => matches!(
-            name,
-            "glob"
-                | "read"
-                | "grep"
-                | "search"
-                | "codesearch"
-                | "write"
-                | "edit"
-                | "apply_patch"
-                | "bash"
-                | "batch"
-        ),
-        ToolIntent::ShellExec => matches!(
-            name,
-            "bash" | "batch" | "glob" | "read" | "grep" | "search" | "codesearch"
-        ),
-        ToolIntent::WebLookup => matches!(
-            name,
-            "websearch" | "webfetch" | "webfetch_html" | "read" | "grep"
-        ),
-        ToolIntent::MemoryOps => matches!(name, "memory_search" | "memory_store" | "memory_list"),
+        ToolIntent::WorkspaceRead => {
+            tool_schema_matches_profile(schema, ToolCapabilityProfile::WorkspaceRead)
+                || tool_schema_matches_profile(schema, ToolCapabilityProfile::WorkspaceDiscover)
+                || tool_schema_matches_profile(schema, ToolCapabilityProfile::WebResearch)
+                || matches!(name.as_str(), "lsp")
+        }
+        ToolIntent::WorkspaceWrite => {
+            tool_schema_matches_profile(schema, ToolCapabilityProfile::WorkspaceRead)
+                || tool_schema_matches_profile(schema, ToolCapabilityProfile::WorkspaceDiscover)
+                || tool_schema_matches_profile(schema, ToolCapabilityProfile::ArtifactWrite)
+                || tool_schema_matches_profile(schema, ToolCapabilityProfile::VerifyCommand)
+                || matches!(name.as_str(), "batch")
+        }
+        ToolIntent::ShellExec => {
+            tool_schema_matches_profile(schema, ToolCapabilityProfile::ShellExecution)
+                || tool_schema_matches_profile(schema, ToolCapabilityProfile::WorkspaceRead)
+                || tool_schema_matches_profile(schema, ToolCapabilityProfile::WorkspaceDiscover)
+                || matches!(name.as_str(), "batch")
+        }
+        ToolIntent::WebLookup => {
+            tool_schema_matches_profile(schema, ToolCapabilityProfile::WebResearch)
+                || tool_schema_matches_profile(schema, ToolCapabilityProfile::WorkspaceRead)
+                || tool_schema_matches_profile(schema, ToolCapabilityProfile::WorkspaceDiscover)
+        }
+        ToolIntent::MemoryOps => {
+            tool_schema_matches_profile(schema, ToolCapabilityProfile::MemoryOperation)
+        }
         ToolIntent::McpExplicit => {
-            name.starts_with("mcp.") || matches!(name, "read" | "grep" | "search")
+            name.starts_with("mcp.") || matches!(name.as_str(), "read" | "grep" | "search")
         }
     }
 }
@@ -334,39 +330,7 @@ fn is_chitchat_phrase(input: &str) -> bool {
 }
 
 pub fn normalize_tool_name(name: &str) -> String {
-    let lowered = name.trim().to_ascii_lowercase().replace('-', "_");
-    let canonical = if let Some(stripped) = strip_known_namespace(&lowered) {
-        stripped
-    } else {
-        lowered
-    };
-    match canonical.as_str() {
-        "shell" | "powershell" | "cmd" | "run_command" => "bash".to_string(),
-        "todowrite" | "update_todo_list" | "update_todos" => "todo_write".to_string(),
-        other => other.to_string(),
-    }
-}
-
-fn strip_known_namespace(name: &str) -> Option<String> {
-    const PREFIXES: [&str; 8] = [
-        "default_api:",
-        "default_api.",
-        "functions.",
-        "function.",
-        "tools.",
-        "tool.",
-        "builtin:",
-        "builtin.",
-    ];
-    for prefix in PREFIXES {
-        if let Some(rest) = name.strip_prefix(prefix) {
-            let trimmed = rest.trim();
-            if !trimmed.is_empty() {
-                return Some(trimmed.to_string());
-            }
-        }
-    }
-    None
+    canonical_tool_name(name)
 }
 
 #[cfg(test)]
@@ -374,11 +338,7 @@ mod tests {
     use super::*;
 
     fn schema(name: &str) -> ToolSchema {
-        ToolSchema {
-            name: name.to_string(),
-            description: String::new(),
-            input_schema: serde_json::json!({}),
-        }
+        ToolSchema::new(name, "", serde_json::json!({}))
     }
 
     #[test]
@@ -418,5 +378,43 @@ mod tests {
         );
         assert_eq!(selected.len(), 1);
         assert_eq!(normalize_tool_name(&selected[0].name), "read");
+    }
+
+    #[test]
+    fn workspace_read_intent_uses_metadata_for_unknown_tool_names() {
+        let selected = select_tool_subset(
+            vec![
+                ToolSchema::new("workspace_inspector", "", serde_json::json!({}))
+                    .with_capabilities(
+                        tandem_types::ToolCapabilities::new()
+                            .effect(tandem_types::ToolEffect::Read)
+                            .domain(tandem_types::ToolDomain::Workspace)
+                            .reads_workspace(),
+                    ),
+            ],
+            ToolIntent::WorkspaceRead,
+            &HashSet::new(),
+            false,
+        );
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0].name, "workspace_inspector");
+    }
+
+    #[test]
+    fn shell_intent_uses_metadata_for_unknown_tool_names() {
+        let selected = select_tool_subset(
+            vec![
+                ToolSchema::new("run_local_checks", "", serde_json::json!({})).with_capabilities(
+                    tandem_types::ToolCapabilities::new()
+                        .effect(tandem_types::ToolEffect::Execute)
+                        .domain(tandem_types::ToolDomain::Shell),
+                ),
+            ],
+            ToolIntent::ShellExec,
+            &HashSet::new(),
+            false,
+        );
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0].name, "run_local_checks");
     }
 }

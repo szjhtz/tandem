@@ -153,6 +153,8 @@ Studio templates compile research-heavy workflows into explicit stages:
 - `external-research` — Web research
 - `finalize` — Artifact writing
 
+Planner previews also surface project-scoped knowledge defaults and rollout guardrails so operators can see when Tandem will reuse promoted knowledge before recomputing.
+
 Saved workflows auto-migrate to `workflow_structure_version = 2` while preserving automation IDs and original research node IDs used by downstream nodes.
 
 ## Optimize Tab (AutoResearch)

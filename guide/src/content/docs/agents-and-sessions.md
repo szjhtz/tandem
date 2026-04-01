@@ -60,7 +60,7 @@ flowchart TD
   F --> G[Transmit Safe Payload to LLM]
 ```
 
-As your conversation grows, Tandem employs a strict sliding window: it gracefully truncates older turns, replacing them with a static placeholder marking the omission. Instead of forcing the LLM to re-read summarized rules repetitively, the engine actively relies on the background `Memory` service to fetch critical long-term facts on the fly using Semantic RAG. This guarantees a safe, stable context boundary for days-long sessions.
+As your conversation grows, Tandem employs a strict sliding window: it gracefully truncates older turns, replacing them with a static placeholder marking the omission. Instead of forcing the LLM to re-read summarized rules repetitively, the engine relies on a governed knowledge layer: run-scoped working state stays local, validated project knowledge is reused selectively, and the engine records why knowledge was reused, skipped, or refreshed. This keeps the context boundary stable without turning memory into a garbage dump.
 
 ## The Loop
 

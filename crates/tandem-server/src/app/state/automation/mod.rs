@@ -21,6 +21,7 @@ pub(crate) mod validation;
 pub(crate) mod verification;
 mod workflow_impl;
 use assessment::*;
+pub(crate) use capability_impl::*;
 use enforcement::*;
 use extraction::*;
 pub(crate) use legacy_defaults::{
@@ -59,6 +60,8 @@ pub(crate) fn automation_node_research_stage(node: &AutomationFlowNode) -> Optio
 }
 
 use serde_json::{json, Value};
+use tandem_core::resolve_shared_paths;
+use tandem_memory::MemoryManager;
 use tandem_plan_compiler::api as compiler_api;
 use tandem_types::{
     MessagePart, MessagePartInput, MessageRole, ModelSpec, PrewriteCoverageMode,
@@ -120,153 +123,93 @@ const AUTOMATION_PROMPT_HIGH_TOKENS: u64 = 3_200;
 const AUTOMATION_TOOL_SCHEMA_WARNING_CHARS: u64 = 18_000;
 const AUTOMATION_TOOL_SCHEMA_HIGH_CHARS: u64 = 26_000;
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub(crate) struct AutomationPromptRenderOptions {
-    summary_only_upstream: bool,
+    pub(crate) summary_only_upstream: bool,
+    pub(crate) knowledge_context: Option<String>,
 }
 
-fn automation_tool_name_is_workspace_read(tool_name: &str) -> bool {
-    tool_name.trim().eq_ignore_ascii_case("read")
-}
+fn automation_effective_knowledge_binding(
+    automation: &AutomationV2Spec,
+    node: &AutomationFlowNode,
+) -> tandem_orchestrator::KnowledgeBinding {
+    let default = tandem_orchestrator::KnowledgeBinding::default();
+    let mut binding = automation.knowledge.clone();
+    let overlay = &node.knowledge;
 
-fn automation_tool_name_is_workspace_discover(tool_name: &str) -> bool {
-    matches!(
-        tool_name
-            .trim()
-            .to_ascii_lowercase()
-            .replace('-', "_")
-            .as_str(),
-        "glob" | "search" | "grep" | "codesearch" | "ls" | "list"
-    )
-}
-
-fn automation_tool_name_is_artifact_write(tool_name: &str) -> bool {
-    matches!(
-        tool_name
-            .trim()
-            .to_ascii_lowercase()
-            .replace('-', "_")
-            .as_str(),
-        "write" | "edit" | "apply_patch"
-    )
-}
-
-fn automation_tool_name_is_web_research(tool_name: &str) -> bool {
-    matches!(
-        tool_name
-            .trim()
-            .to_ascii_lowercase()
-            .replace('-', "_")
-            .as_str(),
-        "websearch" | "webfetch" | "webfetch_html"
-    )
-}
-
-fn automation_tool_name_is_verify_command(tool_name: &str) -> bool {
-    tool_name.trim().eq_ignore_ascii_case("bash")
-}
-
-fn automation_tool_name_tokens(tool_name: &str) -> Vec<String> {
-    tool_name
-        .trim()
-        .to_ascii_lowercase()
-        .chars()
-        .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { ' ' })
-        .collect::<String>()
-        .split_whitespace()
-        .map(str::to_string)
-        .collect::<Vec<_>>()
-}
-
-fn automation_tool_name_contains_token(tokens: &[String], needle: &str) -> bool {
-    tokens.iter().any(|token| token == needle)
-}
-
-fn automation_tool_name_compact(tool_name: &str) -> String {
-    tool_name
-        .trim()
-        .to_ascii_lowercase()
-        .chars()
-        .filter(|ch| ch.is_ascii_alphanumeric())
-        .collect::<String>()
-}
-
-fn automation_tool_name_is_email_send(tool_name: &str) -> bool {
-    let tokens = automation_tool_name_tokens(tool_name);
-    let compact = automation_tool_name_compact(tool_name);
-    automation_tool_name_is_email_delivery(tool_name)
-        && (automation_tool_name_contains_token(&tokens, "send")
-            || automation_tool_name_contains_token(&tokens, "deliver")
-            || automation_tool_name_contains_token(&tokens, "reply")
-            || compact.contains("sendemail")
-            || compact.contains("emailsend")
-            || compact.contains("replyemail")
-            || compact.contains("emailreply"))
-}
-
-fn automation_tool_name_is_email_draft(tool_name: &str) -> bool {
-    let tokens = automation_tool_name_tokens(tool_name);
-    let compact = automation_tool_name_compact(tool_name);
-    automation_tool_name_is_email_delivery(tool_name)
-        && (automation_tool_name_contains_token(&tokens, "draft")
-            || automation_tool_name_contains_token(&tokens, "compose")
-            || compact.contains("draftemail")
-            || compact.contains("emaildraft")
-            || compact.contains("composeemail")
-            || compact.contains("emailcompose"))
-}
-
-fn automation_expand_effective_offered_tools(
-    offered_tools: &[String],
-    available_tool_names: &HashSet<String>,
-) -> Vec<String> {
-    let mut effective = Vec::new();
-    for offered_tool in offered_tools {
-        let offered_tool = offered_tool.trim();
-        if offered_tool.is_empty() {
-            continue;
-        }
-        if offered_tool == "*" {
-            effective.extend(available_tool_names.iter().cloned());
-            continue;
-        }
-        if let Some(prefix) = offered_tool.strip_suffix('*') {
-            effective.extend(
-                available_tool_names
-                    .iter()
-                    .filter(|tool_name| tool_name.starts_with(prefix))
-                    .cloned(),
-            );
-            continue;
-        }
-        if available_tool_names.contains(offered_tool) {
-            effective.push(offered_tool.to_string());
-        }
+    if overlay.enabled != default.enabled {
+        binding.enabled = overlay.enabled;
     }
-    effective.sort();
-    effective.dedup();
-    effective
+    if overlay.reuse_mode != default.reuse_mode {
+        binding.reuse_mode = overlay.reuse_mode;
+    }
+    if overlay.trust_floor != default.trust_floor {
+        binding.trust_floor = overlay.trust_floor;
+    }
+    if !overlay.read_spaces.is_empty() {
+        binding.read_spaces = overlay.read_spaces.clone();
+    }
+    if !overlay.promote_spaces.is_empty() {
+        binding.promote_spaces = overlay.promote_spaces.clone();
+    }
+    if overlay.namespace.is_some() {
+        binding.namespace = overlay.namespace.clone();
+    }
+    if overlay.subject.is_some() {
+        binding.subject = overlay.subject.clone();
+    }
+    if overlay.freshness_ms.is_some() {
+        binding.freshness_ms = overlay.freshness_ms;
+    }
+
+    binding
 }
 
-fn automation_discovered_tools_for_predicate<F>(
-    tools: impl IntoIterator<Item = String>,
-    predicate: F,
-) -> Vec<String>
-where
-    F: Fn(&str) -> bool,
-{
-    let mut discovered = tools
-        .into_iter()
-        .filter(|tool_name| predicate(tool_name))
-        .collect::<Vec<_>>();
-    discovered.sort();
-    discovered.dedup();
-    discovered
-}
-
-fn automation_prompt_token_estimate(text: &str) -> u64 {
-    let chars = text.chars().count() as u64;
-    chars.div_ceil(4)
+async fn automation_knowledge_preflight(
+    state: &AppState,
+    automation: &AutomationV2Spec,
+    node: &AutomationFlowNode,
+    run_id: &str,
+    project_id: &str,
+) -> Option<tandem_orchestrator::KnowledgePreflightResult> {
+    let binding = automation_effective_knowledge_binding(automation, node);
+    if !binding.enabled || binding.reuse_mode == tandem_orchestrator::KnowledgeReuseMode::Disabled {
+        return None;
+    }
+    let subject = binding
+        .subject
+        .clone()
+        .unwrap_or_else(|| node.objective.trim().to_string());
+    if subject.trim().is_empty() {
+        return None;
+    }
+    let task_family = automation_node_knowledge_task_family(node);
+    let paths = resolve_shared_paths().ok()?;
+    let manager = MemoryManager::new(&paths.memory_db_path).await.ok()?;
+    let preflight = manager
+        .preflight_knowledge(&tandem_orchestrator::KnowledgePreflightRequest {
+            project_id: project_id.to_string(),
+            task_family: task_family.clone(),
+            subject,
+            binding,
+        })
+        .await
+        .ok()?;
+    if preflight.is_reusable() {
+        state.event_bus.publish(EngineEvent::new(
+            "knowledge.preflight.injected",
+            json!({
+                "automationID": automation.automation_id,
+                "runID": run_id,
+                "nodeID": node.node_id,
+                "taskFamily": task_family,
+                "decision": preflight.decision.to_string(),
+                "coverageKey": preflight.coverage_key,
+                "itemCount": preflight.items.len(),
+            }),
+        ));
+    }
+    Some(preflight)
 }
 
 pub(crate) fn automation_step_cost_provenance(
@@ -287,221 +230,6 @@ pub(crate) fn automation_step_cost_provenance(
         "cumulative_run_cost_usd_at_step_end": cumulative_run_cost_usd_at_step_end,
         "budget_limit_reached": budget_limit_reached,
     })
-}
-
-fn automation_tool_schema_chars<T: serde::Serialize>(schemas: &[T]) -> u64 {
-    schemas
-        .iter()
-        .map(|schema| {
-            serde_json::to_string(schema)
-                .map(|text| text.len() as u64)
-                .unwrap_or(0)
-        })
-        .sum()
-}
-
-fn automation_tool_capability_ids(node: &AutomationFlowNode, execution_mode: &str) -> Vec<String> {
-    let mut capabilities = Vec::new();
-    if !node.input_refs.is_empty()
-        || automation_node_required_tools(node)
-            .iter()
-            .any(|tool| tool == "read")
-    {
-        capabilities.push("workspace_read".to_string());
-    }
-    if automation_node_required_output_path(node).is_some()
-        || automation_output_validator_kind(node)
-            == crate::AutomationOutputValidatorKind::ResearchBrief
-    {
-        capabilities.push("workspace_discover".to_string());
-    }
-    if automation_node_required_output_path(node).is_some() {
-        capabilities.push("artifact_write".to_string());
-    }
-    if automation_node_web_research_expected(node) {
-        capabilities.push("web_research".to_string());
-    }
-    if automation_node_requires_email_delivery(node) {
-        capabilities.push("email_send".to_string());
-        capabilities.push("email_draft".to_string());
-    }
-    if automation_node_is_code_workflow(node)
-        && (execution_mode == "git_patch" || execution_mode == "filesystem_patch")
-    {
-        capabilities.push("verify_command".to_string());
-    }
-    capabilities.sort();
-    capabilities.dedup();
-    capabilities
-}
-
-fn automation_capability_matches_tool(capability_id: &str, tool_name: &str) -> bool {
-    match capability_id {
-        "workspace_read" => automation_tool_name_is_workspace_read(tool_name),
-        "workspace_discover" => automation_tool_name_is_workspace_discover(tool_name),
-        "artifact_write" => automation_tool_name_is_artifact_write(tool_name),
-        "web_research" => automation_tool_name_is_web_research(tool_name),
-        "email_send" => automation_tool_name_is_email_send(tool_name),
-        "email_draft" => automation_tool_name_is_email_draft(tool_name),
-        "verify_command" => automation_tool_name_is_verify_command(tool_name),
-        _ => false,
-    }
-}
-
-fn automation_resolve_capabilities(
-    node: &AutomationFlowNode,
-    execution_mode: &str,
-    offered_tools: &[String],
-    available_tool_names: &HashSet<String>,
-) -> Value {
-    let effective_offered_tools =
-        automation_expand_effective_offered_tools(offered_tools, available_tool_names);
-    let required_capabilities = automation_tool_capability_ids(node, execution_mode);
-    let mut resolved = serde_json::Map::new();
-    let mut missing = Vec::new();
-    for capability_id in &required_capabilities {
-        let available_matches = available_tool_names
-            .iter()
-            .filter(|tool_name| automation_capability_matches_tool(capability_id, tool_name))
-            .cloned()
-            .collect::<Vec<_>>();
-        let offered_matches = effective_offered_tools
-            .iter()
-            .filter(|tool_name| automation_capability_matches_tool(capability_id, tool_name))
-            .cloned()
-            .collect::<Vec<_>>();
-        let status = if !offered_matches.is_empty() {
-            "resolved"
-        } else if !available_matches.is_empty() {
-            "not_offered"
-        } else {
-            "unavailable"
-        };
-        if status != "resolved" {
-            missing.push(capability_id.clone());
-        }
-        resolved.insert(
-            capability_id.clone(),
-            json!({
-                "status": status,
-                "offered_tools": offered_matches,
-                "available_tools": available_matches,
-            }),
-        );
-    }
-    let mut output = serde_json::Map::new();
-    output.insert(
-        "required_capabilities".to_string(),
-        json!(required_capabilities),
-    );
-    output.insert("resolved".to_string(), json!(resolved));
-    output.insert("missing_capabilities".to_string(), json!(missing));
-    if automation_node_requires_email_delivery(node) {
-        let available_email_like_tools = automation_discovered_tools_for_predicate(
-            available_tool_names.iter().cloned().collect::<Vec<_>>(),
-            automation_tool_name_is_email_delivery,
-        );
-        let offered_email_like_tools = automation_discovered_tools_for_predicate(
-            effective_offered_tools.clone(),
-            automation_tool_name_is_email_delivery,
-        );
-        let available_send_tools = automation_discovered_tools_for_predicate(
-            available_tool_names.iter().cloned().collect::<Vec<_>>(),
-            automation_tool_name_is_email_send,
-        );
-        let offered_send_tools = automation_discovered_tools_for_predicate(
-            effective_offered_tools.clone(),
-            automation_tool_name_is_email_send,
-        );
-        let available_draft_tools = automation_discovered_tools_for_predicate(
-            available_tool_names.iter().cloned().collect::<Vec<_>>(),
-            automation_tool_name_is_email_draft,
-        );
-        let offered_draft_tools = automation_discovered_tools_for_predicate(
-            effective_offered_tools.clone(),
-            automation_tool_name_is_email_draft,
-        );
-        output.insert(
-            "email_tool_diagnostics".to_string(),
-            json!({
-                "available_tools": available_email_like_tools,
-                "offered_tools": offered_email_like_tools,
-                "available_send_tools": available_send_tools,
-                "offered_send_tools": offered_send_tools,
-                "available_draft_tools": available_draft_tools,
-                "offered_draft_tools": offered_draft_tools,
-            }),
-        );
-    }
-    Value::Object(output)
-}
-
-pub(crate) fn build_automation_prompt_preflight<T: serde::Serialize>(
-    prompt: &str,
-    offered_tools: &[String],
-    offered_tool_schemas: &[T],
-    execution_mode: &str,
-    capability_resolution: &Value,
-    prompt_compaction: &str,
-    degraded_prompt: bool,
-) -> Value {
-    let estimated_prompt_tokens = automation_prompt_token_estimate(prompt);
-    let offered_tool_schema_chars = automation_tool_schema_chars(offered_tool_schemas);
-    let budget_status = if estimated_prompt_tokens >= AUTOMATION_PROMPT_HIGH_TOKENS
-        || offered_tool_schema_chars >= AUTOMATION_TOOL_SCHEMA_HIGH_CHARS
-    {
-        "high"
-    } else if estimated_prompt_tokens >= AUTOMATION_PROMPT_WARNING_TOKENS
-        || offered_tool_schema_chars >= AUTOMATION_TOOL_SCHEMA_WARNING_CHARS
-    {
-        "warning"
-    } else {
-        "ok"
-    };
-    json!({
-        "rendered_prompt_chars": prompt.chars().count(),
-        "estimated_prompt_tokens": estimated_prompt_tokens,
-        "offered_tools": offered_tools,
-        "offered_tool_schema_count": offered_tool_schemas.len(),
-        "offered_tool_schema_chars": offered_tool_schema_chars,
-        "execution_mode": execution_mode,
-        "budget_status": budget_status,
-        "degraded_prompt": degraded_prompt,
-        "prompt_compaction": prompt_compaction,
-        "required_capability_availability": capability_resolution,
-    })
-}
-
-fn automation_preflight_should_degrade(preflight: &Value) -> bool {
-    preflight
-        .get("budget_status")
-        .and_then(Value::as_str)
-        .is_some_and(|status| matches!(status, "warning" | "high"))
-}
-
-fn summarize_json_keys(value: &Value) -> Value {
-    match value {
-        Value::Object(map) => {
-            let mut keys = map.keys().cloned().collect::<Vec<_>>();
-            keys.sort();
-            json!({
-                "type": "object",
-                "keys": keys,
-                "field_count": map.len()
-            })
-        }
-        Value::Array(rows) => json!({
-            "type": "array",
-            "length": rows.len()
-        }),
-        Value::String(text) => json!({
-            "type": "string",
-            "length": text.len()
-        }),
-        Value::Null => json!({"type": "null"}),
-        Value::Bool(_) => json!({"type": "boolean"}),
-        Value::Number(_) => json!({"type": "number"}),
-    }
 }
 
 fn automation_attempt_evidence_from_tool_telemetry<'a>(
@@ -2053,6 +1781,56 @@ fn automation_node_task_kind(node: &AutomationFlowNode) -> Option<String> {
     automation_node_builder_metadata(node, "task_kind")
         .map(|value| value.trim().to_ascii_lowercase())
         .filter(|value| !value.is_empty())
+}
+
+fn automation_node_knowledge_task_family(node: &AutomationFlowNode) -> String {
+    let explicit_family = automation_node_builder_metadata(node, "task_family")
+        .or_else(|| automation_node_builder_metadata(node, "knowledge_task_family"))
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    if let Some(family) = explicit_family {
+        let normalized = tandem_orchestrator::normalize_knowledge_segment(&family);
+        if !normalized.is_empty() {
+            return normalized;
+        }
+    }
+
+    if let Some(task_kind) = automation_node_task_kind(node) {
+        let mapped = match task_kind.as_str() {
+            "code_change" | "repo_fix" | "implementation" | "debugging" | "bug_fix" => Some("code"),
+            "research" | "analysis" | "synthesis" | "research_brief" => Some("research"),
+            "support" | "ops" | "runbook" | "incident" | "triage" => Some("ops"),
+            "plan" | "planning" | "roadmap" => Some("planning"),
+            "verification" | "test" | "qa" => Some("verification"),
+            _ => None,
+        };
+        if let Some(mapped) = mapped {
+            return mapped.to_string();
+        }
+        let normalized = tandem_orchestrator::normalize_knowledge_segment(&task_kind);
+        if !normalized.is_empty() {
+            return normalized;
+        }
+    }
+
+    let workflow_class = automation_node_workflow_class(node);
+    if workflow_class != "artifact" {
+        return workflow_class;
+    }
+
+    if let Some(contract_kind) = automation_node_output_contract_kind(node) {
+        let normalized = tandem_orchestrator::normalize_knowledge_segment(&contract_kind);
+        if !normalized.is_empty() {
+            return normalized;
+        }
+    }
+
+    let fallback = tandem_orchestrator::normalize_knowledge_segment(&node.node_id);
+    if fallback.is_empty() {
+        workflow_class
+    } else {
+        fallback
+    }
 }
 
 fn automation_node_projects_backlog_tasks(node: &AutomationFlowNode) -> bool {
@@ -6355,11 +6133,12 @@ pub(crate) async fn execute_automation_v2_node(
     let effective_offered_tools =
         automation_expand_effective_offered_tools(&requested_tools, &available_tool_names);
     let execution_mode = automation_node_execution_mode(node, &workspace_root);
-    let mut capability_resolution = automation_resolve_capabilities(
+    let mut capability_resolution = automation_resolve_capabilities_with_schemas(
         node,
         execution_mode,
         &effective_offered_tools,
         &available_tool_names,
+        &available_tool_schemas,
     );
     let selected_mcp_servers = mcp_tool_diagnostics
         .get("selected_servers")
@@ -6410,8 +6189,21 @@ pub(crate) async fn execute_automation_v2_node(
     } else {
         None
     };
+    let knowledge_preflight =
+        automation_knowledge_preflight(state, automation, node, run_id, &project_id).await;
+    let knowledge_context = knowledge_preflight.as_ref().and_then(|preflight| {
+        if !preflight.is_reusable() {
+            return None;
+        }
+        let rendered = preflight.format_for_injection();
+        if rendered.trim().is_empty() {
+            None
+        } else {
+            Some(rendered)
+        }
+    });
     let max_attempts = automation_node_max_attempts(node);
-    let mut prompt = render_automation_v2_prompt(
+    let mut prompt = render_automation_v2_prompt_with_options(
         automation,
         &workspace_root,
         run_id,
@@ -6428,6 +6220,10 @@ pub(crate) async fn execute_automation_v2_node(
             Some(project_id.as_str())
         } else {
             None
+        },
+        AutomationPromptRenderOptions {
+            summary_only_upstream: false,
+            knowledge_context: knowledge_context.clone(),
         },
     );
     let preserve_full_upstream_inputs = automation_node_preserves_full_upstream_inputs(node);
@@ -6472,6 +6268,7 @@ pub(crate) async fn execute_automation_v2_node(
                 },
                 AutomationPromptRenderOptions {
                     summary_only_upstream: true,
+                    knowledge_context: knowledge_context.clone(),
                 },
             );
             preflight = build_automation_prompt_preflight(
@@ -6902,6 +6699,12 @@ pub(crate) async fn execute_automation_v2_node(
     );
     if let Some(object) = output.as_object_mut() {
         object.insert("cost_provenance".to_string(), cost_provenance);
+        if let Some(knowledge_preflight) = knowledge_preflight.as_ref() {
+            object.insert(
+                "knowledge_preflight".to_string(),
+                serde_json::to_value(knowledge_preflight)?,
+            );
+        }
         if let Some(publication) = artifact_publication {
             object.insert("artifact_publication".to_string(), publication);
         }

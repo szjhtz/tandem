@@ -3,6 +3,7 @@
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use tandem_orchestrator::{KnowledgeScope, KnowledgeTrustLevel};
 use thiserror::Error;
 
 /// Memory tier - determines persistence level
@@ -415,6 +416,137 @@ pub struct GlobalMemoryWriteResult {
 pub struct GlobalMemorySearchHit {
     pub record: GlobalMemoryRecord,
     pub score: f64,
+}
+
+/// Status for a reusable knowledge item.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum KnowledgeItemStatus {
+    Working,
+    Promoted,
+    ApprovedDefault,
+    Deprecated,
+}
+
+impl std::fmt::Display for KnowledgeItemStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Working => write!(f, "working"),
+            Self::Promoted => write!(f, "promoted"),
+            Self::ApprovedDefault => write!(f, "approved_default"),
+            Self::Deprecated => write!(f, "deprecated"),
+        }
+    }
+}
+
+impl std::str::FromStr for KnowledgeItemStatus {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "working" => Ok(Self::Working),
+            "promoted" => Ok(Self::Promoted),
+            "approved_default" => Ok(Self::ApprovedDefault),
+            "deprecated" => Ok(Self::Deprecated),
+            other => Err(format!("unknown knowledge item status: {}", other)),
+        }
+    }
+}
+
+impl Default for KnowledgeItemStatus {
+    fn default() -> Self {
+        Self::Working
+    }
+}
+
+impl KnowledgeItemStatus {
+    pub fn as_trust_level(self) -> Option<KnowledgeTrustLevel> {
+        match self {
+            Self::Working => Some(KnowledgeTrustLevel::Working),
+            Self::Promoted => Some(KnowledgeTrustLevel::Promoted),
+            Self::ApprovedDefault => Some(KnowledgeTrustLevel::ApprovedDefault),
+            Self::Deprecated => None,
+        }
+    }
+
+    pub fn is_active(self) -> bool {
+        !matches!(self, Self::Deprecated)
+    }
+}
+
+/// A reusable knowledge space scoped to a project, run, or global namespace.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KnowledgeSpaceRecord {
+    pub id: String,
+    pub scope: KnowledgeScope,
+    pub project_id: Option<String>,
+    pub namespace: Option<String>,
+    pub title: Option<String>,
+    pub description: Option<String>,
+    pub trust_level: KnowledgeTrustLevel,
+    pub metadata: Option<serde_json::Value>,
+    pub created_at_ms: u64,
+    pub updated_at_ms: u64,
+}
+
+/// A reusable knowledge item promoted from run artifacts or validated memory.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KnowledgeItemRecord {
+    pub id: String,
+    pub space_id: String,
+    pub coverage_key: String,
+    pub dedupe_key: String,
+    pub item_type: String,
+    pub title: String,
+    pub summary: Option<String>,
+    pub payload: serde_json::Value,
+    pub trust_level: KnowledgeTrustLevel,
+    pub status: KnowledgeItemStatus,
+    pub run_id: Option<String>,
+    pub artifact_refs: Vec<String>,
+    pub source_memory_ids: Vec<String>,
+    pub freshness_expires_at_ms: Option<u64>,
+    pub metadata: Option<serde_json::Value>,
+    pub created_at_ms: u64,
+    pub updated_at_ms: u64,
+}
+
+/// Coverage state for a task/topic key within a knowledge space.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KnowledgeCoverageRecord {
+    pub coverage_key: String,
+    pub space_id: String,
+    pub latest_item_id: Option<String>,
+    pub latest_dedupe_key: Option<String>,
+    pub last_seen_at_ms: u64,
+    pub last_promoted_at_ms: Option<u64>,
+    pub freshness_expires_at_ms: Option<u64>,
+    pub metadata: Option<serde_json::Value>,
+}
+
+/// Request to promote or retire a knowledge item.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KnowledgePromotionRequest {
+    pub item_id: String,
+    pub target_status: KnowledgeItemStatus,
+    pub promoted_at_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub freshness_expires_at_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reviewer_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approval_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+/// Result of a knowledge item promotion or retirement.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KnowledgePromotionResult {
+    pub previous_status: KnowledgeItemStatus,
+    pub previous_trust_level: KnowledgeTrustLevel,
+    pub promoted: bool,
+    pub item: KnowledgeItemRecord,
+    pub coverage: KnowledgeCoverageRecord,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

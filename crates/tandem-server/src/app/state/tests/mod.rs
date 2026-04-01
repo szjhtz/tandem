@@ -16,6 +16,7 @@ pub(crate) fn test_automation_node(
     priority: i64,
 ) -> AutomationFlowNode {
     AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
         node_id: node_id.to_string(),
         agent_id: "agent-a".to_string(),
         objective: format!("Run {node_id}"),
@@ -51,6 +52,7 @@ pub(crate) fn test_phase_automation(
             timezone: "UTC".to_string(),
             misfire_policy: RoutineMisfirePolicy::RunOnce,
         },
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
         agents: vec![AutomationAgentProfile {
             agent_id: "agent-a".to_string(),
             template_id: Some("template-a".to_string()),

@@ -243,6 +243,7 @@ mod tests {
                 timezone: "UTC".to_string(),
                 misfire_policy: crate::RoutineMisfirePolicy::RunOnce,
             },
+            knowledge: tandem_orchestrator::KnowledgeBinding::default(),
             agents: Vec::new(),
             flow: crate::AutomationFlowSpec { nodes: Vec::new() },
             execution: crate::AutomationExecutionPolicy {
@@ -288,6 +289,7 @@ mod tests {
     fn build_upstream_inputs_appends_runtime_context_partition_for_node() {
         let run = test_run();
         let node = AutomationFlowNode {
+            knowledge: tandem_orchestrator::KnowledgeBinding::default(),
             node_id: "step_a".to_string(),
             agent_id: "agent_a".to_string(),
             objective: "Do work".to_string(),
@@ -352,6 +354,7 @@ mod tests {
     fn build_upstream_inputs_appends_runtime_credential_envelope_for_node() {
         let run = test_run_with_snapshot();
         let node = AutomationFlowNode {
+            knowledge: tandem_orchestrator::KnowledgeBinding::default(),
             node_id: "step_a".to_string(),
             agent_id: "agent_a".to_string(),
             objective: "Do work".to_string(),

@@ -5,6 +5,8 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use tandem_orchestrator::KnowledgeBinding;
+
 mod mission_builder;
 pub mod plan_package;
 
@@ -49,6 +51,8 @@ pub struct WorkflowStepSpec {
     pub action: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub with: Option<Value>,
+    #[serde(default)]
+    pub knowledge: KnowledgeBinding,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -72,6 +76,8 @@ pub struct WorkflowSpec {
     pub description: Option<String>,
     #[serde(default = "default_true")]
     pub enabled: bool,
+    #[serde(default)]
+    pub knowledge: KnowledgeBinding,
     #[serde(default)]
     pub steps: Vec<WorkflowStepSpec>,
     #[serde(default)]
@@ -382,6 +388,7 @@ fn load_workflow_file(path: &Path, source: &WorkflowLoadSource) -> anyhow::Resul
                 step_id: format!("step_{}", idx + 1),
                 action,
                 with: None,
+                knowledge: KnowledgeBinding::default(),
             },
             WorkflowStepInput::Object(step) => WorkflowStepSpec {
                 step_id: step
@@ -390,6 +397,7 @@ fn load_workflow_file(path: &Path, source: &WorkflowLoadSource) -> anyhow::Resul
                     .unwrap_or_else(|| format!("step_{}", idx + 1)),
                 action: step.action,
                 with: step.with,
+                knowledge: KnowledgeBinding::default(),
             },
         })
         .collect::<Vec<_>>();
@@ -408,6 +416,7 @@ fn load_workflow_file(path: &Path, source: &WorkflowLoadSource) -> anyhow::Resul
         name,
         description: workflow.description,
         enabled: workflow.enabled.unwrap_or(true),
+        knowledge: KnowledgeBinding::default(),
         steps,
         hooks,
         source: Some(source_ref),

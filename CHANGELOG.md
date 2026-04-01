@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Mission/workflow handoff hardening**:
   - Added explicit execution-kind markers and mission coder handoff summaries so mission/workflow nodes can distinguish coder-run work from governance steps.
   - Added regressions that preserve lane, phase, milestone, and launch metadata across mission preview and task-routing boundaries.
+- **Workflow knowledge reuse and rollout guidance**:
+  - Added first-class knowledge bindings, project-scoped preflight reuse, promotion lifecycle tracking, and audit reasons so workflows can reuse validated knowledge instead of redoing the same work.
+  - Added planner and review guardrails that keep raw working state local, prefer project-scoped promoted knowledge, and surface rollout guidance for operators.
 
 ### Fixed
 

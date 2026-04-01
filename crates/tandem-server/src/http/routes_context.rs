@@ -1,6 +1,8 @@
 use axum::routing::{get, post};
 use axum::Router;
 
+use super::context_run_ledger::*;
+use super::context_run_mutation_checkpoints::*;
 use super::context_runs::*;
 use crate::AppState;
 
@@ -22,6 +24,7 @@ pub(super) fn apply(router: Router<AppState>) -> Router<AppState> {
             "/context/runs/{run_id}/events",
             get(context_run_events).post(context_run_event_append),
         )
+        .route("/context/runs/{run_id}/ledger", get(context_run_ledger))
         .route(
             "/context/runs/{run_id}/todos/sync",
             post(context_run_todos_sync),
@@ -57,6 +60,22 @@ pub(super) fn apply(router: Router<AppState>) -> Router<AppState> {
         .route(
             "/context/runs/{run_id}/checkpoints",
             post(context_run_checkpoint_create),
+        )
+        .route(
+            "/context/runs/{run_id}/checkpoints/mutations",
+            get(context_run_mutation_checkpoints),
+        )
+        .route(
+            "/context/runs/{run_id}/checkpoints/mutations/rollback-preview",
+            get(context_run_mutation_checkpoint_rollback_preview),
+        )
+        .route(
+            "/context/runs/{run_id}/checkpoints/mutations/rollback-history",
+            get(context_run_mutation_checkpoint_rollback_history),
+        )
+        .route(
+            "/context/runs/{run_id}/checkpoints/mutations/rollback-execute",
+            post(context_run_mutation_checkpoint_rollback_execute),
         )
         .route(
             "/context/runs/{run_id}/checkpoints/latest",

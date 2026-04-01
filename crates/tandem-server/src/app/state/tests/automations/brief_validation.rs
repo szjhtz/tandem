@@ -3,6 +3,7 @@ use super::*;
 #[test]
 fn completed_brief_without_read_is_blocked_even_if_it_looks_confident() {
     let node = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
         node_id: "research".to_string(),
         agent_id: "agent-a".to_string(),
         objective: "Research".to_string(),
@@ -53,6 +54,7 @@ fn completed_brief_without_read_is_blocked_even_if_it_looks_confident() {
 #[test]
 fn brief_with_timed_out_websearch_is_blocked_when_web_research_is_required() {
     let node = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
         node_id: "research".to_string(),
         agent_id: "agent-a".to_string(),
         objective: "Research".to_string(),
@@ -189,6 +191,7 @@ fn brief_with_timed_out_websearch_is_blocked_when_web_research_is_required() {
 #[test]
 fn brief_prewrite_requirements_enable_repair_and_coverage_mode() {
     let node = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
         node_id: "research".to_string(),
         agent_id: "agent-a".to_string(),
         objective: "Research".to_string(),

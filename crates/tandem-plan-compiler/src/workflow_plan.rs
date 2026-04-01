@@ -116,15 +116,28 @@ pub fn workflow_step_metadata_defaults(
     objective: &str,
     validator_is_research_brief: bool,
 ) -> Option<Value> {
-    if !validator_is_research_brief {
-        return None;
-    }
     let expects_web_research = workflow_step_expects_web_research(step_id, kind, objective);
-    Some(json!({
+    let mut builder = json!({
         "builder": {
-            "web_research_expected": expects_web_research,
+            "knowledge": {
+                "enabled": true,
+                "reuse_mode": "preflight",
+                "trust_floor": "promoted",
+                "read_spaces": [{"scope": "project"}],
+                "promote_spaces": [{"scope": "project"}],
+                "subject": objective.trim(),
+            }
         }
-    }))
+    });
+    if validator_is_research_brief {
+        if let Some(builder_object) = builder.get_mut("builder").and_then(Value::as_object_mut) {
+            builder_object.insert(
+                "web_research_expected".to_string(),
+                Value::Bool(expects_web_research),
+            );
+        }
+    }
+    Some(builder)
 }
 
 pub fn workflow_step_enforcement_defaults(
@@ -1417,6 +1430,56 @@ Here is the planner response:
         .expect("default planner spec");
         assert_eq!(spec.provider_id, "openai");
         assert_eq!(spec.model_id, "gpt-5.1");
+    }
+
+    #[test]
+    fn workflow_step_metadata_defaults_include_project_knowledge() {
+        let defaults =
+            workflow_step_metadata_defaults("research_sources", "research", "Map the topic", false)
+                .expect("metadata defaults");
+        let builder = defaults
+            .get("builder")
+            .and_then(Value::as_object)
+            .expect("builder");
+        let knowledge = builder
+            .get("knowledge")
+            .and_then(Value::as_object)
+            .expect("knowledge defaults");
+
+        assert_eq!(
+            knowledge.get("enabled").and_then(Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            knowledge.get("reuse_mode").and_then(Value::as_str),
+            Some("preflight")
+        );
+        assert_eq!(
+            knowledge.get("trust_floor").and_then(Value::as_str),
+            Some("promoted")
+        );
+        assert_eq!(
+            knowledge.get("subject").and_then(Value::as_str),
+            Some("Map the topic")
+        );
+        assert_eq!(
+            knowledge
+                .get("read_spaces")
+                .and_then(Value::as_array)
+                .and_then(|spaces| spaces.first())
+                .and_then(|space| space.get("scope"))
+                .and_then(Value::as_str),
+            Some("project")
+        );
+        assert_eq!(
+            knowledge
+                .get("promote_spaces")
+                .and_then(Value::as_array)
+                .and_then(|spaces| spaces.first())
+                .and_then(|space| space.get("scope"))
+                .and_then(Value::as_str),
+            Some("project")
+        );
     }
 
     #[test]

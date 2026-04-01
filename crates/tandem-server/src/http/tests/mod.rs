@@ -6,6 +6,7 @@ pub(super) mod capabilities;
 pub(super) mod channels;
 pub(super) mod coder;
 pub(super) mod context_run_ledger;
+pub(super) mod context_run_mutation_checkpoints;
 pub(super) mod context_runs;
 pub(super) mod global;
 pub(super) mod mcp;

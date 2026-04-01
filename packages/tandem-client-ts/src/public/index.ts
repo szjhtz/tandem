@@ -1480,12 +1480,44 @@ export interface AutomationV2FlowNode {
   timeoutMs?: number;
 }
 
+export type KnowledgeScope = "run" | "project" | "global";
+export type KnowledgeTrustLevel = "working" | "promoted" | "approved_default";
+export type KnowledgeReuseMode = "disabled" | "preflight" | "on_demand";
+
+export interface KnowledgeSpaceRef {
+  scope?: KnowledgeScope;
+  projectId?: string;
+  project_id?: string;
+  namespace?: string;
+  spaceId?: string;
+  space_id?: string;
+  [key: string]: unknown;
+}
+
+export interface KnowledgeBinding {
+  enabled?: boolean;
+  reuseMode?: KnowledgeReuseMode;
+  reuse_mode?: KnowledgeReuseMode;
+  trustFloor?: KnowledgeTrustLevel;
+  trust_floor?: KnowledgeTrustLevel;
+  readSpaces?: KnowledgeSpaceRef[];
+  read_spaces?: KnowledgeSpaceRef[];
+  promoteSpaces?: KnowledgeSpaceRef[];
+  promote_spaces?: KnowledgeSpaceRef[];
+  namespace?: string;
+  subject?: string;
+  freshnessMs?: number;
+  freshness_ms?: number;
+  [key: string]: unknown;
+}
+
 export interface AutomationV2Spec {
   automationId?: string;
   name: string;
   description?: string;
   status?: AutomationV2Status;
   schedule: AutomationV2Schedule;
+  knowledge?: KnowledgeBinding;
   agents: AutomationV2AgentProfile[];
   flow: { nodes: AutomationV2FlowNode[] };
   execution?: {

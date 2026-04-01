@@ -451,6 +451,7 @@ pub(crate) fn migrate_bundled_studio_research_split_automation(
         node_id: config.discover_node_id.to_string(),
         agent_id: config.discover_agent_id.to_string(),
         objective: config.discover_objective.to_string(),
+        knowledge: Default::default(),
         depends_on: Vec::new(),
         input_refs: Vec::new(),
         output_contract: Some(AutomationFlowOutputContract {
@@ -501,6 +502,7 @@ pub(crate) fn migrate_bundled_studio_research_split_automation(
         node_id: config.local_node_id.to_string(),
         agent_id: config.local_agent_id.to_string(),
         objective: config.local_objective.to_string(),
+        knowledge: Default::default(),
         depends_on: vec![config.discover_node_id.to_string()],
         input_refs: vec![AutomationFlowInputRef {
             from_step_id: config.discover_node_id.to_string(),
@@ -549,6 +551,7 @@ pub(crate) fn migrate_bundled_studio_research_split_automation(
         node_id: config.external_node_id.to_string(),
         agent_id: config.external_agent_id.to_string(),
         objective: config.external_objective.to_string(),
+        knowledge: Default::default(),
         depends_on: vec![
             config.discover_node_id.to_string(),
             config.local_node_id.to_string(),

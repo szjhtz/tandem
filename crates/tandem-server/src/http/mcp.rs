@@ -334,16 +334,15 @@ impl McpListTool {
 #[async_trait]
 impl Tool for McpListTool {
     fn schema(&self) -> ToolSchema {
-        ToolSchema {
-            name: "mcp_list".to_string(),
-            description: "List the currently configured and connected MCP servers and tools"
-                .to_string(),
-            input_schema: json!({
+        ToolSchema::new(
+            "mcp_list",
+            "List the currently configured and connected MCP servers and tools",
+            json!({
                 "type": "object",
                 "properties": {},
                 "additionalProperties": false,
             }),
-        }
+        )
     }
 
     async fn execute(&self, _args: Value) -> anyhow::Result<ToolResult> {
@@ -382,15 +381,15 @@ pub(crate) async fn sync_mcp_tools_for_server(state: &AppState, name: &str) -> u
     state.tools.unregister_by_prefix(&prefix).await;
     let tools = state.mcp.server_tools(name).await;
     for tool in &tools {
-        let schema = ToolSchema {
-            name: tool.namespaced_name.clone(),
-            description: if tool.description.trim().is_empty() {
+        let schema = ToolSchema::new(
+            tool.namespaced_name.clone(),
+            if tool.description.trim().is_empty() {
                 format!("MCP tool {} from {}", tool.tool_name, tool.server_name)
             } else {
                 tool.description.clone()
             },
-            input_schema: tool.input_schema.clone(),
-        };
+            tool.input_schema.clone(),
+        );
         state
             .tools
             .register_tool(

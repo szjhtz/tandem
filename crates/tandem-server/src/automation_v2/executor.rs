@@ -900,6 +900,7 @@ mod tests {
 
     fn test_automation() -> crate::automation_v2::types::AutomationV2Spec {
         crate::automation_v2::types::AutomationV2Spec {
+            knowledge: tandem_orchestrator::KnowledgeBinding::default(),
             automation_id: "automation-test".to_string(),
             name: "test".to_string(),
             description: None,
@@ -914,6 +915,7 @@ mod tests {
             agents: Vec::new(),
             flow: crate::automation_v2::types::AutomationFlowSpec {
                 nodes: vec![crate::automation_v2::types::AutomationFlowNode {
+                    knowledge: tandem_orchestrator::KnowledgeBinding::default(),
                     node_id: "research-brief".to_string(),
                     agent_id: "research".to_string(),
                     objective: "Research".to_string(),

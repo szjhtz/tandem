@@ -20,6 +20,7 @@ fn sample_automation(workspace_root: &str) -> crate::AutomationV2Spec {
             timezone: "UTC".to_string(),
             misfire_policy: crate::RoutineMisfirePolicy::Skip,
         },
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
         agents: vec![crate::AutomationAgentProfile {
             agent_id: "agent-1".to_string(),
             template_id: None,
@@ -39,6 +40,7 @@ fn sample_automation(workspace_root: &str) -> crate::AutomationV2Spec {
         }],
         flow: crate::AutomationFlowSpec {
             nodes: vec![crate::AutomationFlowNode {
+                knowledge: tandem_orchestrator::KnowledgeBinding::default(),
                 node_id: "node-1".to_string(),
                 agent_id: "agent-1".to_string(),
                 objective: "Write a clear report for the user".to_string(),

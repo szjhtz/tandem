@@ -1463,7 +1463,22 @@ pub(super) async fn context_run_get(
     Path(run_id): Path<String>,
 ) -> Result<Json<Value>, StatusCode> {
     let run = load_context_run_state(&state, &run_id).await?;
-    Ok(Json(json!({ "run": run })))
+    let ledger_summary =
+        super::context_run_ledger::context_run_ledger_summary_for_run(&state, &run_id);
+    let mutation_checkpoint_summary =
+        super::context_run_mutation_checkpoints::context_run_mutation_checkpoint_summary_for_run(
+            &state, &run_id,
+        );
+    let rollback_preview_summary =
+        super::context_run_mutation_checkpoints::context_run_mutation_checkpoint_preview_summary_for_run(
+            &state, &run_id,
+        );
+    Ok(Json(json!({
+        "run": run,
+        "ledger_summary": ledger_summary,
+        "mutation_checkpoint_summary": mutation_checkpoint_summary,
+        "rollback_preview_summary": rollback_preview_summary,
+    })))
 }
 
 pub(super) async fn context_run_put(
@@ -3990,6 +4005,44 @@ fn automation_node_task_payload(node: &crate::AutomationFlowNode, output: Option
             {
                 object.insert("validation_basis".to_string(), validation_basis);
             }
+            if let Some(knowledge_preflight) = output
+                .get("knowledge_preflight")
+                .cloned()
+                .filter(|value| !value.is_null())
+            {
+                object.insert("knowledge_preflight".to_string(), knowledge_preflight);
+            }
+            if let Some(knowledge_preflight) =
+                output.get("knowledge_preflight").and_then(Value::as_object)
+            {
+                if let Some(reuse_reason) = knowledge_preflight
+                    .get("reuse_reason")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                {
+                    object.insert("knowledge_reuse_reason".to_string(), json!(reuse_reason));
+                }
+                if let Some(skip_reason) = knowledge_preflight
+                    .get("skip_reason")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                {
+                    object.insert("knowledge_skip_reason".to_string(), json!(skip_reason));
+                }
+                if let Some(freshness_reason) = knowledge_preflight
+                    .get("freshness_reason")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                {
+                    object.insert(
+                        "knowledge_freshness_reason".to_string(),
+                        json!(freshness_reason),
+                    );
+                }
+            }
             if let Some(blocker_category) = output
                 .get("blocker_category")
                 .and_then(Value::as_str)
@@ -4535,6 +4588,7 @@ mod tests {
     #[test]
     fn automation_node_task_payload_includes_repair_guidance_from_output() {
         let node = crate::AutomationFlowNode {
+            knowledge: tandem_orchestrator::KnowledgeBinding::default(),
             node_id: "research-brief".to_string(),
             agent_id: "research".to_string(),
             objective: "Write marketing-brief.md".to_string(),
@@ -4608,6 +4662,66 @@ mod tests {
                 .get("repair_attempts_remaining")
                 .and_then(Value::as_u64),
             Some(2)
+        );
+    }
+
+    #[test]
+    fn automation_node_task_payload_includes_knowledge_preflight_reasons() {
+        let node = crate::AutomationFlowNode {
+            knowledge: tandem_orchestrator::KnowledgeBinding::default(),
+            node_id: "research-brief".to_string(),
+            agent_id: "research".to_string(),
+            objective: "Write marketing-brief.md".to_string(),
+            depends_on: Vec::new(),
+            input_refs: Vec::new(),
+            output_contract: None,
+            retry_policy: None,
+            timeout_ms: None,
+            stage_kind: None,
+            gate: None,
+            metadata: Some(json!({
+                "builder": {
+                    "title": "Research Brief",
+                    "output_path": "marketing-brief.md"
+                }
+            })),
+        };
+        let output = json!({
+            "status": "needs_repair",
+            "knowledge_preflight": {
+                "decision": "reuse_promoted",
+                "coverage_key": "project::marketing::research::brief",
+                "reuse_reason": "reusing 2 promoted knowledge item(s) from 1 space(s)",
+                "skip_reason": null,
+                "freshness_reason": null,
+                "items": []
+            }
+        });
+
+        let payload = automation_node_task_payload(&node, Some(&output));
+
+        assert_eq!(
+            payload
+                .get("knowledge_preflight")
+                .and_then(|value| value.get("coverage_key"))
+                .and_then(Value::as_str),
+            Some("project::marketing::research::brief")
+        );
+        assert_eq!(
+            payload
+                .get("knowledge_reuse_reason")
+                .and_then(Value::as_str),
+            Some("reusing 2 promoted knowledge item(s) from 1 space(s)")
+        );
+        assert_eq!(
+            payload.get("knowledge_skip_reason").and_then(Value::as_str),
+            None
+        );
+        assert_eq!(
+            payload
+                .get("knowledge_freshness_reason")
+                .and_then(Value::as_str),
+            None
         );
     }
 }

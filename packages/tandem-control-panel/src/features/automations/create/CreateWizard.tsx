@@ -6,6 +6,7 @@ import { Step1Goal } from "./Step1Goal";
 import { Step2Schedule } from "./Step2Schedule";
 import { Step3Mode } from "./Step3Mode";
 import { Step4Review } from "./Step4Review";
+import { buildDefaultKnowledgeOperatorPreferences } from "../../planner/plannerShared";
 
 type ExecutionMode = "single" | "team" | "swarm";
 type WizardStep = 1 | 2 | 3 | 4;
@@ -296,6 +297,7 @@ function buildOperatorPreferences(wizard: WizardState) {
     payload.model_provider = String(wizard.modelProvider).trim();
   if (String(wizard.modelId || "").trim()) payload.model_id = String(wizard.modelId).trim();
   if (roleModels && Object.keys(roleModels).length) payload.role_models = roleModels;
+  Object.assign(payload, buildDefaultKnowledgeOperatorPreferences(wizard.goal));
   return payload;
 }
 

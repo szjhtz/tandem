@@ -478,6 +478,15 @@ pub(crate) fn render_automation_v2_prompt_with_options(
             project_id
         ));
     }
+    if let Some(knowledge_context) = options
+        .knowledge_context
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        prompt.push_str("\n\n");
+        prompt.push_str(knowledge_context);
+    }
     let enforce_completed_first_attempt = (validator_kind
         == crate::AutomationOutputValidatorKind::ResearchBrief
         || !automation_node_required_tools(node).is_empty()

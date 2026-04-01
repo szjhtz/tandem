@@ -32,7 +32,9 @@ use tandem_memory::MemoryManager;
 use tandem_types::{ToolResult, ToolSchema};
 
 mod builtin_tools;
+mod tool_metadata;
 use builtin_tools::*;
+use tool_metadata::*;
 
 #[async_trait]
 pub trait Tool: Send + Sync {
@@ -1081,10 +1083,10 @@ struct WriteTool;
 #[async_trait]
 impl Tool for WriteTool {
     fn schema(&self) -> ToolSchema {
-        ToolSchema {
-            name: "write".to_string(),
-            description: "Write file contents".to_string(),
-            input_schema: json!({
+        tool_schema_with_capabilities(
+            "write",
+            "Write file contents",
+            json!({
                 "type":"object",
                 "properties":{
                     "path":{"type":"string"},
@@ -1093,7 +1095,8 @@ impl Tool for WriteTool {
                 },
                 "required":["path", "content"]
             }),
-        }
+            workspace_write_capabilities(),
+        )
     }
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
         let path = args["path"].as_str().unwrap_or("").trim();
@@ -1134,10 +1137,10 @@ struct EditTool;
 #[async_trait]
 impl Tool for EditTool {
     fn schema(&self) -> ToolSchema {
-        ToolSchema {
-            name: "edit".to_string(),
-            description: "String replacement edit".to_string(),
-            input_schema: json!({
+        tool_schema_with_capabilities(
+            "edit",
+            "String replacement edit",
+            json!({
                 "type":"object",
                 "properties":{
                     "path":{"type":"string"},
@@ -1146,7 +1149,8 @@ impl Tool for EditTool {
                 },
                 "required":["path", "old", "new"]
             }),
-        }
+            workspace_write_capabilities(),
+        )
     }
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
         let path = args["path"].as_str().unwrap_or("");
@@ -1193,11 +1197,12 @@ fn normalize_recursive_wildcard_pattern(pattern: &str) -> Option<String> {
 #[async_trait]
 impl Tool for GlobTool {
     fn schema(&self) -> ToolSchema {
-        ToolSchema {
-            name: "glob".to_string(),
-            description: "Find files by glob".to_string(),
-            input_schema: json!({"type":"object","properties":{"pattern":{"type":"string"}}}),
-        }
+        tool_schema_with_capabilities(
+            "glob",
+            "Find files by glob",
+            json!({"type":"object","properties":{"pattern":{"type":"string"}}}),
+            workspace_search_capabilities(),
+        )
     }
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
         let pattern = args["pattern"].as_str().unwrap_or("*");
@@ -1281,11 +1286,12 @@ struct GrepTool;
 #[async_trait]
 impl Tool for GrepTool {
     fn schema(&self) -> ToolSchema {
-        ToolSchema {
-            name: "grep".to_string(),
-            description: "Regex search in files".to_string(),
-            input_schema: json!({"type":"object","properties":{"pattern":{"type":"string"},"path":{"type":"string"}}}),
-        }
+        tool_schema_with_capabilities(
+            "grep",
+            "Regex search in files",
+            json!({"type":"object","properties":{"pattern":{"type":"string"},"path":{"type":"string"}}}),
+            workspace_search_capabilities(),
+        )
     }
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
         let pattern = args["pattern"].as_str().unwrap_or("");
@@ -1328,10 +1334,10 @@ struct WebFetchTool;
 #[async_trait]
 impl Tool for WebFetchTool {
     fn schema(&self) -> ToolSchema {
-        ToolSchema {
-            name: "webfetch".to_string(),
-            description: "Fetch URL content and return a structured markdown document".to_string(),
-            input_schema: json!({
+        tool_schema_with_capabilities(
+            "webfetch",
+            "Fetch URL content and return a structured markdown document",
+            json!({
                 "type":"object",
                 "properties":{
                     "url":{"type":"string"},
@@ -1342,7 +1348,8 @@ impl Tool for WebFetchTool {
                     "max_redirects":{"type":"integer"}
                 }
             }),
-        }
+            web_fetch_capabilities(),
+        )
     }
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
         let url = args["url"].as_str().unwrap_or("").trim();
@@ -1435,10 +1442,10 @@ struct WebFetchHtmlTool;
 #[async_trait]
 impl Tool for WebFetchHtmlTool {
     fn schema(&self) -> ToolSchema {
-        ToolSchema {
-            name: "webfetch_html".to_string(),
-            description: "Fetch URL and return raw HTML content".to_string(),
-            input_schema: json!({
+        tool_schema_with_capabilities(
+            "webfetch_html",
+            "Fetch URL and return raw HTML content",
+            json!({
                 "type":"object",
                 "properties":{
                     "url":{"type":"string"},
@@ -1447,7 +1454,8 @@ impl Tool for WebFetchHtmlTool {
                     "max_redirects":{"type":"integer"}
                 }
             }),
-        }
+            web_fetch_capabilities(),
+        )
     }
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
         let url = args["url"].as_str().unwrap_or("").trim();
@@ -1601,10 +1609,10 @@ struct McpDebugTool;
 #[async_trait]
 impl Tool for McpDebugTool {
     fn schema(&self) -> ToolSchema {
-        ToolSchema {
-            name: "mcp_debug".to_string(),
-            description: "Call an MCP tool and return the raw response".to_string(),
-            input_schema: json!({
+        tool_schema(
+            "mcp_debug",
+            "Call an MCP tool and return the raw response",
+            json!({
                 "type":"object",
                 "properties":{
                     "url":{"type":"string"},
@@ -1615,7 +1623,7 @@ impl Tool for McpDebugTool {
                     "max_bytes":{"type":"integer"}
                 }
             }),
-        }
+        )
     }
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
         let url = args["url"].as_str().unwrap_or("").trim();
@@ -1726,10 +1734,10 @@ struct WebSearchTool {
 #[async_trait]
 impl Tool for WebSearchTool {
     fn schema(&self) -> ToolSchema {
-        ToolSchema {
-            name: "websearch".to_string(),
-            description: self.backend.schema_description(),
-            input_schema: json!({
+        tool_schema_with_capabilities(
+            "websearch",
+            self.backend.schema_description(),
+            json!({
                 "type": "object",
                 "properties": {
                     "query": { "type": "string" },
@@ -1737,7 +1745,8 @@ impl Tool for WebSearchTool {
                 },
                 "required": ["query"]
             }),
-        }
+            web_fetch_capabilities(),
+        )
     }
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
         let query = extract_websearch_query(&args).unwrap_or_default();
@@ -2556,11 +2565,12 @@ struct CodeSearchTool;
 #[async_trait]
 impl Tool for CodeSearchTool {
     fn schema(&self) -> ToolSchema {
-        ToolSchema {
-            name: "codesearch".to_string(),
-            description: "Search code in workspace files".to_string(),
-            input_schema: json!({"type":"object","properties":{"query":{"type":"string"},"path":{"type":"string"},"limit":{"type":"integer"}}}),
-        }
+        tool_schema_with_capabilities(
+            "codesearch",
+            "Search code in workspace files",
+            json!({"type":"object","properties":{"query":{"type":"string"},"path":{"type":"string"},"limit":{"type":"integer"}}}),
+            workspace_search_capabilities(),
+        )
     }
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
         let query = args["query"].as_str().unwrap_or("").trim();
@@ -2617,10 +2627,10 @@ struct TodoWriteTool;
 #[async_trait]
 impl Tool for TodoWriteTool {
     fn schema(&self) -> ToolSchema {
-        ToolSchema {
-            name: "todo_write".to_string(),
-            description: "Update todo list".to_string(),
-            input_schema: json!({
+        tool_schema(
+            "todo_write",
+            "Update todo list",
+            json!({
                 "type":"object",
                 "properties":{
                     "todos":{
@@ -2637,7 +2647,7 @@ impl Tool for TodoWriteTool {
                     }
                 }
             }),
-        }
+        )
     }
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
         let todos = normalize_todos(args["todos"].as_array().cloned().unwrap_or_default());
@@ -2652,12 +2662,11 @@ struct TaskTool;
 #[async_trait]
 impl Tool for TaskTool {
     fn schema(&self) -> ToolSchema {
-        ToolSchema {
-            name: "task".to_string(),
-            description: "Create a subtask summary or spawn a teammate when team_name is provided."
-                .to_string(),
-            input_schema: task_schema(),
-        }
+        tool_schema(
+            "task",
+            "Create a subtask summary or spawn a teammate when team_name is provided.",
+            task_schema(),
+        )
     }
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
         let input = serde_json::from_value::<TaskInput>(args.clone())
@@ -2742,10 +2751,10 @@ struct QuestionTool;
 #[async_trait]
 impl Tool for QuestionTool {
     fn schema(&self) -> ToolSchema {
-        ToolSchema {
-            name: "question".to_string(),
-            description: "Emit a question request for the user".to_string(),
-            input_schema: json!({
+        tool_schema(
+            "question",
+            "Emit a question request for the user",
+            json!({
                 "type":"object",
                 "properties":{
                     "questions":{
@@ -2760,7 +2769,7 @@ impl Tool for QuestionTool {
                     }
                 }
             }),
-        }
+        )
     }
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
         let questions = normalize_question_payload(&args);
@@ -2936,11 +2945,10 @@ struct SpawnAgentTool;
 #[async_trait]
 impl Tool for SpawnAgentTool {
     fn schema(&self) -> ToolSchema {
-        ToolSchema {
-            name: "spawn_agent".to_string(),
-            description: "Spawn an agent-team instance through server policy enforcement."
-                .to_string(),
-            input_schema: json!({
+        tool_schema(
+            "spawn_agent",
+            "Spawn an agent-team instance through server policy enforcement.",
+            json!({
                 "type":"object",
                 "properties":{
                     "missionID":{"type":"string"},
@@ -2953,7 +2961,7 @@ impl Tool for SpawnAgentTool {
                 },
                 "required":["role","justification"]
             }),
-        }
+        )
     }
 
     async fn execute(&self, _args: Value) -> anyhow::Result<ToolResult> {
@@ -2971,11 +2979,11 @@ struct TeamCreateTool;
 #[async_trait]
 impl Tool for TeamCreateTool {
     fn schema(&self) -> ToolSchema {
-        ToolSchema {
-            name: "TeamCreate".to_string(),
-            description: "Create a coordinated team and shared task context.".to_string(),
-            input_schema: team_create_schema(),
-        }
+        tool_schema(
+            "TeamCreate",
+            "Create a coordinated team and shared task context.",
+            team_create_schema(),
+        )
     }
 
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
@@ -3036,11 +3044,11 @@ struct TaskCreateCompatTool;
 #[async_trait]
 impl Tool for TaskCreateCompatTool {
     fn schema(&self) -> ToolSchema {
-        ToolSchema {
-            name: "TaskCreate".to_string(),
-            description: "Create a task in the shared team task list.".to_string(),
-            input_schema: task_create_schema(),
-        }
+        tool_schema(
+            "TaskCreate",
+            "Create a task in the shared team task list.",
+            task_create_schema(),
+        )
     }
 
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
@@ -3088,11 +3096,11 @@ struct TaskUpdateCompatTool;
 #[async_trait]
 impl Tool for TaskUpdateCompatTool {
     fn schema(&self) -> ToolSchema {
-        ToolSchema {
-            name: "TaskUpdate".to_string(),
-            description: "Update ownership/state/dependencies of a shared task.".to_string(),
-            input_schema: task_update_schema(),
-        }
+        tool_schema(
+            "TaskUpdate",
+            "Update ownership/state/dependencies of a shared task.",
+            task_update_schema(),
+        )
     }
 
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
@@ -3208,11 +3216,11 @@ struct TaskListCompatTool;
 #[async_trait]
 impl Tool for TaskListCompatTool {
     fn schema(&self) -> ToolSchema {
-        ToolSchema {
-            name: "TaskList".to_string(),
-            description: "List tasks from the shared task list.".to_string(),
-            input_schema: task_list_schema(),
-        }
+        tool_schema(
+            "TaskList",
+            "List tasks from the shared task list.",
+            task_list_schema(),
+        )
     }
 
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
@@ -3274,11 +3282,11 @@ struct SendMessageCompatTool;
 #[async_trait]
 impl Tool for SendMessageCompatTool {
     fn schema(&self) -> ToolSchema {
-        ToolSchema {
-            name: "SendMessage".to_string(),
-            description: "Send teammate messages and coordination protocol responses.".to_string(),
-            input_schema: send_message_schema(),
-        }
+        tool_schema(
+            "SendMessage",
+            "Send teammate messages and coordination protocol responses.",
+            send_message_schema(),
+        )
     }
 
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
@@ -3742,10 +3750,10 @@ struct MemorySearchTool;
 #[async_trait]
 impl Tool for MemorySearchTool {
     fn schema(&self) -> ToolSchema {
-        ToolSchema {
-            name: "memory_search".to_string(),
-            description: "Search tandem memory across session/project/global tiers. If scope fields are omitted, the tool defaults to the current session/project context and may include global memory when policy allows it.".to_string(),
-            input_schema: json!({
+        tool_schema(
+            "memory_search",
+            "Search tandem memory across session/project/global tiers. If scope fields are omitted, the tool defaults to the current session/project context and may include global memory when policy allows it.",
+            json!({
                 "type":"object",
                 "properties":{
                     "query":{"type":"string"},
@@ -3757,7 +3765,7 @@ impl Tool for MemorySearchTool {
                 },
                 "required":["query"]
             }),
-        }
+        )
     }
 
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
@@ -3977,10 +3985,10 @@ struct MemoryStoreTool;
 #[async_trait]
 impl Tool for MemoryStoreTool {
     fn schema(&self) -> ToolSchema {
-        ToolSchema {
-            name: "memory_store".to_string(),
-            description: "Store memory chunks in session/project/global tiers. If scope is omitted, the tool defaults to the current project, then session, and only uses global memory when policy allows it.".to_string(),
-            input_schema: json!({
+        tool_schema(
+            "memory_store",
+            "Store memory chunks in session/project/global tiers. If scope is omitted, the tool defaults to the current project, then session, and only uses global memory when policy allows it.",
+            json!({
                 "type":"object",
                 "properties":{
                     "content":{"type":"string"},
@@ -3993,7 +4001,7 @@ impl Tool for MemoryStoreTool {
                 },
                 "required":["content"]
             }),
-        }
+        )
     }
 
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
@@ -4125,11 +4133,10 @@ struct MemoryListTool;
 #[async_trait]
 impl Tool for MemoryListTool {
     fn schema(&self) -> ToolSchema {
-        ToolSchema {
-            name: "memory_list".to_string(),
-            description: "List stored memory chunks for auditing and knowledge-base browsing."
-                .to_string(),
-            input_schema: json!({
+        tool_schema(
+            "memory_list",
+            "List stored memory chunks for auditing and knowledge-base browsing.",
+            json!({
                 "type":"object",
                 "properties":{
                     "tier":{"type":"string","enum":["session","project","global","all"]},
@@ -4139,7 +4146,7 @@ impl Tool for MemoryListTool {
                     "allow_global":{"type":"boolean"}
                 }
             }),
-        }
+        )
     }
 
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
@@ -4254,10 +4261,10 @@ struct MemoryDeleteTool;
 #[async_trait]
 impl Tool for MemoryDeleteTool {
     fn schema(&self) -> ToolSchema {
-        ToolSchema {
-            name: "memory_delete".to_string(),
-            description: "Delete a stored memory chunk from session/project/global memory within the current allowed scope.".to_string(),
-            input_schema: json!({
+        tool_schema(
+            "memory_delete",
+            "Delete a stored memory chunk from session/project/global memory within the current allowed scope.",
+            json!({
                 "type":"object",
                 "properties":{
                     "chunk_id":{"type":"string"},
@@ -4269,7 +4276,7 @@ impl Tool for MemoryDeleteTool {
                 },
                 "required":["chunk_id"]
             }),
-        }
+        )
     }
 
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
@@ -4477,11 +4484,11 @@ struct SkillTool;
 #[async_trait]
 impl Tool for SkillTool {
     fn schema(&self) -> ToolSchema {
-        ToolSchema {
-            name: "skill".to_string(),
-            description: "List or load installed Tandem skills. Call without name to list available skills; provide name to load full SKILL.md content.".to_string(),
-            input_schema: json!({"type":"object","properties":{"name":{"type":"string"}}}),
-        }
+        tool_schema(
+            "skill",
+            "List or load installed Tandem skills. Call without name to list available skills; provide name to load full SKILL.md content.",
+            json!({"type":"object","properties":{"name":{"type":"string"}}}),
+        )
     }
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
         let workspace_root = std::env::current_dir().ok();
@@ -4617,11 +4624,12 @@ struct ApplyPatchTool;
 #[async_trait]
 impl Tool for ApplyPatchTool {
     fn schema(&self) -> ToolSchema {
-        ToolSchema {
-            name: "apply_patch".to_string(),
-            description: "Apply a Codex-style patch in a git workspace, or validate patch text when git patching is unavailable".to_string(),
-            input_schema: json!({"type":"object","properties":{"patchText":{"type":"string"}}}),
-        }
+        tool_schema_with_capabilities(
+            "apply_patch",
+            "Apply a Codex-style patch in a git workspace, or validate patch text when git patching is unavailable",
+            json!({"type":"object","properties":{"patchText":{"type":"string"}}}),
+            apply_patch_capabilities(),
+        )
     }
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
         let patch = args["patchText"].as_str().unwrap_or("");
@@ -4774,10 +4782,10 @@ struct BatchTool;
 #[async_trait]
 impl Tool for BatchTool {
     fn schema(&self) -> ToolSchema {
-        ToolSchema {
-            name: "batch".to_string(),
-            description: "Execute multiple tool calls sequentially".to_string(),
-            input_schema: json!({
+        tool_schema(
+            "batch",
+            "Execute multiple tool calls sequentially",
+            json!({
                 "type":"object",
                 "properties":{
                     "tool_calls":{
@@ -4793,7 +4801,7 @@ impl Tool for BatchTool {
                     }
                 }
             }),
-        }
+        )
     }
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
         let calls = args["tool_calls"].as_array().cloned().unwrap_or_default();
@@ -4836,11 +4844,11 @@ struct LspTool;
 #[async_trait]
 impl Tool for LspTool {
     fn schema(&self) -> ToolSchema {
-        ToolSchema {
-            name: "lsp".to_string(),
-            description: "LSP-like workspace diagnostics and symbol operations".to_string(),
-            input_schema: json!({"type":"object","properties":{"operation":{"type":"string"},"filePath":{"type":"string"},"symbol":{"type":"string"},"query":{"type":"string"}}}),
-        }
+        tool_schema(
+            "lsp",
+            "LSP-like workspace diagnostics and symbol operations",
+            json!({"type":"object","properties":{"operation":{"type":"string"},"filePath":{"type":"string"},"symbol":{"type":"string"},"query":{"type":"string"}}}),
+        )
     }
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
         let operation = args["operation"].as_str().unwrap_or("symbols");
@@ -5047,14 +5055,14 @@ mod tests {
 
     #[test]
     fn validator_rejects_array_without_items() {
-        let schemas = vec![ToolSchema {
-            name: "bad".to_string(),
-            description: "bad schema".to_string(),
-            input_schema: json!({
+        let schemas = vec![ToolSchema::new(
+            "bad",
+            "bad schema",
+            json!({
                 "type":"object",
                 "properties":{"todos":{"type":"array"}}
             }),
-        }];
+        )];
         let err = validate_tool_schemas(&schemas).expect_err("expected schema validation failure");
         assert_eq!(err.tool_name, "bad");
         assert!(err.path.contains("properties.todos"));
@@ -5077,17 +5085,72 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn core_tool_schemas_include_expected_capabilities() {
+        let registry = ToolRegistry::new();
+        let schemas = registry.list().await;
+        let schema_by_name = schemas
+            .iter()
+            .map(|schema| (schema.name.as_str(), schema))
+            .collect::<HashMap<_, _>>();
+
+        let read = schema_by_name.get("read").expect("read tool");
+        assert!(read.capabilities.reads_workspace);
+        assert!(read.capabilities.preferred_for_discovery);
+        assert_eq!(
+            read.capabilities.effects,
+            vec![tandem_types::ToolEffect::Read]
+        );
+
+        let write = schema_by_name.get("write").expect("write tool");
+        assert!(write.capabilities.writes_workspace);
+        assert!(write.capabilities.requires_verification);
+        assert_eq!(
+            write.capabilities.effects,
+            vec![tandem_types::ToolEffect::Write]
+        );
+
+        let grep = schema_by_name.get("grep").expect("grep tool");
+        assert!(grep.capabilities.reads_workspace);
+        assert!(grep.capabilities.preferred_for_discovery);
+        assert_eq!(
+            grep.capabilities.effects,
+            vec![tandem_types::ToolEffect::Search]
+        );
+
+        let bash = schema_by_name.get("bash").expect("bash tool");
+        assert!(bash.capabilities.destructive);
+        assert!(bash.capabilities.network_access);
+        assert_eq!(
+            bash.capabilities.effects,
+            vec![tandem_types::ToolEffect::Execute]
+        );
+
+        let webfetch = schema_by_name.get("webfetch").expect("webfetch tool");
+        assert!(webfetch.capabilities.network_access);
+        assert!(webfetch.capabilities.preferred_for_discovery);
+        assert_eq!(
+            webfetch.capabilities.effects,
+            vec![tandem_types::ToolEffect::Fetch]
+        );
+
+        let apply_patch = schema_by_name.get("apply_patch").expect("apply_patch tool");
+        assert!(apply_patch.capabilities.reads_workspace);
+        assert!(apply_patch.capabilities.writes_workspace);
+        assert!(apply_patch.capabilities.requires_verification);
+        assert_eq!(
+            apply_patch.capabilities.effects,
+            vec![tandem_types::ToolEffect::Patch]
+        );
+    }
+
+    #[tokio::test]
     async fn mcp_server_names_returns_unique_sorted_names() {
         let registry = ToolRegistry::new();
         registry
             .register_tool(
                 "mcp.notion.search_pages".to_string(),
                 Arc::new(TestTool {
-                    schema: ToolSchema {
-                        name: "mcp.notion.search_pages".to_string(),
-                        description: "search".to_string(),
-                        input_schema: json!({}),
-                    },
+                    schema: ToolSchema::new("mcp.notion.search_pages", "search", json!({})),
                 }),
             )
             .await;
@@ -5095,11 +5158,7 @@ mod tests {
             .register_tool(
                 "mcp.github.list_prs".to_string(),
                 Arc::new(TestTool {
-                    schema: ToolSchema {
-                        name: "mcp.github.list_prs".to_string(),
-                        description: "list".to_string(),
-                        input_schema: json!({}),
-                    },
+                    schema: ToolSchema::new("mcp.github.list_prs", "list", json!({})),
                 }),
             )
             .await;
@@ -5107,11 +5166,7 @@ mod tests {
             .register_tool(
                 "mcp.github.get_pr".to_string(),
                 Arc::new(TestTool {
-                    schema: ToolSchema {
-                        name: "mcp.github.get_pr".to_string(),
-                        description: "get".to_string(),
-                        input_schema: json!({}),
-                    },
+                    schema: ToolSchema::new("mcp.github.get_pr", "get", json!({})),
                 }),
             )
             .await;
@@ -5127,11 +5182,7 @@ mod tests {
             .register_tool(
                 "mcp.test.search".to_string(),
                 Arc::new(TestTool {
-                    schema: ToolSchema {
-                        name: "mcp.test.search".to_string(),
-                        description: "search".to_string(),
-                        input_schema: json!({}),
-                    },
+                    schema: ToolSchema::new("mcp.test.search", "search", json!({})),
                 }),
             )
             .await;
@@ -5139,11 +5190,7 @@ mod tests {
             .register_tool(
                 "mcp.test.get".to_string(),
                 Arc::new(TestTool {
-                    schema: ToolSchema {
-                        name: "mcp.test.get".to_string(),
-                        description: "get".to_string(),
-                        input_schema: json!({}),
-                    },
+                    schema: ToolSchema::new("mcp.test.get", "get", json!({})),
                 }),
             )
             .await;

@@ -8,6 +8,7 @@ fn structured_handoff_nodes_fail_when_only_fallback_tool_summary_is_returned() {
     ));
     std::fs::create_dir_all(&workspace_root).expect("create workspace");
     let node = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
         node_id: "research-discover-sources".to_string(),
         agent_id: "researcher".to_string(),
         objective: "Discover source corpus".to_string(),
@@ -102,6 +103,7 @@ fn structured_handoff_missing_is_repairable_even_without_enforcement_metadata() 
     ));
     std::fs::create_dir_all(&workspace_root).expect("create workspace");
     let node = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
         node_id: "research-discover-sources".to_string(),
         agent_id: "researcher".to_string(),
         objective: "Discover source corpus".to_string(),
@@ -212,6 +214,7 @@ fn structured_handoff_nodes_require_concrete_reads_without_output_path() {
     ));
     std::fs::create_dir_all(&workspace_root).expect("create workspace");
     let node = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
         node_id: "research-local-sources".to_string(),
         agent_id: "researcher".to_string(),
         objective: "Read prioritized sources".to_string(),
@@ -294,6 +297,7 @@ fn structured_handoff_nodes_require_concrete_reads_without_output_path() {
 #[test]
 fn wrap_automation_node_output_includes_parsed_structured_handoff() {
     let node = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
         node_id: "research-discover-sources".to_string(),
         agent_id: "researcher".to_string(),
         objective: "Discover source corpus".to_string(),

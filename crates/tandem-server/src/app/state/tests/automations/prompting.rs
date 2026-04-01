@@ -1,10 +1,10 @@
 use super::*;
 
 #[test]
-fn first_attempt_research_prompt_requires_completed_status() {
+fn knowledge_context_is_injected_into_automation_prompt() {
     let automation = AutomationV2Spec {
-        automation_id: "automation-1".to_string(),
-        name: "Research Automation".to_string(),
+        automation_id: "automation-knowledge".to_string(),
+        name: "Knowledge Prompt".to_string(),
         description: None,
         status: crate::AutomationV2Status::Active,
         schedule: crate::AutomationV2Schedule {
@@ -14,6 +14,7 @@ fn first_attempt_research_prompt_requires_completed_status() {
             timezone: "UTC".to_string(),
             misfire_policy: crate::RoutineMisfirePolicy::RunOnce,
         },
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
         agents: Vec::new(),
         flow: crate::AutomationFlowSpec { nodes: Vec::new() },
         execution: crate::AutomationExecutionPolicy {
@@ -33,6 +34,96 @@ fn first_attempt_research_prompt_requires_completed_status() {
         last_fired_at_ms: None,
     };
     let node = AutomationFlowNode {
+        node_id: "strategy-planning".to_string(),
+        agent_id: "planner".to_string(),
+        objective: "Plan next week's launch strategy".to_string(),
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
+        depends_on: Vec::new(),
+        input_refs: Vec::new(),
+        output_contract: None,
+        retry_policy: None,
+        timeout_ms: None,
+        stage_kind: None,
+        gate: None,
+        metadata: None,
+    };
+    let agent = AutomationAgentProfile {
+        agent_id: "planner".to_string(),
+        template_id: None,
+        display_name: "Planner".to_string(),
+        avatar_url: None,
+        model_policy: None,
+        skills: Vec::new(),
+        tool_policy: crate::AutomationAgentToolPolicy {
+            allowlist: vec!["read".to_string()],
+            denylist: Vec::new(),
+        },
+        mcp_policy: crate::AutomationAgentMcpPolicy {
+            allowed_servers: Vec::new(),
+            allowed_tools: None,
+        },
+        approval_policy: None,
+    };
+
+    let prompt = render_automation_v2_prompt_with_options(
+        &automation,
+        "/tmp",
+        "run-knowledge",
+        &node,
+        1,
+        &agent,
+        &[],
+        &["read".to_string()],
+        None,
+        None,
+        None,
+        AutomationPromptRenderOptions {
+            summary_only_upstream: false,
+            knowledge_context: Some(
+                "<knowledge_context>\n- reused evidence\n</knowledge_context>".to_string(),
+            ),
+        },
+    );
+
+    assert!(prompt.contains("<knowledge_context>"));
+    assert!(prompt.contains("reused evidence"));
+}
+
+#[test]
+fn first_attempt_research_prompt_requires_completed_status() {
+    let automation = AutomationV2Spec {
+        automation_id: "automation-1".to_string(),
+        name: "Research Automation".to_string(),
+        description: None,
+        status: crate::AutomationV2Status::Active,
+        schedule: crate::AutomationV2Schedule {
+            schedule_type: crate::AutomationV2ScheduleType::Manual,
+            cron_expression: None,
+            interval_seconds: None,
+            timezone: "UTC".to_string(),
+            misfire_policy: crate::RoutineMisfirePolicy::RunOnce,
+        },
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
+        agents: Vec::new(),
+        flow: crate::AutomationFlowSpec { nodes: Vec::new() },
+        execution: crate::AutomationExecutionPolicy {
+            max_parallel_agents: Some(1),
+            max_total_runtime_ms: None,
+            max_total_tool_calls: None,
+            max_total_tokens: None,
+            max_total_cost_usd: None,
+        },
+        output_targets: Vec::new(),
+        created_at_ms: 0,
+        updated_at_ms: 0,
+        creator_id: "test".to_string(),
+        workspace_root: Some("/tmp".to_string()),
+        metadata: None,
+        next_fire_at_ms: None,
+        last_fired_at_ms: None,
+    };
+    let node = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
         node_id: "research-brief".to_string(),
         agent_id: "research".to_string(),
         objective: "Write marketing-brief.md".to_string(),
@@ -118,6 +209,7 @@ fn code_patch_prompt_includes_code_agent_contract_instructions() {
             timezone: "UTC".to_string(),
             misfire_policy: crate::RoutineMisfirePolicy::RunOnce,
         },
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
         agents: Vec::new(),
         flow: crate::AutomationFlowSpec { nodes: Vec::new() },
         execution: crate::AutomationExecutionPolicy {
@@ -137,6 +229,7 @@ fn code_patch_prompt_includes_code_agent_contract_instructions() {
         last_fired_at_ms: None,
     };
     let node = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
         node_id: "code_patch".to_string(),
         agent_id: "coder".to_string(),
         objective: "Patch the code and verify the change.".to_string(),
@@ -214,6 +307,7 @@ fn code_patch_prompt_includes_code_agent_contract_instructions() {
 #[test]
 fn automation_node_required_tools_reads_builder_metadata() {
     let node = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
         node_id: "artifact".to_string(),
         agent_id: "writer".to_string(),
         objective: "Write notes.md".to_string(),
@@ -268,6 +362,7 @@ fn filter_requested_tools_to_available_removes_unconfigured_websearch() {
 #[test]
 fn wildcard_automation_allowlist_expands_to_minimal_research_tools() {
     let node = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
         node_id: "research_sources".to_string(),
         agent_id: "researcher".to_string(),
         objective: "Research current web sources and collect citations.".to_string(),
@@ -310,6 +405,7 @@ fn wildcard_automation_allowlist_expands_to_minimal_research_tools() {
 #[test]
 fn wildcard_automation_allowlist_keeps_email_delivery_tools_narrow() {
     let node = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
         node_id: "notify_user".to_string(),
         agent_id: "committer".to_string(),
         objective: "Send the finalized report to the requested email address.".to_string(),
@@ -367,6 +463,7 @@ fn wildcard_automation_allowlist_keeps_email_delivery_tools_narrow() {
 #[test]
 fn wildcard_automation_allowlist_recognizes_outlook_reply_and_compose_email_tools() {
     let node = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
         node_id: "notify_user".to_string(),
         agent_id: "committer".to_string(),
         objective: "Send the finalized report to the requested email address.".to_string(),
@@ -434,6 +531,7 @@ fn structured_json_prompt_requires_json_only_without_follow_up_questions() {
             timezone: "UTC".to_string(),
             misfire_policy: crate::RoutineMisfirePolicy::RunOnce,
         },
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
         agents: Vec::new(),
         flow: AutomationFlowSpec { nodes: Vec::new() },
         execution: AutomationExecutionPolicy {
@@ -453,6 +551,7 @@ fn structured_json_prompt_requires_json_only_without_follow_up_questions() {
         last_fired_at_ms: None,
     };
     let node = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
         node_id: "research-external-research".to_string(),
         agent_id: "research".to_string(),
         objective: "Perform external research".to_string(),
@@ -536,6 +635,7 @@ fn external_research_prompt_handles_missing_websearch_tool() {
             timezone: "UTC".to_string(),
             misfire_policy: crate::RoutineMisfirePolicy::RunOnce,
         },
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
         agents: Vec::new(),
         flow: AutomationFlowSpec { nodes: Vec::new() },
         execution: AutomationExecutionPolicy {
@@ -555,6 +655,7 @@ fn external_research_prompt_handles_missing_websearch_tool() {
         last_fired_at_ms: None,
     };
     let node = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
         node_id: "research-external-research".to_string(),
         agent_id: "research".to_string(),
         objective: "Perform targeted external research".to_string(),
@@ -657,6 +758,7 @@ fn render_prompt_normalizes_upstream_research_paths_from_sources_root() {
             timezone: "UTC".to_string(),
             misfire_policy: crate::RoutineMisfirePolicy::RunOnce,
         },
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
         agents: Vec::new(),
         flow: AutomationFlowSpec { nodes: Vec::new() },
         execution: AutomationExecutionPolicy {
@@ -681,6 +783,7 @@ fn render_prompt_normalizes_upstream_research_paths_from_sources_root() {
         last_fired_at_ms: None,
     };
     let node = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
         node_id: "research-local-sources".to_string(),
         agent_id: "research".to_string(),
         objective: "Read prioritized local files".to_string(),
