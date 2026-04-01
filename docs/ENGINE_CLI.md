@@ -11,6 +11,8 @@ tandem doctor
 tandem status
 tandem service install
 tandem install panel
+tandem panel init
+tandem panel open
 tandem-engine serve --hostname 127.0.0.1 --port 39731
 tandem run "Summarize this repository"
 ```
@@ -21,6 +23,20 @@ For the official headless bootstrap path, use the master CLI:
 npm i -g @frumu/tandem
 tandem install panel
 tandem panel init
+```
+
+For a direct engine-only setup, install the master CLI and start the runtime:
+
+```bash
+npm i -g @frumu/tandem
+tandem-engine serve --hostname 127.0.0.1 --port 39731
+```
+
+If you need a terminal-first interface instead, install the TUI:
+
+```bash
+npm i -g @frumu/tandem-tui
+tandem-tui
 ```
 
 ## Command Overview

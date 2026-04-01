@@ -6,6 +6,15 @@ This package remains the control-panel add-on during migration. The canonical
 master CLI now lives in `@frumu/tandem` as `tandem`, and this package keeps
 `tandem-setup` / `tandem-control-panel` as compatibility shims.
 
+## Fastest Ways To Start
+
+- Web control panel: `npm i -g @frumu/tandem && tandem install panel && tandem panel init`
+- Raw local engine: `npm i -g @frumu/tandem && tandem-engine serve --hostname 127.0.0.1 --port 39731`
+- Terminal UI: `npm i -g @frumu/tandem-tui && tandem-tui`
+- SDK usage: `npm install @frumu/tandem-client` or `pip install tandem-client`
+
+If you are not sure which path to take, start with the web control panel. It gives you the engine, panel, token setup, and service install flow in one place.
+
 ## Install
 
 ```bash
@@ -57,6 +66,7 @@ Useful follow-up commands:
 ```bash
 tandem doctor
 tandem status
+tandem service install
 tandem service status
 tandem service restart
 tandem panel doctor

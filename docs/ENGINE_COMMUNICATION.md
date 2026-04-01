@@ -4,9 +4,10 @@ This document explains how Tandem clients communicate with `tandem-engine`, how 
 
 ## Components
 
-- `tandem-engine` (Rust binary): HTTP + SSE runtime.
-- Desktop app (`src-tauri`): starts/stops engine sidecar, forwards UI actions to engine APIs, fans stream events to frontend.
-- TUI (`crates/tandem-tui`): attaches to existing engine when available, otherwise bootstraps/spawns engine.
+- `tandem-engine` (Rust binary): the shared HTTP + SSE runtime and source of truth.
+- Tauri desktop app (`src/` + `src-tauri/`): the native client shell; its root `index.html` is the desktop UI entrypoint, and it starts/stops an engine sidecar when needed.
+- TUI (`crates/tandem-tui`): a terminal client that attaches to an existing engine when available, otherwise bootstraps/spawns one.
+- Web control panel (`packages/tandem-control-panel/`): a browser-based client plus service bootstrap layer that connects to the same engine runtime.
 
 ## Default Endpoint Strategy
 

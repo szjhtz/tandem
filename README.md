@@ -23,9 +23,9 @@ While the current landscape of AI agents is flooded with "chat-first assistants,
 
 Tandem takes a fundamentally different approach to tackle the complex realities of agentic engineering. **We treat autonomous execution as a distributed systems problem**, prioritizing robust engine state over fragile chat transcripts.
 
-It provides durable coordination primitives—blackboards, workboards, explicit task claiming, operational memory accumulation, and checkpoints—allowing multiple agents to work concurrently on complex, long-running software engineering and automation tasks without colliding.
+It provides durable coordination primitives, including blackboards, workboards, explicit task claiming, operational memory accumulation, and checkpoints, allowing multiple agents to work concurrently on complex, long-running software engineering and automation tasks without colliding.
 
-- **Multiple clients, one engine:** The desktop app, TUI, and headless APIs all operate on the exact same materialized state truth.
+- **Entrypoints are clients, not separate engines:** The Tauri desktop app, TUI, web control panel, and SDKs all talk to the same engine runtime.
 - **Engine-owned orchestration:** Shared task state, replay, approvals, and deterministic workflow projections natively solve coordination failures.
 - **Provider agnostic:** Use OpenRouter, Anthropic, OpenAI, OpenCode Zen, or local Ollama endpoints effortlessly.
 
@@ -42,10 +42,9 @@ It provides durable coordination primitives—blackboards, workboards, explicit 
 3. Select a workspace folder.
 4. Start with a task prompt and choose **Immediate** or **Plan Mode**.
 
-### Headless (server/VPS)
+### Web Control Panel
 
-**Option 1: Quick Start (Run instantly)**
-Install the master CLI and then add the web control panel when you want it:
+Install the master CLI, then bootstrap the panel and its engine service:
 
 ```bash
 npm i -g @frumu/tandem
@@ -54,7 +53,10 @@ tandem panel init
 tandem panel open
 ```
 
-**Option 2: Editable App Scaffold**
+Use this when you want the browser-based control center backed by the engine.
+
+### Editable App Scaffold
+
 Generate a fully editable control panel app in your own folder:
 
 ```bash
@@ -66,7 +68,8 @@ npm run dev
 
 Use this when you want to customize routes, pages, themes, styles, or runtime behavior without editing `node_modules`.
 
-**Option 3: Repo Source / Service Install**
+### Repo Source / Service Install
+
 Clone the repo when you are contributing to Tandem itself or want the full source tree and example deployment scripts:
 
 ```bash
@@ -82,6 +85,11 @@ If you only want the engine runtime, you can keep it foreground-only:
 ```bash
 tandem-engine serve --hostname 127.0.0.1 --port 39731
 ```
+
+### Other Entry Points
+
+- TUI: `npm i -g @frumu/tandem-tui && tandem-tui`
+- SDKs: `npm install @frumu/tandem-client` or `pip install tandem-client`
 
 ## Architecture
 
