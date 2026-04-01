@@ -131,6 +131,69 @@ raise SystemExit(1)
 PY
 }
 
+is_transient_publish_error() {
+  local output="$1"
+  if echo "$output" | grep -Eq \
+    'failed to select a version for the requirement|candidate versions found which didn'"'"'t match|location searched: crates.io index'; then
+    return 0
+  fi
+  return 1
+}
+
+publish_crate() {
+  local crate_dir="$1"
+  local crate_name
+  local attempt=1
+  local max_attempts=6
+  local delay_secs=15
+  local output
+  local code
+
+  crate_name="$(crate_name "$crate_dir")"
+
+  while true; do
+    echo "Publishing ${crate_name} (attempt ${attempt}/${max_attempts})..." | tee -a "$LOG_FILE"
+
+    set +e
+    output="$(
+      cd "$crate_dir" &&
+        cargo publish "${publish_args[@]}" 2>&1
+    )"
+    code=$?
+    set -e
+
+    echo "$output" | tee -a "$LOG_FILE"
+
+    if [[ $code -eq 0 ]]; then
+      echo "OK $crate_dir" | tee -a "$LOG_FILE"
+      wait_for_crate_version "$crate_dir" 2>&1 | tee -a "$LOG_FILE"
+      return 0
+    fi
+
+    if echo "$output" | grep -q "already exists on crates.io index"; then
+      echo "SKIP $crate_dir (already published)" | tee -a "$LOG_FILE"
+      wait_for_crate_version "$crate_dir" 2>&1 | tee -a "$LOG_FILE"
+      return 0
+    fi
+
+    if is_transient_publish_error "$output" && [[ $attempt -lt $max_attempts ]]; then
+      echo "Transient crates.io index lag detected for $crate_dir; retrying in ${delay_secs}s" | tee -a "$LOG_FILE"
+      sleep "$delay_secs"
+      attempt=$((attempt + 1))
+      if [[ $delay_secs -lt 60 ]]; then
+        delay_secs=$((delay_secs * 2))
+        if [[ $delay_secs -gt 60 ]]; then
+          delay_secs=60
+        fi
+      fi
+      continue
+    fi
+
+    echo "FAIL $crate_dir" | tee -a "$LOG_FILE"
+    return "$code"
+  done
+}
+
 mkdir -p "$(dirname "$LOG_FILE")"
 : > "$LOG_FILE"
 
@@ -160,30 +223,9 @@ for crate in "${CRATES[@]}"; do
   if [[ "$DRY_RUN" == "true" ]]; then
     echo "DRY-RUN SKIP $crate (publish-time crates.io resolution intentionally not executed)" | tee -a "$LOG_FILE"
     continue
-  else
-    set +e
-    output="$(
-      cd "$crate" &&
-        cargo publish "${publish_args[@]}" 2>&1
-    )"
-    code=$?
-    set -e
   fi
 
-  echo "$output" | tee -a "$LOG_FILE"
-
-  if [[ $code -ne 0 ]]; then
-    if echo "$output" | grep -q "already exists on crates.io index"; then
-      echo "SKIP $crate (already published)" | tee -a "$LOG_FILE"
-      wait_for_crate_version "$crate" 2>&1 | tee -a "$LOG_FILE"
-      continue
-    fi
-    echo "FAIL $crate" | tee -a "$LOG_FILE"
-    exit $code
-  fi
-
-  echo "OK $crate" | tee -a "$LOG_FILE"
-  wait_for_crate_version "$crate" 2>&1 | tee -a "$LOG_FILE"
+  publish_crate "$crate"
 done
 
 echo "Crates publish flow completed." | tee -a "$LOG_FILE"
