@@ -1,34 +1,69 @@
-# Tandem Engine Docs
+# Tandem Docs
 
-> Agent-friendly index for Tandem Engine documentation.
+> Canonical documentation for Tandem at `https://docs.tandem.ac/`.
+> If you are trying to understand the project quickly, start here.
 
-## Primary docs
+## What this site covers
 
-- /start-here/ - Fast setup path for new users.
-- /install-cli-binaries/ - Install CLI binaries.
-- /first-run/ - First-run checklist and validation.
-- /usage/ - Core usage patterns.
-- /headless-service/ - Run Tandem as a headless service.
-- /mcp-automated-agents/ - MCP connectors and automated routines.
-- /webmcp-for-agents/ - WebMCP workflow guidance for agent builders.
+- Tandem engine usage, deployment, and configuration.
+- Desktop and terminal workflows for operators and contributors.
+- Agent orchestration, sessions, and MCP-based automation.
+- SDKs, reference APIs, and protocol behavior.
 
-## Agent and orchestration docs
+## Best starting pages
 
-- /agents-and-sessions/ - Sessions and agent execution model.
-- /agent-teams/ - Agent team architecture and behavior.
-- /agent-command-center/ - Command Center operations.
-- /agent-teams-rollout/ - Rollout and migration details.
+- /start-here/ - Decide whether you need the CLI, web control panel, or source build path.
+- /installation/ - Install the official packages and prerequisites.
+- /install-cli-binaries/ - Install the master CLI, engine, and TUI binaries.
+- /first-run/ - Run the first validation checklist.
+- /control-panel/ - Use or scaffold the browser control panel.
+- /tui-guide/ - Learn the terminal UI.
+- /agents-and-sessions/ - Understand sessions and execution context.
+- /agent-teams/ - Learn Tandem's agent-team orchestration model.
+- /mcp-automated-agents/ - Build automated agent workflows.
+- /webmcp-for-agents/ - Expose local HTTP APIs to agents.
+- /configuration/ - Configure providers, keys, and system instructions.
+- /build-from-source/ - Build Tandem from source.
 
-## Reference docs
+## Reference pages
 
-- /reference/engine-commands/ - Engine CLI and serve commands.
+- /architecture/ - Internal architecture overview.
+- /protocol-matrix/ - Port and protocol compatibility matrix.
+- /engine-testing/ - Engine validation and testing notes.
+- /sdk/ - SDK landing page.
+- /sdk/typescript/ - TypeScript SDK.
+- /sdk/python/ - Python SDK.
+- /reference/engine-commands/ - Engine CLI reference.
 - /reference/tui-commands/ - TUI command reference.
-- /reference/tools/ - Tool APIs and expected arguments.
+- /reference/tools/ - Tool API reference.
 - /reference/spawn-policy/ - Spawn policy and safety gates.
-- /reference/agent-team-api/ - HTTP API for agent teams.
-- /reference/agent-team-events/ - Event stream contract.
-- /protocol-matrix/ - Protocol compatibility matrix.
+- /reference/agent-team-api/ - Agent-team HTTP API.
+- /reference/agent-team-events/ - Agent-team event stream contract.
 
-## External resources
+## Desktop and deployment
 
-- https://webmcp.dev/ - Browser-first MCP environment for tool prototyping and validation.
+- /desktop/overview/ - Desktop architecture and UX overview.
+- /desktop/first-10-minutes/ - Guided onboarding for desktop users.
+- /desktop/workflows/ - Common desktop workflows.
+- /desktop/settings-and-safety/ - Safety and settings guidance.
+- /desktop/learn-walkthroughs/ - Interactive Learn walkthroughs.
+- /desktop/troubleshooting/ - Desktop troubleshooting.
+- /desktop/headless-deployment/ - Desktop-to-headless deployment path.
+- /headless-service/ - Headless engine service mode.
+- /channel-integrations/ - Slack, Discord, Telegram, and related integrations.
+- /browser-setup-and-testing/ - Browser setup and test flow.
+
+## Where to find the source
+
+- `guide/src/content/docs/` - Authoritative source for the published docs.
+- `guide/astro.config.mjs` - Site config, base URL, and sidebar structure.
+- `guide/src/styles/custom.css` - Docs styling.
+- `docs/` - Deeper internal design and implementation docs.
+
+## Full index
+
+- /llms-full.txt - Exhaustive page map with source hints.
+
+## External
+
+- https://github.com/frumu-ai/tandem

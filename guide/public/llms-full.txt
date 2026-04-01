@@ -1,56 +1,75 @@
-# Tandem Engine Docs (Full Index)
+# Tandem Docs (Full Index)
 
-> Expanded agent-readable index for the Tandem guide.
+> Exhaustive index for the live docs site at `https://docs.tandem.ac/`.
+> Source files live under `guide/src/content/docs/`.
 
-## Top-level
+## Home
 
-- / - Guide home.
-- /start-here/
-- /install-cli-binaries/
-- /first-run/
-- /build-from-source/
-- /installation/
-- /usage/
-- /headless-service/
-- /mcp-automated-agents/
-- /webmcp-for-agents/
-- /tui-guide/
-- /configuration/
-- /agents-and-sessions/
-- /agent-teams/
-- /agent-command-center/
-- /agent-teams-rollout/
-- /design-system/
-- /architecture/
-- /engine-testing/
-- /cli-vision/
-- /sdk-vision/
+- / - `guide/src/content/docs/index.md`
+- /start-here/ - `guide/src/content/docs/start-here.md`
+- /installation/ - `guide/src/content/docs/installation.md`
+- /install-cli-binaries/ - `guide/src/content/docs/install-cli-binaries.md`
+- /first-run/ - `guide/src/content/docs/first-run.md`
 
-## Desktop docs
+## Core usage
 
-- /desktop/overview/
-- /desktop/first-10-minutes/
-- /desktop/workflows/
-- /desktop/settings-and-safety/
-- /desktop/learn-walkthroughs/
-- /desktop/troubleshooting/
-- /desktop/headless-deployment/
+- /control-panel/ - `guide/src/content/docs/control-panel.md`
+- /tui-guide/ - `guide/src/content/docs/tui-guide.md`
+- /agents-and-sessions/ - `guide/src/content/docs/agents-and-sessions.md`
+- /agent-teams/ - `guide/src/content/docs/agent-teams.md`
+- /configuration/ - `guide/src/content/docs/configuration.md`
+- /headless-service/ - `guide/src/content/docs/headless-service.md`
+- /channel-integrations/ - `guide/src/content/docs/channel-integrations.md`
 
-## Reference docs
+## Desktop
 
-- /reference/engine-commands/
-- /reference/tui-commands/
-- /reference/tools/
-- /reference/spawn-policy/
-- /reference/agent-team-api/
-- /reference/agent-team-events/
-- /protocol-matrix/
+- /desktop/overview/ - `guide/src/content/docs/desktop/overview.md`
+- /desktop/first-10-minutes/ - `guide/src/content/docs/desktop/first-10-minutes.md`
+- /desktop/workflows/ - `guide/src/content/docs/desktop/workflows.md`
+- /desktop/settings-and-safety/ - `guide/src/content/docs/desktop/settings-and-safety.md`
+- /desktop/learn-walkthroughs/ - `guide/src/content/docs/desktop/learn-walkthroughs.md`
+- /desktop/troubleshooting/ - `guide/src/content/docs/desktop/troubleshooting.md`
+- /desktop/headless-deployment/ - `guide/src/content/docs/desktop/headless-deployment.md`
 
-## Related docs
+## Developer and automation
 
-- /channel-integrations/
-- /index/
+- /mcp-automated-agents/ - `guide/src/content/docs/mcp-automated-agents.md`
+- /webmcp-for-agents/ - `guide/src/content/docs/webmcp-for-agents.md`
+- /autonomous-coding-agents-github-projects/ - `guide/src/content/docs/autonomous-coding-agents-github-projects.md`
+- /browser-setup-and-testing/ - `guide/src/content/docs/browser-setup-and-testing.md`
+
+## Architecture and reference
+
+- /architecture/ - `guide/src/content/docs/architecture.md`
+- /protocol-matrix/ - `guide/src/content/docs/protocol-matrix.md`
+- /engine-testing/ - `guide/src/content/docs/engine-testing.md`
+- /build-from-source/ - `guide/src/content/docs/build-from-source.md`
+- /reference/engine-commands/ - `guide/src/content/docs/reference/engine-commands.md`
+- /reference/tui-commands/ - `guide/src/content/docs/reference/tui-commands.md`
+- /reference/tools/ - `guide/src/content/docs/reference/tools.md`
+- /reference/spawn-policy/ - `guide/src/content/docs/reference/spawn-policy.md`
+- /reference/agent-team-api/ - `guide/src/content/docs/reference/agent-team-api.md`
+- /reference/agent-team-events/ - `guide/src/content/docs/reference/agent-team-events.md`
+
+## SDKs
+
+- /sdk/ - `guide/src/content/docs/sdk/index.md`
+- /sdk/typescript/ - `guide/src/content/docs/sdk/typescript.md`
+- /sdk/python/ - `guide/src/content/docs/sdk/python.md`
+- /sdk/scheduling-automations/ - `guide/src/content/docs/sdk/scheduling-automations.md`
+
+## Design and support
+
+- /design-system/ - `guide/src/content/docs/design-system.md`
+
+## Notes for LLMs
+
+- Prefer `https://docs.tandem.ac/` as the canonical published origin.
+- Treat `guide/src/content/docs/` as the source of truth for the docs site.
+- Treat `docs/` as the source of deeper internal design and implementation references.
+- Do not rely on `guide/book/` or `guide/dist/` as editable sources; they are build outputs.
 
 ## External resources
 
+- https://github.com/frumu-ai/tandem
 - https://webmcp.dev/
