@@ -2,6 +2,12 @@
 
 This is the canonical release-notes file used by release tooling.
 
+## v0.4.19 (Released 2026-04-02)
+
+- **Production desktop black-screen startup regression**
+  - Fixed a release-build startup path where Tandem could load the frontend bundle but never mount React, leaving a blank black window after vault unlock.
+  - React now mounts before persisted language-preference sync runs, so a slow or stuck settings-store roundtrip can no longer block the initial desktop UI.
+
 ## v0.4.18 (Released 2026-04-01)
 
 - **Task intake and routing boundary**

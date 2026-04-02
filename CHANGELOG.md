@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.19] - 2026-04-02
+
+### Fixed
+
+- **Production desktop black-screen startup regression**:
+  - Render the React app shell before bootstrapping persisted language preferences so a slow or stuck Tauri settings call cannot leave production builds on a blank window with an empty `#root`.
+  - Keep language synchronization best-effort during startup instead of making initial desktop render depend on the settings store roundtrip.
+
 ## [0.4.18] - 2026-04-01
 
 ### Added

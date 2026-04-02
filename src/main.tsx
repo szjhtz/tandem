@@ -36,13 +36,7 @@ import {
   }
 })();
 
-async function startApp() {
-  try {
-    await bootstrapLanguagePreference();
-  } catch {
-    // Continue booting with i18next default detection on any sync failure.
-  }
-
+function startApp() {
   ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
     <React.StrictMode>
       <ThemeProvider>
@@ -54,6 +48,11 @@ async function startApp() {
       </ThemeProvider>
     </React.StrictMode>
   );
+
+  // Language sync is best-effort and must never block initial UI mount.
+  void bootstrapLanguagePreference().catch(() => {
+    // Continue booting with i18next default detection on any sync failure.
+  });
 }
 
-void startApp();
+startApp();
