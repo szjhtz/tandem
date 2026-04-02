@@ -420,20 +420,28 @@ export function MyAutomationsContainer({
       family,
       reason,
     }: {
-      action: "pause" | "resume";
+      action: "pause" | "resume" | "cancel";
       runId: string;
       family: "legacy" | "v2";
       reason?: string;
     }) => {
       if (family === "v2") {
+        if (action === "cancel") return client.automationsV2.cancelRun(runId, reason);
         if (action === "pause") return client.automationsV2.pauseRun(runId, reason);
         return client.automationsV2.resumeRun(runId, reason);
+      }
+      if (action === "cancel") {
+        throw new Error("Cancel is only available for workflow runs in this client.");
       }
       if (action === "pause") return client.automations.pauseRun(runId, reason);
       return client.automations.resumeRun(runId, reason);
     },
-    onSuccess: async () => {
-      toast("ok", "Run action applied.");
+    onSuccess: async (_payload, vars) => {
+      if (vars.action === "cancel") {
+        toast("ok", "Run cancelled.");
+      } else {
+        toast("ok", "Run action applied.");
+      }
       await queryClient.invalidateQueries({ queryKey: ["automations"] });
     },
     onError: (error) => toast("err", error instanceof Error ? error.message : String(error)),

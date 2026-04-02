@@ -3229,6 +3229,96 @@ fn validator_summary_tracks_verification_and_repair_state() {
 }
 
 #[test]
+fn generic_artifact_validation_rejects_stale_verified_output_on_retry() {
+    let workspace_root = std::env::temp_dir().join(format!(
+        "tandem-stale-verified-output-{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&workspace_root).expect("workspace dir");
+    let node = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
+        node_id: "research_sources".to_string(),
+        agent_id: "researcher".to_string(),
+        objective: "Collect sources".to_string(),
+        depends_on: Vec::new(),
+        input_refs: Vec::new(),
+        output_contract: Some(AutomationFlowOutputContract {
+            kind: "citations".to_string(),
+            validator: Some(crate::AutomationOutputValidatorKind::GenericArtifact),
+            enforcement: None,
+            schema: None,
+            summary_guidance: None,
+        }),
+        retry_policy: None,
+        timeout_ms: None,
+        stage_kind: None,
+        gate: None,
+        metadata: Some(json!({
+            "builder": {
+                "output_path": ".tandem/artifacts/research-sources.json"
+            }
+        })),
+    };
+
+    let session = Session::new(Some("retry without touching output".to_string()), None);
+    let mut tool_telemetry =
+        summarize_automation_tool_activity(&node, &session, &["write".to_string()]);
+    tool_telemetry
+        .as_object_mut()
+        .expect("tool telemetry object")
+        .insert(
+            "verified_output_materialized_by_current_attempt".to_string(),
+            json!(false),
+        );
+
+    let (accepted_output, artifact_validation, rejected) =
+        validate_automation_artifact_output_with_upstream(
+            &node,
+            &session,
+            workspace_root.to_str().expect("workspace root"),
+            Some("run-stale"),
+            "",
+            &tool_telemetry,
+            None,
+            Some((
+                ".tandem/runs/run-stale/artifacts/research-sources.json".to_string(),
+                "{\"status\":\"completed\"}".to_string(),
+            )),
+            &std::collections::BTreeSet::new(),
+            None,
+        );
+
+    assert!(accepted_output.is_none(), "{artifact_validation:?}");
+    assert_eq!(
+        artifact_validation
+            .get("validation_outcome")
+            .and_then(Value::as_str),
+        Some("needs_repair")
+    );
+    assert_eq!(
+        artifact_validation
+            .get("accepted_candidate_source")
+            .and_then(Value::as_str),
+        Some("current_attempt_missing_output_write")
+    );
+    assert_eq!(
+        artifact_validation
+            .get("validation_basis")
+            .and_then(|value| value.get("current_attempt_output_materialized"))
+            .and_then(Value::as_bool),
+        Some(false)
+    );
+    assert_eq!(
+        rejected.as_deref(),
+        Some(
+            "required output `.tandem/runs/run-stale/artifacts/research-sources.json` was not created in the current attempt"
+        )
+    );
+
+    let _ = std::fs::remove_dir_all(&workspace_root);
+}
+
+#[test]
 fn generic_artifact_validation_blocks_weak_report_markdown() {
     let workspace_root =
         std::env::temp_dir().join(format!("tandem-editorial-{}", uuid::Uuid::new_v4()));

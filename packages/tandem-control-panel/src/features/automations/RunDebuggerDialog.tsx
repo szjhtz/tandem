@@ -251,6 +251,27 @@ export function RunDebuggerDialog({ state, actions, helpers }: any) {
               <i data-lucide={runStatus === "paused" ? "play" : "pause"}></i>
               {runStatus === "paused" ? "Resume" : "Pause"}
             </button>
+            {isWorkflowRun ? (
+              <button
+                type="button"
+                className="tcp-btn h-8 w-full px-2 text-xs sm:w-auto"
+                onClick={() =>
+                  runActionMutation.mutate({
+                    action: "cancel",
+                    runId: selectedRunId,
+                    family: "v2",
+                    reason: "cancelled from run debugger",
+                  })
+                }
+                disabled={
+                  !selectedRunId || runActionMutation.isPending || runStatus === "cancelled"
+                }
+                title="Force stop this workflow run and clear active sessions"
+              >
+                <i data-lucide="square"></i>
+                {runActionMutation.isPending ? "Cancelling..." : "Cancel"}
+              </button>
+            ) : null}
             <button className="tcp-btn h-8 w-full px-2 text-xs sm:w-auto" onClick={onRefresh}>
               <i data-lucide="refresh-cw"></i>
               Refresh

@@ -83,6 +83,24 @@ fn derive_terminal_run_state(
     let mut blocked_nodes = run.checkpoint.blocked_nodes.clone();
     blocked_nodes.extend(crate::app::state::automation_blocked_nodes(automation, run));
     let mut failed_nodes = Vec::new();
+    let pending_nodes = run
+        .checkpoint
+        .pending_nodes
+        .iter()
+        .cloned()
+        .collect::<std::collections::HashSet<_>>();
+    for node in &automation.flow.nodes {
+        let attempts = run
+            .checkpoint
+            .node_attempts
+            .get(&node.node_id)
+            .copied()
+            .unwrap_or(0);
+        let max_attempts = crate::app::state::automation_node_max_attempts(node);
+        if pending_nodes.contains(&node.node_id) && attempts >= max_attempts {
+            failed_nodes.push(node.node_id.clone());
+        }
+    }
     for (node_id, output) in &run.checkpoint.node_outputs {
         let status = node_output_status(output);
         let failure_kind = node_output_failure_kind(output);
@@ -306,6 +324,16 @@ pub async fn run_automation_v2_run(
                     .nodes
                     .iter()
                     .find(|n| n.node_id == *node_id)?;
+                let attempts = latest
+                    .checkpoint
+                    .node_attempts
+                    .get(node_id)
+                    .copied()
+                    .unwrap_or(0);
+                let max_attempts = crate::app::state::automation_node_max_attempts(node);
+                if attempts >= max_attempts {
+                    return None;
+                }
                 if node.depends_on.iter().all(|dep| completed.contains(dep)) {
                     Some(node.clone())
                 } else {
@@ -1035,6 +1063,28 @@ mod tests {
         assert_eq!(
             derive_terminal_run_state(&automation, &run, false),
             DerivedTerminalRunState::Completed
+        );
+    }
+
+    #[test]
+    fn derive_terminal_run_state_fails_pending_nodes_that_exhausted_attempts() {
+        let automation = test_automation();
+        let mut run = test_run_with_output(json!({
+            "status": "completed",
+        }));
+        run.checkpoint.node_outputs.clear();
+        run.checkpoint.pending_nodes = vec!["research-brief".to_string()];
+        run.checkpoint
+            .node_attempts
+            .insert("research-brief".to_string(), 3);
+
+        assert_eq!(
+            derive_terminal_run_state(&automation, &run, true),
+            DerivedTerminalRunState::Failed {
+                failed_nodes: vec!["research-brief".to_string()],
+                blocked_nodes: Vec::new(),
+                detail: "automation run failed from node outcomes: research-brief".to_string(),
+            }
         );
     }
 }

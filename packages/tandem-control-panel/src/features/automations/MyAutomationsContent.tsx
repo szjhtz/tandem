@@ -563,6 +563,23 @@ export function MyAutomationsContent({ state, actions, helpers }: any) {
                       <i data-lucide="play"></i>
                       Resume
                     </button>
+                    {runId.startsWith("automation-v2-run-") ? (
+                      <button
+                        className="tcp-btn h-7 px-2 text-xs"
+                        onClick={() =>
+                          runActionMutation.mutate({
+                            action: "cancel",
+                            runId,
+                            family: "v2",
+                            reason: "cancelled from active runs panel",
+                          })
+                        }
+                        disabled={!runId || runActionMutation.isPending}
+                      >
+                        <i data-lucide="square"></i>
+                        Cancel
+                      </button>
+                    ) : null}
                   </div>
                 </div>
               );

@@ -2447,6 +2447,7 @@ struct AutomationArtifactPublishSpec {
 pub(crate) struct AutomationVerifiedOutputResolution {
     path: PathBuf,
     legacy_workspace_artifact_promoted_from: Option<PathBuf>,
+    materialized_by_current_attempt: bool,
 }
 
 fn automation_node_publish_spec(
@@ -2543,6 +2544,7 @@ fn maybe_promote_legacy_workspace_artifact_for_run(
         return Ok(Some(AutomationVerifiedOutputResolution {
             path: run_scoped_path,
             legacy_workspace_artifact_promoted_from: None,
+            materialized_by_current_attempt: true,
         }));
     }
     if !legacy_path.exists() || !legacy_path.is_file() {
@@ -2562,6 +2564,7 @@ fn maybe_promote_legacy_workspace_artifact_for_run(
     Ok(Some(AutomationVerifiedOutputResolution {
         path: run_scoped_path,
         legacy_workspace_artifact_promoted_from: Some(legacy_path),
+        materialized_by_current_attempt: true,
     }))
 }
 
@@ -3002,6 +3005,7 @@ async fn reconcile_automation_resolve_verified_output_path(
             return Ok(Some(AutomationVerifiedOutputResolution {
                 path: resolved,
                 legacy_workspace_artifact_promoted_from: None,
+                materialized_by_current_attempt: output_touched,
             }));
         }
         if let Some(promoted) = maybe_promote_legacy_workspace_artifact_for_run(
@@ -3010,7 +3014,10 @@ async fn reconcile_automation_resolve_verified_output_path(
             run_id,
             output_path,
         )? {
-            return Ok(Some(promoted));
+            return Ok(Some(AutomationVerifiedOutputResolution {
+                materialized_by_current_attempt: output_touched,
+                ..promoted
+            }));
         }
         if let Some(recovered) =
             recover_required_output_from_session_text(session, workspace_root, run_id, output_path)?
@@ -3018,6 +3025,7 @@ async fn reconcile_automation_resolve_verified_output_path(
             return Ok(Some(AutomationVerifiedOutputResolution {
                 path: recovered,
                 legacy_workspace_artifact_promoted_from: None,
+                materialized_by_current_attempt: true,
             }));
         }
         if !output_touched {
@@ -3927,7 +3935,11 @@ pub(crate) fn validate_automation_artifact_output_with_upstream(
     };
     let mut semantic_block_reason = None::<String>;
     let verified_output_materialized = verified_output.as_ref().is_some_and(|value| {
-        automation_verified_output_differs_from_preexisting(preexisting_output, value)
+        tool_telemetry
+            .get("verified_output_materialized_by_current_attempt")
+            .and_then(Value::as_bool)
+            .unwrap_or(true)
+            && automation_verified_output_differs_from_preexisting(preexisting_output, value)
     });
     let mut accepted_output = verified_output;
     let mut recovered_from_session_write = false;
@@ -6372,6 +6384,9 @@ pub(crate) async fn execute_automation_v2_node(
     };
     let tool_telemetry = summarize_automation_tool_activity(node, &session, &requested_tools);
     let mut tool_telemetry = tool_telemetry;
+    let verified_output_resolution = verified_output
+        .as_ref()
+        .map(|(_, _, resolution)| resolution.clone());
     let verified_output_for_evidence = verified_output
         .as_ref()
         .map(|(path, text, _)| (path.clone(), text.clone()));
@@ -6393,6 +6408,13 @@ pub(crate) async fn execute_automation_v2_node(
             capability_resolution.clone(),
         );
         object.insert(
+            "verified_output_materialized_by_current_attempt".to_string(),
+            json!(verified_output_resolution
+                .as_ref()
+                .map(|resolution| resolution.materialized_by_current_attempt)
+                .unwrap_or(false)),
+        );
+        object.insert(
             "attempt_evidence".to_string(),
             base_attempt_evidence.clone(),
         );
@@ -6411,9 +6433,6 @@ pub(crate) async fn execute_automation_v2_node(
     } else {
         None
     };
-    let verified_output_resolution = verified_output
-        .as_ref()
-        .map(|(_, _, resolution)| resolution.clone());
     let verified_output = verified_output.map(|(path, text, _)| (path, text));
     let (verified_output, mut artifact_validation, artifact_rejected_reason) =
         validate_automation_artifact_output_with_upstream(
