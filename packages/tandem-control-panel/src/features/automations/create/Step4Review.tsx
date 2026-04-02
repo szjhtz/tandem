@@ -246,7 +246,7 @@ export function Step4Review({
             </span>
           </div>
         ) : null}
-        <div className="grid gap-2 rounded-lg border border-cyan-500/10 bg-cyan-500/5 p-3">
+        <div className="grid gap-2 rounded-md border border-cyan-500/10 bg-cyan-500/5 p-3">
           <span className="text-xs uppercase tracking-wide text-cyan-200/80">
             Knowledge defaults
           </span>
@@ -267,7 +267,7 @@ export function Step4Review({
             outcomes only after validation.
           </div>
         </div>
-        <div className="grid gap-2 rounded-lg border border-amber-500/15 bg-amber-500/5 p-3">
+        <div className="grid gap-2 rounded-md border border-amber-500/15 bg-amber-500/5 p-3">
           <span className="text-xs uppercase tracking-wide text-amber-200/80">
             Rollout guardrails
           </span>
