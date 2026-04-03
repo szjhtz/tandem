@@ -264,7 +264,7 @@ If Brave is rate-limited and Exa is configured, `auto` can continue with Exa ins
 - **Local-first runtime**: Data and state stay on your machine unless you send prompts/tools to configured providers.
 - **Supervised execution**: AI runs through controlled tools with explicit approvals for write/delete operations.
 - **Provider agnostic**: Route through the model providers you choose.
-- **Open source and auditable**: MIT repo license and `MIT OR Apache-2.0` for Rust crates.
+- **Open source and auditable**: MIT repo license, `MIT OR Apache-2.0` for most Rust crates, and `BUSL-1.1` for `tandem-plan-compiler` as documented in [docs/LICENSING.md](docs/LICENSING.md).
 
 ## Security and privacy
 

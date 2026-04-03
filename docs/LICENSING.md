@@ -24,6 +24,12 @@ Consumers may choose either license (`MIT OR Apache-2.0`) for the packages below
 | `tandem-tools`         | `crates/tandem-tools/Cargo.toml`         | `MIT OR Apache-2.0` |
 | `tandem-tui`           | `crates/tandem-tui/Cargo.toml`           | `MIT OR Apache-2.0` |
 
+## Business Source Licensed Component
+
+| Package                | Path                                     | License    |
+| ---------------------- | ---------------------------------------- | ---------- |
+| `tandem-plan-compiler` | `crates/tandem-plan-compiler/Cargo.toml` | `BUSL-1.1` |
+
 ## App/Desktop/Web Scope
 
 Desktop/web app licensing is unchanged in this pass. This document only changes and clarifies the Rust SDK/runtime package licensing listed above.
