@@ -19,8 +19,8 @@ pub mod matrix;
 pub mod pager_overlay;
 pub mod spinner;
 use crate::app::{
-    AgentStatus, App, AppState, ChatMessage, ContentBlock, ModalState, PendingRequestKind,
-    PinPromptMode, SetupStep, TandemMode, UiMode,
+    ActivityTone, AgentStatus, App, AppState, ChatMessage, ContentBlock, ModalState,
+    PendingRequestKind, PinPromptMode, SetupStep, TandemMode, UiMode,
 };
 use crate::ui::components::{flow::FlowList, task_list::TaskList};
 
@@ -207,9 +207,14 @@ fn draw_chat(f: &mut Frame, app: &App) {
             0
         };
 
+        let activity_summary = app.active_activity_summary();
+        let activity_height = if activity_summary.is_some() { 3 } else { 0 };
         let mut constraints = vec![Constraint::Min(0)];
         if request_panel_active {
             constraints.push(Constraint::Length(request_height as u16));
+        }
+        if activity_height > 0 {
+            constraints.push(Constraint::Length(activity_height));
         }
         let input_height = if request_panel_active {
             0
@@ -227,6 +232,13 @@ fn draw_chat(f: &mut Frame, app: &App) {
         let content_area = chunks[0];
         let mut next_chunk_idx = 1usize;
         let request_chunk = if request_panel_active {
+            let area = chunks[next_chunk_idx];
+            next_chunk_idx += 1;
+            Some(area)
+        } else {
+            None
+        };
+        let activity_chunk = if activity_height > 0 {
             let area = chunks[next_chunk_idx];
             next_chunk_idx += 1;
             Some(area)
@@ -347,16 +359,7 @@ fn draw_chat(f: &mut Frame, app: &App) {
                     break;
                 }
                 let is_active = start + pane_idx == *active_agent_index;
-                let status_label = match agent.status {
-                    AgentStatus::Running | AgentStatus::Streaming => {
-                        format!("{} Working", spinner_frame(ui_tick))
-                    }
-                    AgentStatus::Cancelling => "Cancelling".to_string(),
-                    AgentStatus::Done => "Done".to_string(),
-                    AgentStatus::Error => "Error".to_string(),
-                    AgentStatus::Closed => "Closed".to_string(),
-                    AgentStatus::Idle => "Idle".to_string(),
-                };
+                let status_label = app.agent_status_label(agent, spinner_frame(ui_tick));
                 let title = format!(
                     " {} {} [{}] ",
                     if is_active { ">" } else { " " },
@@ -455,6 +458,10 @@ fn draw_chat(f: &mut Frame, app: &App) {
                 let (cursor_x, cursor_y) = command_input.cursor_screen_pos(input_chunk);
                 f.set_cursor_position((cursor_x, cursor_y));
             }
+        }
+
+        if let (Some(activity_area), Some(summary)) = (activity_chunk, activity_summary) {
+            draw_activity_strip(f, activity_area, &summary);
         }
 
         // Autocomplete popup
@@ -1084,6 +1091,35 @@ fn draw_chat(f: &mut Frame, app: &App) {
             f.render_widget(popup, area);
         }
     }
+}
+
+fn draw_activity_strip(
+    f: &mut Frame,
+    area: ratatui::layout::Rect,
+    summary: &crate::app::ActivitySummary,
+) {
+    let (color, title) = match summary.tone {
+        ActivityTone::Neutral => (Color::DarkGray, " Activity "),
+        ActivityTone::Active => (Color::Cyan, " Activity "),
+        ActivityTone::Waiting => (Color::Yellow, " Attention "),
+        ActivityTone::Success => (Color::Green, " Ready "),
+        ActivityTone::Error => (Color::Red, " Error "),
+    };
+    let body = Paragraph::new(Text::from(vec![
+        Line::from(vec![Span::styled(
+            summary.headline.clone(),
+            Style::default().fg(color).add_modifier(Modifier::BOLD),
+        )]),
+        Line::from(summary.detail.clone()),
+    ]))
+    .wrap(Wrap { trim: true })
+    .block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title(title)
+            .border_style(Style::default().fg(color)),
+    );
+    f.render_widget(body, area);
 }
 
 fn draw_status_bar(f: &mut Frame, app: &App) {

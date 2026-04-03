@@ -18,7 +18,9 @@ use tandem_observability::{
     canonical_logs_dir_from_root, emit_event, init_process_logging, ObservabilityEvent, ProcessKind,
 };
 
+mod activity;
 mod app;
+mod command_catalog;
 mod crypto;
 mod net;
 mod paste_burst;

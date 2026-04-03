@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.4.20] - 2026-04-03
 
+### Added
+
+- **Tandem TUI exploration transcript summaries**:
+  - Added durable exploration summaries that turn read/search/list tool bursts into compact transcript entries instead of leaving that work visible only in the live activity strip.
+  - Added exploration-batch accumulation, burst-boundary flushing, and target-change splitting so long exploration runs can emit multiple focused summaries as the AI shifts between workspace areas.
+  - Added an optional verbose exploration-summary fallback for debugging, allowing deeper target detail to be surfaced when `TANDEM_TUI_VERBOSE_EXPLORATION=1`.
+  - Added snapshot-style and unit coverage for exploration summary wording, target-change segmentation, and grouped-exploration rendering.
+- **Tandem TUI structured edit transcript cells**:
+  - Added structured edit-result transcript cells that summarize file changes, aggregate add/remove counts, per-file change counts, tiny diff previews for low-volume edits, and applied/partial/failed outcome states.
+  - Added consistent `Next` guidance blocks for edit transcript cells so operators can quickly decide whether to review diffs, inspect failures, or retry an edit.
+  - Added snapshot-style regression coverage for applied, partial, and failed edit cells plus long-output truncation behavior.
+- **Tandem TUI recent-command helper**:
+  - Added `/recent`, `/recent run <index>`, and `/recent clear` so frequent terminal operators can list, replay, and clear recently used slash commands without retyping them.
+  - Added regression coverage for recent-command ordering, replay behavior, and clear semantics.
+
+### Changed
+
+- **Tandem TUI transcript readability and operator guidance**:
+  - Improved transcript event differentiation so tool-oriented system events and governance/operator-action-required events render with clearer badges instead of sharing one generic system treatment.
+  - Improved long command/tool result rendering with stable head/tail truncation so operators can see both the opening context and the final output without flooding narrow terminals.
+  - Added structured rollback transcript cells for preview, execute, and receipt flows so guarded rollback work now follows one compact terminal UX pattern with action badges, status summaries, and focused next steps.
+  - Continued landing new TUI behavior in modular UI and activity files rather than growing `app.rs`, matching the current maintainability plan.
+
 ### Fixed
 
 - **Installed desktop startup black-screen after vault unlock**:

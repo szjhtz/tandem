@@ -397,6 +397,192 @@ fn research_workflow_status_is_needs_repair_before_repair_budget_is_exhausted() 
 }
 
 #[test]
+fn structured_json_node_requires_declared_workspace_files_for_current_attempt() {
+    let workspace_root = std::env::temp_dir().join(format!(
+        "tandem-must-write-missing-{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&workspace_root).expect("create workspace");
+    let snapshot =
+        automation_workspace_root_file_snapshot(workspace_root.to_str().expect("workspace root"));
+    let node = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
+        node_id: "extract_pain_points".to_string(),
+        agent_id: "agent-a".to_string(),
+        objective: "Write synthesis".to_string(),
+        depends_on: Vec::new(),
+        input_refs: Vec::new(),
+        output_contract: Some(AutomationFlowOutputContract {
+            kind: "structured_json".to_string(),
+            validator: Some(crate::AutomationOutputValidatorKind::StructuredJson),
+            enforcement: None,
+            schema: None,
+            summary_guidance: None,
+        }),
+        retry_policy: None,
+        timeout_ms: None,
+        stage_kind: None,
+        gate: None,
+        metadata: Some(json!({
+            "builder": {
+                "output_path": "extract.json",
+                "must_write_files": ["02_reddit_pain_points.md"]
+            }
+        })),
+    };
+    let artifact_text =
+        "{\"status\":\"completed\",\"summary\":\"Synthesis artifact already written successfully.\"}"
+            .to_string();
+    std::fs::write(workspace_root.join("extract.json"), &artifact_text).expect("write artifact");
+    let mut session = Session::new(
+        Some("must write files".to_string()),
+        Some(workspace_root.to_str().expect("workspace root").to_string()),
+    );
+    session.messages.push(tandem_types::Message::new(
+        MessageRole::Assistant,
+        vec![MessagePart::ToolInvocation {
+            tool: "write".to_string(),
+            args: json!({"path":"extract.json","content":artifact_text}),
+            result: Some(json!({"ok": true})),
+            error: None,
+        }],
+    ));
+    let tool_telemetry =
+        summarize_automation_tool_activity(&node, &session, &["write".to_string()]);
+    let (_accepted_output, metadata, rejected) = validate_automation_artifact_output(
+        &node,
+        &session,
+        workspace_root.to_str().expect("workspace root"),
+        "{\"status\":\"completed\"}",
+        &tool_telemetry,
+        None,
+        Some(("extract.json".to_string(), artifact_text)),
+        &snapshot,
+    );
+
+    assert_eq!(
+        rejected.as_deref(),
+        Some("required workspace files were not written for this run")
+    );
+    assert!(metadata
+        .get("unmet_requirements")
+        .and_then(Value::as_array)
+        .is_some_and(|values| values
+            .iter()
+            .any(|value| value.as_str() == Some("required_workspace_files_missing"))));
+    assert!(metadata
+        .get("validation_basis")
+        .and_then(|value| value.get("must_write_file_statuses"))
+        .and_then(Value::as_array)
+        .is_some_and(|values| values.iter().any(|value| {
+            value.get("path").and_then(Value::as_str) == Some("02_reddit_pain_points.md")
+                && value
+                    .get("materialized_by_current_attempt")
+                    .and_then(Value::as_bool)
+                    == Some(false)
+        })));
+
+    let _ = std::fs::remove_dir_all(workspace_root);
+}
+
+#[test]
+fn structured_json_node_passes_when_declared_workspace_files_are_written() {
+    let workspace_root = std::env::temp_dir().join(format!(
+        "tandem-must-write-present-{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&workspace_root).expect("create workspace");
+    let snapshot =
+        automation_workspace_root_file_snapshot(workspace_root.to_str().expect("workspace root"));
+    let node = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
+        node_id: "extract_pain_points".to_string(),
+        agent_id: "agent-a".to_string(),
+        objective: "Write synthesis".to_string(),
+        depends_on: Vec::new(),
+        input_refs: Vec::new(),
+        output_contract: Some(AutomationFlowOutputContract {
+            kind: "structured_json".to_string(),
+            validator: Some(crate::AutomationOutputValidatorKind::StructuredJson),
+            enforcement: None,
+            schema: None,
+            summary_guidance: None,
+        }),
+        retry_policy: None,
+        timeout_ms: None,
+        stage_kind: None,
+        gate: None,
+        metadata: Some(json!({
+            "builder": {
+                "output_path": "extract.json",
+                "must_write_files": ["02_reddit_pain_points.md"]
+            }
+        })),
+    };
+    let artifact_text =
+        "{\"status\":\"completed\",\"summary\":\"Pain point synthesis completed.\"}".to_string();
+    let markdown_text = "# Reddit pain points\n\n- Brittle automations.\n".to_string();
+    std::fs::write(workspace_root.join("extract.json"), &artifact_text).expect("write artifact");
+    std::fs::write(
+        workspace_root.join("02_reddit_pain_points.md"),
+        &markdown_text,
+    )
+    .expect("write markdown");
+    let mut session = Session::new(
+        Some("must write files".to_string()),
+        Some(workspace_root.to_str().expect("workspace root").to_string()),
+    );
+    session.messages.push(tandem_types::Message::new(
+        MessageRole::Assistant,
+        vec![
+            MessagePart::ToolInvocation {
+                tool: "write".to_string(),
+                args: json!({"path":"extract.json","content":artifact_text}),
+                result: Some(json!({"ok": true})),
+                error: None,
+            },
+            MessagePart::ToolInvocation {
+                tool: "write".to_string(),
+                args: json!({"path":"02_reddit_pain_points.md","content":markdown_text}),
+                result: Some(json!({"ok": true})),
+                error: None,
+            },
+        ],
+    ));
+    let tool_telemetry =
+        summarize_automation_tool_activity(&node, &session, &["write".to_string()]);
+    let (_accepted_output, metadata, rejected) = validate_automation_artifact_output(
+        &node,
+        &session,
+        workspace_root.to_str().expect("workspace root"),
+        "{\"status\":\"completed\"}",
+        &tool_telemetry,
+        None,
+        Some(("extract.json".to_string(), artifact_text)),
+        &snapshot,
+    );
+
+    assert_eq!(rejected, None);
+    assert_eq!(
+        metadata.get("validation_outcome").and_then(Value::as_str),
+        Some("passed")
+    );
+    assert!(metadata
+        .get("validation_basis")
+        .and_then(|value| value.get("must_write_file_statuses"))
+        .and_then(Value::as_array)
+        .is_some_and(|values| values.iter().any(|value| {
+            value.get("path").and_then(Value::as_str) == Some("02_reddit_pain_points.md")
+                && value
+                    .get("materialized_by_current_attempt")
+                    .and_then(Value::as_bool)
+                    == Some(true)
+        })));
+
+    let _ = std::fs::remove_dir_all(workspace_root);
+}
+
+#[test]
 fn research_workflow_status_blocks_after_repair_budget_is_exhausted() {
     let node = AutomationFlowNode {
         knowledge: tandem_orchestrator::KnowledgeBinding::default(),

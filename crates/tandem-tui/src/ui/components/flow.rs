@@ -119,11 +119,7 @@ impl<'a> StatefulWidget for FlowList<'a> {
 
 fn render_message_lines(msg: &ChatMessage, max_width: usize) -> Vec<Line<'static>> {
     let mut lines: Vec<Line<'static>> = Vec::new();
-    let (role_color, role_prefix) = match msg.role {
-        MessageRole::User => (Color::Cyan, "you: "),
-        MessageRole::Assistant => (Color::Green, "ai:  "),
-        MessageRole::System => (Color::Yellow, "sys: "),
-    };
+    let (role_color, role_prefix) = message_badge(msg);
 
     lines.push(Line::from(vec![Span::styled(
         role_prefix,
@@ -211,6 +207,47 @@ fn render_message_lines(msg: &ChatMessage, max_width: usize) -> Vec<Line<'static
     }
     lines.push(Line::from(""));
     lines
+}
+
+fn message_badge(msg: &ChatMessage) -> (Color, &'static str) {
+    match msg.role {
+        MessageRole::User => (Color::Cyan, "you: "),
+        MessageRole::Assistant => (Color::Green, "ai:  "),
+        MessageRole::System => {
+            if msg.content.iter().any(|block| {
+                matches!(
+                    block,
+                    ContentBlock::ToolCall(_) | ContentBlock::ToolResult(_)
+                )
+            }) {
+                (Color::Magenta, "tool:")
+            } else if message_contains_governance_text(msg) {
+                (Color::LightYellow, "gov: ")
+            } else {
+                (Color::Yellow, "sys: ")
+            }
+        }
+    }
+}
+
+fn message_contains_governance_text(msg: &ChatMessage) -> bool {
+    msg.content.iter().any(|block| match block {
+        ContentBlock::Text(text) => {
+            let lower = text.to_lowercase();
+            [
+                "approval",
+                "permission",
+                "rollback",
+                "guard",
+                "review gate",
+                "request center",
+                "operator action required",
+            ]
+            .iter()
+            .any(|needle| lower.contains(needle))
+        }
+        _ => false,
+    })
 }
 
 fn message_cache_key(msg: &ChatMessage, max_width: usize) -> u64 {
@@ -384,6 +421,7 @@ mod tests {
     use ratatui::buffer::Buffer;
     use ratatui::layout::Rect;
     use ratatui::style::Color;
+    use ratatui::text::Line;
     use ratatui::widgets::StatefulWidget;
     use std::time::{Duration, Instant};
 
@@ -587,6 +625,20 @@ mod tests {
             .collect()
     }
 
+    fn render_lines_to_text(lines: Vec<Line<'static>>) -> String {
+        lines
+            .into_iter()
+            .map(|l| {
+                l.spans
+                    .iter()
+                    .map(|s| s.content.to_string())
+                    .collect::<Vec<_>>()
+                    .join("")
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
     #[test]
     fn virtualization_scans_subset_for_recent_view() {
         let messages = generate_long_fixture(3_000);
@@ -694,5 +746,65 @@ mod tests {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         assert!(cache.map.len() <= super::FLOW_RENDER_CACHE_MAX_ENTRIES);
+    }
+
+    #[test]
+    fn system_tool_messages_use_tool_badge() {
+        let msg = ChatMessage {
+            role: MessageRole::System,
+            content: vec![ContentBlock::ToolResult(
+                "M crates/tandem-tui/src/app.rs +1 -0".to_string(),
+            )],
+        };
+        let rendered = render_lines_to_text(render_message_lines(&msg, 80));
+        assert!(rendered.contains("tool:"));
+    }
+
+    #[test]
+    fn governance_messages_use_governance_badge() {
+        let msg = ChatMessage {
+            role: MessageRole::System,
+            content: vec![ContentBlock::Text(
+                "Approval required before rollback can continue".to_string(),
+            )],
+        };
+        let rendered = render_lines_to_text(render_message_lines(&msg, 80));
+        assert!(rendered.contains("gov: "));
+    }
+
+    #[test]
+    fn governance_messages_match_snapshot() {
+        let msg = ChatMessage {
+            role: MessageRole::System,
+            content: vec![ContentBlock::Text(
+                "Approval required before rollback can continue".to_string(),
+            )],
+        };
+        let rendered = render_lines_to_text(render_message_lines(&msg, 80));
+        let expected = "\
+gov: 
+     Approval required before rollback can continue
+";
+        assert_eq!(rendered, expected);
+    }
+
+    #[test]
+    fn system_tool_messages_match_snapshot() {
+        let msg = ChatMessage {
+            role: MessageRole::System,
+            content: vec![ContentBlock::ToolResult(
+                "M crates/tandem-tui/src/app.rs +1 -0".to_string(),
+            )],
+        };
+        let rendered = render_lines_to_text(render_message_lines(&msg, 80));
+        let expected = "\
+tool:
+      EDITS  applied • 1 file
+        1 action • +1 -0
+        modified crates/tandem-tui/src/app.rs (+1 -0)
+        files: crates/tandem-tui/src/app.rs
+      NEXT  review with /diff
+";
+        assert_eq!(rendered, expected);
     }
 }

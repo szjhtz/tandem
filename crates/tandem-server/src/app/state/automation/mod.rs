@@ -2256,6 +2256,8 @@ fn semantic_block_reason_for_requirements(unmet_requirements: &[String]) -> Opti
             "final artifact contains a bare relative artifact href; use a canonical run-scoped link or plain text instead"
                 .to_string(),
         )
+    } else if has_unmet("required_workspace_files_missing") {
+        Some("required workspace files were not written for this run".to_string())
     } else if has_unmet("upstream_evidence_not_synthesized") {
         Some(
             "final artifact does not adequately synthesize the available upstream evidence"
@@ -2422,6 +2424,25 @@ fn automation_node_allows_preexisting_output_reuse(node: &AutomationFlowNode) ->
         .and_then(|builder| builder.get("allow_preexisting_output_reuse"))
         .and_then(Value::as_bool)
         .unwrap_or(false)
+}
+
+fn automation_node_must_write_files(node: &AutomationFlowNode) -> Vec<String> {
+    node.metadata
+        .as_ref()
+        .and_then(|metadata| metadata.get("builder"))
+        .and_then(Value::as_object)
+        .and_then(|builder| builder.get("must_write_files"))
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -3908,6 +3929,7 @@ pub(crate) fn validate_automation_artifact_output_with_upstream(
     let enforcement = automation_node_output_enforcement(node);
     let validator_kind = automation_output_validator_kind(node);
     let execution_policy = automation_node_execution_policy(node, workspace_root);
+    let must_write_files = automation_node_must_write_files(node);
     let mutation_summary = session_file_mutation_summary(session, workspace_root);
     let verification_summary = session_verification_summary(node, session);
     let touched_files = mutation_summary
@@ -4156,6 +4178,34 @@ pub(crate) fn validate_automation_artifact_output_with_upstream(
             automation_node_allows_preexisting_output_reuse(node);
         let current_attempt_output_materialized =
             current_attempt_output_materialized_via_filesystem || verified_output_materialized;
+        let must_write_file_statuses = must_write_files
+            .iter()
+            .map(|required_path| {
+                let resolved = resolve_automation_output_path(workspace_root, required_path).ok();
+                let exists = resolved
+                    .as_ref()
+                    .is_some_and(|path| path.exists() && path.is_file());
+                let touched_by_current_attempt = session_write_touched_output_for_output(
+                    session,
+                    workspace_root,
+                    required_path,
+                    None,
+                );
+                let materialized_by_current_attempt = session_write_materialized_output_for_output(
+                    session,
+                    workspace_root,
+                    required_path,
+                    None,
+                );
+                json!({
+                    "path": required_path,
+                    "resolved_path": resolved.map(|path| path.to_string_lossy().to_string()),
+                    "exists": exists,
+                    "touched_by_current_attempt": touched_by_current_attempt,
+                    "materialized_by_current_attempt": materialized_by_current_attempt,
+                })
+            })
+            .collect::<Vec<_>>();
         validation_basis = json!({
             "authority": "filesystem_and_receipts",
             "quality_mode": quality_mode_resolution.effective.stable_key(),
@@ -4202,6 +4252,20 @@ pub(crate) fn validate_automation_artifact_output_with_upstream(
                 "upstream_evidence_used".to_string(),
                 json!(use_upstream_evidence && upstream_evidence.is_some()),
             );
+            object.insert("must_write_files".to_string(), json!(must_write_files));
+            object.insert(
+                "must_write_file_statuses".to_string(),
+                json!(must_write_file_statuses),
+            );
+        }
+        if !must_write_files.is_empty()
+            && !must_write_file_statuses.iter().all(|item| {
+                item.get("materialized_by_current_attempt")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false)
+            })
+        {
+            unmet_requirements.push("required_workspace_files_missing".to_string());
         }
         let missing_current_attempt_output_write = requires_current_attempt_output
             && !current_attempt_output_materialized

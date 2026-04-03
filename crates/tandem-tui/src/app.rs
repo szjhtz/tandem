@@ -2,6 +2,8 @@ use crate::ui::components::composer_input::ComposerInputState;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 use std::collections::{HashMap, HashSet, VecDeque};
 
+mod commands;
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Action {
     Tick,
@@ -225,6 +227,63 @@ mod tests {
             lines.push(line.trim_end().to_string());
         }
         lines.join("\n")
+    }
+
+    #[test]
+    fn render_activity_strip_groups_exploration_calls() {
+        let mut app = chat_app();
+        if let AppState::Chat { agents, .. } = &mut app.state {
+            let agent = &mut agents[0];
+            agent.status = AgentStatus::Streaming;
+            agent.live_tool_calls.insert(
+                "read-1".to_string(),
+                LiveToolCall {
+                    tool_name: "Read".to_string(),
+                    args_preview: "/workspace/src/main.rs".to_string(),
+                },
+            );
+            agent.live_tool_calls.insert(
+                "search-1".to_string(),
+                LiveToolCall {
+                    tool_name: "SearchCodebase".to_string(),
+                    args_preview: "find rollback preview".to_string(),
+                },
+            );
+        }
+
+        let rendered = render_to_text(&app);
+        let summary = app.active_activity_summary().expect("activity summary");
+        assert!(rendered.contains("Activity"));
+        assert!(rendered.contains("Exploring"));
+        assert!(summary.detail.contains("read"));
+        assert!(summary.detail.contains("search"));
+    }
+
+    #[test]
+    fn render_activity_strip_surfaces_pending_requests() {
+        let mut app = chat_app();
+        if let AppState::Chat {
+            pending_requests, ..
+        } = &mut app.state
+        {
+            pending_requests.push(PendingRequest {
+                session_id: "s-test".to_string(),
+                agent_id: "A1".to_string(),
+                kind: PendingRequestKind::Permission(PendingPermissionRequest {
+                    id: "perm-1".to_string(),
+                    tool: "RunCommand".to_string(),
+                    args: None,
+                    args_source: None,
+                    args_integrity: None,
+                    query: None,
+                    status: None,
+                }),
+            });
+        }
+
+        let rendered = render_to_text(&app);
+        assert!(rendered.contains("Attention"));
+        assert!(rendered.contains("Waiting for approval"));
     }
 
     #[test]
@@ -1104,6 +1163,8 @@ pub struct AgentPane {
     pub paste_registry: HashMap<u32, String>,
     pub next_paste_id: u32,
     pub live_tool_calls: HashMap<String, LiveToolCall>,
+    pub exploration_batch: Option<crate::activity::ExplorationBatch>,
+    pub live_activity_message: Option<String>,
     pub delegated_worker: bool,
     pub delegated_team_name: Option<String>,
 }
@@ -1113,6 +1174,7 @@ pub struct LiveToolCall {
     pub tool_name: String,
     pub args_preview: String,
 }
+pub use crate::activity::{ActivitySummary, ActivityTone};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum AppState {
@@ -1219,6 +1281,7 @@ pub enum AutocompleteMode {
     Model,
 }
 
+use crate::command_catalog::COMMAND_HELP;
 use crate::net::client::EngineClient;
 use reqwest::Client;
 use serde::Deserialize;
@@ -1228,7 +1291,7 @@ use tandem_types::ModelSpec;
 use tandem_wire::WireSessionMessage;
 use tokio::io::AsyncWriteExt;
 use tokio::process::{Child, Command};
-use tokio::time::{sleep, timeout};
+use tokio::time::timeout;
 
 use crate::crypto::{
     keystore::SecureKeyStore,
@@ -1241,8 +1304,8 @@ use std::path::PathBuf;
 use std::process::{Command as StdCommand, Stdio};
 use std::time::Instant;
 use tandem_core::{
-    engine_api_token_file_path, load_or_create_engine_api_token, migrate_legacy_storage_if_needed,
-    resolve_shared_paths, DEFAULT_ENGINE_HOST, DEFAULT_ENGINE_PORT,
+    load_or_create_engine_api_token, migrate_legacy_storage_if_needed, resolve_shared_paths,
+    DEFAULT_ENGINE_HOST, DEFAULT_ENGINE_PORT,
 };
 
 pub struct App {
@@ -1281,6 +1344,7 @@ pub struct App {
     pub engine_spawned_at: Option<Instant>,
     pub local_engine_build_attempted: bool,
     pub pending_model_provider: Option<String>,
+    pub recent_commands: VecDeque<String>,
     pub autocomplete_items: Vec<(String, String)>,
     pub autocomplete_index: usize,
     pub autocomplete_mode: AutocompleteMode,
@@ -1352,6 +1416,7 @@ pub enum TandemMode {
 
 const SCROLL_LINE_STEP: u16 = 3;
 const SCROLL_PAGE_STEP: u16 = 20;
+const MAX_RECENT_COMMANDS: usize = 8;
 const MIN_ENGINE_BINARY_SIZE: u64 = 100 * 1024;
 const ENGINE_REPO: &str = "frumu-ai/tandem";
 const GITHUB_API: &str = "https://api.github.com";
@@ -1475,6 +1540,35 @@ impl App {
             .as_ref()
             .map(|c| c.connected.iter().any(|p| p == provider_id))
             .unwrap_or(false)
+    }
+
+    fn record_recent_command(&mut self, cmd: &str) {
+        let normalized = cmd.trim();
+        if normalized.is_empty()
+            || !normalized.starts_with('/')
+            || normalized.starts_with("/recent")
+        {
+            return;
+        }
+        if let Some(existing) = self
+            .recent_commands
+            .iter()
+            .position(|row| row == normalized)
+        {
+            self.recent_commands.remove(existing);
+        }
+        self.recent_commands.push_front(normalized.to_string());
+        self.recent_commands.truncate(MAX_RECENT_COMMANDS);
+    }
+
+    fn recent_commands_snapshot(&self) -> Vec<String> {
+        self.recent_commands.iter().cloned().collect()
+    }
+
+    fn clear_recent_commands(&mut self) -> usize {
+        let cleared = self.recent_commands.len();
+        self.recent_commands.clear();
+        cleared
     }
 
     fn open_key_wizard_for_provider(&mut self, provider_id: &str) -> bool {
@@ -1619,101 +1713,6 @@ impl App {
         Some((token_material.token, token_material.backend))
     }
 
-    pub const COMMAND_HELP: &'static [(&'static str, &'static str)] = &[
-        ("help", "Show available commands"),
-        ("diff", "Show workspace git diff overlay"),
-        ("files", "Search workspace files and insert @path"),
-        ("edit", "Open external editor for current draft"),
-        ("workspace", "Show/switch workspace directory"),
-        ("engine", "Engine status / restart"),
-        ("sessions", "List all sessions"),
-        ("new", "Create new session"),
-        ("agent", "Manage in-chat agents"),
-        ("use", "Switch to session by ID"),
-        ("title", "Rename current session"),
-        ("prompt", "Send prompt to session"),
-        ("cancel", "Cancel current operation"),
-        ("last_error", "Show last prompt/system error"),
-        ("messages", "Show message history"),
-        ("modes", "List available modes"),
-        ("mode", "Set or show current mode"),
-        ("providers", "List available providers"),
-        ("provider", "Set current provider"),
-        ("models", "List models for provider"),
-        ("model", "Set current model"),
-        ("keys", "Show configured API keys"),
-        ("key", "Manage provider API keys"),
-        ("approve", "Approve a pending request"),
-        ("deny", "Deny a pending request"),
-        ("answer", "Answer a question"),
-        ("requests", "Open pending request center"),
-        ("copy", "Copy latest assistant text to clipboard"),
-        ("routines", "List scheduled routines"),
-        ("routine_create", "Create interval routine"),
-        ("routine_edit", "Edit routine interval"),
-        ("routine_pause", "Pause a routine"),
-        ("routine_resume", "Resume a routine"),
-        ("routine_run_now", "Trigger a routine now"),
-        ("routine_delete", "Delete a routine"),
-        ("routine_history", "Show routine execution history"),
-        ("context_runs", "List engine context runs"),
-        ("context_run_create", "Create an engine context run"),
-        ("context_run_get", "Get engine context run state"),
-        (
-            "context_run_rollback_preview",
-            "Show rollback preview steps for a context run",
-        ),
-        (
-            "context_run_rollback_execute",
-            "Execute selected rollback steps for a context run",
-        ),
-        (
-            "context_run_rollback_execute_all",
-            "Execute every executable rollback preview step for a context run",
-        ),
-        (
-            "context_run_rollback_history",
-            "Show detailed rollback receipts for a context run",
-        ),
-        ("context_run_events", "Show context run events"),
-        ("context_run_pause", "Pause context run"),
-        ("context_run_resume", "Resume context run"),
-        ("context_run_cancel", "Cancel context run"),
-        (
-            "context_run_blackboard",
-            "Show context run blackboard summary",
-        ),
-        (
-            "context_run_next",
-            "Ask engine ContextDriver to choose next step",
-        ),
-        (
-            "context_run_replay",
-            "Replay context run from events/checkpoints",
-        ),
-        (
-            "context_run_lineage",
-            "Show decision lineage from context run events",
-        ),
-        (
-            "context_run_bind",
-            "Bind active agent todowrite updates to a context run",
-        ),
-        (
-            "context_run_sync_tasks",
-            "Sync current TUI task list into context run steps",
-        ),
-        ("missions", "List engine missions"),
-        ("mission_create", "Create an engine mission"),
-        ("mission_get", "Get mission details"),
-        ("mission_event", "Apply mission event JSON"),
-        ("mission_start", "Apply mission_started"),
-        ("mission_review_ok", "Approve review gate"),
-        ("mission_test_ok", "Approve test gate"),
-        ("mission_review_no", "Deny review gate"),
-        ("config", "Show configuration"),
-    ];
-
     pub fn new() -> Self {
         let test_mode = Self::test_mode_enabled();
         let test_skip_engine = test_mode && Self::test_skip_engine_enabled();
@@ -1811,6 +1810,7 @@ impl App {
             engine_spawned_at: None,
             local_engine_build_attempted: false,
             pending_model_provider: None,
+            recent_commands: VecDeque::new(),
             autocomplete_items: Vec::new(),
             autocomplete_index: 0,
             autocomplete_mode: AutocompleteMode::Command,
@@ -1842,6 +1842,8 @@ impl App {
             paste_registry: HashMap::new(),
             next_paste_id: 1,
             live_tool_calls: HashMap::new(),
+            exploration_batch: None,
+            live_activity_message: None,
             delegated_worker: false,
             delegated_team_name: None,
         }
@@ -2089,6 +2091,31 @@ impl App {
                 active_session == session_id && active_agent == agent_id
             })
             .unwrap_or(false)
+    }
+
+    pub fn active_activity_summary(&self) -> Option<ActivitySummary> {
+        if let AppState::Chat {
+            agents,
+            active_agent_index,
+            pending_requests,
+            plan_awaiting_approval,
+            plan_waiting_for_clarification_question,
+            ..
+        } = &self.state
+        {
+            let agent = agents.get(*active_agent_index)?;
+            return Some(crate::activity::summarize_active_agent(
+                agent,
+                pending_requests,
+                *plan_waiting_for_clarification_question,
+                *plan_awaiting_approval,
+            ));
+        }
+        None
+    }
+
+    pub fn agent_status_label(&self, agent: &AgentPane, spinner: &str) -> String {
+        crate::activity::agent_status_label(agent, spinner)
     }
 
     fn open_request_center_if_needed(&mut self) {
@@ -2500,7 +2527,7 @@ impl App {
             }
         }
         let cmd_part = input.trim_start_matches('/').to_lowercase();
-        self.autocomplete_items = Self::COMMAND_HELP
+        self.autocomplete_items = COMMAND_HELP
             .iter()
             .filter(|(name, _)| name.starts_with(&cmd_part))
             .map(|(name, desc)| (name.to_string(), desc.to_string()))
@@ -4157,7 +4184,7 @@ impl App {
                     }
                     let input = command_input.text().to_string();
                     if input == "/" {
-                        self.autocomplete_items = Self::COMMAND_HELP
+                        self.autocomplete_items = COMMAND_HELP
                             .iter()
                             .map(|(name, desc)| (name.to_string(), desc.to_string()))
                             .collect();
@@ -6013,6 +6040,7 @@ impl App {
                         agent.stream_collector =
                             Some(crate::ui::markdown_stream::MarkdownStreamCollector::new());
                         agent.live_tool_calls.clear();
+                        agent.exploration_batch = None;
                         if *active_agent_index == agent_idx {
                             *session_id = agent.session_id.clone();
                         }
@@ -6028,6 +6056,7 @@ impl App {
                 let dispatch_agent_id = agent_id.clone();
                 let mut clarification_follow_up: Option<(String, String)> = None;
                 let mut finalized_tail: Option<String> = None;
+                let mut exploration_summary: Option<ChatMessage> = None;
                 if let AppState::Chat {
                     agents,
                     active_agent_index,
@@ -6048,10 +6077,18 @@ impl App {
                             Self::append_assistant_delta(&mut agent.messages, &tail);
                         }
                         agent.stream_collector = None;
+                        exploration_summary = crate::activity::take_exploration_completion_message(
+                            &mut agent.exploration_batch,
+                        )
+                        .or_else(|| crate::activity::exploration_completion_message(agent));
                         Self::merge_prompt_success_messages(&mut agent.messages, &new_messages);
+                        if let Some(summary) = &exploration_summary {
+                            agent.messages.push(summary.clone());
+                        }
                         agent.status = AgentStatus::Done;
                         agent.active_run_id = None;
                         agent.live_tool_calls.clear();
+                        agent.live_activity_message = None;
                         agent.scroll_from_bottom = 0;
                     }
                     if *active_agent_index < agents.len()
@@ -6068,6 +6105,9 @@ impl App {
                             agent.stream_collector = None;
                         }
                         Self::merge_prompt_success_messages(messages, &new_messages);
+                        if let Some(summary) = exploration_summary {
+                            messages.push(summary);
+                        }
                         *scroll_from_bottom = 0;
                     }
                     if matches!(self.current_mode, TandemMode::Plan)
@@ -6365,9 +6405,7 @@ impl App {
                         if !matches!(agent.status, AgentStatus::Streaming) {
                             agent.status = AgentStatus::Running;
                         }
-                        // Keep the latest stream activity out of transcript; request state and
-                        // status line already communicate progress.
-                        let _ = message;
+                        agent.live_activity_message = Some(message);
                     }
                 }
                 self.sync_active_agent_from_chat();
@@ -6380,13 +6418,34 @@ impl App {
                 args_delta: _,
                 args_preview,
             } => {
-                if let AppState::Chat { agents, .. } = &mut self.state {
-                    if let Some(agent) = agents
-                        .iter_mut()
-                        .find(|a| a.agent_id == agent_id && a.session_id == event_session_id)
+                if let AppState::Chat {
+                    agents,
+                    active_agent_index,
+                    messages,
+                    scroll_from_bottom,
+                    ..
+                } = &mut self.state
+                {
+                    if let Some(agent_idx) = agents
+                        .iter()
+                        .position(|a| a.agent_id == agent_id && a.session_id == event_session_id)
                     {
+                        let is_active = *active_agent_index == agent_idx;
+                        let agent = &mut agents[agent_idx];
                         if matches!(agent.status, AgentStatus::Idle | AgentStatus::Done) {
                             agent.status = AgentStatus::Streaming;
+                        }
+                        let exploration_summary = crate::activity::record_tool_call(
+                            &mut agent.exploration_batch,
+                            &tool_name,
+                            &args_preview,
+                        );
+                        if let Some(summary) = exploration_summary {
+                            agent.messages.push(summary.clone());
+                            if is_active {
+                                messages.push(summary);
+                                *scroll_from_bottom = 0;
+                            }
                         }
                         agent.live_tool_calls.insert(
                             tool_call_id,
@@ -6395,6 +6454,7 @@ impl App {
                                 args_preview,
                             },
                         );
+                        agent.live_activity_message = None;
                     }
                 }
                 self.sync_active_agent_from_chat();
@@ -6677,6 +6737,7 @@ impl App {
                         agent.status = AgentStatus::Error;
                         agent.active_run_id = None;
                         agent.live_tool_calls.clear();
+                        agent.exploration_batch = None;
                         agent.scroll_from_bottom = 0;
                         agent.messages.push(ChatMessage {
                             role: MessageRole::System,
@@ -7035,367 +7096,17 @@ impl App {
 
         let cmd_name = &parts[0][1..];
         let args = &parts[1..];
+        let normalized_cmd = cmd_name.to_lowercase();
+        if normalized_cmd != "recent" {
+            self.record_recent_command(cmd);
+        }
 
-        match cmd_name.to_lowercase().as_str() {
-            "help" => {
-                let help_text = r#"Tandem TUI Commands:
+        if let Some(result) = commands::try_execute_basic_command(self, &normalized_cmd, args).await
+        {
+            return result;
+        }
 
-BASICS:
-  /help              Show this help message
-  /workspace show    Show current workspace directory
-  /workspace use <path>
-                     Switch workspace directory for this TUI process
-  /engine status     Check engine connection status
-  /engine restart    Restart the Tandem engine
-  /engine token      Show masked engine API token
-  /engine token show Show full engine API token
-  /browser status    Show browser readiness from the engine
-  /browser doctor    Show browser diagnostics and install hints
-  /diff              Show current workspace git diff in pager overlay
-  /files [query]     Open file-search overlay and insert selected path as @mention
-  /edit              Edit current draft in external $EDITOR/$VISUAL
-
-SESSIONS:
-  /sessions          List all sessions
-  /new [title...]    Create new session
-  /use <session_id> Switch to session
-  /agent new         Create agent in current chat
-  /agent list        List chat agents
-  /agent use <A#>    Switch active agent
-  /agent close       Close active agent
-  /agent fanout [n] [goal...]
-                     Ensure n agents and switch to grid (default 4).
-                     If goal is provided, dispatch coordinated kickoff prompts.
-  /title <new title> Rename current session
-  /prompt <text>    Send prompt to current session
-  /tool <name> <json_args> Pass-through engine tool call
-  /cancel           Cancel current operation
-  /steer <message>  Queue steering interrupt message
-  /followup <msg>   Queue follow-up message
-  /queue            Show queue status
-  /queue clear      Clear steering/follow-up queue
-  /last_error       Show last prompt/system error
-  /messages [limit] Show session messages
-  /task add <desc>   Add a new task
-  /task done <id>    Mark task as done
-  /task fail <id>    Mark task as failed
-  /task work <id>    Mark task as working
-  /task pin <id>     Toggle pin status
-  /task list         List all tasks
-
-MODES:
-  /modes             List available modes
-  /mode <name>       Set mode (ask|coder|explore|immediate|orchestrate|plan)
-  /mode              Show current mode
-
-PROVIDERS & MODELS:
-  /providers         List available providers
-  /provider <id>     Set current provider
-  /models [provider] List models for provider
-  /model <model_id>  Set current model
-
-KEYS:
-  /keys              Show configured providers
-  /key set <provider> Add/update provider key
-  /key remove <provider> Remove provider key
-  /key test <provider> Test provider connection
-
-APPROVALS:
-  /approve <id> [always]  Approve request
-  /approve all            Approve all pending in this session
-  /deny <id>              Deny request
-  /answer <id> <reply>    Send raw permission reply (allow/deny/once/always/reject)
-  /requests               Open pending request center
-  /copy                   Copy latest assistant response to clipboard
-
-ROUTINES:
-  /routines                               List routines
-  /routine_create <id> <sec> <entrypoint> Create an interval routine
-  /routine_edit <id> <sec>                Update interval schedule
-  /routine_pause <id>                     Pause routine
-  /routine_resume <id>                    Resume routine
-  /routine_run_now <id> [count]           Trigger routine immediately
-  /routine_delete <id>                    Delete routine
-  /routine_history <id> [limit]           Show routine history
-
-CONTEXT RUNS:
-  /context_runs [limit]                   List context runs from engine
-  /context_run_create <objective...>      Create context run (interactive type)
-  /context_run_get <run_id>               Show context run details
-  /context_run_rollback_preview <run_id>  Show rollback preview steps
-  /context_run_rollback_execute <run_id> --ack <event_id...>
-                                          Execute selected rollback steps
-  /context_run_rollback_execute_all <run_id> --ack
-                                          Execute all executable preview steps
-  /context_run_rollback_history <run_id>  Show rollback receipt history
-  /context_run_events <run_id> [tail]     Show recent context run events
-  /context_run_pause <run_id>             Append pause event + set paused status
-  /context_run_resume <run_id>            Append resume event + set running status
-  /context_run_cancel <run_id>            Append cancel event + set cancelled status
-  /context_run_blackboard <run_id>        Show blackboard counts + summary snippets
-  /context_run_next <run_id> [dry_run]    Run engine ContextDriver next-step selection
-  /context_run_replay <run_id> [upto_seq] Replay run and show drift vs persisted state
-  /context_run_lineage <run_id> [tail]    Show why-next-step decision history
-  /context_run_bind <run_id|off>          Bind or clear active-agent todo -> context sync
-  /context_run_sync_tasks <run_id>         Sync current task list into context run steps
-
-MISSIONS:
-  /missions                                List missions
-  /mission_create <title> :: <goal>        Create mission (supports optional work item title after third :: segment)
-  /mission_get <mission_id>                Show mission details
-  /mission_event <mission_id> <event_json> Apply mission event payload JSON
-  /mission_start <mission_id>              Quick mission_started event
-  /mission_review_ok <mission_id> <work_item_id> [approval_id]
-                                           Quick approval_granted for review
-  /mission_test_ok <mission_id> <work_item_id> [approval_id]
-                                           Quick approval_granted for test
-  /mission_review_no <mission_id> <work_item_id> [reason]
-                                           Quick approval_denied for review
-  /agent-team                              Show agent-team dashboard summary
-  /agent-team missions                     List agent-team mission rollups
-  /agent-team instances [mission_id]       List agent-team instances
-  /agent-team approvals                    List pending agent-team approvals
-  /agent-team bindings [team_name]         Show local teammate -> session bindings
-  /agent-team approve spawn <approval_id> [reason]
-                                           Approve pending spawn approval
-  /agent-team deny spawn <approval_id> [reason]
-                                           Deny pending spawn approval
-  /agent-team approve tool <request_id>    Approve tool permission request
-  /agent-team deny tool <request_id>       Deny tool permission request
-
-PRESETS:
-  /preset index
-                                           List layered preset counts
-  /preset agent compose <base_prompt> :: <fragments_json>
-                                           Deterministic prompt compose preview
-  /preset agent summary required=<csv> [:: optional=<csv>]
-                                           Compute agent capability summary
-  /preset agent fork <source_path> [target_id]
-                                           Fork source preset into project override
-  /preset automation summary <tasks_json> [:: required=<csv> :: optional=<csv>]
-                                           Compute automation capability summary
-  /preset automation save <id> :: <tasks_json> [:: required=<csv> :: optional=<csv>]
-                                           Save automation preset override from task-agent bindings
-
-CONFIG:
-  /config            Show configuration
-
-MULTI-AGENT KEYS:
-  Tab / Shift+Tab    Cycle active agent
-  Alt+1..Alt+9       Jump to agent slot
-  Ctrl+N             New agent
-  Ctrl+W             Close active agent
-  Ctrl+C             Cancel active run / double-tap quit
-  Alt+M              Cycle mode
-  Alt+G              Toggle Focus/Grid
-  Alt+R              Open request center
-  Alt+P              Open file search overlay
-  Alt+D              Open diff overlay
-  Alt+E              Open external editor for current draft
-  Alt+I              Queue steering interrupt (and cancel active run)
-  [ / ]              Prev/next grid page
-  Alt+S / Alt+B      Demo stream controls (dev)
-  Enter              Send prompt (queues follow-up if busy)
-  Shift+Enter        Insert newline
-  Alt+Enter          Insert newline
-  Esc                Close modal / return to input
-  Ctrl+X             Quit"#;
-                help_text.to_string()
-            }
-            "diff" => self.open_diff_overlay().await,
-            "files" => {
-                let query = if args.is_empty() {
-                    None
-                } else {
-                    Some(args.join(" "))
-                };
-                self.open_file_search_modal(query.as_deref());
-                if let Some(q) = query {
-                    format!("Opened file search for query: {}", q)
-                } else {
-                    "Opened file search overlay.".to_string()
-                }
-            }
-            "edit" => self.open_external_editor_for_active_input().await,
-
-            "workspace" => match args.first().copied() {
-                Some("show") | None => {
-                    let cwd = std::env::current_dir()
-                        .map(|p| p.display().to_string())
-                        .unwrap_or_else(|_| "<unknown>".to_string());
-                    format!("Current workspace directory:\n  {}", cwd)
-                }
-                Some("use") => {
-                    let raw_path = args
-                        .get(1..)
-                        .map(|items| items.join(" "))
-                        .unwrap_or_default();
-                    if raw_path.trim().is_empty() {
-                        return "Usage: /workspace use <path>".to_string();
-                    }
-                    let target = match Self::resolve_workspace_path(raw_path.trim()) {
-                        Ok(path) => path,
-                        Err(err) => return err,
-                    };
-                    let previous = std::env::current_dir()
-                        .map(|p| p.display().to_string())
-                        .unwrap_or_else(|_| "<unknown>".to_string());
-                    if let Err(err) = std::env::set_current_dir(&target) {
-                        return format!(
-                            "Failed to switch workspace to {}: {}",
-                            target.display(),
-                            err
-                        );
-                    }
-                    let current = std::env::current_dir()
-                        .map(|p| p.display().to_string())
-                        .unwrap_or_else(|_| target.display().to_string());
-                    format!(
-                        "Workspace switched.\n  From: {}\n  To:   {}",
-                        previous, current
-                    )
-                }
-                _ => "Usage: /workspace [show|use <path>]".to_string(),
-            },
-
-            "engine" => match args.get(0).map(|s| *s) {
-                Some("status") => {
-                    if let Some(client) = &self.client {
-                        match client.get_engine_status().await {
-                            Ok(status) => {
-                                let required = Self::desired_engine_version()
-                                    .map(Self::format_semver_triplet)
-                                    .unwrap_or_else(|| "unknown".to_string());
-                                let stale_policy = EngineStalePolicy::from_env();
-                                format!(
-                                    "Engine Status:\n  Healthy: {}\n  Version: {}\n  Required: {}\n  Mode: {}\n  Endpoint: {}\n  Source: {}\n  Stale policy: {}",
-                                    if status.healthy { "Yes" } else { "No" },
-                                    status.version,
-                                    required,
-                                    status.mode,
-                                    client.base_url(),
-                                    self.engine_connection_source.as_str(),
-                                    stale_policy.as_str()
-                                )
-                            }
-                            Err(e) => format!("Failed to get engine status: {}", e),
-                        }
-                    } else {
-                        "Engine: Not connected".to_string()
-                    }
-                }
-                Some("restart") => {
-                    self.connection_status = "Restarting engine...".to_string();
-                    self.release_engine_lease().await;
-                    self.stop_engine_process().await;
-                    self.client = None;
-                    self.engine_base_url_override = None;
-                    self.engine_connection_source = EngineConnectionSource::Unknown;
-                    self.engine_spawned_at = None;
-                    self.provider_catalog = None;
-                    sleep(std::time::Duration::from_millis(300)).await;
-                    self.state = AppState::Connecting;
-                    "Engine restart requested.".to_string()
-                }
-                Some("token") => {
-                    let show_full =
-                        args.get(1).map(|s| s.eq_ignore_ascii_case("show")) == Some(true);
-                    let Some(token) = self.engine_api_token.as_deref().map(str::trim) else {
-                        return "Engine token is not configured.".to_string();
-                    };
-                    if token.is_empty() {
-                        return "Engine token is not configured.".to_string();
-                    }
-                    let value = if show_full {
-                        token.to_string()
-                    } else {
-                        Self::masked_engine_api_token(token)
-                    };
-                    let path = engine_api_token_file_path().to_string_lossy().to_string();
-                    let backend = self
-                        .engine_api_token_backend
-                        .clone()
-                        .unwrap_or_else(|| "unknown".to_string());
-                    if show_full {
-                        format!(
-                            "Engine API token:\n  {}\nStorage: {}\nPath:\n  {}",
-                            value, backend, path
-                        )
-                    } else {
-                        format!(
-                            "Engine API token (masked):\n  {}\nStorage: {}\nUse `/engine token show` to reveal.\nPath:\n  {}",
-                            value, backend, path
-                        )
-                    }
-                }
-                _ => "Usage: /engine status | restart | token [show]".to_string(),
-            },
-
-            "browser" => match args.get(0).map(|s| *s) {
-                Some("status") | Some("doctor") => {
-                    if let Some(client) = &self.client {
-                        match client.get_browser_status().await {
-                            Ok(status) => {
-                                let mut lines = vec![
-                                    "Browser Status:".to_string(),
-                                    format!(
-                                        "  Enabled: {}",
-                                        if status.enabled { "Yes" } else { "No" }
-                                    ),
-                                    format!(
-                                        "  Runnable: {}",
-                                        if status.runnable { "Yes" } else { "No" }
-                                    ),
-                                    format!(
-                                        "  Sidecar: {}",
-                                        status
-                                            .sidecar
-                                            .path
-                                            .clone()
-                                            .unwrap_or_else(|| "<not found>".to_string())
-                                    ),
-                                    format!(
-                                        "  Browser: {}",
-                                        status
-                                            .browser
-                                            .path
-                                            .clone()
-                                            .unwrap_or_else(|| "<not found>".to_string())
-                                    ),
-                                ];
-                                if let Some(version) = status.browser.version.as_deref() {
-                                    lines.push(format!("  Browser version: {}", version));
-                                }
-                                if !status.blocking_issues.is_empty() {
-                                    lines.push("Blocking issues:".to_string());
-                                    for issue in status.blocking_issues {
-                                        lines
-                                            .push(format!("  - {}: {}", issue.code, issue.message));
-                                    }
-                                }
-                                if !status.recommendations.is_empty() {
-                                    lines.push("Recommendations:".to_string());
-                                    for row in status.recommendations {
-                                        lines.push(format!("  - {}", row));
-                                    }
-                                }
-                                if !status.install_hints.is_empty() {
-                                    lines.push("Install hints:".to_string());
-                                    for row in status.install_hints {
-                                        lines.push(format!("  - {}", row));
-                                    }
-                                }
-                                lines.join("\n")
-                            }
-                            Err(e) => format!("Failed to get browser status: {}", e),
-                        }
-                    } else {
-                        "Engine: Not connected".to_string()
-                    }
-                }
-                _ => "Usage: /browser status | doctor".to_string(),
-            },
-
+        match normalized_cmd.as_str() {
             "sessions" => {
                 if self.sessions.is_empty() {
                     "No sessions found.".to_string()
@@ -7708,160 +7419,6 @@ MULTI-AGENT KEYS:
                 } else {
                     format!("Session not found: {}", target_id)
                 }
-            }
-
-            "mode" => {
-                if args.is_empty() {
-                    let agent = self.current_mode.as_agent();
-                    return format!("Current mode: {:?} (agent: {})", self.current_mode, agent);
-                }
-                let mode_name = args[0];
-                if let Some(mode) = TandemMode::from_str(mode_name) {
-                    self.current_mode = mode;
-                    format!("Mode set to: {:?}", mode)
-                } else {
-                    format!(
-                        "Unknown mode: {}. Use /modes to see available modes.",
-                        mode_name
-                    )
-                }
-            }
-
-            "modes" => {
-                let lines: Vec<String> = TandemMode::all_modes()
-                    .iter()
-                    .map(|(name, desc)| format!("  {} - {}", name, desc))
-                    .collect();
-                format!("Available modes:\n{}", lines.join("\n"))
-            }
-
-            "providers" => {
-                if let Some(catalog) = &self.provider_catalog {
-                    let lines: Vec<String> = catalog
-                        .all
-                        .iter()
-                        .map(|p| {
-                            let status = if catalog.connected.contains(&p.id) {
-                                "connected"
-                            } else {
-                                "not configured"
-                            };
-                            format!("  {} - {}", p.id, status)
-                        })
-                        .collect();
-                    if lines.is_empty() {
-                        "No providers available.".to_string()
-                    } else {
-                        format!("Available providers:\n{}", lines.join("\n"))
-                    }
-                } else {
-                    "Loading providers... (use /providers to refresh)".to_string()
-                }
-            }
-
-            "provider" => {
-                let mut step = SetupStep::SelectProvider;
-                let mut selected_provider_index = 0;
-                let filter_model = String::new();
-
-                if !args.is_empty() {
-                    let provider_id = args[0];
-                    if let Some(catalog) = &self.provider_catalog {
-                        if let Some(idx) = catalog.all.iter().position(|p| p.id == provider_id) {
-                            selected_provider_index = idx;
-                            step = if catalog.connected.contains(&provider_id.to_string()) {
-                                SetupStep::SelectModel
-                            } else {
-                                SetupStep::EnterApiKey
-                            };
-                        }
-                    }
-                } else if let Some(current) = &self.current_provider {
-                    if let Some(catalog) = &self.provider_catalog {
-                        if let Some(idx) = catalog.all.iter().position(|p| &p.id == current) {
-                            selected_provider_index = idx;
-                            step = if catalog.connected.contains(current) {
-                                SetupStep::SelectModel
-                            } else {
-                                SetupStep::EnterApiKey
-                            };
-                        }
-                    }
-                }
-
-                self.state = AppState::SetupWizard {
-                    step,
-                    provider_catalog: self.provider_catalog.clone(),
-                    selected_provider_index,
-                    selected_model_index: 0,
-                    api_key_input: String::new(),
-                    model_input: filter_model,
-                };
-                "Opening provider selection...".to_string()
-            }
-
-            "models" => {
-                let provider_id = args
-                    .first()
-                    .map(|s| s.to_string())
-                    .or_else(|| self.current_provider.clone());
-                if let Some(catalog) = &self.provider_catalog {
-                    if let Some(pid) = &provider_id {
-                        if let Some(provider) = catalog.all.iter().find(|p| p.id == *pid) {
-                            let model_ids: Vec<String> = provider.models.keys().cloned().collect();
-                            if model_ids.is_empty() {
-                                format!("No models available for provider: {}", pid)
-                            } else {
-                                format!(
-                                    "Models for {}:\n{}",
-                                    pid,
-                                    model_ids
-                                        .iter()
-                                        .map(|m| format!("  {}", m))
-                                        .collect::<Vec<_>>()
-                                        .join("\n")
-                                )
-                            }
-                        } else {
-                            format!("Provider not found: {}", pid)
-                        }
-                    } else {
-                        "No provider selected. Use /provider <id> first.".to_string()
-                    }
-                } else {
-                    "Loading providers... (use /providers to refresh)".to_string()
-                }
-            }
-
-            "model" => {
-                if args.is_empty() {
-                    // Open wizard for model selection
-                    let mut selected_provider_index = 0;
-                    if let Some(current) = &self.current_provider {
-                        if let Some(catalog) = &self.provider_catalog {
-                            if let Some(idx) = catalog.all.iter().position(|p| &p.id == current) {
-                                selected_provider_index = idx;
-                            }
-                        }
-                    }
-                    self.state = AppState::SetupWizard {
-                        step: SetupStep::SelectModel,
-                        provider_catalog: self.provider_catalog.clone(),
-                        selected_provider_index,
-                        selected_model_index: 0,
-                        api_key_input: String::new(),
-                        model_input: String::new(),
-                    };
-                    return "Opening model selection...".to_string();
-                }
-                let model_id = args.join(" ");
-                self.current_model = Some(model_id.clone());
-                self.pending_model_provider = None;
-                if let Some(provider_id) = self.current_provider.clone() {
-                    self.persist_provider_defaults(&provider_id, Some(&model_id), None)
-                        .await;
-                }
-                format!("Model set to: {}", model_id)
             }
 
             "keys" => {

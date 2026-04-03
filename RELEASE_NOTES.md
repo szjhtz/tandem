@@ -4,6 +4,26 @@ This is the canonical release-notes file used by release tooling.
 
 ## v0.4.20 (Released 2026-04-03)
 
+- **Tandem TUI exploration transcript summaries**
+  - Added durable exploration transcript summaries so read/search/list tool bursts are preserved as compact operator-readable history instead of existing only in the live status strip.
+  - Added exploration-batch accumulation, burst-boundary flushing, and target-change splitting so long exploration runs can emit multiple focused summaries as the AI moves between workspace targets.
+  - Added an optional verbose exploration-summary fallback for debugging through `TANDEM_TUI_VERBOSE_EXPLORATION=1`, which surfaces deeper exploration target detail when needed.
+  - Added focused regression and golden coverage for exploration summary wording and grouped-exploration rendering.
+
+- **Tandem TUI structured edit transcript cells**
+  - Added structured edit transcript cells for coding results with file-level summaries, aggregate and per-file add/remove counts, compact diff previews for tiny edits, and explicit applied/partial/failed states.
+  - Added `Next` guidance blocks to edit transcript cells so operators can quickly review diffs, inspect failed edits, or retry when needed.
+  - Added golden coverage for applied, partial, and failed edit summaries plus long-output truncation behavior.
+
+- **Tandem TUI recent-command helper**
+  - Added `/recent`, `/recent run <index>`, and `/recent clear` so terminal operators can reuse frequent slash commands without retyping them.
+  - Added regression coverage for recent-command ordering, replay behavior, and clear semantics.
+
+- **Tandem TUI transcript readability**
+  - Improved transcript differentiation for tool-focused system messages and governance/operator-action-required messages with clearer badges.
+  - Improved generic command/tool output rendering with stable head/tail truncation so transcript history stays readable during long runs.
+  - Added structured rollback transcript cells for preview, execute, and receipt flows so guarded rollback work now follows one compact terminal UX pattern with action badges, concise summaries, and focused next steps.
+
 - **Installed desktop startup black-screen after vault unlock**
   - Added a timeout to installed-build sidecar release discovery so a stalled GitHub metadata lookup cannot hold the Tauri app on a black screen after passcode unlock.
   - Hardened startup routing after unlock so Tandem uses the actual configured workspace/provider state before deciding whether to show onboarding or chat.
