@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useQueryClient } from "@tanstack/react-query";
+import { renderIcons } from "../app/icons.js";
 import { Badge, PanelCard } from "../ui/index.tsx";
 import { EmptyState } from "./ui";
 import { ProviderModelSelector } from "../components/ProviderModelSelector";
@@ -44,6 +45,7 @@ type PlanningDraft = {
   plannerError: string;
   plannerDiagnostics: any | null;
   publishedAtMs: number | null;
+  updatedAtMs?: number | null;
   publishedTasks: Array<{
     title: string;
     issueNumber?: number | null;
@@ -75,11 +77,21 @@ type ClarificationState =
       options: ClarifierOption[];
     };
 
-const DRAFT_PREFIX = "tcp.coding.task-planning.v1";
+type PlannerSessionRow = {
+  id: string;
+  title: string;
+  updatedAtMs: number;
+};
+
 const PLANNER_HANDOFF_KEY = "tandem.intent-planner.codingTaskHandoff.v1";
 
 function safeString(value: unknown) {
   return String(value || "").trim();
+}
+
+function isMissingWorkflowPlanError(message: string) {
+  const text = safeString(message).toLowerCase();
+  return text.includes("workflow_plan_not_found") || text.includes("workflow plan not found");
 }
 
 function inferGitHubWorkspaceRoot(selectedProject: any | null) {
@@ -101,51 +113,18 @@ function inferGitHubWorkspaceRoot(selectedProject: any | null) {
   }
 }
 
-function storageKey(projectSlug: string) {
-  return `${DRAFT_PREFIX}:${safeString(projectSlug) || "unbound"}`;
-}
-
-function loadDraft(projectSlug: string): PlanningDraft | null {
-  if (typeof localStorage === "undefined") return null;
-  try {
-    const raw = localStorage.getItem(storageKey(projectSlug));
-    if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== "object") return null;
-    return {
-      goal: safeString(parsed.goal),
-      workspaceRoot: safeString(parsed.workspaceRoot),
-      notes: safeString(parsed.notes),
-      plannerProvider: safeString(parsed.plannerProvider || parsed.planner_provider),
-      plannerModel: safeString(parsed.plannerModel || parsed.planner_model),
-      plan: parsed.plan ?? null,
-      conversation: parsed.conversation ?? null,
-      changeSummary: Array.isArray(parsed.changeSummary)
-        ? parsed.changeSummary.map((row: any) => safeString(row)).filter(Boolean)
-        : [],
-      plannerError: safeString(parsed.plannerError),
-      plannerDiagnostics: parsed.plannerDiagnostics ?? null,
-      publishedAtMs: Number(parsed.publishedAtMs || 0) || null,
-      publishedTasks: Array.isArray(parsed.publishedTasks) ? parsed.publishedTasks : [],
-    };
-  } catch {
-    return null;
-  }
-}
-
-function saveDraft(projectSlug: string, draft: PlanningDraft) {
-  if (typeof localStorage === "undefined") return;
-  try {
-    localStorage.setItem(
-      storageKey(projectSlug),
-      JSON.stringify({
-        ...draft,
-        updatedAtMs: Date.now(),
-      })
-    );
-  } catch {
-    // ignore
-  }
+function plannerSessionTitle(input: {
+  goal?: string;
+  plan?: any;
+  fallbackTime?: number;
+  existingTitle?: string;
+}) {
+  const planTitle = safeString(input.plan?.title);
+  if (planTitle) return planTitle;
+  const goal = safeString(input.goal);
+  if (goal) return goal.length > 48 ? `${goal.slice(0, 47).trimEnd()}…` : goal;
+  if (input.existingTitle) return input.existingTitle;
+  return `Plan ${new Date(input.fallbackTime || Date.now()).toLocaleTimeString()}`;
 }
 
 function normalizePlanSteps(plan: any): PlannedTask[] {
@@ -482,7 +461,11 @@ export function TaskPlanningPanel({
   engineHealthy,
   providerStatus,
 }: TaskPlanningPanelProps) {
+  const rootRef = useRef<HTMLDivElement | null>(null);
   const queryClient = useQueryClient();
+  const [plannerSessions, setPlannerSessions] = useState<PlannerSessionRow[]>([]);
+  const [selectedSessionId, setSelectedSessionId] = useState("");
+  const [sessionsOpen, setSessionsOpen] = useState(false);
   const [goal, setGoal] = useState("");
   const [workspaceRoot, setWorkspaceRoot] = useState("");
   const [notes, setNotes] = useState("");
@@ -521,7 +504,6 @@ export function TaskPlanningPanel({
   });
 
   const plannedTasks = useMemo(() => normalizePlanSteps(planPreview), [planPreview]);
-  const localDraftKey = useMemo(() => storageKey(selectedProjectSlug), [selectedProjectSlug]);
   const isGitHubProject = String(taskSourceType || "").trim() === "github_project";
   const providerOptions = useMemo<PlannerProviderOption[]>(() => {
     return buildPlannerProviderOptions({
@@ -608,16 +590,14 @@ export function TaskPlanningPanel({
     (!!plannerFallbackReason || /fallback draft/i.test(safeString(planPreview?.description)));
   const displayTasks = planIsFallbackOnly ? [] : plannedTasks;
 
-  useEffect(() => {
-    const draft = loadDraft(selectedProjectSlug);
-    setLoadingDraft(true);
+  const hydrateDraft = (draft: PlanningDraft | null) => {
     if (draft) {
       setGoal(draft.goal);
       setPlannerInput(draft.notes || draft.goal || "");
       setWorkspaceRoot(draft.workspaceRoot || resolvedWorkspaceRoot || workspaceRootSeed || "");
       setNotes(draft.notes);
-      setPlannerProvider(draft.plannerProvider || "");
-      setPlannerModel(draft.plannerModel || "");
+      setPlannerProvider(draft.plannerProvider || providerStatus.defaultProvider || "");
+      setPlannerModel(draft.plannerModel || providerStatus.defaultModel || "");
       setPlanPreview(draft.plan);
       setPlanningConversation(draft.conversation);
       setPlanningChangeSummary(draft.changeSummary || []);
@@ -630,30 +610,230 @@ export function TaskPlanningPanel({
       );
       setLastSavedAtMs(draft.publishedAtMs || null);
       setPublishedTasks(draft.publishedTasks || []);
-    } else {
-      setGoal("");
-      setPlannerInput("");
-      setWorkspaceRoot(resolvedWorkspaceRoot || workspaceRootSeed || "");
-      setNotes("");
-      setPlannerProvider(providerStatus.defaultProvider || "");
-      setPlannerModel(providerStatus.defaultModel || "");
-      setPlanPreview(null);
-      setPlanningConversation(null);
-      setPlanningChangeSummary([]);
-      setPlannerError("");
-      setPlannerDiagnostics(null);
-      setPublishStatus("");
-      setLastSavedAtMs(null);
-      setPublishedTasks([]);
+      setClarification({ status: "none" });
+      return;
     }
-    setLoadingDraft(false);
+    setGoal("");
+    setPlannerInput("");
+    setWorkspaceRoot(resolvedWorkspaceRoot || workspaceRootSeed || "");
+    setNotes("");
+    setPlannerProvider(providerStatus.defaultProvider || "");
+    setPlannerModel(providerStatus.defaultModel || "");
+    setPlanPreview(null);
+    setPlanningConversation(null);
+    setPlanningChangeSummary([]);
+    setPlannerError("");
+    setPlannerDiagnostics(null);
+    setClarification({ status: "none" });
+    setPublishStatus("");
+    setLastSavedAtMs(null);
+    setPublishedTasks([]);
+  };
+
+  const planningDraftFromSession = useCallback(
+    (session: any | null): PlanningDraft | null => {
+      if (!session) return null;
+      const draft = session?.draft || null;
+      const plan = draft?.current_plan || draft?.currentPlan || null;
+      return {
+        goal: safeString(session?.goal || plan?.title || ""),
+        workspaceRoot: safeString(session?.workspace_root || session?.workspaceRoot || ""),
+        notes: safeString(session?.notes || ""),
+        plannerProvider: safeString(session?.planner_provider || session?.plannerProvider || ""),
+        plannerModel: safeString(session?.planner_model || session?.plannerModel || ""),
+        plan,
+        conversation: draft?.conversation || null,
+        changeSummary: [],
+        plannerError: "",
+        plannerDiagnostics: draft?.planner_diagnostics || draft?.plannerDiagnostics || null,
+        publishedAtMs: Number(session?.published_at_ms || session?.publishedAtMs || 0) || null,
+        updatedAtMs: Number(session?.updated_at_ms || session?.updatedAtMs || 0) || Date.now(),
+        publishedTasks: Array.isArray(session?.published_tasks || session?.publishedTasks)
+          ? session?.published_tasks || session?.publishedTasks
+          : [],
+      };
+    },
+    [
+      resolvedWorkspaceRoot,
+      providerStatus.defaultModel,
+      providerStatus.defaultProvider,
+      workspaceRootSeed,
+    ]
+  );
+
+  const refreshPlannerSessions = useCallback(async () => {
+    if (!client?.workflowPlannerSessions?.list) return [];
+    const response = await client.workflowPlannerSessions.list({
+      project_slug: selectedProjectSlug,
+    });
+    const rows = Array.isArray(response?.sessions) ? response.sessions : [];
+    setPlannerSessions(
+      rows
+        .map((row: any) => ({
+          id: safeString(row?.session_id || row?.sessionId),
+          title: safeString(row?.title),
+          updatedAtMs: Number(row?.updated_at_ms || row?.updatedAtMs || 0) || 0,
+        }))
+        .filter((row: PlannerSessionRow) => row.id)
+        .sort(
+          (left: PlannerSessionRow, right: PlannerSessionRow) =>
+            right.updatedAtMs - left.updatedAtMs
+        )
+    );
+    return rows;
+  }, [client?.workflowPlannerSessions?.list, selectedProjectSlug]);
+
+  const loadPlannerSession = useCallback(
+    async (sessionId: string) => {
+      if (!client?.workflowPlannerSessions?.get || !sessionId) return;
+      const response = await client.workflowPlannerSessions.get(sessionId);
+      const session = response?.session || null;
+      if (!session) return;
+      hydrateDraft(planningDraftFromSession(session));
+      setPublishStatus(
+        session.published_at_ms
+          ? `Last published ${new Date(session.published_at_ms).toLocaleString()}`
+          : ""
+      );
+      setLastSavedAtMs(Number(session.updated_at_ms || 0) || null);
+      setPlannerSessions((current) => {
+        const next = current.filter((row) => row.id !== session.session_id);
+        next.unshift({
+          id: session.session_id,
+          title: safeString(session.title) || "Untitled plan",
+          updatedAtMs: Number(session.updated_at_ms || 0) || Date.now(),
+        });
+        return next.sort((left, right) => right.updatedAtMs - left.updatedAtMs);
+      });
+    },
+    [client?.workflowPlannerSessions?.get, planningDraftFromSession]
+  );
+
+  const patchActivePlannerSession = useCallback(
+    async (patch: Record<string, unknown>) => {
+      if (!selectedSessionId || !client?.workflowPlannerSessions?.patch) return;
+      try {
+        const response = await client.workflowPlannerSessions.patch(
+          selectedSessionId,
+          patch as any
+        );
+        const session = response?.session;
+        if (session?.session_id) {
+          setPlannerSessions((current) => {
+            const next = current.filter((row) => row.id !== session.session_id);
+            next.unshift({
+              id: session.session_id,
+              title: safeString(session.title) || "Untitled plan",
+              updatedAtMs: Number(session.updated_at_ms || 0) || Date.now(),
+            });
+            return next.sort((left, right) => right.updatedAtMs - left.updatedAtMs);
+          });
+        }
+      } catch {
+        // ignore transient patch failures while the user is typing
+      }
+    },
+    [client?.workflowPlannerSessions?.patch, selectedSessionId]
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoadingDraft(true);
+    (async () => {
+      try {
+        let rows = await refreshPlannerSessions();
+        if (!rows.length && client?.workflowPlannerSessions?.create) {
+          const created = await client.workflowPlannerSessions.create({
+            project_slug: selectedProjectSlug,
+            title: plannerSessionDefaultTitle("", Date.now()),
+            workspace_root: resolvedWorkspaceRoot || workspaceRootSeed || "",
+            goal: "",
+            notes: "",
+            planner_provider: providerStatus.defaultProvider || "",
+            planner_model: providerStatus.defaultModel || "",
+            plan_source: "coding_task_planning",
+            allowed_mcp_servers: connectedMcpServers,
+            operator_preferences: plannerOperatorPreferences({
+              plannerProvider,
+              plannerModel,
+              defaultProvider: providerStatus.defaultProvider,
+              defaultModel: providerStatus.defaultModel,
+              selectedProjectSlug,
+              taskSourceType,
+              selectedProject,
+              goal: "",
+              notes: "",
+            }),
+          });
+          const createdSession = created?.session;
+          if (createdSession?.session_id) {
+            rows = [createdSession, ...rows];
+            setPlannerSessions(
+              rows
+                .map((row: any) => ({
+                  id: safeString(row?.session_id || row?.sessionId),
+                  title: safeString(row?.title),
+                  updatedAtMs: Number(row?.updated_at_ms || row?.updatedAtMs || 0) || 0,
+                }))
+                .filter((row: PlannerSessionRow) => row.id)
+                .sort(
+                  (left: PlannerSessionRow, right: PlannerSessionRow) =>
+                    right.updatedAtMs - left.updatedAtMs
+                )
+            );
+          }
+        }
+        const nextSessionId = safeString(rows[0]?.session_id || rows[0]?.sessionId || "");
+        if (nextSessionId) {
+          setSelectedSessionId(nextSessionId);
+        }
+      } catch {
+        // ignore load failures; the page will remain usable for a new session
+      } finally {
+        if (!cancelled) setLoadingDraft(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [
-    localDraftKey,
+    client?.workflowPlannerSessions,
+    connectedMcpServers,
+    plannerModel,
+    plannerProvider,
     providerStatus.defaultModel,
     providerStatus.defaultProvider,
+    refreshPlannerSessions,
     resolvedWorkspaceRoot,
+    selectedProject,
     selectedProjectSlug,
+    taskSourceType,
     workspaceRootSeed,
+  ]);
+
+  useEffect(() => {
+    if (!selectedSessionId) return;
+    let cancelled = false;
+    setLoadingDraft(true);
+    (async () => {
+      try {
+        await loadPlannerSession(selectedSessionId);
+      } catch {
+        hydrateDraft(null);
+      } finally {
+        if (!cancelled) setLoadingDraft(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    selectedSessionId,
+    loadPlannerSession,
+    resolvedWorkspaceRoot,
+    workspaceRootSeed,
+    providerStatus.defaultProvider,
+    providerStatus.defaultModel,
   ]);
 
   useEffect(() => {
@@ -663,25 +843,61 @@ export function TaskPlanningPanel({
       if (!raw) return;
       sessionStorage.removeItem(PLANNER_HANDOFF_KEY);
       const handoff = JSON.parse(raw);
-      setGoal(safeString(handoff?.goal));
-      setWorkspaceRoot(
-        safeString(handoff?.workspaceRoot || handoff?.workspace_root || workspaceRootSeed)
-      );
-      setNotes(safeString(handoff?.notes));
-      setPlannerProvider(safeString(handoff?.plannerProvider || handoff?.planner_provider));
-      setPlannerModel(safeString(handoff?.plannerModel || handoff?.planner_model));
-      setPlanPreview(handoff?.plan ?? null);
-      setPlanningConversation(handoff?.conversation ?? null);
-      setPlanningChangeSummary(Array.isArray(handoff?.changeSummary) ? handoff.changeSummary : []);
-      setPlannerError(safeString(handoff?.plannerError));
-      setPlannerDiagnostics(handoff?.plannerDiagnostics ?? null);
-      setPublishedTasks(Array.isArray(handoff?.publishedTasks) ? handoff.publishedTasks : []);
-      setLastSavedAtMs(Number(handoff?.publishedAtMs || 0) || null);
-      setPublishStatus("Planner handoff loaded from Planner page.");
+      if (!client?.workflowPlannerSessions?.create) return;
+      const loadHandoff = async () => {
+        const response = await client.workflowPlannerSessions.create({
+          project_slug: selectedProjectSlug,
+          title: plannerSessionTitle({
+            goal: handoff?.goal,
+            plan: handoff?.plan,
+            fallbackTime: Date.now(),
+          }),
+          workspace_root: safeString(
+            handoff?.workspaceRoot || handoff?.workspace_root || workspaceRootSeed
+          ),
+          goal: safeString(handoff?.goal),
+          notes: safeString(handoff?.notes),
+          planner_provider: safeString(handoff?.plannerProvider || handoff?.planner_provider),
+          planner_model: safeString(handoff?.plannerModel || handoff?.planner_model),
+          plan_source: "coding_task_planning",
+          plan: handoff?.plan ?? null,
+          conversation: handoff?.conversation ?? null,
+          planner_diagnostics: handoff?.plannerDiagnostics ?? null,
+          plan_revision: handoff?.plan?.plan_revision ?? 1,
+          last_success_materialization: handoff?.lastSuccessMaterialization ?? null,
+          allowed_mcp_servers: Array.isArray(handoff?.allowedMcpServers)
+            ? handoff.allowedMcpServers
+            : connectedMcpServers,
+          operator_preferences: handoff?.operatorPreferences ?? null,
+        });
+        const session = response?.session;
+        if (session?.session_id) {
+          setPlannerSessions((current) =>
+            [
+              {
+                id: session.session_id,
+                title: safeString(session.title) || "Untitled plan",
+                updatedAtMs: Number(session.updated_at_ms || 0) || Date.now(),
+              },
+              ...current.filter((row) => row.id !== session.session_id),
+            ].sort((left, right) => right.updatedAtMs - left.updatedAtMs)
+          );
+          setSelectedSessionId(session.session_id);
+          hydrateDraft(planningDraftFromSession(session));
+          setPublishStatus("Planner handoff loaded from Planner page.");
+        }
+      };
+      void loadHandoff();
     } catch {
       // ignore
     }
-  }, [selectedProjectSlug, workspaceRootSeed]);
+  }, [
+    client?.workflowPlannerSessions?.create,
+    connectedMcpServers,
+    planningDraftFromSession,
+    selectedProjectSlug,
+    workspaceRootSeed,
+  ]);
 
   useEffect(() => {
     if (!workspaceRoot && resolvedWorkspaceRoot) {
@@ -696,22 +912,57 @@ export function TaskPlanningPanel({
   }, [plannerProvider, plannerModel]);
 
   useEffect(() => {
-    if (loadingDraft) return;
-    saveDraft(selectedProjectSlug, {
+    if (loadingDraft || !selectedSessionId) return;
+    const plan = planPreview || null;
+    const currentPlanId = safeString(plan?.plan_id || "");
+    const draft =
+      plan && plan.plan_id
+        ? {
+            initial_plan: plan,
+            current_plan: plan,
+            plan_revision: Number(plan.plan_revision || 1) || 1,
+            conversation: planningConversation || {
+              conversation_id: `wfchat-${selectedSessionId}`,
+              plan_id: plan.plan_id,
+              created_at_ms: Date.now(),
+              updated_at_ms: Date.now(),
+              messages: [],
+            },
+            planner_diagnostics: plannerDiagnostics,
+            last_success_materialization: null,
+          }
+        : undefined;
+    void patchActivePlannerSession({
+      title: plannerSessionTitle({
+        goal,
+        plan,
+        fallbackTime: lastSavedAtMs || Date.now(),
+      }),
+      workspace_root: workspaceRoot,
       goal,
-      workspaceRoot,
       notes,
-      plannerProvider,
-      plannerModel,
-      plan: planPreview,
-      conversation: planningConversation,
-      changeSummary: planningChangeSummary,
-      plannerError,
-      plannerDiagnostics,
-      publishedAtMs: lastSavedAtMs,
-      publishedTasks,
+      planner_provider: plannerProvider,
+      planner_model: plannerModel,
+      plan_source: "coding_task_planning",
+      allowed_mcp_servers: connectedMcpServers,
+      operator_preferences: plannerOperatorPreferences({
+        plannerProvider,
+        plannerModel,
+        defaultProvider: providerStatus.defaultProvider,
+        defaultModel: providerStatus.defaultModel,
+        selectedProjectSlug,
+        taskSourceType,
+        selectedProject,
+        goal,
+        notes,
+      }),
+      current_plan_id: currentPlanId || undefined,
+      draft,
+      published_at_ms: lastSavedAtMs || undefined,
+      published_tasks: publishedTasks.length ? publishedTasks : undefined,
     });
   }, [
+    connectedMcpServers,
     goal,
     lastSavedAtMs,
     loadingDraft,
@@ -723,10 +974,152 @@ export function TaskPlanningPanel({
     planningConversation,
     publishedTasks,
     selectedProjectSlug,
+    selectedSessionId,
+    taskSourceType,
     plannerModel,
     plannerProvider,
+    patchActivePlannerSession,
     workspaceRoot,
+    providerStatus.defaultProvider,
+    providerStatus.defaultModel,
+    selectedProject,
   ]);
+
+  const createNewPlannerSession = async () => {
+    if (!client?.workflowPlannerSessions?.create) return;
+    try {
+      const response = await client.workflowPlannerSessions.create({
+        project_slug: selectedProjectSlug,
+        title: plannerSessionTitle({
+          goal: "",
+          fallbackTime: Date.now(),
+        }),
+        workspace_root: resolvedWorkspaceRoot || workspaceRootSeed || workspaceRoot || "",
+        goal: "",
+        notes: "",
+        planner_provider: providerStatus.defaultProvider || "",
+        planner_model: providerStatus.defaultModel || "",
+        plan_source: "coding_task_planning",
+        allowed_mcp_servers: connectedMcpServers,
+        operator_preferences: plannerOperatorPreferences({
+          plannerProvider: providerStatus.defaultProvider || "",
+          plannerModel: providerStatus.defaultModel || "",
+          defaultProvider: providerStatus.defaultProvider,
+          defaultModel: providerStatus.defaultModel,
+          selectedProjectSlug,
+          taskSourceType,
+          selectedProject,
+          goal: "",
+          notes: "",
+        }),
+      });
+      const session = response?.session;
+      if (session?.session_id) {
+        setPlannerSessions((current) =>
+          [
+            {
+              id: session.session_id,
+              title: safeString(session.title) || "Untitled plan",
+              updatedAtMs: Number(session.updated_at_ms || 0) || Date.now(),
+            },
+            ...current.filter((row) => row.id !== session.session_id),
+          ].sort((left, right) => right.updatedAtMs - left.updatedAtMs)
+        );
+        setSelectedSessionId(session.session_id);
+        setSessionsOpen(false);
+        hydrateDraft(planningDraftFromSession(session));
+        toast("ok", "Started a new planner session.");
+      }
+    } catch (error) {
+      toast("err", error instanceof Error ? error.message : String(error));
+    }
+  };
+
+  const renamePlannerSession = async (sessionId: string) => {
+    const session = plannerSessions.find((row) => row.id === sessionId);
+    if (!session || !client?.workflowPlannerSessions?.patch) return;
+    const nextTitle = window.prompt("Rename planner session", session.title || "Untitled plan");
+    if (nextTitle === null) return;
+    const title = safeString(nextTitle);
+    if (!title) return;
+    try {
+      const response = await client.workflowPlannerSessions.patch(sessionId, { title });
+      const updated = response?.session;
+      if (updated?.session_id) {
+        setPlannerSessions((current) =>
+          current
+            .filter((row) => row.id !== updated.session_id)
+            .concat({
+              id: updated.session_id,
+              title: safeString(updated.title) || title,
+              updatedAtMs: Number(updated.updated_at_ms || 0) || Date.now(),
+            })
+            .sort((left, right) => right.updatedAtMs - left.updatedAtMs)
+        );
+        if (selectedSessionId === sessionId) {
+          setSelectedSessionId(updated.session_id);
+        }
+      }
+      toast("ok", "Planner session renamed.");
+    } catch (error) {
+      toast("err", error instanceof Error ? error.message : String(error));
+    }
+  };
+
+  const duplicatePlannerSession = async (sessionId: string) => {
+    const session = plannerSessions.find((row) => row.id === sessionId);
+    if (!session || !client?.workflowPlannerSessions?.duplicate) return;
+    try {
+      const response = await client.workflowPlannerSessions.duplicate(sessionId, {
+        title: `Copy of ${session.title || "Untitled plan"}`,
+      });
+      const copied = response?.session;
+      if (copied?.session_id) {
+        setPlannerSessions((current) =>
+          current
+            .filter((row) => row.id !== copied.session_id)
+            .concat({
+              id: copied.session_id,
+              title: safeString(copied.title) || `Copy of ${session.title || "Untitled plan"}`,
+              updatedAtMs: Number(copied.updated_at_ms || 0) || Date.now(),
+            })
+            .sort((left, right) => right.updatedAtMs - left.updatedAtMs)
+        );
+        setSelectedSessionId(copied.session_id);
+        setSessionsOpen(false);
+      }
+      toast("ok", "Planner session duplicated.");
+    } catch (error) {
+      toast("err", error instanceof Error ? error.message : String(error));
+    }
+  };
+
+  const deletePlannerSession = async (sessionId: string) => {
+    const session = plannerSessions.find((row) => row.id === sessionId);
+    if (!session) return;
+    if (
+      typeof window !== "undefined" &&
+      !window.confirm(`Delete planner session "${session.title || "Untitled plan"}"?`)
+    ) {
+      return;
+    }
+    try {
+      await client.workflowPlannerSessions.delete(sessionId);
+      const remaining = plannerSessions.filter((row) => row.id !== sessionId);
+      setPlannerSessions(remaining);
+      if (selectedSessionId === sessionId) {
+        const nextSessionId = remaining[0]?.id || "";
+        if (nextSessionId) {
+          setSelectedSessionId(nextSessionId);
+        } else {
+          void createNewPlannerSession();
+        }
+      }
+      toast("ok", "Planner session deleted.");
+    } catch (error) {
+      toast("err", error instanceof Error ? error.message : String(error));
+    }
+  };
 
   const previewMutation = async (messageOverride?: string) => {
     const trimmedGoal = safeString(messageOverride ?? plannerInput ?? goal);
@@ -743,7 +1136,7 @@ export function TaskPlanningPanel({
       toast("warn", "Workspace root must be an absolute path.");
       return;
     }
-    if (!client?.workflowPlans?.chatStart) {
+    if (!client?.workflowPlannerSessions?.start || !selectedSessionId) {
       toast("err", "This control panel build is missing workflow planner support.");
       return;
     }
@@ -754,7 +1147,7 @@ export function TaskPlanningPanel({
     let nextState: "idle" | "clarifying" = "idle";
     setPlanningState("generating");
     try {
-      const response = await client.workflowPlans.chatStart({
+      const response = await client.workflowPlannerSessions.start(selectedSessionId, {
         prompt: [
           `Create a Tandem workflow plan for the repo at ${trimmedWorkspaceRoot} to implement this goal: ${trimmedGoal}`,
           "Use small ordered implementation steps.",
@@ -809,7 +1202,7 @@ export function TaskPlanningPanel({
       }
       setLastSavedAtMs(Date.now());
       setPublishedTasks([]);
-      setSaveStatus("Plan saved locally.");
+      setSaveStatus("Plan synced to session.");
       setPlannerInput("");
       toast(
         "ok",
@@ -819,6 +1212,17 @@ export function TaskPlanningPanel({
       );
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      if (isMissingWorkflowPlanError(message)) {
+        setPlanPreview(null);
+        setPlanningConversation(null);
+        setPlanningChangeSummary([]);
+        setPlannerError("");
+        setPlannerDiagnostics(null);
+        setClarification({ status: "none" });
+        toast("info", "The previous planner session expired. Starting a fresh planning chat.");
+        await previewMutation(trimmedGoal);
+        return;
+      }
       setPlannerError(message);
       setClarification({ status: "none" });
       setSaveStatus(
@@ -833,7 +1237,7 @@ export function TaskPlanningPanel({
   };
 
   const reviseMutation = async (messageOverride?: string) => {
-    if (!client?.workflowPlans?.chatMessage || !planPreview?.plan_id) {
+    if (!client?.workflowPlannerSessions?.message || !selectedSessionId) {
       toast("warn", "Generate a plan first before revising it.");
       return;
     }
@@ -849,8 +1253,7 @@ export function TaskPlanningPanel({
     let nextState: "idle" | "clarifying" = "idle";
     setPlanningState("revising");
     try {
-      const response = await client.workflowPlans.chatMessage({
-        plan_id: planPreview.plan_id,
+      const response = await client.workflowPlannerSessions.message(selectedSessionId, {
         message: clarificationNeeded
           ? trimmedNotes
           : [
@@ -897,11 +1300,22 @@ export function TaskPlanningPanel({
       }
       setLastSavedAtMs(Date.now());
       setPublishedTasks([]);
-      setSaveStatus("Revision saved locally.");
+      setSaveStatus("Revision synced to session.");
       setPlannerInput("");
       toast("ok", "Plan revised.");
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      if (isMissingWorkflowPlanError(message)) {
+        setPlanPreview(null);
+        setPlanningConversation(null);
+        setPlanningChangeSummary([]);
+        setPlannerError("");
+        setPlannerDiagnostics(null);
+        setClarification({ status: "none" });
+        toast("info", "The previous planner session expired. Starting a fresh planning chat.");
+        await previewMutation(trimmedNotes);
+        return;
+      }
       setPlannerError(message);
       setClarification({ status: "none" });
       setSaveStatus(
@@ -916,7 +1330,7 @@ export function TaskPlanningPanel({
   };
 
   const resetMutation = async () => {
-    if (!planPreview?.plan_id || !client?.workflowPlans?.chatReset) {
+    if (!client?.workflowPlannerSessions?.reset || !selectedSessionId) {
       setGoal("");
       setPlannerInput("");
       setNotes("");
@@ -927,28 +1341,12 @@ export function TaskPlanningPanel({
       setPlannerDiagnostics(null);
       setClarification({ status: "none" });
       setPublishStatus("");
-      setSaveStatus("Draft reset locally.");
-      saveDraft(selectedProjectSlug, {
-        goal: "",
-        workspaceRoot,
-        notes: "",
-        plannerProvider,
-        plannerModel,
-        plan: null,
-        conversation: null,
-        changeSummary: [],
-        plannerError: "",
-        plannerDiagnostics: null,
-        publishedAtMs: null,
-        publishedTasks: [],
-      });
+      setSaveStatus("Draft cleared.");
       return;
     }
     setResetting(true);
     try {
-      const response = await client.workflowPlans.chatReset({
-        plan_id: planPreview.plan_id,
-      });
+      const response = await client.workflowPlannerSessions.reset(selectedSessionId);
       setPlanPreview(response?.plan || null);
       setPlanningConversation(response?.conversation || null);
       setPlannerInput("");
@@ -962,6 +1360,21 @@ export function TaskPlanningPanel({
       toast("ok", "Plan reset.");
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      if (isMissingWorkflowPlanError(message)) {
+        setGoal("");
+        setPlannerInput("");
+        setNotes("");
+        setPlanPreview(null);
+        setPlanningConversation(null);
+        setPlanningChangeSummary([]);
+        setPlannerError("");
+        setPlannerDiagnostics(null);
+        setClarification({ status: "none" });
+        setPublishStatus("");
+        setSaveStatus("The expired planner session was cleared locally.");
+        toast("info", "The previous planner session had expired, so the local draft was reset.");
+        return;
+      }
       setPlannerError(message);
       toast("err", message);
     } finally {
@@ -1076,20 +1489,6 @@ export function TaskPlanningPanel({
         setPublishedTasks(publishedTasks);
         setPublishStatus(`Published ${publishedTasks.length} GitHub tasks into Ready.`);
         setLastSavedAtMs(Date.now());
-        saveDraft(selectedProjectSlug, {
-          goal,
-          workspaceRoot,
-          notes,
-          plannerProvider,
-          plannerModel,
-          plan: planPreview,
-          conversation: planningConversation,
-          changeSummary: planningChangeSummary,
-          plannerError,
-          plannerDiagnostics,
-          publishedAtMs: Date.now(),
-          publishedTasks,
-        });
         await Promise.all([
           queryClient.invalidateQueries({
             queryKey: ["coding-workflows", "aca-project-board", selectedProjectSlug],
@@ -1110,23 +1509,6 @@ export function TaskPlanningPanel({
           notes,
           plannerProvider,
           plannerModel,
-        });
-        saveDraft(selectedProjectSlug, {
-          goal,
-          workspaceRoot,
-          notes,
-          plannerProvider,
-          plannerModel,
-          plan: planPreview,
-          conversation: planningConversation,
-          changeSummary: planningChangeSummary,
-          plannerError,
-          plannerDiagnostics,
-          publishedAtMs: Date.now(),
-          publishedTasks: tasks.map((task) => ({
-            title: task.title,
-            publishedAtMs: Date.now(),
-          })),
         });
         setPublishedTasks(
           tasks.map((task) => ({
@@ -1185,17 +1567,108 @@ export function TaskPlanningPanel({
     planningChangeSummary.length > 0 ||
     (Array.isArray(planningConversation?.messages) && planningConversation.messages.length > 0);
 
+  useEffect(() => {
+    if (rootRef.current) renderIcons(rootRef.current);
+  }, [
+    clarification.status,
+    displayTasks.length,
+    hasPlannerResponse,
+    isPlanning,
+    plannerError,
+    planPreview,
+    planningChangeSummary.length,
+    planningConversation,
+    publishStatus,
+    saveStatus,
+  ]);
+
   return (
-    <div
-      className={`grid gap-4 ${
-        hasPlannerResponse ? "xl:grid-cols-[minmax(0,1.1fr)_minmax(340px,0.9fr)]" : ""
-      }`}
-    >
+    <div ref={rootRef} className="grid gap-4">
       <PanelCard
         title={plannerTitle}
         subtitle="Use the built-in scrum-master planner to turn a goal into reviewable implementation tasks."
       >
         <div className="grid gap-4">
+          <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <div className="text-xs uppercase tracking-wide text-slate-500">
+                  Planner sessions
+                </div>
+                <div className="tcp-subtle text-xs">
+                  Keep multiple coding plans per project instead of one long planner thread.
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  className="tcp-btn"
+                  onClick={() => setSessionsOpen((open) => !open)}
+                >
+                  <i data-lucide="history"></i>
+                  {sessionsOpen ? "Hide sessions" : "Show sessions"}
+                </button>
+                <button type="button" className="tcp-btn" onClick={createNewPlannerSession}>
+                  <i data-lucide="plus"></i>
+                  New plan
+                </button>
+              </div>
+            </div>
+            {sessionsOpen ? (
+              <div className="mt-3 grid gap-2">
+                {plannerSessions.map((session) => (
+                  <div
+                    key={session.id}
+                    className="flex items-center gap-2 rounded-xl border border-white/10 bg-black/20 p-2"
+                  >
+                    <button
+                      type="button"
+                      className={`tcp-btn flex-1 justify-start text-left ${
+                        session.id === selectedSessionId ? "tcp-btn-primary" : ""
+                      }`}
+                      onClick={() => {
+                        setSelectedSessionId(session.id);
+                        setSessionsOpen(false);
+                      }}
+                      title={session.title}
+                    >
+                      <span className="truncate">{session.title || "Untitled plan"}</span>
+                    </button>
+                    <button
+                      type="button"
+                      className="tcp-btn"
+                      title="Rename session"
+                      onClick={() => void renamePlannerSession(session.id)}
+                    >
+                      <i data-lucide="pencil"></i>
+                    </button>
+                    <button
+                      type="button"
+                      className="tcp-btn"
+                      title="Duplicate session"
+                      onClick={() => void duplicatePlannerSession(session.id)}
+                    >
+                      <i data-lucide="copy"></i>
+                    </button>
+                    <div className="tcp-subtle hidden text-xs sm:block">
+                      {session.updatedAtMs
+                        ? new Date(session.updatedAtMs).toLocaleString()
+                        : "Saved locally"}
+                    </div>
+                    <button
+                      type="button"
+                      className="tcp-btn"
+                      title="Delete session"
+                      onClick={() => deletePlannerSession(session.id)}
+                    >
+                      <i data-lucide="trash-2"></i>
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+          </div>
+
           <div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/5 p-4">
             <div className="flex flex-wrap items-center gap-2">
               <Badge tone="ok">scrum-master</Badge>
@@ -1343,6 +1816,7 @@ export function TaskPlanningPanel({
                 onClick={() => void previewMutation(plannerInput || goal)}
                 disabled={isPlanning}
               >
+                <i data-lucide="refresh-cw"></i>
                 Regenerate plan
               </button>
             ) : null}
@@ -1352,6 +1826,7 @@ export function TaskPlanningPanel({
               disabled={resetting || isPlanning}
               onClick={() => void resetMutation()}
             >
+              <i data-lucide="rotate-ccw"></i>
               {resetting ? "Resetting…" : "Reset plan"}
             </button>
             <button
@@ -1369,32 +1844,64 @@ export function TaskPlanningPanel({
                 isPlanning || (!plannerInput && !notes && !plannerError && !plannerDiagnostics)
               }
             >
-              Clear chat and warnings
+              <i data-lucide="eraser"></i>
+              Clear composer and warnings
             </button>
             <button
               type="button"
               className="tcp-btn"
               onClick={() => {
-                saveDraft(selectedProjectSlug, {
+                void patchActivePlannerSession({
+                  title: plannerSessionTitle({
+                    goal,
+                    plan: planPreview,
+                    fallbackTime: lastSavedAtMs || Date.now(),
+                  }),
+                  workspace_root: workspaceRoot,
                   goal,
-                  workspaceRoot,
                   notes,
-                  plannerProvider,
-                  plannerModel,
-                  plan: planPreview,
-                  conversation: planningConversation,
-                  changeSummary: planningChangeSummary,
-                  plannerError,
-                  plannerDiagnostics,
-                  publishedAtMs: lastSavedAtMs,
-                  publishedTasks,
+                  planner_provider: plannerProvider,
+                  planner_model: plannerModel,
+                  plan_source: "coding_task_planning",
+                  allowed_mcp_servers: connectedMcpServers,
+                  operator_preferences: plannerOperatorPreferences({
+                    plannerProvider,
+                    plannerModel,
+                    defaultProvider: providerStatus.defaultProvider,
+                    defaultModel: providerStatus.defaultModel,
+                    selectedProjectSlug,
+                    taskSourceType,
+                    selectedProject,
+                    goal,
+                    notes,
+                  }),
+                  current_plan_id: planPreview?.plan_id,
+                  draft: planPreview
+                    ? {
+                        initial_plan: planPreview,
+                        current_plan: planPreview,
+                        plan_revision: Number(planPreview.plan_revision || 1) || 1,
+                        conversation: planningConversation || {
+                          conversation_id: `wfchat-${selectedSessionId}`,
+                          plan_id: planPreview.plan_id,
+                          created_at_ms: Date.now(),
+                          updated_at_ms: Date.now(),
+                          messages: [],
+                        },
+                        planner_diagnostics: plannerDiagnostics,
+                        last_success_materialization: null,
+                      }
+                    : undefined,
+                  published_at_ms: lastSavedAtMs || undefined,
+                  published_tasks: publishedTasks.length ? publishedTasks : undefined,
                 });
-                setSaveStatus("Draft saved locally.");
-                toast("ok", "Task planning draft saved locally.");
+                setSaveStatus("Planner session synced.");
+                toast("ok", "Task planning session synced.");
               }}
               disabled={isPlanning}
             >
-              Save draft
+              <i data-lucide="save"></i>
+              Sync session
             </button>
             <button
               type="button"
@@ -1409,6 +1916,7 @@ export function TaskPlanningPanel({
               }}
               disabled={isPlanning}
             >
+              <i data-lucide="copy"></i>
               Copy markdown
             </button>
           </div>
@@ -1471,6 +1979,84 @@ export function TaskPlanningPanel({
       {hasPlannerResponse ? (
         <div className="grid gap-4">
           <PanelCard
+            title="Plan details"
+            subtitle="Planner metadata and markdown stay visible here"
+          >
+            {planPreview ? (
+              <div className="grid gap-3">
+                <div className="grid gap-2 text-sm text-slate-300">
+                  <div>
+                    <span className="tcp-subtle">Title:</span>{" "}
+                    {safeString(planPreview?.title) || "Untitled plan"}
+                  </div>
+                  <div>
+                    <span className="tcp-subtle">Confidence:</span>{" "}
+                    {safeString(planPreview?.confidence) || "unknown"}
+                  </div>
+                  <div>
+                    <span className="tcp-subtle">Plan source:</span>{" "}
+                    {safeString(planPreview?.plan_source || planPreview?.planSource) ||
+                      "coding_task_planning"}
+                  </div>
+                </div>
+                {typeof planPreview?.description === "string" && planPreview.description.trim() ? (
+                  <div className="rounded-2xl border border-white/10 bg-black/20 p-3">
+                    <div className="text-xs uppercase tracking-wide text-slate-500">
+                      Planner markdown
+                    </div>
+                    <div
+                      className="tcp-markdown tcp-markdown-ai mt-2 text-sm"
+                      dangerouslySetInnerHTML={{
+                        __html: renderMarkdownSafe(String(planPreview.description || "")),
+                      }}
+                    />
+                  </div>
+                ) : null}
+                <div className="grid gap-2">
+                  <button
+                    type="button"
+                    className="tcp-btn-primary"
+                    disabled={
+                      publishing ||
+                      isPlanning ||
+                      !goal.trim() ||
+                      !workspaceRoot.trim() ||
+                      clarificationNeeded ||
+                      plannerTimedOut ||
+                      planIsFallbackOnly
+                    }
+                    onClick={() => void publishTasks()}
+                  >
+                    <i
+                      data-lucide={
+                        isGitHubProject && canPublishToGitHub ? "badge-check" : "arrow-up-circle"
+                      }
+                    ></i>
+                    {publishing
+                      ? "Publishing…"
+                      : isGitHubProject && canPublishToGitHub
+                        ? "Approve and publish to GitHub Project"
+                        : "Save local task bundle"}
+                  </button>
+                  <div className="text-xs text-slate-500">
+                    {clarificationNeeded
+                      ? "Answer the planner's question before approving or publishing tasks."
+                      : plannerTimedOut
+                        ? "Retry the planner revision or switch models before approving tasks."
+                        : planIsFallbackOnly
+                          ? "Wait for a real task breakdown before approving or publishing tasks."
+                          : isGitHubProject && canPublishToGitHub
+                            ? "This will create GitHub issues, add each issue to the selected project board, and move it into Ready when the board metadata is available."
+                            : "Local kanban mode saves the plan locally so you can apply it to the board file or keep it as a durable draft."}
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <EmptyState text="No plan has been generated yet." />
+            )}
+          </PanelCard>
+
+          <PanelCard
             title="Planned tasks"
             subtitle="Review the generated backlog before publishing"
           >
@@ -1526,79 +2112,6 @@ export function TaskPlanningPanel({
               />
             ) : (
               <EmptyState text="Generate a plan to see task drafts here." />
-            )}
-          </PanelCard>
-
-          <PanelCard
-            title="Plan details"
-            subtitle="Planner metadata and markdown stay visible here"
-          >
-            {planPreview ? (
-              <div className="grid gap-3">
-                <div className="grid gap-2 text-sm text-slate-300">
-                  <div>
-                    <span className="tcp-subtle">Title:</span>{" "}
-                    {safeString(planPreview?.title) || "Untitled plan"}
-                  </div>
-                  <div>
-                    <span className="tcp-subtle">Confidence:</span>{" "}
-                    {safeString(planPreview?.confidence) || "unknown"}
-                  </div>
-                  <div>
-                    <span className="tcp-subtle">Plan source:</span>{" "}
-                    {safeString(planPreview?.plan_source || planPreview?.planSource) ||
-                      "coding_task_planning"}
-                  </div>
-                </div>
-                {typeof planPreview?.description === "string" && planPreview.description.trim() ? (
-                  <div className="rounded-2xl border border-white/10 bg-black/20 p-3">
-                    <div className="text-xs uppercase tracking-wide text-slate-500">
-                      Planner markdown
-                    </div>
-                    <div
-                      className="tcp-markdown tcp-markdown-ai mt-2 text-sm"
-                      dangerouslySetInnerHTML={{
-                        __html: renderMarkdownSafe(String(planPreview.description || "")),
-                      }}
-                    />
-                  </div>
-                ) : null}
-                <div className="grid gap-2">
-                  <button
-                    type="button"
-                    className="tcp-btn-primary"
-                    disabled={
-                      publishing ||
-                      isPlanning ||
-                      !goal.trim() ||
-                      !workspaceRoot.trim() ||
-                      clarificationNeeded ||
-                      plannerTimedOut ||
-                      planIsFallbackOnly
-                    }
-                    onClick={() => void publishTasks()}
-                  >
-                    {publishing
-                      ? "Publishing…"
-                      : isGitHubProject && canPublishToGitHub
-                        ? "Approve and publish to GitHub Project"
-                        : "Save local task bundle"}
-                  </button>
-                  <div className="text-xs text-slate-500">
-                    {clarificationNeeded
-                      ? "Answer the planner's question before approving or publishing tasks."
-                      : plannerTimedOut
-                        ? "Retry the planner revision or switch models before approving tasks."
-                        : planIsFallbackOnly
-                          ? "Wait for a real task breakdown before approving or publishing tasks."
-                          : isGitHubProject && canPublishToGitHub
-                            ? "This will create GitHub issues, add each issue to the selected project board, and move it into Ready when the board metadata is available."
-                            : "Local kanban mode saves the plan locally so you can apply it to the board file or keep it as a durable draft."}
-                  </div>
-                </div>
-              </div>
-            ) : (
-              <EmptyState text="No plan has been generated yet." />
             )}
           </PanelCard>
         </div>

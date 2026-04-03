@@ -77,6 +77,14 @@ pub struct AppState {
     pub workflow_plans: Arc<RwLock<std::collections::HashMap<String, WorkflowPlan>>>,
     pub workflow_plan_drafts:
         Arc<RwLock<std::collections::HashMap<String, WorkflowPlanDraftRecord>>>,
+    pub workflow_planner_sessions: Arc<
+        RwLock<
+            std::collections::HashMap<
+                String,
+                crate::http::workflow_planner::WorkflowPlannerSessionRecord,
+            >,
+        >,
+    >,
     pub optimization_campaigns:
         Arc<RwLock<std::collections::HashMap<String, OptimizationCampaignRecord>>>,
     pub optimization_experiments:
@@ -109,6 +117,7 @@ pub struct AppState {
     pub bug_monitor_posts_path: PathBuf,
     pub external_actions_path: PathBuf,
     pub workflow_runs_path: PathBuf,
+    pub workflow_planner_sessions_path: PathBuf,
     pub workflow_hook_overrides_path: PathBuf,
     pub agent_teams: AgentTeamRuntime,
     pub web_ui_enabled: Arc<AtomicBool>,
@@ -185,6 +194,7 @@ impl AppState {
             automation_scheduler_stopping: Arc::new(AtomicBool::new(false)),
             workflow_plans: Arc::new(RwLock::new(std::collections::HashMap::new())),
             workflow_plan_drafts: Arc::new(RwLock::new(std::collections::HashMap::new())),
+            workflow_planner_sessions: Arc::new(RwLock::new(std::collections::HashMap::new())),
             optimization_campaigns: Arc::new(RwLock::new(std::collections::HashMap::new())),
             optimization_experiments: Arc::new(RwLock::new(std::collections::HashMap::new())),
             bug_monitor_config: Arc::new(
@@ -214,6 +224,7 @@ impl AppState {
             bug_monitor_posts_path: config::paths::resolve_bug_monitor_posts_path(),
             external_actions_path: config::paths::resolve_external_actions_path(),
             workflow_runs_path: config::paths::resolve_workflow_runs_path(),
+            workflow_planner_sessions_path: config::paths::resolve_workflow_planner_sessions_path(),
             workflow_hook_overrides_path: config::paths::resolve_workflow_hook_overrides_path(),
             agent_teams: AgentTeamRuntime::new(config::paths::resolve_agent_team_audit_path()),
             web_ui_enabled: Arc::new(AtomicBool::new(false)),
@@ -372,6 +383,7 @@ impl AppState {
         let _ = self.load_bug_monitor_incidents().await;
         let _ = self.load_bug_monitor_posts().await;
         let _ = self.load_external_actions().await;
+        let _ = self.load_workflow_planner_sessions().await;
         let _ = self.load_workflow_runs().await;
         let _ = self.load_workflow_hook_overrides().await;
         let _ = self.reload_workflows().await;
@@ -2657,6 +2669,161 @@ impl AppState {
 
     pub async fn get_workflow_plan_draft(&self, plan_id: &str) -> Option<WorkflowPlanDraftRecord> {
         self.workflow_plan_drafts.read().await.get(plan_id).cloned()
+    }
+
+    pub async fn load_workflow_planner_sessions(&self) -> anyhow::Result<()> {
+        if !self.workflow_planner_sessions_path.exists() {
+            return Ok(());
+        }
+        let raw = fs::read_to_string(&self.workflow_planner_sessions_path).await?;
+        let parsed = serde_json::from_str::<
+            std::collections::HashMap<
+                String,
+                crate::http::workflow_planner::WorkflowPlannerSessionRecord,
+            >,
+        >(&raw)
+        .unwrap_or_default();
+        self.replace_workflow_planner_sessions(parsed).await?;
+        Ok(())
+    }
+
+    pub async fn persist_workflow_planner_sessions(&self) -> anyhow::Result<()> {
+        if let Some(parent) = self.workflow_planner_sessions_path.parent() {
+            fs::create_dir_all(parent).await?;
+        }
+        let payload = {
+            let guard = self.workflow_planner_sessions.read().await;
+            serde_json::to_string_pretty(&*guard)?
+        };
+        fs::write(&self.workflow_planner_sessions_path, payload).await?;
+        Ok(())
+    }
+
+    async fn replace_workflow_planner_sessions(
+        &self,
+        sessions: std::collections::HashMap<
+            String,
+            crate::http::workflow_planner::WorkflowPlannerSessionRecord,
+        >,
+    ) -> anyhow::Result<()> {
+        {
+            let mut sessions_guard = self.workflow_planner_sessions.write().await;
+            *sessions_guard = sessions.clone();
+        }
+        {
+            let mut plans = self.workflow_plans.write().await;
+            let mut drafts = self.workflow_plan_drafts.write().await;
+            plans.clear();
+            drafts.clear();
+            for session in sessions.values() {
+                if let Some(draft) = session.draft.as_ref() {
+                    plans.insert(
+                        draft.current_plan.plan_id.clone(),
+                        draft.current_plan.clone(),
+                    );
+                    drafts.insert(draft.current_plan.plan_id.clone(), draft.clone());
+                }
+            }
+        }
+        Ok(())
+    }
+
+    async fn sync_workflow_planner_session_cache(
+        &self,
+        session: &crate::http::workflow_planner::WorkflowPlannerSessionRecord,
+    ) {
+        if let Some(draft) = session.draft.as_ref() {
+            self.workflow_plans.write().await.insert(
+                draft.current_plan.plan_id.clone(),
+                draft.current_plan.clone(),
+            );
+            self.workflow_plan_drafts
+                .write()
+                .await
+                .insert(draft.current_plan.plan_id.clone(), draft.clone());
+        }
+    }
+
+    pub async fn put_workflow_planner_session(
+        &self,
+        mut session: crate::http::workflow_planner::WorkflowPlannerSessionRecord,
+    ) -> anyhow::Result<crate::http::workflow_planner::WorkflowPlannerSessionRecord> {
+        if session.session_id.trim().is_empty() {
+            anyhow::bail!("session_id is required");
+        }
+        if session.project_slug.trim().is_empty() {
+            anyhow::bail!("project_slug is required");
+        }
+        let now = now_ms();
+        if session.created_at_ms == 0 {
+            session.created_at_ms = now;
+        }
+        session.updated_at_ms = now;
+        {
+            self.workflow_planner_sessions
+                .write()
+                .await
+                .insert(session.session_id.clone(), session.clone());
+        }
+        self.sync_workflow_planner_session_cache(&session).await;
+        self.persist_workflow_planner_sessions().await?;
+        Ok(session)
+    }
+
+    pub async fn get_workflow_planner_session(
+        &self,
+        session_id: &str,
+    ) -> Option<crate::http::workflow_planner::WorkflowPlannerSessionRecord> {
+        self.workflow_planner_sessions
+            .read()
+            .await
+            .get(session_id)
+            .cloned()
+    }
+
+    pub async fn list_workflow_planner_sessions(
+        &self,
+        project_slug: Option<&str>,
+    ) -> Vec<crate::http::workflow_planner::WorkflowPlannerSessionRecord> {
+        let mut rows = self
+            .workflow_planner_sessions
+            .read()
+            .await
+            .values()
+            .filter(|session| {
+                project_slug
+                    .map(|slug| session.project_slug == slug)
+                    .unwrap_or(true)
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        rows.sort_by(|a, b| b.updated_at_ms.cmp(&a.updated_at_ms));
+        rows
+    }
+
+    pub async fn delete_workflow_planner_session(
+        &self,
+        session_id: &str,
+    ) -> Option<crate::http::workflow_planner::WorkflowPlannerSessionRecord> {
+        let removed = self
+            .workflow_planner_sessions
+            .write()
+            .await
+            .remove(session_id);
+        if let Some(session) = removed.as_ref() {
+            if let Some(draft) = session.draft.as_ref() {
+                self.workflow_plan_drafts
+                    .write()
+                    .await
+                    .remove(&draft.current_plan.plan_id);
+                self.workflow_plans
+                    .write()
+                    .await
+                    .remove(&draft.current_plan.plan_id);
+            }
+        }
+        let _ = self.persist_workflow_planner_sessions().await;
+        removed
     }
 
     pub async fn put_optimization_campaign(

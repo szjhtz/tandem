@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Backend-backed coder planner sessions**:
+  - Added persisted planner-session records and session-scoped endpoints so one project can hold multiple independent coding plans without a single giant thread.
+  - Added a Chat-style planner session rail in the control panel with `New plan`, switch, rename, duplicate, and delete actions.
+  - Added stale-plan recovery so expired `plan_id` drafts can be rehydrated from session state instead of leaving the coder planner stuck on 404s.
+  - Added control-panel client smoke coverage plus backend CRUD/recovery tests for the new planner-session flow.
 - **Tandem TUI exploration transcript summaries**:
   - Added durable exploration summaries that turn read/search/list tool bursts into compact transcript entries instead of leaving that work visible only in the live activity strip.
   - Added exploration-batch accumulation, burst-boundary flushing, and target-change splitting so long exploration runs can emit multiple focused summaries as the AI shifts between workspace areas.
@@ -29,6 +34,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Improved long command/tool result rendering with stable head/tail truncation so operators can see both the opening context and the final output without flooding narrow terminals.
   - Added structured rollback transcript cells for preview, execute, and receipt flows so guarded rollback work now follows one compact terminal UX pattern with action badges, status summaries, and focused next steps.
   - Continued landing new TUI behavior in modular UI and activity files rather than growing `app.rs`, matching the current maintainability plan.
+  - Continued extracting low-risk slash commands from `app.rs` into `app/commands.rs`, including session flows, provider-key helpers, queue/error helpers, local agent-control commands, basic task/prompt/title chat commands, and the routine-management command family.
 
 ### Fixed
 

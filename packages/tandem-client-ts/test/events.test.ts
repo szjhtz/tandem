@@ -191,6 +191,264 @@ describe("Workflow planning SDK coverage", () => {
   });
 });
 
+describe("Workflow planner session SDK coverage", () => {
+  it("routes session CRUD and chat methods to the new planner-session endpoints", async () => {
+    const client = new TandemClient({
+      baseUrl: "http://localhost:39731",
+      token: "test-token",
+    });
+
+    const originalFetch = globalThis.fetch;
+    const calls: Array<{ url: string; method: string; body?: string }> = [];
+    globalThis.fetch = (async (input, init) => {
+      const url = String(input);
+      const body = typeof init?.body === "string" ? init.body : String(init?.body ?? "");
+      calls.push({ url, method: String(init?.method ?? "GET"), body });
+
+      if (url.endsWith("/workflow-plans/sessions") && String(init?.method ?? "GET") === "POST") {
+        return new Response(
+          JSON.stringify({
+            session: {
+              session_id: "wfplan-session-1",
+              project_slug: "planner-project",
+              title: "Planner session",
+              workspace_root: "/workspace/repos/demo",
+              current_plan_id: "wfplan-1",
+              draft: {
+                initial_plan: {
+                  plan_id: "wfplan-1",
+                  title: "Planner session",
+                  schedule: { type: "manual" },
+                  steps: [],
+                },
+                current_plan: {
+                  plan_id: "wfplan-1",
+                  title: "Planner session",
+                  schedule: { type: "manual" },
+                  steps: [],
+                },
+                conversation: { messages: [] },
+              },
+              created_at_ms: 1,
+              updated_at_ms: 2,
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+
+      if (url.includes("/workflow-plans/sessions?project_slug=")) {
+        return new Response(
+          JSON.stringify({
+            sessions: [{ session_id: "wfplan-session-1", title: "Planner session" }],
+            count: 1,
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+
+      if (url.endsWith("/workflow-plans/sessions/wfplan-session-1")) {
+        if (String(init?.method ?? "GET") === "PATCH") {
+          return new Response(
+            JSON.stringify({
+              session: {
+                session_id: "wfplan-session-1",
+                project_slug: "planner-project",
+                title: "Planner session renamed",
+                workspace_root: "/workspace/repos/demo",
+                current_plan_id: "wfplan-1",
+                created_at_ms: 1,
+                updated_at_ms: 3,
+              },
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } }
+          );
+        }
+        if (String(init?.method ?? "GET") === "DELETE") {
+          return new Response(
+            JSON.stringify({
+              ok: true,
+              session: {
+                session_id: "wfplan-session-1",
+                project_slug: "planner-project",
+              },
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } }
+          );
+        }
+        return new Response(
+          JSON.stringify({
+            session: {
+              session_id: "wfplan-session-1",
+              project_slug: "planner-project",
+              title: "Planner session",
+              workspace_root: "/workspace/repos/demo",
+              current_plan_id: "wfplan-1",
+              created_at_ms: 1,
+              updated_at_ms: 2,
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+
+      if (url.includes("/workflow-plans/sessions/wfplan-session-1/duplicate")) {
+        return new Response(
+          JSON.stringify({
+            session: {
+              session_id: "wfplan-session-2",
+              project_slug: "planner-project",
+              title: "Copy of Planner session",
+              workspace_root: "/workspace/repos/demo",
+              current_plan_id: "wfplan-2",
+              created_at_ms: 4,
+              updated_at_ms: 4,
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+
+      if (url.includes("/workflow-plans/sessions/wfplan-session-1/start")) {
+        return new Response(
+          JSON.stringify({
+            session: {
+              session_id: "wfplan-session-1",
+              project_slug: "planner-project",
+              title: "Planner session",
+              workspace_root: "/workspace/repos/demo",
+              current_plan_id: "wfplan-3",
+              created_at_ms: 1,
+              updated_at_ms: 5,
+            },
+            plan: {
+              plan_id: "wfplan-3",
+              title: "Planner session",
+              schedule: { type: "manual" },
+              steps: [],
+            },
+            conversation: { messages: [] },
+            change_summary: [],
+            planner_diagnostics: { mode: "start" },
+            clarifier: { status: "none" },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+
+      if (url.includes("/workflow-plans/sessions/wfplan-session-1/message")) {
+        return new Response(
+          JSON.stringify({
+            session: {
+              session_id: "wfplan-session-1",
+              project_slug: "planner-project",
+              title: "Planner session",
+              workspace_root: "/workspace/repos/demo",
+              current_plan_id: "wfplan-3",
+              created_at_ms: 1,
+              updated_at_ms: 6,
+            },
+            plan: {
+              plan_id: "wfplan-3",
+              title: "Planner session",
+              schedule: { type: "manual" },
+              steps: [],
+            },
+            conversation: { messages: [{ role: "assistant", text: "ok" }] },
+            change_summary: ["updated"],
+            planner_diagnostics: { mode: "message" },
+            clarifier: { status: "none" },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+
+      if (url.includes("/workflow-plans/sessions/wfplan-session-1/reset")) {
+        return new Response(
+          JSON.stringify({
+            session: {
+              session_id: "wfplan-session-1",
+              project_slug: "planner-project",
+              title: "Planner session",
+              workspace_root: "/workspace/repos/demo",
+              current_plan_id: "wfplan-3",
+              created_at_ms: 1,
+              updated_at_ms: 7,
+            },
+            plan: {
+              plan_id: "wfplan-3",
+              title: "Planner session",
+              schedule: { type: "manual" },
+              steps: [],
+            },
+            conversation: { messages: [] },
+            planner_diagnostics: { mode: "reset" },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }) as typeof fetch;
+
+    try {
+      const listed = await client.workflowPlannerSessions.list({ project_slug: "planner-project" });
+      const created = await client.workflowPlannerSessions.create({
+        project_slug: "planner-project",
+        title: "Planner session",
+        workspace_root: "/workspace/repos/demo",
+        goal: "Ship a planner session",
+        notes: "seeded by test",
+        plan_source: "coding_task_planning",
+      });
+      const fetched = await client.workflowPlannerSessions.get("wfplan-session-1");
+      const patched = await client.workflowPlannerSessions.patch("wfplan-session-1", {
+        title: "Planner session renamed",
+      });
+      const duplicated = await client.workflowPlannerSessions.duplicate("wfplan-session-1", {
+        title: "Copy of Planner session",
+      });
+      const started = await client.workflowPlannerSessions.start("wfplan-session-1", {
+        prompt: "Create a planner session",
+        workspace_root: "/workspace/repos/demo",
+        plan_source: "coding_task_planning",
+      });
+      const messaged = await client.workflowPlannerSessions.message("wfplan-session-1", {
+        message: "Revise the plan",
+      });
+      const reset = await client.workflowPlannerSessions.reset("wfplan-session-1");
+      const deleted = await client.workflowPlannerSessions.delete("wfplan-session-1");
+
+      expect(listed.sessions.length).toBe(1);
+      expect(created.session.session_id).toBe("wfplan-session-1");
+      expect(fetched.session.current_plan_id).toBe("wfplan-1");
+      expect(patched.session.title).toBe("Planner session renamed");
+      expect(duplicated.session.session_id).toBe("wfplan-session-2");
+      expect(started.session?.current_plan_id).toBe("wfplan-3");
+      expect(messaged.session?.updated_at_ms).toBe(6);
+      expect(reset.planner_diagnostics).toEqual({ mode: "reset" });
+      expect(deleted.ok).toBe(true);
+      expect(calls[0]?.url).toContain("/workflow-plans/sessions?project_slug=planner-project");
+      expect(calls[1]?.method).toBe("POST");
+      expect(calls[2]?.method).toBe("GET");
+      expect(calls[3]?.method).toBe("PATCH");
+      expect(calls[4]?.method).toBe("POST");
+      expect(calls[5]?.url).toContain("/start");
+      expect(calls[6]?.url).toContain("/message");
+      expect(calls[7]?.url).toContain("/reset");
+      expect(calls[8]?.method).toBe("DELETE");
+      expect(String(calls[1]?.body || "")).toContain("planner-project");
+      expect(String(calls[5]?.body || "")).toContain("Create a planner session");
+      expect(String(calls[6]?.body || "")).toContain("Revise the plan");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
 describe("High-value parity coverage", () => {
   it("exposes new top-level namespaces", () => {
     const client = new TandemClient({

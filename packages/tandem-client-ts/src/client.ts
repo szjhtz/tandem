@@ -133,6 +133,15 @@ import type {
   WorkflowPlanImportResponse,
   WorkflowPlanPackBuilderExportRequest,
   WorkflowPlanPackBuilderExportResult,
+  WorkflowPlannerSessionCreateResponse,
+  WorkflowPlannerSessionDuplicateResponse,
+  WorkflowPlannerSessionListResponse,
+  WorkflowPlannerSessionMessageResponse,
+  WorkflowPlannerSessionPatchResponse,
+  WorkflowPlannerSessionRecord,
+  WorkflowPlannerSessionResetResponse,
+  WorkflowPlannerSessionResponse,
+  WorkflowPlannerSessionStartResponse,
   MissionCreateInput,
   MissionCreateResponse,
   MissionListResponse,
@@ -253,6 +262,8 @@ export class TandemClient {
   readonly optimizations: Optimizations;
   /** Engine-owned workflow planning */
   readonly workflowPlans: WorkflowPlans;
+  /** Planner session management */
+  readonly workflowPlannerSessions: WorkflowPlannerSessions;
   /** Semantic memory / vector store */
   readonly memory: Memory;
   /** Agent skill packs */
@@ -295,6 +306,7 @@ export class TandemClient {
     this.automationsV2 = new AutomationsV2(this.baseUrl, getToken, req);
     this.optimizations = new Optimizations(req);
     this.workflowPlans = new WorkflowPlans(req);
+    this.workflowPlannerSessions = new WorkflowPlannerSessions(req);
     this.memory = new Memory(req);
     this.skills = new Skills(req);
     this.packs = new Packs(req);
@@ -2471,6 +2483,190 @@ class WorkflowPlans {
         creator_id: options.creator_id ?? options.creatorId,
       }),
     });
+  }
+}
+
+class WorkflowPlannerSessions {
+  constructor(private req: TandemClient["_request"]) {}
+
+  async list(options?: {
+    projectSlug?: string;
+    project_slug?: string;
+  }): Promise<WorkflowPlannerSessionListResponse> {
+    const params = new URLSearchParams();
+    const projectSlug = options?.project_slug ?? options?.projectSlug;
+    if (projectSlug) params.set("project_slug", projectSlug);
+    const qs = params.toString() ? `?${params.toString()}` : "";
+    return this.req<WorkflowPlannerSessionListResponse>(`/workflow-plans/sessions${qs}`);
+  }
+
+  async create(options: {
+    projectSlug: string;
+    project_slug?: string;
+    title?: string;
+    workspaceRoot?: string;
+    workspace_root?: string;
+    goal?: string;
+    notes?: string;
+    plannerProvider?: string;
+    planner_provider?: string;
+    plannerModel?: string;
+    planner_model?: string;
+    planSource?: string;
+    plan_source?: string;
+    allowedMcpServers?: string[];
+    allowed_mcp_servers?: string[];
+    operatorPreferences?: JsonObject;
+    operator_preferences?: JsonObject;
+  }): Promise<WorkflowPlannerSessionCreateResponse> {
+    return this.req<WorkflowPlannerSessionCreateResponse>("/workflow-plans/sessions", {
+      method: "POST",
+      body: JSON.stringify({
+        project_slug: options.project_slug ?? options.projectSlug,
+        title: options.title,
+        workspace_root: options.workspace_root ?? options.workspaceRoot,
+        goal: options.goal,
+        notes: options.notes,
+        planner_provider: options.planner_provider ?? options.plannerProvider,
+        planner_model: options.planner_model ?? options.plannerModel,
+        plan_source: options.plan_source ?? options.planSource,
+        allowed_mcp_servers: options.allowed_mcp_servers ?? options.allowedMcpServers,
+        operator_preferences: options.operator_preferences ?? options.operatorPreferences,
+      }),
+    });
+  }
+
+  async get(sessionId: string): Promise<WorkflowPlannerSessionResponse> {
+    return this.req<WorkflowPlannerSessionResponse>(
+      `/workflow-plans/sessions/${encodeURIComponent(sessionId)}`
+    );
+  }
+
+  async patch(
+    sessionId: string,
+    patch: {
+      title?: string;
+      workspaceRoot?: string;
+      workspace_root?: string;
+      goal?: string;
+      notes?: string;
+      plannerProvider?: string;
+      planner_provider?: string;
+      plannerModel?: string;
+      planner_model?: string;
+      planSource?: string;
+      plan_source?: string;
+      allowedMcpServers?: string[];
+      allowed_mcp_servers?: string[];
+      operatorPreferences?: JsonObject;
+      operator_preferences?: JsonObject;
+      currentPlanId?: string;
+      current_plan_id?: string;
+      draft?: WorkflowPlanDraftRecord;
+      publishedAtMs?: number;
+      published_at_ms?: number;
+      publishedTasks?: JsonValue[];
+      published_tasks?: JsonValue[];
+    }
+  ): Promise<WorkflowPlannerSessionPatchResponse> {
+    return this.req<WorkflowPlannerSessionPatchResponse>(
+      `/workflow-plans/sessions/${encodeURIComponent(sessionId)}`,
+      {
+        method: "PATCH",
+        body: JSON.stringify({
+          title: patch.title,
+          workspace_root: patch.workspace_root ?? patch.workspaceRoot,
+          goal: patch.goal,
+          notes: patch.notes,
+          planner_provider: patch.planner_provider ?? patch.plannerProvider,
+          planner_model: patch.planner_model ?? patch.plannerModel,
+          plan_source: patch.plan_source ?? patch.planSource,
+          allowed_mcp_servers: patch.allowed_mcp_servers ?? patch.allowedMcpServers,
+          operator_preferences: patch.operator_preferences ?? patch.operatorPreferences,
+          current_plan_id: patch.current_plan_id ?? patch.currentPlanId,
+          draft: patch.draft,
+          published_at_ms: patch.published_at_ms ?? patch.publishedAtMs,
+          published_tasks: patch.published_tasks ?? patch.publishedTasks,
+        }),
+      }
+    );
+  }
+
+  async duplicate(
+    sessionId: string,
+    options?: { title?: string }
+  ): Promise<WorkflowPlannerSessionDuplicateResponse> {
+    return this.req<WorkflowPlannerSessionDuplicateResponse>(
+      `/workflow-plans/sessions/${encodeURIComponent(sessionId)}/duplicate`,
+      {
+        method: "POST",
+        body: JSON.stringify({ title: options?.title }),
+      }
+    );
+  }
+
+  async delete(
+    sessionId: string
+  ): Promise<{ ok: boolean; session?: WorkflowPlannerSessionRecord }> {
+    return this.req<{ ok: boolean; session?: WorkflowPlannerSessionRecord }>(
+      `/workflow-plans/sessions/${encodeURIComponent(sessionId)}`,
+      { method: "DELETE" }
+    );
+  }
+
+  async start(
+    sessionId: string,
+    options: {
+      prompt: string;
+      schedule?: JsonObject;
+      planSource?: string;
+      plan_source?: string;
+      allowedMcpServers?: string[];
+      allowed_mcp_servers?: string[];
+      workspaceRoot?: string;
+      workspace_root?: string;
+      operatorPreferences?: JsonObject;
+      operator_preferences?: JsonObject;
+    }
+  ): Promise<WorkflowPlannerSessionStartResponse> {
+    return this.req<WorkflowPlannerSessionStartResponse>(
+      `/workflow-plans/sessions/${encodeURIComponent(sessionId)}/start`,
+      {
+        method: "POST",
+        timeoutMs: this.chatTimeoutMs,
+        body: JSON.stringify({
+          prompt: options.prompt,
+          schedule: options.schedule,
+          plan_source: options.plan_source ?? options.planSource,
+          allowed_mcp_servers: options.allowed_mcp_servers ?? options.allowedMcpServers,
+          workspace_root: options.workspace_root ?? options.workspaceRoot,
+          operator_preferences: options.operator_preferences ?? options.operatorPreferences,
+        }),
+      }
+    );
+  }
+
+  async message(
+    sessionId: string,
+    options: { message: string }
+  ): Promise<WorkflowPlannerSessionMessageResponse> {
+    return this.req<WorkflowPlannerSessionMessageResponse>(
+      `/workflow-plans/sessions/${encodeURIComponent(sessionId)}/message`,
+      {
+        method: "POST",
+        timeoutMs: this.chatTimeoutMs,
+        body: JSON.stringify({ message: options.message }),
+      }
+    );
+  }
+
+  async reset(sessionId: string): Promise<WorkflowPlannerSessionResetResponse> {
+    return this.req<WorkflowPlannerSessionResetResponse>(
+      `/workflow-plans/sessions/${encodeURIComponent(sessionId)}/reset`,
+      {
+        method: "POST",
+      }
+    );
   }
 }
 

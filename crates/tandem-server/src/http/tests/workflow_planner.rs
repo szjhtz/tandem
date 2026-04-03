@@ -2709,6 +2709,233 @@ async fn workflow_plan_chat_reset_restores_initial_plan() {
 }
 
 #[tokio::test]
+async fn workflow_planner_sessions_support_crud_and_duplication() {
+    let state = test_state().await;
+    let app = app_router(state.clone());
+
+    let preview_resp = app
+        .clone()
+        .oneshot(preview_request(json!({
+            "prompt": "Write a small workflow plan for testing session CRUD",
+            "workspace_root": "/tmp/custom-workspace"
+        })))
+        .await
+        .expect("preview response");
+    assert_eq!(preview_resp.status(), StatusCode::OK);
+    let preview_body = to_bytes(preview_resp.into_body(), usize::MAX)
+        .await
+        .expect("preview body");
+    let preview_payload: Value = serde_json::from_slice(&preview_body).expect("preview json");
+
+    let create_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/workflow-plans/sessions")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "project_slug": "planner-crud",
+                        "title": "Planner CRUD",
+                        "workspace_root": "/tmp/custom-workspace",
+                        "goal": "Write a small workflow plan for testing session CRUD",
+                        "notes": "seeded from preview payload",
+                        "plan_source": "coding_task_planning",
+                        "plan": preview_payload.get("plan").cloned(),
+                        "conversation": preview_payload.get("conversation").cloned(),
+                        "planner_diagnostics": preview_payload.get("planner_diagnostics").cloned(),
+                    })
+                    .to_string(),
+                ))
+                .expect("create request"),
+        )
+        .await
+        .expect("create response");
+    assert_eq!(create_resp.status(), StatusCode::OK);
+    let create_body = to_bytes(create_resp.into_body(), usize::MAX)
+        .await
+        .expect("create body");
+    let create_payload: Value = serde_json::from_slice(&create_body).expect("create json");
+    let session_id = create_payload
+        .get("session")
+        .and_then(|row| row.get("session_id"))
+        .and_then(Value::as_str)
+        .expect("session id")
+        .to_string();
+
+    let list_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/workflow-plans/sessions?project_slug=planner-crud")
+                .body(Body::empty())
+                .expect("list request"),
+        )
+        .await
+        .expect("list response");
+    assert_eq!(list_resp.status(), StatusCode::OK);
+    let list_body = to_bytes(list_resp.into_body(), usize::MAX)
+        .await
+        .expect("list body");
+    let list_payload: Value = serde_json::from_slice(&list_body).expect("list json");
+    assert!(list_payload
+        .get("sessions")
+        .and_then(Value::as_array)
+        .is_some_and(|rows| rows.iter().any(|row| {
+            row.get("session_id").and_then(Value::as_str) == Some(session_id.as_str())
+        })));
+
+    let patch_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri(format!("/workflow-plans/sessions/{session_id}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({ "title": "Planner CRUD Renamed" }).to_string(),
+                ))
+                .expect("patch request"),
+        )
+        .await
+        .expect("patch response");
+    assert_eq!(patch_resp.status(), StatusCode::OK);
+    let patch_body = to_bytes(patch_resp.into_body(), usize::MAX)
+        .await
+        .expect("patch body");
+    let patch_payload: Value = serde_json::from_slice(&patch_body).expect("patch json");
+    assert_eq!(
+        patch_payload
+            .get("session")
+            .and_then(|row| row.get("title"))
+            .and_then(Value::as_str),
+        Some("Planner CRUD Renamed")
+    );
+
+    let duplicate_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/workflow-plans/sessions/{session_id}/duplicate"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({ "title": "Planner CRUD Copy" }).to_string(),
+                ))
+                .expect("duplicate request"),
+        )
+        .await
+        .expect("duplicate response");
+    assert_eq!(duplicate_resp.status(), StatusCode::OK);
+    let duplicate_body = to_bytes(duplicate_resp.into_body(), usize::MAX)
+        .await
+        .expect("duplicate body");
+    let duplicate_payload: Value = serde_json::from_slice(&duplicate_body).expect("duplicate json");
+    let duplicate_session_id = duplicate_payload
+        .get("session")
+        .and_then(|row| row.get("session_id"))
+        .and_then(Value::as_str)
+        .expect("duplicate session id");
+    assert_ne!(duplicate_session_id, session_id);
+}
+
+#[tokio::test]
+async fn workflow_planner_session_reset_recovers_missing_current_plan_id() {
+    let state = test_state().await;
+    let app = app_router(state.clone());
+
+    let preview_resp = app
+        .clone()
+        .oneshot(preview_request(json!({
+            "prompt": "Write a small workflow plan for reset recovery",
+            "workspace_root": "/tmp/custom-workspace"
+        })))
+        .await
+        .expect("preview response");
+    assert_eq!(preview_resp.status(), StatusCode::OK);
+    let preview_body = to_bytes(preview_resp.into_body(), usize::MAX)
+        .await
+        .expect("preview body");
+    let preview_payload: Value = serde_json::from_slice(&preview_body).expect("preview json");
+
+    let create_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/workflow-plans/sessions")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "project_slug": "planner-reset",
+                        "title": "Planner Reset",
+                        "workspace_root": "/tmp/custom-workspace",
+                        "goal": "Write a small workflow plan for reset recovery",
+                        "notes": "seeded from preview payload",
+                        "plan_source": "coding_task_planning",
+                        "plan": preview_payload.get("plan").cloned(),
+                        "conversation": preview_payload.get("conversation").cloned(),
+                        "planner_diagnostics": preview_payload.get("planner_diagnostics").cloned(),
+                    })
+                    .to_string(),
+                ))
+                .expect("create request"),
+        )
+        .await
+        .expect("create response");
+    assert_eq!(create_resp.status(), StatusCode::OK);
+    let create_body = to_bytes(create_resp.into_body(), usize::MAX)
+        .await
+        .expect("create body");
+    let create_payload: Value = serde_json::from_slice(&create_body).expect("create json");
+    let session_id = create_payload
+        .get("session")
+        .and_then(|row| row.get("session_id"))
+        .and_then(Value::as_str)
+        .expect("session id")
+        .to_string();
+
+    let patch_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri(format!("/workflow-plans/sessions/{session_id}"))
+                .header("content-type", "application/json")
+                .body(Body::from(json!({ "current_plan_id": "" }).to_string()))
+                .expect("patch request"),
+        )
+        .await
+        .expect("patch response");
+    assert_eq!(patch_resp.status(), StatusCode::OK);
+
+    let reset_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/workflow-plans/sessions/{session_id}/reset"))
+                .body(Body::empty())
+                .expect("reset request"),
+        )
+        .await
+        .expect("reset response");
+    assert_eq!(reset_resp.status(), StatusCode::OK);
+    let reset_body = to_bytes(reset_resp.into_body(), usize::MAX)
+        .await
+        .expect("reset body");
+    let reset_payload: Value = serde_json::from_slice(&reset_body).expect("reset json");
+    assert!(reset_payload
+        .get("session")
+        .and_then(|row| row.get("current_plan_id"))
+        .and_then(Value::as_str)
+        .is_some());
+    assert!(reset_payload.get("plan").is_some());
+}
+
+#[tokio::test]
 async fn workflow_plan_planner_model_spec_prefers_planner_role_model() {
     let spec = crate::http::workflow_planner::planner_model_spec(Some(&json!({
         "model_provider": "openai",

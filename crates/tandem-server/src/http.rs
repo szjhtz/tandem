@@ -104,7 +104,7 @@ mod setup_understanding;
 mod skills_memory;
 mod system_api;
 mod task_intake;
-mod workflow_planner;
+pub(crate) mod workflow_planner;
 mod workflow_planner_host;
 mod workflow_planner_policy;
 pub(crate) mod workflow_planner_runtime;

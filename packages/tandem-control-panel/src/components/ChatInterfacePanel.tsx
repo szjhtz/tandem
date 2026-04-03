@@ -1,5 +1,6 @@
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { useEffect, useRef } from "react";
+import { renderIcons } from "../app/icons.js";
 import { renderMarkdownSafe } from "../lib/markdown";
 
 export type ChatInterfaceMessage = {
@@ -76,6 +77,7 @@ export function ChatInterfacePanel({
   className = "",
 }: ChatInterfacePanelProps) {
   const reducedMotion = !!useReducedMotion();
+  const panelRef = useRef<HTMLDivElement>(null);
   const messagesRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const stickToBottomRef = useRef(true);
@@ -99,10 +101,15 @@ export function ChatInterfacePanel({
     area.style.height = `${Math.min(area.scrollHeight, 180)}px`;
   }, [inputValue]);
 
+  useEffect(() => {
+    if (panelRef.current) renderIcons(panelRef.current);
+  }, [attachments, inputValue, messages, quickReplies, sendDisabled, showThinking, streamingText]);
+
   const assistantLabel = botIdentity?.botName || "Assistant";
 
   return (
     <div
+      ref={panelRef}
       className={`rounded-2xl border border-white/10 bg-black/20 p-3 flex min-h-0 flex-1 flex-col ${className}`}
     >
       {questionText ? (

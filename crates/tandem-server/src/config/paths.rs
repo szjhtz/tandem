@@ -106,6 +106,16 @@ pub(crate) fn resolve_workflow_runs_path() -> PathBuf {
     default_state_dir().join("workflow_runs.json")
 }
 
+pub(crate) fn resolve_workflow_planner_sessions_path() -> PathBuf {
+    if let Ok(root) = std::env::var("TANDEM_STATE_DIR") {
+        let trimmed = root.trim();
+        if !trimmed.is_empty() {
+            return PathBuf::from(trimmed).join("workflow_planner_sessions.json");
+        }
+    }
+    default_state_dir().join("workflow_planner_sessions.json")
+}
+
 pub(crate) fn resolve_bug_monitor_config_path() -> PathBuf {
     if let Ok(root) = std::env::var("TANDEM_STATE_DIR") {
         let trimmed = root.trim();

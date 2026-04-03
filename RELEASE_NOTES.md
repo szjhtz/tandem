@@ -4,6 +4,12 @@ This is the canonical release-notes file used by release tooling.
 
 ## v0.4.20 (Released 2026-04-03)
 
+- **Backend-backed coder planner sessions**
+  - Added persisted planner-session records and session-scoped planner endpoints so one project can hold multiple independent coding plans instead of a single long thread.
+  - Added a Chat-style session rail in the control panel with `New plan`, switch, rename, duplicate, and delete actions.
+  - Added stale-plan recovery so expired `plan_id` drafts can be rehydrated from session state instead of leaving the coder planner stuck on 404s.
+  - Added backend CRUD/recovery tests plus client smoke coverage for the new planner-session flow.
+
 - **Tandem TUI exploration transcript summaries**
   - Added durable exploration transcript summaries so read/search/list tool bursts are preserved as compact operator-readable history instead of existing only in the live status strip.
   - Added exploration-batch accumulation, burst-boundary flushing, and target-change splitting so long exploration runs can emit multiple focused summaries as the AI moves between workspace targets.
@@ -23,6 +29,7 @@ This is the canonical release-notes file used by release tooling.
   - Improved transcript differentiation for tool-focused system messages and governance/operator-action-required messages with clearer badges.
   - Improved generic command/tool output rendering with stable head/tail truncation so transcript history stays readable during long runs.
   - Added structured rollback transcript cells for preview, execute, and receipt flows so guarded rollback work now follows one compact terminal UX pattern with action badges, concise summaries, and focused next steps.
+  - Continued moving low-risk slash commands out of `app.rs` into `app/commands.rs`, including session flows, provider-key helpers, queue/error helpers, local agent-control commands, basic task/prompt/title chat commands, and the routine-management command family.
 
 - **Installed desktop startup black-screen after vault unlock**
   - Added a timeout to installed-build sidecar release discovery so a stalled GitHub metadata lookup cannot hold the Tauri app on a black screen after passcode unlock.
