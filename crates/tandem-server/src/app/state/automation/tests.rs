@@ -945,6 +945,66 @@ async fn reconcile_verified_output_path_times_out_when_file_never_appears() {
 }
 
 #[tokio::test]
+async fn reconcile_verified_output_path_marks_stale_existing_run_output_as_not_current_attempt() {
+    let workspace_root = std::env::temp_dir().join(format!(
+        "tandem-reconcile-stale-existing-output-{}",
+        uuid::Uuid::new_v4()
+    ));
+    let run_id = "run-stale-existing";
+    let output_path = ".tandem/artifacts/report.md";
+    let resolved_path = workspace_root.join(".tandem/runs/run-stale-existing/artifacts/report.md");
+    std::fs::create_dir_all(
+        resolved_path
+            .parent()
+            .expect("artifact path should have parent"),
+    )
+    .expect("create artifacts dir");
+    std::fs::write(&resolved_path, "stale report").expect("write stale artifact");
+
+    let session = Session::new(Some("no output write this attempt".to_string()), None);
+    let resolved = super::reconcile_automation_resolve_verified_output_path(
+        &session,
+        workspace_root.to_str().expect("workspace root"),
+        run_id,
+        &AutomationFlowNode {
+            knowledge: tandem_orchestrator::KnowledgeBinding::default(),
+            node_id: "generate_report".to_string(),
+            agent_id: "writer".to_string(),
+            objective: "Generate report".to_string(),
+            depends_on: vec![],
+            input_refs: vec![],
+            output_contract: Some(AutomationFlowOutputContract {
+                kind: "report_markdown".to_string(),
+                validator: Some(crate::AutomationOutputValidatorKind::GenericArtifact),
+                enforcement: None,
+                schema: None,
+                summary_guidance: None,
+            }),
+            retry_policy: None,
+            timeout_ms: None,
+            stage_kind: None,
+            gate: None,
+            metadata: Some(json!({
+                "builder": {
+                    "output_path": output_path
+                }
+            })),
+        },
+        output_path,
+        50,
+        10,
+    )
+    .await
+    .expect("resolve stale output")
+    .expect("stale output should still resolve");
+
+    assert_eq!(resolved.path, resolved_path);
+    assert!(!resolved.materialized_by_current_attempt);
+
+    let _ = std::fs::remove_dir_all(&workspace_root);
+}
+
+#[tokio::test]
 async fn reconcile_verified_output_path_recovers_json_artifact_from_session_text() {
     let workspace_root = std::env::temp_dir().join(format!(
         "tandem-reconcile-session-text-json-{}",
