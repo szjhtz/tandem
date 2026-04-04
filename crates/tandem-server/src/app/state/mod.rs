@@ -2728,10 +2728,10 @@ impl AppState {
         let mut contexts = Vec::new();
         for pack_id in pack_ids {
             let Some(pack) = self.get_context_pack(&pack_id).await else {
-                anyhow::bail!("shared context pack not found: {pack_id}");
+                anyhow::bail!("shared workflow context not found: {pack_id}");
             };
             if pack.state != crate::http::context_packs::ContextPackState::Published {
-                anyhow::bail!("shared context pack is not published: {pack_id}");
+                anyhow::bail!("shared workflow context is not published: {pack_id}");
             }
             let pack_context = pack
                 .manifest
@@ -2757,7 +2757,7 @@ impl AppState {
                         })
                 });
             let Some(pack_context) = pack_context else {
-                anyhow::bail!("shared context pack lacks runtime context: {pack_id}");
+                anyhow::bail!("shared workflow context lacks runtime context: {pack_id}");
             };
             contexts.push(pack_context);
         }
@@ -3044,9 +3044,8 @@ impl AppState {
             .await
             .values()
             .filter(|pack| {
-                let project_ok = project_key
-                    .map(|key| pack.project_key.as_deref() == Some(key))
-                    .unwrap_or(true);
+                let project_ok =
+                    crate::http::context_packs::context_pack_allows_project(pack, project_key);
                 let workspace_ok = workspace_root
                     .map(|root| pack.workspace_root == root)
                     .unwrap_or(true);
@@ -3065,7 +3064,7 @@ impl AppState {
     ) -> anyhow::Result<crate::http::context_packs::ContextPackRecord> {
         let mut guard = self.context_packs.write().await;
         let Some(pack) = guard.get_mut(pack_id) else {
-            anyhow::bail!("context pack not found");
+            anyhow::bail!("shared workflow context not found");
         };
         update(pack)?;
         pack.updated_at_ms = now_ms();

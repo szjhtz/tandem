@@ -2194,9 +2194,10 @@ async fn automation_runtime_context_merges_shared_context_packs() {
     state
         .put_context_pack(crate::http::context_packs::ContextPackRecord {
             pack_id: pack_id.clone(),
-            title: "Shared context pack".to_string(),
+            title: "Shared workflow context".to_string(),
             summary: Some("Shared runtime context".to_string()),
             project_key: Some("project-a".to_string()),
+            allowed_project_keys: Vec::new(),
             workspace_root: ".".to_string(),
             source_plan_id: Some("plan-shared-1".to_string()),
             source_automation_id: None,

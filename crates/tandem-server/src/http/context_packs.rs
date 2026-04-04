@@ -22,6 +22,7 @@ pub(crate) enum ContextPackState {
 pub(crate) enum ContextPackVisibilityScope {
     #[default]
     SameProject,
+    ProjectAllowlist,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -67,6 +68,8 @@ pub(crate) struct ContextPackRecord {
     pub(crate) summary: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) project_key: Option<String>,
+    #[serde(default)]
+    pub(crate) allowed_project_keys: Vec<String>,
     pub(crate) workspace_root: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) source_plan_id: Option<String>,
@@ -121,6 +124,8 @@ pub(super) struct ContextPackPublishRequest {
     pub(super) summary: Option<String>,
     #[serde(default)]
     pub(super) project_key: Option<String>,
+    #[serde(default)]
+    pub(super) allowed_project_keys: Vec<String>,
     pub(super) workspace_root: String,
     #[serde(default)]
     pub(super) source_plan_id: Option<String>,
@@ -182,6 +187,14 @@ pub(super) struct ContextPackPath {
     pub(super) pack_id: String,
 }
 
+#[derive(Debug, Deserialize, Default)]
+pub(super) struct ContextPackReadQuery {
+    #[serde(default)]
+    pub(super) project_key: Option<String>,
+    #[serde(default)]
+    pub(super) workspace_root: Option<String>,
+}
+
 fn infer_pack_title(request: &ContextPackPublishRequest) -> String {
     request
         .title
@@ -217,7 +230,7 @@ fn infer_pack_title(request: &ContextPackPublishRequest) -> String {
                 .filter(|value| !value.is_empty())
                 .map(|value| format!("Shared context for {value}"))
         })
-        .unwrap_or_else(|| "Shared context pack".to_string())
+        .unwrap_or_else(|| "Shared workflow context".to_string())
 }
 
 fn infer_context_object_refs(request: &ContextPackPublishRequest) -> Vec<String> {
@@ -242,6 +255,34 @@ fn infer_context_object_refs(request: &ContextPackPublishRequest) -> Vec<String>
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default()
+}
+
+pub(crate) fn normalize_project_keys(values: Vec<String>) -> Vec<String> {
+    let mut rows = values
+        .into_iter()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>();
+    rows.sort();
+    rows.dedup();
+    rows
+}
+
+pub(crate) fn context_pack_allows_project(
+    pack: &ContextPackRecord,
+    project_key: Option<&str>,
+) -> bool {
+    let Some(project_key) = project_key.map(str::trim).filter(|value| !value.is_empty()) else {
+        return matches!(
+            pack.visibility_scope,
+            ContextPackVisibilityScope::SameProject
+        );
+    };
+    pack.project_key.as_deref() == Some(project_key)
+        || pack
+            .allowed_project_keys
+            .iter()
+            .any(|candidate| candidate == project_key)
 }
 
 pub(crate) fn shared_context_pack_ids_from_metadata(metadata: Option<&Value>) -> Vec<String> {
@@ -315,12 +356,37 @@ pub(crate) fn shared_context_pack_ids_from_metadata(metadata: Option<&Value>) ->
     rows
 }
 
+fn emit_context_pack_policy_hook(
+    state: &AppState,
+    action: &str,
+    pack: &ContextPackRecord,
+    actor_metadata: Option<Value>,
+    related_pack_id: Option<String>,
+) {
+    state.event_bus.publish(EngineEvent::new(
+        "context.pack.policy_hook",
+        json!({
+            "action": action,
+            "pack_id": pack.pack_id,
+            "title": pack.title,
+            "workspace_root": pack.workspace_root,
+            "project_key": pack.project_key,
+            "state": pack.state,
+            "related_pack_id": related_pack_id,
+            "actor_present": actor_metadata.is_some(),
+            "actor_metadata": actor_metadata,
+            "timestamp_ms": now_ms(),
+        }),
+    ));
+}
+
 pub(super) async fn context_pack_publish(
     State(state): State<AppState>,
     Json(input): Json<ContextPackPublishRequest>,
 ) -> Result<Json<Value>, StatusCode> {
     let workspace_root = crate::normalize_absolute_workspace_root(&input.workspace_root)
         .map_err(|_| StatusCode::BAD_REQUEST)?;
+    let allowed_project_keys = normalize_project_keys(input.allowed_project_keys.clone());
     let pack_id = format!("context-pack-{}", Uuid::new_v4());
     let pack = ContextPackRecord {
         pack_id: pack_id.clone(),
@@ -336,12 +402,17 @@ pub(super) async fn context_pack_publish(
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .map(ToString::to_string),
+        allowed_project_keys: allowed_project_keys.clone(),
         workspace_root: workspace_root.clone(),
         source_plan_id: input.source_plan_id.clone(),
         source_automation_id: input.source_automation_id.clone(),
         source_run_id: input.source_run_id.clone(),
         source_context_run_id: input.source_context_run_id.clone(),
-        visibility_scope: ContextPackVisibilityScope::SameProject,
+        visibility_scope: if allowed_project_keys.is_empty() {
+            ContextPackVisibilityScope::SameProject
+        } else {
+            ContextPackVisibilityScope::ProjectAllowlist
+        },
         state: ContextPackState::Published,
         manifest: ContextPackManifest {
             plan_package: input.plan_package.clone(),
@@ -373,8 +444,15 @@ pub(super) async fn context_pack_publish(
         created_at_ms: now_ms(),
         updated_at_ms: now_ms(),
     };
+    emit_context_pack_policy_hook(
+        &state,
+        "publish",
+        &pack,
+        pack.published_actor_metadata.clone(),
+        None,
+    );
     let stored = state.put_context_pack(pack).await.map_err(|error| {
-        tracing::warn!("context pack publish failed: {}", error);
+        tracing::warn!("shared workflow context publish failed: {}", error);
         StatusCode::BAD_REQUEST
     })?;
     state.event_bus.publish(EngineEvent::new(
@@ -421,6 +499,7 @@ pub(super) async fn context_pack_list(
                 })
                 .unwrap_or(true)
         })
+        .filter(|pack| context_pack_allows_project(pack, query.project_key.as_deref()))
         .collect::<Vec<_>>();
     Ok(Json(json!({ "context_packs": packs })))
 }
@@ -428,11 +507,26 @@ pub(super) async fn context_pack_list(
 pub(super) async fn context_pack_get(
     State(state): State<AppState>,
     Path(ContextPackPath { pack_id }): Path<ContextPackPath>,
+    Query(query): Query<ContextPackReadQuery>,
 ) -> Result<Json<Value>, StatusCode> {
     let pack = state
         .get_context_pack(&pack_id)
         .await
         .ok_or(StatusCode::NOT_FOUND)?;
+    if let Some(project_key) = query.project_key.as_deref() {
+        if !context_pack_allows_project(&pack, Some(project_key.trim())) {
+            return Err(StatusCode::FORBIDDEN);
+        }
+    } else if !context_pack_allows_project(&pack, None) {
+        return Err(StatusCode::FORBIDDEN);
+    }
+    if let Some(workspace_root) = query.workspace_root.as_deref() {
+        let normalized = crate::normalize_absolute_workspace_root(workspace_root)
+            .map_err(|_| StatusCode::BAD_REQUEST)?;
+        if normalized != pack.workspace_root {
+            return Err(StatusCode::FORBIDDEN);
+        }
+    }
     Ok(Json(json!({ "context_pack": pack })))
 }
 
@@ -448,10 +542,8 @@ pub(super) async fn context_pack_bind(
     if matches!(pack.state, ContextPackState::Revoked) {
         return Err(StatusCode::CONFLICT);
     }
-    if let Some(project_key) = input.consumer_project_key.as_deref() {
-        if pack.project_key.as_deref() != Some(project_key.trim()) {
-            return Err(StatusCode::FORBIDDEN);
-        }
+    if !context_pack_allows_project(&pack, input.consumer_project_key.as_deref()) {
+        return Err(StatusCode::FORBIDDEN);
     }
     if let Some(workspace_root) = input.consumer_workspace_root.as_deref() {
         let normalized = crate::normalize_absolute_workspace_root(workspace_root)
@@ -471,11 +563,12 @@ pub(super) async fn context_pack_bind(
         created_at_ms: now_ms(),
         updated_at_ms: now_ms(),
     };
+    emit_context_pack_policy_hook(&state, "bind", &pack, binding.actor_metadata.clone(), None);
     let stored = state
         .bind_context_pack(&pack_id, binding)
         .await
         .map_err(|error| {
-            tracing::warn!("context pack bind failed: {}", error);
+            tracing::warn!("shared workflow context bind failed: {}", error);
             StatusCode::BAD_REQUEST
         })?;
     state.event_bus.publish(EngineEvent::new(
@@ -498,13 +591,24 @@ pub(super) async fn context_pack_revoke(
     Json(input): Json<ContextPackRevokeRequest>,
 ) -> Result<Json<Value>, StatusCode> {
     let stored = state
+        .get_context_pack(&pack_id)
+        .await
+        .ok_or(StatusCode::NOT_FOUND)?;
+    emit_context_pack_policy_hook(
+        &state,
+        "revoke",
+        &stored,
+        input.actor_metadata.clone(),
+        None,
+    );
+    let stored = state
         .revoke_context_pack(&pack_id, input.actor_metadata)
         .await
         .map_err(|error| {
             if error.to_string().contains("not found") {
                 StatusCode::NOT_FOUND
             } else {
-                tracing::warn!("context pack revoke failed: {}", error);
+                tracing::warn!("shared workflow context revoke failed: {}", error);
                 StatusCode::BAD_REQUEST
             }
         })?;
@@ -533,6 +637,17 @@ pub(super) async fn context_pack_supersede(
         .get_context_pack(&input.superseded_by_pack_id)
         .await
         .ok_or(StatusCode::NOT_FOUND)?;
+    let current = state
+        .get_context_pack(&pack_id)
+        .await
+        .ok_or(StatusCode::NOT_FOUND)?;
+    emit_context_pack_policy_hook(
+        &state,
+        "supersede",
+        &current,
+        input.actor_metadata.clone(),
+        Some(target.pack_id.clone()),
+    );
     let stored = state
         .supersede_context_pack(&pack_id, target.pack_id.clone(), input.actor_metadata)
         .await
@@ -540,7 +655,7 @@ pub(super) async fn context_pack_supersede(
             if error.to_string().contains("not found") {
                 StatusCode::NOT_FOUND
             } else {
-                tracing::warn!("context pack supersede failed: {}", error);
+                tracing::warn!("shared workflow context supersede failed: {}", error);
                 StatusCode::BAD_REQUEST
             }
         })?;

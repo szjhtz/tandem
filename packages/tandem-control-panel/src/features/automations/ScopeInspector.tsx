@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { formatJson } from "../../pages/ui";
 import { api } from "../../lib/api";
@@ -19,6 +19,7 @@ type ScopeInspectorProps = {
   onOpenPromptEditor?: () => void;
   onOpenModelRoutingEditor?: () => void;
   onOpenConnectorBindingsEditor?: () => void;
+  onReplaceSharedContextPack?: (fromPackId: string, toPackId: string) => void;
 };
 
 type ScopeView =
@@ -125,6 +126,13 @@ function prettyEnumLabel(value: unknown) {
     .replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
+function contextPackVisibilityLabel(value: unknown) {
+  const key = safeString(value).toLowerCase();
+  if (key === "project_allowlist") return "Project allowlist";
+  if (key === "same_project") return "Same project";
+  return prettyEnumLabel(value);
+}
+
 function contextPackStateLabel(state: string, isStale: boolean) {
   const normalized = safeString(state).toLowerCase();
   if (normalized === "revoked") return "revoked";
@@ -147,11 +155,11 @@ function contextPackStateHint(entry: any) {
   if (entry.pack.state === "superseded") {
     const supersededBy = safeString(entry.pack.raw?.superseded_by_pack_id);
     return supersededBy
-      ? `This pack has been superseded by ${supersededBy}. Rebind to the replacement pack before creating new runs.`
-      : "This pack has been superseded. Rebind to the replacement pack before creating new runs.";
+      ? `This shared workflow context has been superseded by ${supersededBy}. Rebind to the replacement before creating new runs.`
+      : "This shared workflow context has been superseded. Rebind to the replacement before creating new runs.";
   }
   if (entry.pack.state !== "published") {
-    return "This pack is not published. New runs will be blocked until a published pack is selected.";
+    return "This shared workflow context is not published. New runs will be blocked until a published context is selected.";
   }
   return "";
 }
@@ -203,6 +211,53 @@ function statusBadge(value: unknown) {
         ? "tcp-badge-warning"
         : "tcp-badge-info";
   return <span className={className}>{label}</span>;
+}
+
+function timestampLabel(value: unknown) {
+  const timestamp = Number(value || 0);
+  if (!Number.isFinite(timestamp) || timestamp <= 0) return "n/a";
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(new Date(timestamp));
+}
+
+function tokenizeSuggestionTerms(value: unknown) {
+  return safeString(value)
+    .toLowerCase()
+    .split(/[^a-z0-9]+/g)
+    .map((term) => term.trim())
+    .filter((term) => term.length >= 4);
+}
+
+function parseCommaSeparatedProjectKeys(value: string) {
+  return Array.from(
+    new Set(
+      value
+        .split(/[\n,]/g)
+        .map((entry) => safeString(entry))
+        .filter(Boolean)
+    )
+  );
+}
+
+function packSuggestionReason(pack: any, currentSourcePlanId: string, currentTitleTerms: string[]) {
+  const reasons: string[] = [];
+  if (currentSourcePlanId && pack.sourcePlanId === currentSourcePlanId) {
+    reasons.push("same source plan");
+  }
+  const packTerms = new Set([
+    ...tokenizeSuggestionTerms(pack.title),
+    ...tokenizeSuggestionTerms(pack.raw?.summary),
+  ]);
+  const overlap = currentTitleTerms.filter((term) => packTerms.has(term));
+  if (overlap.length) {
+    reasons.push(`title overlap: ${overlap.slice(0, 2).join(", ")}`);
+  }
+  if (!pack.isStale && pack.updatedAtMs) {
+    reasons.push("recent");
+  }
+  return reasons.length ? reasons.join(" · ") : "recent workspace context";
 }
 
 function successCriteriaStatus(entry: any) {
@@ -285,6 +340,7 @@ export function ScopeInspector({
   onOpenPromptEditor,
   onOpenModelRoutingEditor,
   onOpenConnectorBindingsEditor,
+  onReplaceSharedContextPack,
 }: ScopeInspectorProps) {
   const [view, setView] = useState<ScopeView>("all");
   const [historyVisibilityFilter, setHistoryVisibilityFilter] =
@@ -294,6 +350,8 @@ export function ScopeInspector({
   const [overlapHistorySearch, setOverlapHistorySearch] = useState("");
   const [bundleShareStatus, setBundleShareStatus] = useState("");
   const [contextPackStatus, setContextPackStatus] = useState("");
+  const [selectedContextPackId, setSelectedContextPackId] = useState("");
+  const [sharedContextAllowlistInput, setSharedContextAllowlistInput] = useState("");
   const routines = useMemo(() => toArray(planPackage?.routine_graph), [planPackage]);
   const workspaceRoot = useMemo(
     () =>
@@ -741,6 +799,10 @@ export function ScopeInspector({
         state: safeString(pack?.state || "published"),
         sourcePlanId: safeString(pack?.source_plan_id || pack?.manifest?.plan_package?.plan_id),
         projectKey: safeString(pack?.project_key || ""),
+        visibilityScope: safeString(pack?.visibility_scope || "same_project"),
+        allowedProjectKeys: toArray(pack?.allowed_project_keys)
+          .map((entry: any) => safeString(entry))
+          .filter(Boolean),
         bindings: toArray(pack?.bindings),
         freshnessWindowHours: pack?.freshness_window_hours,
         updatedAtMs: Number(pack?.updated_at_ms || pack?.published_at_ms || 0),
@@ -753,6 +815,22 @@ export function ScopeInspector({
       }))
       .sort((left: any, right: any) => right.updatedAtMs - left.updatedAtMs);
   }, [contextPacksQuery.data]);
+  useEffect(() => {
+    if (!contextPacks.length) {
+      if (selectedContextPackId) setSelectedContextPackId("");
+      return;
+    }
+    if (
+      !selectedContextPackId ||
+      !contextPacks.some((pack: any) => pack.packId === selectedContextPackId)
+    ) {
+      setSelectedContextPackId(contextPacks[0].packId);
+    }
+  }, [contextPacks, selectedContextPackId]);
+  const selectedContextPack = useMemo(
+    () => contextPacks.find((pack: any) => pack.packId === selectedContextPackId) || null,
+    [contextPacks, selectedContextPackId]
+  );
   const sharedContextBindingRows = useMemo(() => {
     const packById = new Map(contextPacks.map((pack: any) => [pack.packId, pack]));
     const candidateSources = [
@@ -798,13 +876,63 @@ export function ScopeInspector({
       pack: packById.get(row.packId) || null,
     }));
   }, [approvedPlanMaterialization, contextPacks, planPackage]);
+  const suggestedContextPacks = useMemo(() => {
+    const currentSourcePlanId = safeString(
+      planPackage?.source_plan_id ||
+        planPackage?.sourcePlanId ||
+        approvedPlanMaterialization?.source_plan_id ||
+        approvedPlanMaterialization?.sourcePlanId ||
+        planPackage?.plan_id ||
+        planPackage?.planId ||
+        approvedPlanMaterialization?.plan_id ||
+        approvedPlanMaterialization?.planId
+    );
+    const currentTitleTerms = [
+      ...tokenizeSuggestionTerms(planPackage?.title),
+      ...tokenizeSuggestionTerms(planPackage?.name),
+      ...tokenizeSuggestionTerms(approvedPlanMaterialization?.title),
+    ];
+    const boundIds = new Set(sharedContextBindingRows.map((entry: any) => entry.packId));
+    return contextPacks
+      .filter((pack: any) => !boundIds.has(pack.packId))
+      .filter((pack: any) => safeString(pack.state) === "published")
+      .filter((pack: any) => !pack.isStale)
+      .map((pack: any) => {
+        let score = 0;
+        if (currentSourcePlanId && pack.sourcePlanId === currentSourcePlanId) score += 6;
+        if (pack.updatedAtMs) score += 1;
+        const packTerms = new Set([
+          ...tokenizeSuggestionTerms(pack.title),
+          ...tokenizeSuggestionTerms(pack.raw?.summary),
+        ]);
+        const overlap = currentTitleTerms.filter((term) => packTerms.has(term));
+        score += Math.min(3, overlap.length);
+        return {
+          ...pack,
+          score,
+          reason: packSuggestionReason(pack, currentSourcePlanId, currentTitleTerms),
+        };
+      })
+      .sort(
+        (left: any, right: any) => right.score - left.score || right.updatedAtMs - left.updatedAtMs
+      )
+      .slice(0, 3);
+  }, [approvedPlanMaterialization, contextPacks, planPackage, sharedContextBindingRows]);
+  const supersededContextBindingRows = useMemo(
+    () =>
+      sharedContextBindingRows.filter(
+        (entry: any) =>
+          entry.pack?.state === "superseded" && safeString(entry.pack?.raw?.superseded_by_pack_id)
+      ),
+    [sharedContextBindingRows]
+  );
 
   async function publishCurrentContextPack() {
     if (!workspaceRoot) {
       setContextPackStatus("Workspace root is not available for this plan.");
       return;
     }
-    setContextPackStatus("Publishing shared context pack...");
+    setContextPackStatus("Publishing shared workflow context...");
     try {
       const contextObjectRefs = toArray(planPackage?.context_objects)
         .map((entry: any) => safeString(entry?.context_object_id || entry?.contextObjectId))
@@ -829,7 +957,7 @@ export function ScopeInspector({
             approvedPlanMaterialization?.title ||
             approvedPlanMaterialization?.name ||
             planPackage?.plan_id ||
-            "Shared context pack"
+            "Shared workflow context"
         ),
         summary: safeString(
           planPackage?.summary || approvedPlanMaterialization?.summary || "Shared workflow context"
@@ -852,6 +980,7 @@ export function ScopeInspector({
         context_object_refs: contextObjectRefs,
         artifact_refs: artifactRefs,
         governed_memory_refs: governedMemoryRefs,
+        allowed_project_keys: parseCommaSeparatedProjectKeys(sharedContextAllowlistInput),
       };
       const response = await api("/api/engine/context/packs", {
         method: "POST",
@@ -1957,6 +2086,15 @@ export function ScopeInspector({
           {sharedContextBindingRows.length ? (
             <div className="grid gap-2">
               <div className="font-medium text-slate-200">Shared context bindings</div>
+              {supersededContextBindingRows.length ? (
+                <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-100">
+                  <div className="font-medium text-amber-50">Replacement available</div>
+                  <div className="mt-1">
+                    One or more bindings point at superseded packs. Rebind them to the suggested
+                    replacement pack before saving this workflow.
+                  </div>
+                </div>
+              ) : null}
               <div className="grid gap-2">
                 {sharedContextBindingRows.map((entry: any) => (
                   <div
@@ -1988,7 +2126,7 @@ export function ScopeInspector({
                       </div>
                     </div>
                     <div className="mt-2 grid gap-2 sm:grid-cols-2">
-                      {kv("pack id", entry.packId)}
+                      {kv("context id", entry.packId)}
                       {kv("source plan", entry.pack?.sourcePlanId || "n/a")}
                       {kv("workspace", entry.pack?.raw?.workspace_root || "n/a")}
                       {kv("project", entry.pack?.projectKey || "n/a")}
@@ -1996,6 +2134,32 @@ export function ScopeInspector({
                     {contextPackStateHint(entry) ? (
                       <div className="mt-2 rounded-md border border-amber-500/40 bg-amber-500/10 p-2 text-[11px] text-amber-100">
                         {contextPackStateHint(entry)}
+                      </div>
+                    ) : null}
+                    {entry.pack?.state === "superseded" &&
+                    safeString(entry.pack?.raw?.superseded_by_pack_id) ? (
+                      <div className="mt-2 flex flex-wrap items-center gap-2 rounded-md border border-amber-500/30 bg-amber-500/5 p-2">
+                        <div className="text-[11px] text-amber-100">
+                          Suggested replacement:{` `}
+                          <span className="font-medium">
+                            {safeString(entry.pack.raw.superseded_by_pack_id)}
+                          </span>
+                        </div>
+                        {onReplaceSharedContextPack ? (
+                          <button
+                            type="button"
+                            className="tcp-btn h-7 px-2 text-[11px]"
+                            onClick={() =>
+                              onReplaceSharedContextPack(
+                                entry.packId,
+                                safeString(entry.pack.raw.superseded_by_pack_id)
+                              )
+                            }
+                          >
+                            <i data-lucide="refresh-cw"></i>
+                            Swap to replacement
+                          </button>
+                        ) : null}
                       </div>
                     ) : null}
                   </div>
@@ -2014,12 +2178,28 @@ export function ScopeInspector({
               disabled={!workspaceRoot}
             >
               <i data-lucide="package-plus"></i>
-              Publish context pack
+              Publish shared workflow context
             </button>
           </div>
           <div className="tcp-subtle text-[11px]">
             workspace: {workspaceRoot || "n/a"}
             {projectKey ? ` · project: ${projectKey}` : ""}
+          </div>
+          <div className="rounded-lg border border-slate-800/80 bg-slate-950/30 p-3">
+            <div className="tcp-subtle text-[11px] uppercase tracking-wide">
+              cross-project allowlist
+            </div>
+            <input
+              type="text"
+              className="tcp-input mt-2"
+              value={sharedContextAllowlistInput}
+              onChange={(event) => setSharedContextAllowlistInput(event.target.value)}
+              placeholder="project-b, project-c"
+            />
+            <div className="tcp-subtle mt-2 text-[11px]">
+              Optional comma-separated project keys for future cross-project reuse. Leave blank for
+              same-project only.
+            </div>
           </div>
           {contextPackStatus ? (
             <div className="rounded-md border border-slate-800/80 bg-slate-950/30 p-2 text-[11px] text-slate-200">
@@ -2028,47 +2208,272 @@ export function ScopeInspector({
           ) : null}
           <div className="grid gap-2">
             {contextPacks.length ? (
-              contextPacks.map((pack: any) => (
-                <div
-                  key={pack.packId}
-                  className="rounded-lg border border-slate-800/80 bg-slate-950/30 p-3"
-                >
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div className="font-medium text-slate-100">{pack.title}</div>
-                    <div className="flex flex-wrap items-center gap-1">
-                      <span className="tcp-badge-info">{pack.state}</span>
+              <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+                <div className="grid gap-2">
+                  {contextPacks.map((pack: any) => {
+                    const isSelected = selectedContextPack?.packId === pack.packId;
+                    return (
                       <button
+                        key={pack.packId}
                         type="button"
-                        className="tcp-btn h-7 px-2 text-[11px]"
-                        onClick={async () => {
-                          try {
-                            await navigator.clipboard.writeText(pack.packId);
-                            setContextPackStatus(`Copied ${pack.packId}.`);
-                          } catch (error) {
-                            setContextPackStatus(
-                              error instanceof Error ? error.message : "Copy failed."
-                            );
-                          }
-                        }}
+                        className={[
+                          "rounded-lg border p-3 text-left transition",
+                          isSelected
+                            ? "border-blue-500/80 bg-blue-500/10"
+                            : "border-slate-800/80 bg-slate-950/30 hover:border-slate-700",
+                        ].join(" ")}
+                        onClick={() => setSelectedContextPackId(pack.packId)}
                       >
-                        <i data-lucide="copy"></i>
-                        Copy id
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="font-medium text-slate-100">{pack.title}</div>
+                          <div className="flex flex-wrap items-center gap-1">
+                            {pack.visibilityScope === "project_allowlist" ? (
+                              <span className="tcp-badge-info">allowlist</span>
+                            ) : null}
+                            {pack.isStale ? <span className="tcp-badge-warning">stale</span> : null}
+                            <span className="tcp-badge-info">{pack.state}</span>
+                          </div>
+                        </div>
+                        <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                          {kv("context id", pack.packId)}
+                          {kv("source plan", pack.sourcePlanId || "n/a")}
+                          {kv("bindings", pack.bindings.length)}
+                          {kv("freshness", pack.freshnessWindowHours || "n/a")}
+                        </div>
                       </button>
-                    </div>
-                  </div>
-                  <div className="mt-2 grid gap-2 sm:grid-cols-2">
-                    {kv("pack id", pack.packId)}
-                    {kv("source plan", pack.sourcePlanId || "n/a")}
-                    {kv("bindings", pack.bindings.length)}
-                    {kv("freshness", pack.freshnessWindowHours || "n/a")}
-                  </div>
+                    );
+                  })}
                 </div>
-              ))
+                <div className="rounded-lg border border-slate-800/80 bg-slate-950/30 p-3">
+                  {selectedContextPack ? (
+                    <div className="grid gap-3">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div>
+                          <div className="font-medium text-slate-100">
+                            {selectedContextPack.title}
+                          </div>
+                          <div className="tcp-subtle text-[11px]">
+                            Published {timestampLabel(selectedContextPack.raw?.published_at_ms)}
+                          </div>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-1">
+                          {selectedContextPack.isStale ? (
+                            <span className="tcp-badge-warning">stale</span>
+                          ) : null}
+                          <span className="tcp-badge-info">{selectedContextPack.state}</span>
+                          <button
+                            type="button"
+                            className="tcp-btn h-7 px-2 text-[11px]"
+                            onClick={async () => {
+                              try {
+                                await navigator.clipboard.writeText(selectedContextPack.packId);
+                                setContextPackStatus(`Copied ${selectedContextPack.packId}.`);
+                              } catch (error) {
+                                setContextPackStatus(
+                                  error instanceof Error ? error.message : "Copy failed."
+                                );
+                              }
+                            }}
+                          >
+                            <i data-lucide="copy"></i>
+                            Copy context id
+                          </button>
+                        </div>
+                      </div>
+                      <div className="grid gap-2 sm:grid-cols-2">
+                        {kv("context id", selectedContextPack.packId)}
+                        {kv("workspace", selectedContextPack.raw?.workspace_root || "n/a")}
+                        {kv("project", selectedContextPack.projectKey || "n/a")}
+                        {kv(
+                          "visibility",
+                          contextPackVisibilityLabel(selectedContextPack.raw?.visibility_scope)
+                        )}
+                        {kv("source plan", selectedContextPack.sourcePlanId || "n/a")}
+                        {kv(
+                          "source automation",
+                          selectedContextPack.raw?.source_automation_id || "n/a"
+                        )}
+                        {kv("source run", selectedContextPack.raw?.source_run_id || "n/a")}
+                        {kv(
+                          "source context run",
+                          selectedContextPack.raw?.source_context_run_id || "n/a"
+                        )}
+                      </div>
+                      <div className="grid gap-2 sm:grid-cols-3">
+                        {kv("freshness window", selectedContextPack.freshnessWindowHours || "n/a")}
+                        {kv("updated", timestampLabel(selectedContextPack.updatedAtMs))}
+                        {kv(
+                          "superseded by",
+                          selectedContextPack.raw?.superseded_by_pack_id || "n/a"
+                        )}
+                      </div>
+                      <div className="grid gap-2 sm:grid-cols-2">
+                        {kv(
+                          "allowed projects",
+                          selectedContextPack.allowedProjectKeys.length
+                            ? selectedContextPack.allowedProjectKeys.join(", ")
+                            : "n/a"
+                        )}
+                        {kv(
+                          "visibility scope",
+                          contextPackVisibilityLabel(selectedContextPack.raw?.visibility_scope)
+                        )}
+                      </div>
+                      {selectedContextPack.raw?.summary ? (
+                        <div className="rounded-md border border-slate-800/80 bg-slate-950/30 p-2">
+                          <div className="tcp-subtle text-[11px] uppercase tracking-wide">
+                            summary
+                          </div>
+                          <div className="mt-1 break-words text-sm text-slate-100">
+                            {selectedContextPack.raw.summary}
+                          </div>
+                        </div>
+                      ) : null}
+                      <div className="grid gap-2 sm:grid-cols-3">
+                        {kv(
+                          "approved materialization",
+                          selectedContextPack.raw?.manifest?.approved_plan_materialization
+                            ? "present"
+                            : "n/a"
+                        )}
+                        {kv(
+                          "plan package",
+                          selectedContextPack.raw?.manifest?.plan_package ? "present" : "n/a"
+                        )}
+                        {kv(
+                          "runtime context",
+                          selectedContextPack.raw?.manifest?.runtime_context ? "present" : "n/a"
+                        )}
+                      </div>
+                      <div className="grid gap-2 sm:grid-cols-3">
+                        {kv(
+                          "context refs",
+                          toArray(selectedContextPack.raw?.manifest?.context_object_refs).length
+                        )}
+                        {kv(
+                          "artifact refs",
+                          toArray(selectedContextPack.raw?.manifest?.artifact_refs).length
+                        )}
+                        {kv(
+                          "memory refs",
+                          toArray(selectedContextPack.raw?.manifest?.governed_memory_refs).length
+                        )}
+                      </div>
+                      <div className="grid gap-2">
+                        <div className="font-medium text-slate-200">Bind history</div>
+                        {selectedContextPack.bindings.length ? (
+                          <div className="grid gap-2">
+                            {selectedContextPack.bindings.map((binding: any) => (
+                              <div
+                                key={binding.binding_id}
+                                className="rounded-md border border-slate-800/80 bg-slate-950/30 p-2"
+                              >
+                                <div className="flex flex-wrap items-center justify-between gap-2">
+                                  <div className="font-medium text-slate-100">
+                                    {binding.alias || binding.binding_id}
+                                  </div>
+                                  <div className="flex flex-wrap items-center gap-1">
+                                    <span
+                                      className={
+                                        binding.required ? "tcp-badge-warning" : "tcp-badge-info"
+                                      }
+                                    >
+                                      {binding.required ? "required" : "optional"}
+                                    </span>
+                                  </div>
+                                </div>
+                                <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                                  {kv("consumer plan", binding.consumer_plan_id || "n/a")}
+                                  {kv("consumer project", binding.consumer_project_key || "n/a")}
+                                  {kv(
+                                    "consumer workspace",
+                                    binding.consumer_workspace_root || "n/a"
+                                  )}
+                                  {kv("created", timestampLabel(binding.created_at_ms))}
+                                </div>
+                                {binding.actor_metadata ? (
+                                  <div className="mt-2">
+                                    <div className="tcp-subtle text-[11px] uppercase tracking-wide">
+                                      actor metadata
+                                    </div>
+                                    <pre className="tcp-code mt-1 max-h-28 overflow-auto text-[11px]">
+                                      {formatJson(binding.actor_metadata)}
+                                    </pre>
+                                  </div>
+                                ) : null}
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="rounded-md border border-slate-800/80 bg-slate-950/30 p-2 text-[11px] text-slate-400">
+                            No bindings recorded on this shared workflow context yet.
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="rounded-md border border-slate-800/80 bg-slate-950/30 p-3 text-[11px] text-slate-400">
+                      Select a shared workflow context to inspect its provenance and bind history.
+                    </div>
+                  )}
+                </div>
+              </div>
             ) : (
               <div className="rounded-lg border border-slate-800/80 bg-slate-950/30 p-3 text-[11px] text-slate-400">
-                No shared context packs have been published for this workspace yet.
+                No shared workflow contexts have been published for this workspace yet.
               </div>
             )}
+            {suggestedContextPacks.length ? (
+              <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="font-medium text-emerald-100">
+                    Suggested recent shared workflow contexts
+                  </div>
+                  <span className="tcp-badge-info">copy only, no auto-bind</span>
+                </div>
+                <div className="mt-2 grid gap-2">
+                  {suggestedContextPacks.map((pack: any) => (
+                    <div
+                      key={pack.packId}
+                      className="rounded-md border border-emerald-500/20 bg-slate-950/30 p-2"
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div>
+                          <div className="font-medium text-slate-100">{pack.title}</div>
+                          <div className="tcp-subtle text-[11px]">{pack.reason}</div>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-1">
+                          <span className="tcp-badge-info">{pack.state}</span>
+                          <button
+                            type="button"
+                            className="tcp-btn h-7 px-2 text-[11px]"
+                            onClick={async () => {
+                              try {
+                                await navigator.clipboard.writeText(pack.packId);
+                                setContextPackStatus(`Copied ${pack.packId}.`);
+                              } catch (error) {
+                                setContextPackStatus(
+                                  error instanceof Error ? error.message : "Copy failed."
+                                );
+                              }
+                            }}
+                          >
+                            <i data-lucide="copy"></i>
+                            Copy context id
+                          </button>
+                        </div>
+                      </div>
+                      <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                        {kv("context id", pack.packId)}
+                        {kv("source plan", pack.sourcePlanId || "n/a")}
+                        {kv("updated", timestampLabel(pack.updatedAtMs))}
+                        {kv("freshness", pack.freshnessWindowHours || "n/a")}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
           </div>
         </div>
       ) : null}

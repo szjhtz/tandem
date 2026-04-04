@@ -2594,6 +2594,114 @@ async fn automations_v2_create_rejects_shared_context_pack_project_mismatch() {
 }
 
 #[tokio::test]
+async fn automations_v2_create_allows_shared_context_pack_project_allowlist() {
+    let state = test_state().await;
+    let app = app_router(state.clone());
+    let workspace_root = std::env::temp_dir()
+        .join(format!(
+            "tandem-automation-v2-shared-context-allowlist-{}",
+            Uuid::new_v4()
+        ))
+        .to_string_lossy()
+        .to_string();
+    std::fs::create_dir_all(&workspace_root).expect("workspace root");
+
+    let publish_req = Request::builder()
+        .method("POST")
+        .uri("/context/packs")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "title": "Allowlisted shared context",
+                "workspace_root": workspace_root,
+                "project_key": "project-a",
+                "allowed_project_keys": ["project-b"],
+                "source_plan_id": "plan-allowlisted",
+                "plan_package": {
+                    "plan_id": "plan-allowlisted",
+                    "title": "Allowlisted Plan",
+                    "context_objects": []
+                },
+                "approved_plan_materialization": {
+                    "plan_id": "plan-allowlisted",
+                    "plan_revision": 1
+                },
+                "runtime_context": { "routines": [] }
+            })
+            .to_string(),
+        ))
+        .expect("publish request");
+    let publish_resp = app
+        .clone()
+        .oneshot(publish_req)
+        .await
+        .expect("publish response");
+    assert_eq!(publish_resp.status(), StatusCode::OK);
+    let publish_body = to_bytes(publish_resp.into_body(), usize::MAX)
+        .await
+        .expect("publish body");
+    let publish_payload: Value = serde_json::from_slice(&publish_body).expect("publish json");
+    let pack_id = publish_payload
+        .get("context_pack")
+        .and_then(|value| value.get("pack_id"))
+        .and_then(Value::as_str)
+        .map(ToString::to_string)
+        .expect("pack id");
+
+    let create_req = Request::builder()
+        .method("POST")
+        .uri("/automations/v2")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "automation_id": "auto-v2-shared-context-allowlisted",
+                "name": "Allowlisted shared context automation",
+                "status": "draft",
+                "workspace_root": workspace_root,
+                "schedule": {
+                    "type": "manual",
+                    "timezone": "UTC",
+                    "misfire_policy": { "type": "skip" }
+                },
+                "agents": [
+                    {
+                        "agent_id": "agent-a",
+                        "display_name": "Agent A",
+                        "skills": [],
+                        "tool_policy": { "allowlist": ["read"], "denylist": [] },
+                        "mcp_policy": { "allowed_servers": [] }
+                    }
+                ],
+                "flow": {
+                    "nodes": [
+                        {
+                            "node_id": "node-1",
+                            "agent_id": "agent-a",
+                            "objective": "Use shared context",
+                            "depends_on": []
+                        }
+                    ]
+                },
+                "metadata": {
+                    "shared_context_project_key": "project-b",
+                    "shared_context_bindings": [
+                        { "pack_id": pack_id, "required": true }
+                    ]
+                },
+                "execution": { "max_parallel_agents": 1 }
+            })
+            .to_string(),
+        ))
+        .expect("create request");
+    let create_resp = app
+        .clone()
+        .oneshot(create_req)
+        .await
+        .expect("create response");
+    assert_eq!(create_resp.status(), StatusCode::OK);
+}
+
+#[tokio::test]
 async fn automations_v2_executor_fails_run_when_workspace_root_missing() {
     let state = test_state().await;
     let app = app_router(state.clone());

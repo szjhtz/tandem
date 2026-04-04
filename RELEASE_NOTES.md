@@ -4,11 +4,16 @@ This is the canonical release-notes file used by release tooling.
 
 ## v0.4.21 (Unreleased)
 
-- **Shared Workflow Context / Context Packs**
-  - Added persisted context-pack records plus publish/list/get/bind/revoke/supersede routes so approved workflow context can be published once and reused later with explicit bindings.
-  - Added runtime expansion, scope-inspector surfacing, and control-panel binding flows so bound packs participate in automation runtime materialization instead of sitting only as metadata.
-  - Added a Scope Inspector pack details drawer with provenance, freshness, manifest summaries, and bind history so operators can inspect packs before reuse.
-  - Added compile-time/runtime validation and regressions for revoked packs, workspace mismatches, project mismatches, project-key list filtering, and scoped GET/read enforcement so the reuse path stays explicit and isolated.
+- **Shared Workflow Context**
+  - Added persisted context records plus publish/list/get/bind/revoke/supersede routes so approved shared workflow context can be published once and reused later with explicit bindings.
+  - Added project allowlist visibility for Shared Workflow Context so explicit cross-project reuse can be opt-in instead of implied by default.
+  - Added runtime expansion, scope-inspector surfacing, and control-panel binding flows so bound shared workflow contexts participate in automation runtime materialization instead of sitting only as metadata.
+  - Added a Shared Workflow Context details drawer with provenance, freshness, manifest summaries, and bind history so operators can inspect reusable context before reuse.
+  - Added copy-only suggestions for recent relevant shared workflow contexts in Scope Inspector, ranked by source-plan and title overlap, so operators can discover reuse candidates without auto-binding them.
+  - Added superseded-context upgrade prompts in workflow review so existing bindings can be swapped to the replacement context with one click before saving.
+  - Added explicit policy-hook events for publish, bind, revoke, and supersede so future authorization checks have a clear seam without introducing a new role model.
+  - Added compile-time/runtime validation and regressions for revoked contexts, workspace mismatches, project mismatches, project-key list filtering, and scoped GET/read enforcement so the reuse path stays explicit and isolated.
+  - Swept the shared-context UI copy to use Shared Workflow Context terminology consistently instead of the older pack wording.
 
 - **Tandem TUI mission-command modularization**
   - Moved the remaining higher-risk slash commands out of `app.rs` into `app/commands.rs`, including mission list/create/get/event flows, quick mission approval helpers, agent-team summary views, local bindings, agent-team approval reply helpers, preset index lookups, agent compose/summary/fork flows, automation preset summary/save flows, and agent-pane creation/switching/fanout orchestration commands.

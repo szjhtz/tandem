@@ -268,7 +268,7 @@ async fn validate_shared_context_pack_bindings(
             return Err((
                 StatusCode::NOT_FOUND,
                 Json(json!({
-                    "error": "shared context pack not found",
+                    "error": "shared workflow context not found",
                     "code": "AUTOMATION_V2_SHARED_CONTEXT_PACK_NOT_FOUND",
                     "pack_id": pack_id,
                 })),
@@ -278,7 +278,7 @@ async fn validate_shared_context_pack_bindings(
             return Err((
                 StatusCode::CONFLICT,
                 Json(json!({
-                    "error": "shared context pack is not published",
+                    "error": "shared workflow context is not published",
                     "code": "AUTOMATION_V2_SHARED_CONTEXT_PACK_INVALID",
                     "pack_id": pack.pack_id,
                     "state": pack.state,
@@ -290,7 +290,7 @@ async fn validate_shared_context_pack_bindings(
                 return Err((
                     StatusCode::FORBIDDEN,
                     Json(json!({
-                        "error": "shared context pack workspace does not match",
+                        "error": "shared workflow context workspace does not match",
                         "code": "AUTOMATION_V2_SHARED_CONTEXT_PACK_SCOPE_MISMATCH",
                         "pack_id": pack.pack_id,
                         "workspace_root": pack.workspace_root,
@@ -298,18 +298,20 @@ async fn validate_shared_context_pack_bindings(
                 ));
             }
         }
-        if let Some(project_key) = declared_project_key.as_deref() {
-            if pack.project_key.as_deref() != Some(project_key) {
-                return Err((
-                    StatusCode::FORBIDDEN,
-                    Json(json!({
-                        "error": "shared context pack project does not match",
-                        "code": "AUTOMATION_V2_SHARED_CONTEXT_PACK_SCOPE_MISMATCH",
-                        "pack_id": pack.pack_id,
-                        "project_key": pack.project_key,
-                    })),
-                ));
-            }
+        if !crate::http::context_packs::context_pack_allows_project(
+            &pack,
+            declared_project_key.as_deref(),
+        ) {
+            return Err((
+                StatusCode::FORBIDDEN,
+                Json(json!({
+                    "error": "shared workflow context project does not match",
+                    "code": "AUTOMATION_V2_SHARED_CONTEXT_PACK_SCOPE_MISMATCH",
+                    "pack_id": pack.pack_id,
+                    "project_key": pack.project_key,
+                    "allowed_project_keys": pack.allowed_project_keys,
+                })),
+            ));
         }
     }
     Ok(())

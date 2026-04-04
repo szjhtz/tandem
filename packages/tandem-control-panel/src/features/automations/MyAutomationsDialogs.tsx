@@ -532,9 +532,9 @@ export function WorkflowAutomationEditDialog({
                 Shared workflow context
               </div>
               <div className="text-xs text-slate-400">
-                Bind approved context packs here, one pack id per line. The ids are validated
-                against this workflow&apos;s workspace and kept on the saved automation metadata so
-                later runs can reuse the same approved context.
+                Bind approved shared workflow contexts here, one context id per line. The ids are
+                validated against this workflow&apos;s workspace and kept on the saved automation
+                metadata so later runs can reuse the same approved context.
               </div>
               <textarea
                 className="tcp-input min-h-[120px] font-mono text-xs leading-5"
@@ -549,10 +549,10 @@ export function WorkflowAutomationEditDialog({
                       : current
                   )
                 }
-                placeholder={`context-pack-123\ncontext-pack-456`}
+                placeholder={`context-context-123\ncontext-context-456`}
               />
               <div className="text-xs text-slate-500">
-                Use the copy-id button in the Shared workflow context panel to paste pack ids
+                Use the copy context id button in the Shared workflow context panel to paste ids
                 quickly.
               </div>
             </div>
@@ -617,6 +617,26 @@ export function WorkflowAutomationEditDialog({
                 document
                   .getElementById("workflow-connector-bindings")
                   ?.scrollIntoView({ behavior: "smooth", block: "start" });
+              }}
+              onReplaceSharedContextPack={(fromPackId: string, toPackId: string) => {
+                if (!fromPackId || !toPackId) return;
+                setWorkflowEditDraft((current: any) =>
+                  current
+                    ? {
+                        ...current,
+                        sharedContextPackIdsText: String(current.sharedContextPackIdsText || "")
+                          .split(/[\n,]/g)
+                          .map((value: string) => String(value || "").trim())
+                          .filter(Boolean)
+                          .map((value: string) => (value === fromPackId ? toPackId : value))
+                          .filter(
+                            (value: string, index: number, values: string[]) =>
+                              values.indexOf(value) === index
+                          )
+                          .join("\n"),
+                      }
+                    : current
+                );
               }}
               onDryRun={
                 workflowEditDraft.automationId

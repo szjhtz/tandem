@@ -9,11 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Shared Workflow Context / Context Packs**:
-  - Added persisted context-pack records plus publish/list/get/bind/revoke/supersede routes so approved workflow context can be published once and reused later with explicit bindings.
-  - Added runtime expansion, scope-inspector surfacing, and control-panel binding flows so bound packs participate in automation runtime materialization instead of sitting only as metadata.
-  - Added a Scope Inspector pack details drawer with provenance, freshness, manifest summaries, and bind history so operators can inspect packs before reuse.
-  - Added compile-time/runtime validation and regressions for revoked packs, workspace mismatches, project mismatches, project-key list filtering, and scoped GET/read enforcement so the reuse path stays scoped and explicit.
+- **Shared Workflow Context**:
+  - Added persisted context records plus publish/list/get/bind/revoke/supersede routes so approved shared workflow context can be published once and reused later with explicit bindings.
+  - Added project allowlist visibility for Shared Workflow Context so explicit cross-project reuse can be opt-in instead of implied by default.
+  - Added runtime expansion, scope-inspector surfacing, and control-panel binding flows so bound shared workflow contexts participate in automation runtime materialization instead of sitting only as metadata.
+  - Added a Shared Workflow Context details drawer with provenance, freshness, manifest summaries, and bind history so operators can inspect reusable context before reuse.
+  - Added copy-only suggestions for recent relevant shared workflow contexts in Scope Inspector, ranked by source-plan and title overlap, so operators can discover reuse candidates without auto-binding them.
+  - Added superseded-context upgrade prompts in workflow review so existing bindings can be swapped to the replacement context with one click before saving.
+  - Added explicit policy-hook events for publish, bind, revoke, and supersede so future authorization checks have a clear seam without introducing a new role model.
+  - Added compile-time/runtime validation and regressions for revoked contexts, workspace mismatches, project mismatches, project-key list filtering, and scoped GET/read enforcement so the reuse path stays scoped and explicit.
+  - Swept the shared-context UI copy to use Shared Workflow Context terminology consistently instead of the older pack wording.
 
 ### Changed
 
