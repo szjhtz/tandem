@@ -3068,6 +3068,9 @@ impl EngineLoop {
         if self.workspace_override_active(session_id).await {
             return None;
         }
+        if is_mcp_tool_name(tool) {
+            return None;
+        }
         let session = self.storage.get_session(session_id).await?;
         let workspace = session
             .workspace_root
@@ -3418,6 +3421,11 @@ fn extract_tool_candidate_paths(tool: &str, args: &Value) -> Vec<String> {
         .filter(|s| !s.trim().is_empty())
         .map(ToString::to_string)
         .collect()
+}
+
+fn is_mcp_tool_name(tool_name: &str) -> bool {
+    let normalized = normalize_tool_name(tool_name);
+    normalized == "mcp_list" || normalized.starts_with("mcp.")
 }
 
 fn agent_can_use_tool(agent: &AgentDefinition, tool_name: &str) -> bool {
@@ -8526,6 +8534,15 @@ Call: todowrite(task_id=3, status="in_progress")
         );
         assert_eq!(mcp_server_from_tool_name("read"), None);
         assert_eq!(mcp_server_from_tool_name("mcp"), None);
+    }
+
+    #[test]
+    fn mcp_tools_are_exempt_from_workspace_sandbox_path_checks() {
+        assert!(is_mcp_tool_name("mcp_list"));
+        assert!(is_mcp_tool_name("mcp.tandem_mcp.get_doc"));
+        assert!(is_mcp_tool_name("MCP.TANDEM_MCP.GET_DOC"));
+        assert!(!is_mcp_tool_name("read"));
+        assert!(!is_mcp_tool_name("glob"));
     }
 
     #[test]

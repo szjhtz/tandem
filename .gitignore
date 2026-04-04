@@ -64,6 +64,7 @@ src-tauri/gen/
 
 # Tandem
 .tandem/
+tandem-data/
 
 # TypeScript
 *.tsbuildinfo

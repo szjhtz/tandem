@@ -1052,7 +1052,6 @@ pub async fn start_channel_listeners(config: ChannelsConfig) -> JoinSet<()> {
     );
 
     let session_map: SessionMap = Arc::new(Mutex::new(initial_map));
-    let setup_clarifiers: SetupClarifierMap = Arc::new(Mutex::new(HashMap::new()));
     let mut security_profiles = HashMap::new();
     let mut set = JoinSet::new();
 
@@ -1060,13 +1059,10 @@ pub async fn start_channel_listeners(config: ChannelsConfig) -> JoinSet<()> {
         security_profiles.insert("telegram".to_string(), tg.security_profile);
         let channel = Arc::new(TelegramChannel::new(tg));
         let map = session_map.clone();
-        let clarifiers = setup_clarifiers.clone();
         let base_url = config.server_base_url.clone();
         let api_token = config.api_token.clone();
         let profiles = Arc::new(security_profiles.clone());
-        set.spawn(supervise(
-            channel, base_url, api_token, map, clarifiers, profiles,
-        ));
+        set.spawn(supervise(channel, base_url, api_token, map, profiles));
         info!("tandem-channels: Telegram listener started");
     }
 
@@ -1074,13 +1070,10 @@ pub async fn start_channel_listeners(config: ChannelsConfig) -> JoinSet<()> {
         security_profiles.insert("discord".to_string(), dc.security_profile);
         let channel = Arc::new(DiscordChannel::new(dc));
         let map = session_map.clone();
-        let clarifiers = setup_clarifiers.clone();
         let base_url = config.server_base_url.clone();
         let api_token = config.api_token.clone();
         let profiles = Arc::new(security_profiles.clone());
-        set.spawn(supervise(
-            channel, base_url, api_token, map, clarifiers, profiles,
-        ));
+        set.spawn(supervise(channel, base_url, api_token, map, profiles));
         info!("tandem-channels: Discord listener started");
     }
 
@@ -1088,13 +1081,10 @@ pub async fn start_channel_listeners(config: ChannelsConfig) -> JoinSet<()> {
         security_profiles.insert("slack".to_string(), sl.security_profile);
         let channel = Arc::new(SlackChannel::new(sl));
         let map = session_map.clone();
-        let clarifiers = setup_clarifiers.clone();
         let base_url = config.server_base_url.clone();
         let api_token = config.api_token.clone();
         let profiles = Arc::new(security_profiles.clone());
-        set.spawn(supervise(
-            channel, base_url, api_token, map, clarifiers, profiles,
-        ));
+        set.spawn(supervise(channel, base_url, api_token, map, profiles));
         info!("tandem-channels: Slack listener started");
     }
 
@@ -1111,7 +1101,6 @@ async fn supervise(
     base_url: String,
     api_token: String,
     session_map: SessionMap,
-    setup_clarifiers: SetupClarifierMap,
     security_profiles: ChannelSecurityMap,
 ) {
     let mut backoff_secs: u64 = 1;
@@ -1130,10 +1119,9 @@ async fn supervise(
             let base = base_url.clone();
             let tok = api_token.clone();
             let map = session_map.clone();
-            let clarifiers = setup_clarifiers.clone();
             let profiles = security_profiles.clone();
             tokio::spawn(async move {
-                process_channel_message(msg, ch, &base, &tok, &map, &clarifiers, &profiles).await;
+                process_channel_message(msg, ch, &base, &tok, &map, &profiles).await;
             });
         }
 
@@ -1165,7 +1153,6 @@ async fn process_channel_message(
     base_url: &str,
     api_token: &str,
     session_map: &SessionMap,
-    setup_clarifiers: &SetupClarifierMap,
     security_profiles: &ChannelSecurityMap,
 ) {
     let security_profile = channel_security_profile(&msg.channel, security_profiles);
@@ -1256,123 +1243,6 @@ async fn process_channel_message(
         }
     }
 
-    let conversation_key = session_map_key(&msg);
-    let clarified_text =
-        consume_setup_clarifier_reply(&conversation_key, &msg.content, setup_clarifiers).await;
-    let effective_text = clarified_text.as_deref().unwrap_or(&msg.content);
-    let setup_response =
-        match understand_setup_request(base_url, api_token, &msg, None, effective_text).await {
-            Ok(response) => response,
-            Err(err) => {
-                warn!(
-                    "setup understanding failed for channel '{}': {err}",
-                    channel.name()
-                );
-                SetupUnderstandResponse {
-                    decision: SetupDecision::PassThrough,
-                    intent_kind: SetupIntentKind::General,
-                    confidence: 0.0,
-                    slots: SetupUnderstandSlots::default(),
-                    evidence: Vec::new(),
-                    clarifier: None,
-                    proposed_action: SetupProposedAction::default(),
-                }
-            }
-        };
-
-    if setup_response.decision == SetupDecision::Clarify {
-        if let Some(clarifier) = &setup_response.clarifier {
-            remember_setup_clarifier(
-                conversation_key.clone(),
-                clarifier,
-                effective_text.to_string(),
-                setup_clarifiers,
-            )
-            .await;
-            let reply = format_setup_clarifier_message(clarifier);
-            if let Err(e) = channel
-                .send(&SendMessage {
-                    content: reply,
-                    recipient: msg.reply_target,
-                    image_urls: Vec::new(),
-                })
-                .await
-            {
-                error!(
-                    "failed to send setup clarifier via '{}': {e}",
-                    channel.name()
-                );
-            }
-            return;
-        }
-    }
-
-    if setup_response.decision == SetupDecision::Intercept {
-        match setup_response.intent_kind {
-            SetupIntentKind::AutomationCreate => {
-                let map_key = session_map_key(&msg);
-                let session_id =
-                    get_or_create_session(&msg, base_url, api_token, session_map, security_profile)
-                        .await;
-                let session_id = match session_id {
-                    Some(id) => id,
-                    None => {
-                        error!("failed to get or create session for {}", map_key);
-                        return;
-                    }
-                };
-                match preview_setup_automation(
-                    base_url,
-                    api_token,
-                    &session_id,
-                    &thread_key,
-                    effective_text,
-                )
-                .await
-                {
-                    Some(reply) => {
-                        if let Err(e) = channel
-                            .send(&SendMessage {
-                                content: reply,
-                                recipient: msg.reply_target,
-                                image_urls: Vec::new(),
-                            })
-                            .await
-                        {
-                            error!(
-                                "failed to send setup automation preview via '{}': {e}",
-                                channel.name()
-                            );
-                        }
-                    }
-                    None => warn!("pack builder preview did not return a reply"),
-                }
-                return;
-            }
-            SetupIntentKind::ProviderSetup
-            | SetupIntentKind::IntegrationSetup
-            | SetupIntentKind::ChannelSetupHelp
-            | SetupIntentKind::SetupHelp => {
-                let reply = format_setup_guidance_message(&setup_response);
-                if let Err(e) = channel
-                    .send(&SendMessage {
-                        content: reply,
-                        recipient: msg.reply_target,
-                        image_urls: Vec::new(),
-                    })
-                    .await
-                {
-                    error!(
-                        "failed to send setup guidance via '{}': {e}",
-                        channel.name()
-                    );
-                }
-                return;
-            }
-            SetupIntentKind::General => {}
-        }
-    }
-
     if let Err(e) = channel.start_typing(&msg.reply_target).await {
         warn!(
             "failed to start typing indicator for channel '{}': {e}",
@@ -1391,7 +1261,7 @@ async fn process_channel_message(
             return;
         }
     };
-    let mut prompt_content = effective_text.to_string();
+    let mut prompt_content = msg.content.clone();
     if let Some(attachment) = msg.attachment.as_deref() {
         if is_zip_attachment(&msg) {
             if let Some(pack_reply) =
@@ -1430,7 +1300,7 @@ async fn process_channel_message(
         prompt_content = synthesize_attachment_prompt(
             &msg.channel,
             attachment,
-            effective_text,
+            &msg.content,
             persisted.as_deref(),
             msg.attachment_path.as_deref(),
             msg.attachment_url.as_deref(),
@@ -1439,7 +1309,7 @@ async fn process_channel_message(
         );
     }
 
-    let route = route_agent_for_channel_message(effective_text);
+    let route = route_agent_for_channel_message(&msg.content);
     let tool_prefs = load_channel_tool_preferences(&msg.channel, &msg.scope.id).await;
     let effective_allowlist =
         build_channel_tool_allowlist(route.tool_allowlist.as_ref(), &tool_prefs, security_profile);
