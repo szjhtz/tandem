@@ -125,6 +125,11 @@ Use:
 
 - workflow plans or direct V2 automations
 
+This pattern can be authored from both UI surfaces:
+
+- **Tandem Control Panel** (`packages/tandem-control-panel`): Use the Automations Wizard or Studio.
+- **Tandem Desktop App** (`src-tauri` / App frontend): Use the Automations page or the Agent Team setup.
+
 This is the best fit for avoiding high-token polling. Tandem uses a triage-first DAG pattern where:
 
 - A cheap `assess` node uses a fast model to survey the environment.
