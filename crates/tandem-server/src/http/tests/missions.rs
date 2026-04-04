@@ -392,6 +392,26 @@ async fn agent_standup_compose_builds_workflow_automation_from_templates() {
     assert!(nodes[0]
         .get("output_contract")
         .and_then(|value| value.get("enforcement"))
+        .and_then(|value| value.get("required_tools"))
+        .and_then(Value::as_array)
+        .is_some_and(|rows| rows.iter().any(|value| value.as_str() == Some("glob"))));
+    assert!(nodes[0]
+        .get("output_contract")
+        .and_then(|value| value.get("enforcement"))
+        .and_then(|value| value.get("required_tools"))
+        .and_then(Value::as_array)
+        .is_some_and(|rows| rows.iter().any(|value| value.as_str() == Some("grep"))));
+    assert!(nodes[0]
+        .get("output_contract")
+        .and_then(|value| value.get("enforcement"))
+        .and_then(|value| value.get("required_tools"))
+        .and_then(Value::as_array)
+        .is_some_and(|rows| rows
+            .iter()
+            .any(|value| value.as_str() == Some("memory_search"))));
+    assert!(nodes[0]
+        .get("output_contract")
+        .and_then(|value| value.get("enforcement"))
         .and_then(|value| value.get("required_evidence"))
         .and_then(Value::as_array)
         .is_some_and(|rows| rows
@@ -442,7 +462,7 @@ async fn agent_standup_compose_builds_workflow_automation_from_templates() {
         .and_then(|rows| rows.first())
         .and_then(|value| value.get("objective"))
         .and_then(Value::as_str)
-        .is_some_and(|value| value.contains("memory_search")));
+        .is_some_and(|value| value.contains("inventory every top-level directory")));
     assert!(automation
         .get("agents")
         .and_then(Value::as_array)

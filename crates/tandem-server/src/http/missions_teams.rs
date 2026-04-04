@@ -251,14 +251,19 @@ fn validate_standup_report_path(raw: &str) -> Result<String, &'static str> {
 
 fn standup_participant_objective(template_name: &str) -> String {
     format!(
-        "You are preparing your daily standup update for {template_name}. Base the update on workspace files and Tandem memory for this project. Review relevant workspace context and use `memory_search` for prior conversations and history. `memory_search` defaults to the current session, current workspace/project, and global Tandem memory, so use it directly unless you need to narrow scope. Use `glob` to enumerate files and directories, `grep` to find relevant text, and `read` only on concrete files. Do not treat missing web research or missing connector results as a blocker for this standup unless the workspace evidence itself explicitly says external research is required. If current external findings are unavailable, still complete the standup from local evidence and mention that limitation plainly instead of blocking. Return valid JSON with keys `yesterday`, `today`, and `blockers`. Keep each field concise and evidence-based. If evidence is unavailable, say so plainly instead of guessing."
+        "You are preparing your daily standup update for {template_name}. Base the update on workspace files and Tandem memory for this project. Before making any claim, inspect the workspace broadly: use `glob` to inventory every top-level directory and the major subdirectories beneath it, use `grep` to identify standup-relevant paths, then `read` the concrete files that appear relevant. Complete that workspace-wide inventory pass first, then drill into every area that appears relevant to recent work, artifacts, docs, drafts, outputs, notes, or generated results. Use `memory_search` for prior conversations and history; it defaults to the current session, current workspace/project, and global Tandem memory unless you need to narrow scope. Ground each standup point in files you actually opened or memory you actually found. Do not write tool/process commentary in the final update. Describe actual work found in the workspace, not the act of preparing the standup. Do not treat missing web research or missing connector results as a blocker for this standup unless the workspace evidence itself explicitly says external research is required. If current external findings are unavailable, still complete the standup from local evidence and mention that limitation plainly instead of blocking. Return valid JSON with keys `yesterday`, `today`, and `blockers`. Keep each field concise and evidence-based. If no verifiable role-specific progress is found after the workspace-wide pass, say that plainly instead of guessing."
     )
 }
 
 fn standup_participant_enforcement() -> crate::AutomationOutputEnforcement {
     crate::AutomationOutputEnforcement {
         validation_profile: Some("local_research".to_string()),
-        required_tools: vec!["read".to_string()],
+        required_tools: vec![
+            "glob".to_string(),
+            "grep".to_string(),
+            "read".to_string(),
+            "memory_search".to_string(),
+        ],
         required_evidence: vec!["local_source_reads".to_string()],
         required_sections: Vec::new(),
         prewrite_gates: vec![
