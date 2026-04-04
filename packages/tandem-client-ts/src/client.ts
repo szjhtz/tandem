@@ -133,6 +133,7 @@ import type {
   WorkflowPlanImportResponse,
   WorkflowPlanPackBuilderExportRequest,
   WorkflowPlanPackBuilderExportResult,
+  WorkflowPlanDraftRecord,
   WorkflowPlannerSessionCreateResponse,
   WorkflowPlannerSessionDuplicateResponse,
   WorkflowPlannerSessionListResponse,
@@ -2488,6 +2489,8 @@ class WorkflowPlans {
 
 class WorkflowPlannerSessions {
   constructor(private req: TandemClient["_request"]) {}
+
+  private readonly chatTimeoutMs = 90_000;
 
   async list(options?: {
     projectSlug?: string;

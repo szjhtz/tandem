@@ -1,5 +1,12 @@
 // ─── Core ─────────────────────────────────────────────────────────────────────
 
+export type JsonValue =
+  | string
+  | number
+  | boolean
+  | null
+  | JsonValue[]
+  | { [key: string]: JsonValue };
 export type JsonObject = Record<string, unknown>;
 
 export interface TandemClientOptions {
@@ -1245,6 +1252,20 @@ export interface WorkflowPlanConversation {
   updated_at_ms?: number;
   messages: WorkflowPlanChatMessage[];
   [key: string]: unknown;
+}
+
+export interface WorkflowPlanChatResponse {
+  plan: WorkflowPlan;
+  conversation: WorkflowPlanConversation;
+  assistant_message?: JsonObject;
+  change_summary?: string[];
+  clarifier?: JsonObject | null;
+  planner_diagnostics?: JsonObject | null;
+  plan_package?: JsonObject;
+  plan_package_bundle?: JsonObject;
+  plan_package_validation?: JsonObject;
+  overlap_analysis?: JsonObject | null;
+  teaching_library?: JsonObject;
 }
 
 export interface WorkflowPlanDraftRecord {

@@ -1625,6 +1625,16 @@ export interface WorkflowPlanConversation {
   [key: string]: unknown;
 }
 
+export interface WorkflowPlanDraftRecord {
+  initial_plan: WorkflowPlan;
+  current_plan: WorkflowPlan;
+  plan_revision?: number;
+  conversation: WorkflowPlanConversation;
+  planner_diagnostics?: JsonValue;
+  last_success_materialization?: JsonValue;
+  [key: string]: unknown;
+}
+
 export interface WorkflowPlanPreviewResponse {
   plan: WorkflowPlan;
   clarifier?: JsonObject | null;
@@ -1688,6 +1698,65 @@ export interface WorkflowPlanImportPreviewResponse {
 }
 
 export type WorkflowPlanImportResponse = WorkflowPlanImportPreviewResponse;
+
+export interface WorkflowPlannerSessionRecord {
+  session_id: string;
+  project_slug: string;
+  title: string;
+  workspace_root: string;
+  current_plan_id?: string;
+  draft?: WorkflowPlanDraftRecord;
+  goal?: string;
+  notes?: string;
+  planner_provider?: string;
+  planner_model?: string;
+  plan_source?: string;
+  allowed_mcp_servers?: string[];
+  operator_preferences?: JsonObject;
+  published_at_ms?: number | null;
+  published_tasks?: JsonValue[];
+  created_at_ms: number;
+  updated_at_ms: number;
+  [key: string]: unknown;
+}
+
+export interface WorkflowPlannerSessionListItem {
+  session_id: string;
+  title: string;
+  project_slug: string;
+  workspace_root: string;
+  current_plan_id?: string;
+  created_at_ms: number;
+  updated_at_ms: number;
+  goal?: string | null;
+  planner_provider?: string | null;
+  planner_model?: string | null;
+}
+
+export interface WorkflowPlannerSessionListResponse {
+  sessions: WorkflowPlannerSessionListItem[];
+  count: number;
+}
+
+export interface WorkflowPlannerSessionResponse {
+  session: WorkflowPlannerSessionRecord;
+}
+
+export interface WorkflowPlannerSessionCreateResponse extends WorkflowPlannerSessionResponse {}
+export interface WorkflowPlannerSessionPatchResponse extends WorkflowPlannerSessionResponse {}
+export interface WorkflowPlannerSessionDuplicateResponse extends WorkflowPlannerSessionResponse {}
+
+export interface WorkflowPlannerSessionStartResponse extends WorkflowPlanChatResponse {
+  session?: WorkflowPlannerSessionRecord;
+}
+
+export interface WorkflowPlannerSessionMessageResponse extends WorkflowPlanChatResponse {
+  session?: WorkflowPlannerSessionRecord;
+}
+
+export interface WorkflowPlannerSessionResetResponse extends WorkflowPlanChatResponse {
+  session?: WorkflowPlannerSessionRecord;
+}
 
 export interface AutomationV2RunRecord {
   runId: string;
