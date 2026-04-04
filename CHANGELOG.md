@@ -37,6 +37,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Added validation coverage so connector-backed work that never discovers available MCP tools is blocked instead of completing with guessed answers.
   - Added regression tests for planner prompt generation, runtime prompt rendering, and connector-backed intent detection.
 
+- **Channel MCP permission refresh**:
+  - Reapplied the channel permission template whenever a Telegram, Discord, or Slack session is reused so `mcp_list` and other `mcp*` tools no longer get stuck behind stale session permissions after a restart.
+  - Allowed session PATCH updates to refresh permission rules and added regression coverage so channel sessions can recover MCP discovery without manually recreating the session.
+
 ## [0.4.20] - 2026-04-03
 
 ### Added
