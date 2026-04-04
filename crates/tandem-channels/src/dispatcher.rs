@@ -2620,6 +2620,35 @@ fn build_channel_session_create_body(
     payload
 }
 
+async fn refresh_channel_session_permissions(
+    base_url: &str,
+    api_token: &str,
+    session_id: &str,
+    security_profile: ChannelSecurityProfile,
+) {
+    let client = reqwest::Client::new();
+    let permissions = build_channel_session_permissions(security_profile);
+    let response = add_auth(
+        client.patch(format!("{base_url}/session/{session_id}")),
+        api_token,
+    )
+    .json(&serde_json::json!({ "permission": permissions }))
+    .send()
+    .await;
+    match response {
+        Ok(resp) if resp.status().is_success() => {}
+        Ok(resp) => warn!(
+            "failed to refresh permissions for session '{}': HTTP {}",
+            session_id,
+            resp.status()
+        ),
+        Err(err) => warn!(
+            "failed to refresh permissions for session '{}': {}",
+            session_id, err
+        ),
+    }
+}
+
 /// Look up an existing session or create a new one via `POST /session`.
 async fn get_or_create_session(
     msg: &ChannelMessage,
@@ -2640,6 +2669,8 @@ async fn get_or_create_session(
             let sid = record.session_id.clone();
             // Persist the updated last_seen_at_ms
             persist_session_map(&guard).await;
+            drop(guard);
+            refresh_channel_session_permissions(base_url, api_token, &sid, security_profile).await;
             return Some(sid);
         }
         if let Some(mut legacy_record) = guard.remove(&legacy_key) {
@@ -2652,6 +2683,8 @@ async fn get_or_create_session(
             let sid = legacy_record.session_id.clone();
             guard.insert(map_key.clone(), legacy_record);
             persist_session_map(&guard).await;
+            drop(guard);
+            refresh_channel_session_permissions(base_url, api_token, &sid, security_profile).await;
             return Some(sid);
         }
     }
@@ -2714,6 +2747,8 @@ async fn get_or_create_session(
         },
     );
     persist_session_map(&guard).await;
+    drop(guard);
+    refresh_channel_session_permissions(base_url, api_token, &session_id, security_profile).await;
 
     Some(session_id)
 }

@@ -1172,6 +1172,7 @@ pub(super) async fn update_session(
     if let Some(title) = input.title {
         session.title = title;
     }
+    apply_session_permission_rules(&state, input.permission).await;
     session.time.updated = chrono::Utc::now();
     state
         .storage

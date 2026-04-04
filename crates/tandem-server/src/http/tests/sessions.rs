@@ -104,6 +104,34 @@ async fn session_todo_route_returns_normalized_items() {
 }
 
 #[tokio::test]
+async fn update_session_refreshes_mcp_permissions() {
+    let state = test_state().await;
+    let session = Session::new(Some("perm refresh".to_string()), Some(".".to_string()));
+    let session_id = session.id.clone();
+    state.storage.save_session(session).await.expect("save");
+
+    let app = app_router(state.clone());
+    let req = Request::builder()
+        .method("PATCH")
+        .uri(format!("/session/{session_id}"))
+        .header("content-type", "application/json")
+        .body(Body::from(
+            serde_json::json!({
+                "permission": [
+                    {"permission": "mcp*", "pattern": "*", "action": "allow"}
+                ]
+            })
+            .to_string(),
+        ))
+        .expect("request");
+    let resp = app.oneshot(req).await.expect("response");
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let action = state.permissions.evaluate("mcp_list", "mcp_list").await;
+    assert!(matches!(action, tandem_core::PermissionAction::Allow));
+}
+
+#[tokio::test]
 async fn session_part_persister_stores_tool_parts_in_session_history() {
     let state = test_state().await;
     let task = tokio::spawn(crate::run_session_part_persister(state.clone()));

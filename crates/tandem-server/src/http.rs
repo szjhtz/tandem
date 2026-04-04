@@ -197,6 +197,7 @@ struct StorageFilesQuery {
 struct UpdateSessionInput {
     title: Option<String>,
     archived: Option<bool>,
+    permission: Option<Vec<serde_json::Value>>,
 }
 
 #[derive(Debug, Deserialize)]

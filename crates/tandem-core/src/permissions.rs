@@ -168,7 +168,15 @@ impl PermissionManager {
             pattern: pattern.into(),
             action,
         };
-        self.rules.write().await.push(rule.clone());
+        let mut rules = self.rules.write().await;
+        if rules.iter().any(|existing| {
+            existing.permission == rule.permission
+                && existing.pattern == rule.pattern
+                && std::mem::discriminant(&existing.action) == std::mem::discriminant(&rule.action)
+        }) {
+            return rule;
+        }
+        rules.push(rule.clone());
         rule
     }
 
