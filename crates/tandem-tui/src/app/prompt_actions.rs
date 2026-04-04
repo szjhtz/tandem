@@ -4,6 +4,7 @@ use super::{
     ModalState, PendingPermissionRequest, PendingQuestionRequest, PendingRequest,
     PendingRequestKind, PlanFeedbackWizardState, QuestionDraft, TandemMode, ToolCallInfo,
 };
+use tandem_types::ModelSpec;
 use tandem_wire::WireSessionMessage;
 
 impl App {
@@ -25,6 +26,17 @@ impl App {
             .map(|(active_session, active_agent)| {
                 active_session == session_id && active_agent == agent_id
             })
+            .unwrap_or(false)
+    }
+
+    fn is_delegated_worker_agent(&self, session_id: &str, agent_id: &str) -> bool {
+        let AppState::Chat { agents, .. } = &self.state else {
+            return false;
+        };
+        agents
+            .iter()
+            .find(|agent| agent.session_id == session_id && agent.agent_id == agent_id)
+            .map(|agent| agent.delegated_worker)
             .unwrap_or(false)
     }
 
@@ -200,6 +212,15 @@ impl App {
         } else {
             Some(text)
         }
+    }
+
+    fn current_model_spec(&self) -> Option<ModelSpec> {
+        let provider_id = self.current_provider.as_ref()?.to_string();
+        let model_id = self.current_model.as_ref()?.to_string();
+        Some(ModelSpec {
+            provider_id,
+            model_id,
+        })
     }
 
     pub(super) fn maybe_dispatch_queued_for_agent(&mut self, session_id: &str, agent_id: &str) {
