@@ -1883,3 +1883,255 @@ fn assess_evidence_anchors_count_upstream_path_and_url_mentions() {
         assessment.evidence_anchor_count
     );
 }
+
+// -----------------------------------------------------------------------
+// Standup gap fill — T1: filler detection consolidation (item E)
+// -----------------------------------------------------------------------
+
+// Converts raw standup JSON into the upstream input shape that
+// extract_standup_participant_update() and the filler detectors consume.
+fn standup_participant_input(node_id: &str, yesterday: &str, today: &str) -> Value {
+    json!({
+        "alias": node_id,
+        "from_step_id": node_id,
+        "output": {
+            "status": "completed",
+            "content": {
+                "text": serde_json::to_string(&json!({
+                    "yesterday": yesterday,
+                    "today": today,
+                    "status": "completed"
+                })).unwrap()
+            }
+        }
+    })
+}
+
+#[test]
+fn standup_filler_detection_catches_standup_specific_phrases() {
+    use super::node_output::detect_automation_node_status;
+    let mut node = bare_node();
+    node.output_contract = Some(AutomationFlowOutputContract {
+        kind: "standup_update".to_string(),
+        validator: Some(crate::AutomationOutputValidatorKind::StandupUpdate),
+        enforcement: None,
+        schema: None,
+        summary_guidance: None,
+    });
+    // Both fields contain standup-specific filler phrases
+    let session_text = serde_json::to_string(&json!({
+        "yesterday": "reviewed workspace artifacts and tandem memory; identified relevant context",
+        "today": "prepare the daily standup report from available context",
+        "status": "completed"
+    }))
+    .unwrap();
+    let (status, reason, _) =
+        detect_automation_node_status(&node, &session_text, None, &json!({}), None);
+    assert_eq!(
+        status, "needs_repair",
+        "standup-specific filler phrases should trigger needs_repair"
+    );
+    assert!(
+        reason.is_some(),
+        "filler rejection should include a repair reason"
+    );
+}
+
+#[test]
+fn standup_filler_detection_catches_generic_placeholder_phrases() {
+    use super::node_output::detect_automation_node_status;
+    let mut node = bare_node();
+    node.output_contract = Some(AutomationFlowOutputContract {
+        kind: "standup_update".to_string(),
+        validator: Some(crate::AutomationOutputValidatorKind::StandupUpdate),
+        enforcement: None,
+        schema: None,
+        summary_guidance: None,
+    });
+    // Generic status-only markers that placeholder_like_artifact_text() catches:
+    // short text containing "completed", "confirmed", "write completion", etc.
+    // These represent agents that respond with status echo strings instead of content.
+    let session_text = serde_json::to_string(&json!({
+        "yesterday": "completed",
+        "today": "write completion",
+        "status": "completed"
+    }))
+    .unwrap();
+    let (status, _reason, _) =
+        detect_automation_node_status(&node, &session_text, None, &json!({}), None);
+    assert_eq!(
+        status, "needs_repair",
+        "generic placeholder phrases should also trigger needs_repair via consolidated detection"
+    );
+}
+
+#[test]
+fn standup_filler_detection_accepts_concrete_updates() {
+    use super::node_output::detect_automation_node_status;
+    let mut node = bare_node();
+    node.output_contract = Some(AutomationFlowOutputContract {
+        kind: "standup_update".to_string(),
+        validator: Some(crate::AutomationOutputValidatorKind::StandupUpdate),
+        enforcement: None,
+        schema: None,
+        summary_guidance: None,
+    });
+    // Concrete update with real file references
+    let session_text = serde_json::to_string(&json!({
+        "yesterday": "Drafted homepage headline copy in outputs/homepage-copy.md and refined the H1 variant list.",
+        "today": "Update the campaign brief with the new audience segment based on outputs/research-brief.md.",
+        "status": "completed"
+    }))
+    .unwrap();
+    let (status, _reason, _) =
+        detect_automation_node_status(&node, &session_text, None, &json!({}), None);
+    assert_eq!(
+        status, "completed",
+        "concrete standup update with file references should be accepted"
+    );
+}
+
+// -----------------------------------------------------------------------
+// Standup gap fill — T2: enriched repair reason (item D)
+// -----------------------------------------------------------------------
+
+#[test]
+fn standup_filler_repair_reason_includes_tool_telemetry_context() {
+    use super::node_output::detect_automation_node_status;
+    let mut node = bare_node();
+    node.output_contract = Some(AutomationFlowOutputContract {
+        kind: "standup_update".to_string(),
+        validator: Some(crate::AutomationOutputValidatorKind::StandupUpdate),
+        enforcement: None,
+        schema: None,
+        summary_guidance: None,
+    });
+    let session_text = serde_json::to_string(&json!({
+        "yesterday": "reviewed workspace artifacts and tandem memory",
+        "today": "prepare the daily standup report from available context",
+        "status": "completed"
+    }))
+    .unwrap();
+    let tool_telemetry = json!({
+        "executed_tools": ["glob", "read", "memory_search"],
+        "glob_directories": ["outputs/", "content/"],
+        "read_paths": ["outputs/homepage-copy.md", "content/article-draft.md"]
+    });
+    let (status, reason, _) =
+        detect_automation_node_status(&node, &session_text, None, &tool_telemetry, None);
+    assert_eq!(status, "needs_repair");
+    let reason = reason.expect("filler rejection should include a reason");
+    assert!(
+        reason.contains("glob") || reason.contains("read"),
+        "repair reason should mention tools used, got: {reason}"
+    );
+    assert!(
+        reason.contains("outputs/") || reason.contains("content/"),
+        "repair reason should mention directories searched, got: {reason}"
+    );
+    assert!(
+        reason.contains("homepage-copy") || reason.contains("article-draft"),
+        "repair reason should mention files read, got: {reason}"
+    );
+}
+
+#[test]
+fn standup_filler_repair_reason_handles_missing_telemetry_gracefully() {
+    use super::node_output::detect_automation_node_status;
+    let mut node = bare_node();
+    node.output_contract = Some(AutomationFlowOutputContract {
+        kind: "standup_update".to_string(),
+        validator: Some(crate::AutomationOutputValidatorKind::StandupUpdate),
+        enforcement: None,
+        schema: None,
+        summary_guidance: None,
+    });
+    let session_text = serde_json::to_string(&json!({
+        "yesterday": "reviewed workspace",
+        "today": "workspace context",
+        "status": "completed"
+    }))
+    .unwrap();
+    let (status, reason, _) =
+        detect_automation_node_status(&node, &session_text, None, &json!({}), None);
+    assert_eq!(status, "needs_repair");
+    let reason = reason.expect("filler rejection should always include a reason");
+    assert!(
+        reason.contains("none recorded"),
+        "missing telemetry should not cause panic; got: {reason}"
+    );
+}
+
+// -----------------------------------------------------------------------
+// Standup gap fill — T3: receipt path derivation (item B)
+// -----------------------------------------------------------------------
+
+#[test]
+fn standup_receipt_path_derived_from_report_path() {
+    // Test the standup_receipt_path_for_report helper directly
+    // The function is private, so we test it indirectly through compile-time
+    // inclusion. We verify the expected pattern holds for our documented example.
+    let report = "docs/standups/2026-04-05.md";
+    let receipt = super::standup_receipt_path_for_report(report);
+    assert_eq!(receipt, "docs/standups/receipt-2026-04-05.json");
+}
+
+#[test]
+fn standup_receipt_path_handles_root_level_report() {
+    let report = "standup.md";
+    let receipt = super::standup_receipt_path_for_report(report);
+    assert_eq!(receipt, "docs/standups/receipt-standup.json");
+}
+
+#[test]
+fn standup_receipt_path_handles_nested_report() {
+    let report = "team/standups/weekly/2026-04-05.md";
+    let receipt = super::standup_receipt_path_for_report(report);
+    assert_eq!(receipt, "team/standups/weekly/receipt-2026-04-05.json");
+}
+
+// -----------------------------------------------------------------------
+// Standup gap fill — T5: coordinator input formatting (item C)
+// -----------------------------------------------------------------------
+
+#[test]
+fn extract_standup_participant_update_finds_nested_json_in_content_text() {
+    let input = standup_participant_input(
+        "participant_0_copywriter",
+        "Drafted homepage headline copy in outputs/homepage-copy.md",
+        "Refine the H1 variants based on the new positioning brief",
+    );
+    let update = super::prompting_impl::extract_standup_participant_update_pub(&input);
+    assert!(
+        update.is_some(),
+        "should extract standup update from content.text JSON"
+    );
+    let update = update.unwrap();
+    assert!(
+        update.get("yesterday").is_some(),
+        "extracted update should have yesterday field"
+    );
+    assert!(
+        update.get("today").is_some(),
+        "extracted update should have today field"
+    );
+}
+
+#[test]
+fn extract_standup_participant_update_returns_none_for_non_standup_output() {
+    let input = json!({
+        "alias": "research_brief",
+        "from_step_id": "research_brief",
+        "output": {
+            "status": "completed",
+            "content": {
+                "text": "The research findings indicate three key market opportunities..."
+            }
+        }
+    });
+    let update = super::prompting_impl::extract_standup_participant_update_pub(&input);
+    assert!(
+        update.is_none(),
+        "non-standup output text should not be mistaken for a participant update"
+    );
+}

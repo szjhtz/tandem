@@ -1770,6 +1770,156 @@ fn resolve_standup_report_path_for_run(
     Some(template.replace("{{date}}", &date))
 }
 
+/// Derives the receipt path from the standup report path by inserting a
+/// "receipt-" prefix on the filename and replacing the extension with ".json".
+/// Example: "docs/standups/2026-04-05.md" → "docs/standups/receipt-2026-04-05.json"
+pub(super) fn standup_receipt_path_for_report(report_path: &str) -> String {
+    let p = std::path::Path::new(report_path);
+    let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or("standup");
+    let dir = p
+        .parent()
+        .and_then(|d| d.to_str())
+        .filter(|d| !d.is_empty())
+        .unwrap_or("docs/standups");
+    format!("{dir}/receipt-{stem}.json")
+}
+
+/// Builds an operator-facing JSON receipt for a completed standup run.
+/// Sources all data from existing structures: run checkpoint, lifecycle history,
+/// node outputs, and the coordinator's assessment score.
+/// Returns None if the run data is not available or this is not a standup run.
+fn build_standup_run_receipt(
+    run: &AutomationV2RunRecord,
+    automation: &AutomationV2Spec,
+    run_id: &str,
+    report_path: &str,
+    coordinator_assessment: &ArtifactCandidateAssessment,
+) -> Option<Value> {
+    let completed_at_iso = run
+        .finished_at_ms
+        .or(run.started_at_ms)
+        .map(|ms| {
+            chrono::DateTime::<chrono::Utc>::from_timestamp_millis(ms as i64)
+                .unwrap_or_else(chrono::Utc::now)
+                .to_rfc3339()
+        })
+        .unwrap_or_else(|| "unknown".to_string());
+
+    // Count lifecycle events by type for summary
+    let lifecycle_events = &run.checkpoint.lifecycle_history;
+    let total_events = lifecycle_events.len();
+    let total_repair_cycles = lifecycle_events
+        .iter()
+        .filter(|e| e.event == "node_repair_requested")
+        .count();
+    // Filler rejections are repair cycles on standup_update nodes
+    let total_filler_rejections = lifecycle_events
+        .iter()
+        .filter(|e| {
+            e.event == "node_repair_requested"
+                && e.metadata
+                    .as_ref()
+                    .and_then(|m| m.get("contract_kind"))
+                    .and_then(Value::as_str)
+                    .is_some_and(|k| k == "standup_update")
+        })
+        .count();
+
+    // Build per-participant summaries from node outputs
+    let participants: Vec<Value> = automation
+        .flow
+        .nodes
+        .iter()
+        .filter(|n| n.node_id != "standup_synthesis")
+        .map(|participant_node| {
+            let node_output = run
+                .checkpoint
+                .node_outputs
+                .get(&participant_node.node_id);
+            let attempts = run
+                .checkpoint
+                .node_attempts
+                .get(&participant_node.node_id)
+                .copied()
+                .unwrap_or(0);
+            let status = node_output
+                .and_then(|o| o.get("status"))
+                .and_then(Value::as_str)
+                .unwrap_or("unknown");
+            // Extract yesterday/today from the participant's standup JSON,
+            // stored in the node output content text
+            let standup_json = node_output
+                .and_then(|o| o.get("content"))
+                .and_then(|c| c.get("text").or_else(|| c.get("raw_assistant_text")))
+                .and_then(Value::as_str)
+                .and_then(|text| serde_json::from_str::<Value>(text).ok());
+            let yesterday = standup_json
+                .as_ref()
+                .and_then(|v| v.get("yesterday"))
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .trim()
+                .to_string();
+            let today = standup_json
+                .as_ref()
+                .and_then(|v| v.get("today"))
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .trim()
+                .to_string();
+            let filler_rejected = lifecycle_events.iter().any(|e| {
+                e.event == "node_repair_requested"
+                    && e.metadata
+                        .as_ref()
+                        .and_then(|m| m.get("node_id"))
+                        .and_then(Value::as_str)
+                        .is_some_and(|id| id == participant_node.node_id)
+            });
+            // Derive a readable name from the node_id (e.g., "participant_0_copywriter")
+            let display_name = participant_node
+                .node_id
+                .splitn(3, '_')
+                .nth(2)
+                .unwrap_or(&participant_node.node_id)
+                .replace('_', " ");
+            json!({
+                "node_id": participant_node.node_id,
+                "display_name": display_name,
+                "attempts": attempts,
+                "status": status,
+                "filler_rejected": filler_rejected,
+                "yesterday_summary": if yesterday.is_empty() { Value::Null } else { json!(yesterday) },
+                "today_summary": if today.is_empty() { Value::Null } else { json!(today) },
+            })
+        })
+        .collect();
+
+    let coordinator_attempts = run
+        .checkpoint
+        .node_attempts
+        .get("standup_synthesis")
+        .copied()
+        .unwrap_or(0);
+
+    Some(json!({
+        "run_id": run_id,
+        "automation_id": automation.automation_id,
+        "automation_name": automation.name,
+        "completed_at_iso": completed_at_iso,
+        "report_path": report_path,
+        "participants": participants,
+        "coordinator": {
+            "node_id": "standup_synthesis",
+            "attempts": coordinator_attempts,
+            "report_path": report_path,
+            "assessment": assessment::artifact_candidate_summary(coordinator_assessment, true),
+        },
+        "lifecycle_event_count": total_events,
+        "total_repair_cycles": total_repair_cycles,
+        "total_filler_rejections": total_filler_rejections,
+    }))
+}
+
 fn automation_workspace_project_id(workspace_root: &str) -> String {
     tandem_core::workspace_project_id(workspace_root)
         .unwrap_or_else(|| "workspace-unknown".to_string())
@@ -7052,6 +7202,109 @@ pub(crate) async fn execute_automation_v2_node(
                 "external_actions".to_string(),
                 serde_json::to_value(&external_actions)?,
             );
+        }
+
+        // --- A. Standup coordinator assessment scoring ---
+        // Reuses assess_artifact_candidate() from assessment.rs to score the
+        // coordinator's synthesis report. Records score + breakdown as metadata.
+        // Does NOT hard-block. Soft warning only for low-quality outputs.
+        //
+        // Score thresholds (informational, not enforcement gates):
+        //   < 0   : effectively empty/broken
+        //   < 500 : weak — warning logged + standup_quality_warning flag set
+        //   >= 500: acceptable
+        //   >= 2000: strong (substantive flag set by assess_artifact_candidate)
+        if is_agent_standup_automation(automation) && node.node_id == "standup_synthesis" {
+            let report_text = object
+                .get("content")
+                .and_then(|c| c.get("text").and_then(Value::as_str))
+                .or_else(|| {
+                    object
+                        .get("content")
+                        .and_then(|c| c.get("raw_assistant_text").and_then(Value::as_str))
+                })
+                .unwrap_or(&session_text);
+            let read_paths = tool_telemetry
+                .get("read_paths")
+                .and_then(Value::as_array)
+                .map(|rows| {
+                    rows.iter()
+                        .filter_map(Value::as_str)
+                        .map(str::to_string)
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            let assessment = assess_artifact_candidate(
+                node,
+                &workspace_root,
+                "session_write",
+                report_text,
+                &read_paths,
+                &[],
+                &[],
+                &[],
+            );
+            let assessment_summary = assessment::artifact_candidate_summary(&assessment, true);
+            object.insert("standup_assessment".to_string(), assessment_summary);
+            if assessment.score < 500 {
+                object.insert("standup_quality_warning".to_string(), json!(true));
+                tracing::warn!(
+                    run_id = %run_id,
+                    node_id = %node.node_id,
+                    score = assessment.score,
+                    substantive = assessment.substantive,
+                    placeholder_like = assessment.placeholder_like,
+                    "standup coordinator output scored below warning threshold (500); \
+                     report may be low-quality"
+                );
+            }
+
+            // --- B. Operator-facing standup run receipt ---
+            // Generates a JSON receipt beside the standup report using existing
+            // node_outputs, node_attempts, lifecycle_history, and assessment data.
+            // The receipt path is derived from the report path by inserting a
+            // "receipt-" prefix on the filename, e.g.:
+            //   docs/standups/2026-04-05.md -> docs/standups/receipt-2026-04-05.json
+            if let Some(report_path) = standup_report_path.as_deref() {
+                if let Some(receipt_json) = build_standup_run_receipt(
+                    &run_after,
+                    automation,
+                    run_id,
+                    report_path,
+                    &assessment,
+                ) {
+                    let receipt_path = standup_receipt_path_for_report(report_path);
+                    let abs_receipt = PathBuf::from(&workspace_root).join(&receipt_path);
+                    if let Some(parent) = abs_receipt.parent() {
+                        let _ = std::fs::create_dir_all(parent);
+                    }
+                    match serde_json::to_string_pretty(&receipt_json) {
+                        Ok(content) => match std::fs::write(&abs_receipt, &content) {
+                            Ok(()) => {
+                                object.insert(
+                                    "standup_receipt_path".to_string(),
+                                    json!(receipt_path),
+                                );
+                            }
+                            Err(err) => {
+                                tracing::warn!(
+                                    run_id = %run_id,
+                                    receipt_path = %receipt_path,
+                                    error = %err,
+                                    "failed to write standup run receipt"
+                                );
+                            }
+                        },
+                        Err(err) => {
+                            tracing::warn!(
+                                run_id = %run_id,
+                                error = %err,
+                                "failed to serialize standup run receipt"
+                            );
+                        }
+                    }
+                }
+            }
         }
     }
     Ok(output)

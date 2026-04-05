@@ -6,6 +6,11 @@ use tandem_types::MessagePart;
 /// Returns true when all user-visible standup fields consist entirely of known
 /// meta-commentary phrases. Used by the `StandupUpdate` fast path to trigger
 /// a repair rather than silently accepting empty-substance output.
+///
+/// Detection layers (applied per-field, both must be filler to reject):
+/// 1. Standup-specific phrase list — catches standup-unique meta-commentary.
+/// 2. Generic `placeholder_like_artifact_text()` — catches status-only markers
+///    and strong placeholder patterns shared across all automation outputs.
 fn standup_output_contains_only_filler(parsed: &Value) -> bool {
     // Phrases that indicate the agent described its search process instead of
     // reporting actual deliverables. Kept intentionally specific to avoid
@@ -39,11 +44,68 @@ fn standup_output_contains_only_filler(parsed: &Value) -> bool {
             .get(field)
             .and_then(Value::as_str)
             .map(|text| {
-                let lower = text.trim().to_ascii_lowercase();
-                lower.is_empty() || FILLER_PATTERNS.iter().any(|p| lower.contains(p))
+                let trimmed = text.trim();
+                let lower = trimmed.to_ascii_lowercase();
+                lower.is_empty()
+                    || FILLER_PATTERNS.iter().any(|p| lower.contains(p))
+                    || placeholder_like_artifact_text(trimmed)
             })
             .unwrap_or(true) // missing field counts as filler
     })
+}
+
+/// Builds a structured repair reason for standup filler rejection that includes
+/// what the agent tried (tools used, directories searched, files read) so the
+/// repair attempt has actionable context instead of just a generic message.
+fn standup_filler_repair_reason(tool_telemetry: &Value) -> String {
+    let tools_used = tool_telemetry
+        .get("executed_tools")
+        .and_then(Value::as_array)
+        .map(|rows| {
+            rows.iter()
+                .filter_map(Value::as_str)
+                .map(str::trim)
+                .filter(|v| !v.is_empty())
+                .collect::<Vec<_>>()
+                .join(", ")
+        })
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| "none recorded".to_string());
+    let dirs_searched = tool_telemetry
+        .get("glob_directories")
+        .and_then(Value::as_array)
+        .map(|rows| {
+            rows.iter()
+                .filter_map(Value::as_str)
+                .map(str::trim)
+                .filter(|v| !v.is_empty())
+                .collect::<Vec<_>>()
+                .join(", ")
+        })
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| "none recorded".to_string());
+    let files_read = tool_telemetry
+        .get("read_paths")
+        .and_then(Value::as_array)
+        .map(|rows| {
+            rows.iter()
+                .filter_map(Value::as_str)
+                .map(str::trim)
+                .filter(|v| !v.is_empty())
+                .take(10)
+                .collect::<Vec<_>>()
+                .join(", ")
+        })
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| "none recorded".to_string());
+    format!(
+        "Standup update contains only meta-commentary. \
+         Your previous attempt used these tools: [{tools_used}], \
+         searched directories: [{dirs_searched}], \
+         and read files: [{files_read}]. \
+         Report concrete file names, deliverables, or drafts found in the workspace. \
+         If genuinely nothing exists, write exactly: \"No [role] deliverables found in workspace.\""
+    )
 }
 
 pub(crate) fn augment_automation_attempt_evidence_with_validation(
@@ -556,6 +618,8 @@ pub(crate) fn detect_automation_node_status(
                 .map(str::to_string);
             // Filler rejection: if every user-visible field is meta-commentary,
             // trigger a repair so the agent tries again with the repair hint.
+            // The repair reason includes structured tool telemetry so the agent
+            // knows what it already tried and can adjust its search strategy.
             if standup_output_contains_only_filler(parsed.as_ref().unwrap()) {
                 return (
                     if research_repair_exhausted {
@@ -563,12 +627,7 @@ pub(crate) fn detect_automation_node_status(
                     } else {
                         "needs_repair".to_string()
                     },
-                    Some(
-                        "standup update contains only meta-commentary; \
-                         report concrete file names or deliverables, \
-                         or write exactly: \"No [role] deliverables found in workspace.\""
-                            .to_string(),
-                    ),
+                    Some(standup_filler_repair_reason(tool_telemetry)),
                     None,
                 );
             }

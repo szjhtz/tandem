@@ -87,6 +87,39 @@ fn automation_prompt_render_canonical_html_body(text: &str) -> String {
     html
 }
 
+/// Extracts the standup participant update JSON (`yesterday`/`today`/`blockers`)
+/// from an upstream input value. The participant output is a full automation node
+/// output object; the actual standup JSON may be in several places depending on
+/// how the session text was captured.
+///
+/// Returns None if the input does not appear to be a standup participant output.
+fn extract_standup_participant_update(input: &Value) -> Option<Value> {
+    let output = input.get("output")?;
+    let content = output.get("content")?;
+
+    // Try content.text (parsed as JSON first, then as raw standup update)
+    let text_candidates = [
+        content.get("text").and_then(Value::as_str),
+        content.get("raw_assistant_text").and_then(Value::as_str),
+        content.get("raw_text").and_then(Value::as_str),
+    ];
+    for text in text_candidates.into_iter().flatten() {
+        // Participant outputs are JSON with yesterday/today keys
+        if let Ok(parsed) = serde_json::from_str::<Value>(text.trim()) {
+            if parsed.get("yesterday").is_some() || parsed.get("today").is_some() {
+                return Some(parsed);
+            }
+        }
+    }
+    // Try content.data if the JSON was already pre-parsed
+    if let Some(data) = content.get("data") {
+        if data.get("yesterday").is_some() || data.get("today").is_some() {
+            return Some(data.clone());
+        }
+    }
+    None
+}
+
 fn automation_prompt_extract_upstream_text(input: &Value) -> Option<String> {
     let mut candidates = Vec::new();
     for pointer in [
@@ -413,34 +446,102 @@ pub(crate) fn render_automation_v2_prompt_with_options(
     }
     let mut prompt = sections.join("\n\n");
     if !normalized_upstream_inputs.is_empty() {
-        prompt.push_str("\n\nUpstream Inputs:");
-        for input in &normalized_upstream_inputs {
-            let alias = input
-                .get("alias")
-                .and_then(Value::as_str)
-                .unwrap_or("input");
-            let from_step_id = input
-                .get("from_step_id")
-                .and_then(Value::as_str)
-                .unwrap_or("unknown");
-            let output = input
-                .get("output")
-                .map(|value| {
-                    compact_automation_prompt_output_with_mode(value, summary_only_upstream)
-                })
-                .unwrap_or(Value::Null);
-            let rendered =
-                serde_json::to_string_pretty(&output).unwrap_or_else(|_| output.to_string());
-            prompt.push_str(&format!(
-                "\n- {}\n  from_step_id: {}\n  output:\n{}",
-                alias,
-                from_step_id,
-                rendered
-                    .lines()
-                    .map(|line| format!("    {}", line))
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            ));
+        // For standup coordinator nodes, format participant outputs as structured
+        // labeled sections (Yesterday / Today / Blockers) rather than raw JSON.
+        // This reduces coordinator confusion from pipeline metadata fields and
+        // surfaces the actual standup content in a human-readable form.
+        let is_standup_coordinator = node.node_id == "standup_synthesis"
+            && normalized_upstream_inputs.iter().any(|input| {
+                // Participant outputs contain standup JSON with yesterday/today keys
+                extract_standup_participant_update(input).is_some()
+            });
+
+        if is_standup_coordinator {
+            prompt.push_str("\n\nStandup Participant Updates:");
+            for input in &normalized_upstream_inputs {
+                let alias = input
+                    .get("alias")
+                    .and_then(Value::as_str)
+                    .unwrap_or("participant");
+                // Skip non-participant synthetic inputs like runtime_context_partition
+                if alias == "runtime_context_partition" || alias == "runtime_credential_envelope" {
+                    continue;
+                }
+                let display_name = alias
+                    .splitn(3, '_')
+                    .nth(2)
+                    .unwrap_or(alias)
+                    .replace('_', " ");
+                if let Some(update) = extract_standup_participant_update(input) {
+                    let yesterday = update
+                        .get("yesterday")
+                        .and_then(Value::as_str)
+                        .unwrap_or("(none reported)")
+                        .trim();
+                    let today = update
+                        .get("today")
+                        .and_then(Value::as_str)
+                        .unwrap_or("(none reported)")
+                        .trim();
+                    let blockers = update
+                        .get("blockers")
+                        .and_then(Value::as_str)
+                        .map(str::trim)
+                        .filter(|v| !v.is_empty())
+                        .unwrap_or("none");
+                    let status = update
+                        .get("status")
+                        .and_then(Value::as_str)
+                        .unwrap_or("unknown");
+                    prompt.push_str(&format!(
+                        "\n\n### {display_name} (node: {alias}, status: {status})\
+                         \n- Yesterday: {yesterday}\
+                         \n- Today: {today}\
+                         \n- Blockers: {blockers}"
+                    ));
+                } else {
+                    // Participant did not produce a valid standup update — note it
+                    let status = input
+                        .get("output")
+                        .and_then(|o| o.get("status"))
+                        .and_then(Value::as_str)
+                        .unwrap_or("unknown");
+                    prompt.push_str(&format!(
+                        "\n\n### {display_name} (node: {alias}, status: {status})\
+                         \n- No standup update produced."
+                    ));
+                }
+            }
+        } else {
+            prompt.push_str("\n\nUpstream Inputs:");
+            for input in &normalized_upstream_inputs {
+                let alias = input
+                    .get("alias")
+                    .and_then(Value::as_str)
+                    .unwrap_or("input");
+                let from_step_id = input
+                    .get("from_step_id")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown");
+                let output = input
+                    .get("output")
+                    .map(|value| {
+                        compact_automation_prompt_output_with_mode(value, summary_only_upstream)
+                    })
+                    .unwrap_or(Value::Null);
+                let rendered =
+                    serde_json::to_string_pretty(&output).unwrap_or_else(|_| output.to_string());
+                prompt.push_str(&format!(
+                    "\n- {}\n  from_step_id: {}\n  output:\n{}",
+                    alias,
+                    from_step_id,
+                    rendered
+                        .lines()
+                        .map(|line| format!("    {}", line))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                ));
+            }
         }
     }
     if automation_node_is_research_finalize(node) {
@@ -881,4 +982,11 @@ pub(crate) fn render_automation_repair_brief(
         repair_attempts_remaining.saturating_sub(1),
         code_workflow_line,
     ))
+}
+
+/// Test-accessible shim for `extract_standup_participant_update`.
+/// Only compiled in test builds; production code uses the private function directly.
+#[cfg(test)]
+pub(crate) fn extract_standup_participant_update_pub(input: &Value) -> Option<Value> {
+    extract_standup_participant_update(input)
 }
