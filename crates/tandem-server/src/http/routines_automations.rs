@@ -2613,6 +2613,104 @@ pub(super) async fn automations_v2_resume(
     Ok(Json(json!({ "ok": true, "automation": stored })))
 }
 
+/// GET /automations/v2/{id}/handoffs
+///
+/// Returns the inbox, approved, and archived handoff artifacts for a given automation.
+/// Scans the directories defined in the automation's `handoff_config` (or defaults)
+/// relative to the automation's `workspace_root`.
+///
+/// Response shape:
+/// ```json
+/// { "inbox": [...], "approved": [...], "archived": [...],
+///   "counts": { "inbox": 0, "approved": 0, "archived": 0 } }
+/// ```
+pub(super) async fn automations_v2_handoffs(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    use crate::automation_v2::types::HandoffArtifact;
+
+    let Some(automation) = state.get_automation_v2(&id).await else {
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(
+                json!({"error":"Automation not found","code":"AUTOMATION_V2_NOT_FOUND","automationID": id}),
+            ),
+        ));
+    };
+
+    let workspace_root = match automation.workspace_root.as_deref() {
+        Some(root) if !root.is_empty() => root.to_string(),
+        _ => state.workspace_index.snapshot().await.root,
+    };
+
+    let handoff_cfg = automation.effective_handoff_config();
+    let root = std::path::Path::new(&workspace_root);
+
+    let inbox_dir = root.join(&handoff_cfg.inbox_dir);
+    let approved_dir = root.join(&handoff_cfg.approved_dir);
+    let archived_dir = root.join(&handoff_cfg.archived_dir);
+
+    async fn scan_dir(dir: &std::path::Path) -> Vec<HandoffArtifact> {
+        if !dir.exists() {
+            return vec![];
+        }
+        let Ok(mut entries) = tokio::fs::read_dir(dir).await else {
+            return vec![];
+        };
+        let mut items: Vec<HandoffArtifact> = Vec::new();
+        let mut scanned = 0usize;
+        while let Ok(Some(entry)) = entries.next_entry().await {
+            scanned += 1;
+            if scanned > 512 {
+                break; // cap scan
+            }
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("json") {
+                continue;
+            }
+            if let Ok(bytes) = tokio::fs::read(&path).await {
+                if let Ok(artifact) = serde_json::from_slice::<HandoffArtifact>(&bytes) {
+                    items.push(artifact);
+                }
+            }
+        }
+        // Sort oldest-first by created_at_ms
+        items.sort_by_key(|a| a.created_at_ms);
+        items
+    }
+
+    let (inbox, approved, archived) = tokio::join!(
+        scan_dir(&inbox_dir),
+        scan_dir(&approved_dir),
+        scan_dir(&archived_dir),
+    );
+
+    let inbox_count = inbox.len();
+    let approved_count = approved.len();
+    let archived_count = archived.len();
+
+    Ok(Json(json!({
+        "automation_id": id,
+        "workspace_root": workspace_root,
+        "handoff_config": {
+            "inbox_dir":    handoff_cfg.inbox_dir,
+            "approved_dir": handoff_cfg.approved_dir,
+            "archived_dir": handoff_cfg.archived_dir,
+            "auto_approve": handoff_cfg.auto_approve,
+        },
+        "inbox":    inbox,
+        "approved": approved,
+        "archived": archived,
+        "counts": {
+            "inbox":    inbox_count,
+            "approved": approved_count,
+            "archived": archived_count,
+            "total":    inbox_count + approved_count + archived_count,
+        },
+    })))
+}
+
 pub(super) async fn automations_v2_runs(
     State(state): State<AppState>,
     Path(id): Path<String>,
