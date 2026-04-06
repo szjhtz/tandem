@@ -1376,6 +1376,9 @@ mod tests {
             metadata: None,
             next_fire_at_ms: None,
             last_fired_at_ms: None,
+            scope_policy: None,
+            watch_conditions: Vec::new(),
+            handoff_config: None,
         }
     }
 
@@ -1672,6 +1675,8 @@ mod tests {
             total_tokens: 100,
             estimated_cost_usd: 0.5,
             scheduler: None,
+            trigger_reason: None,
+            consumed_handoff_id: None,
         };
         let metrics = derive_phase1_metrics_from_run(&run, &workflow, &phase1).expect("metrics");
         assert!((metrics.artifact_validator_pass_rate - 0.5).abs() < 1e-9);

@@ -403,6 +403,9 @@ fn build_pack_builder_automation(
         })),
         next_fire_at_ms: None,
         last_fired_at_ms: None,
+        scope_policy: None,
+        watch_conditions: Vec::new(),
+        handoff_config: None,
     }
 }
 

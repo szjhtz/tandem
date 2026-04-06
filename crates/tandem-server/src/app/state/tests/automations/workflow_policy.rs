@@ -1265,6 +1265,9 @@ fn marketing_template_automation_migrates_to_split_research_flow() {
         })),
         next_fire_at_ms: None,
         last_fired_at_ms: None,
+        scope_policy: None,
+        watch_conditions: Vec::new(),
+        handoff_config: None,
     };
 
     assert!(migrate_bundled_studio_research_split_automation(
@@ -2646,6 +2649,8 @@ fn workflow_state_events_capture_typed_stability_transitions() {
         total_tokens: 0,
         estimated_cost_usd: 0.0,
         scheduler: None,
+        trigger_reason: None,
+        consumed_handoff_id: None,
     };
     let output = json!({
         "status": "blocked",
@@ -2881,6 +2886,9 @@ fn collect_automation_external_action_receipts_records_bound_publisher_tools() {
         metadata: None,
         next_fire_at_ms: None,
         last_fired_at_ms: None,
+        scope_policy: None,
+        watch_conditions: Vec::new(),
+        handoff_config: None,
     };
     let node = AutomationFlowNode {
         knowledge: tandem_orchestrator::KnowledgeBinding::default(),
@@ -2996,6 +3004,9 @@ fn collect_automation_external_action_receipts_ignores_non_outbound_nodes() {
         metadata: None,
         next_fire_at_ms: None,
         last_fired_at_ms: None,
+        scope_policy: None,
+        watch_conditions: Vec::new(),
+        handoff_config: None,
     };
     let node = AutomationFlowNode {
         knowledge: tandem_orchestrator::KnowledgeBinding::default(),
@@ -3086,6 +3097,9 @@ fn collect_automation_external_action_receipts_stabilize_identity_across_retries
         metadata: None,
         next_fire_at_ms: None,
         last_fired_at_ms: None,
+        scope_policy: None,
+        watch_conditions: Vec::new(),
+        handoff_config: None,
     };
     let node = AutomationFlowNode {
         knowledge: tandem_orchestrator::KnowledgeBinding::default(),
@@ -3923,6 +3937,9 @@ fn research_finalize_prompt_includes_upstream_coverage_summary() {
         metadata: None,
         next_fire_at_ms: None,
         last_fired_at_ms: None,
+        scope_policy: None,
+        watch_conditions: Vec::new(),
+        handoff_config: None,
     };
     let node = AutomationFlowNode {
         knowledge: tandem_orchestrator::KnowledgeBinding::default(),

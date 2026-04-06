@@ -1275,6 +1275,9 @@ fn publish_verified_output_snapshot_replace_copies_into_workspace_target() {
         metadata: None,
         next_fire_at_ms: None,
         last_fired_at_ms: None,
+        scope_policy: None,
+        watch_conditions: Vec::new(),
+        handoff_config: None,
     };
     let mut node = bare_node();
     node.node_id = "generate_report".to_string();
@@ -1349,6 +1352,9 @@ fn publish_verified_output_snapshot_replace_copies_into_global_target() {
         metadata: None,
         next_fire_at_ms: None,
         last_fired_at_ms: None,
+        scope_policy: None,
+        watch_conditions: Vec::new(),
+        handoff_config: None,
     };
     let mut node = bare_node();
     node.node_id = "generate_report".to_string();
@@ -1433,6 +1439,9 @@ fn publish_verified_output_append_jsonl_appends_records() {
         metadata: None,
         next_fire_at_ms: None,
         last_fired_at_ms: None,
+        scope_policy: None,
+        watch_conditions: Vec::new(),
+        handoff_config: None,
     };
     let mut node = bare_node();
     node.node_id = "research_sources".to_string();
@@ -1526,6 +1535,9 @@ fn publish_verified_output_falls_back_to_automation_output_targets() {
         metadata: None,
         next_fire_at_ms: None,
         last_fired_at_ms: None,
+        scope_policy: None,
+        watch_conditions: Vec::new(),
+        handoff_config: None,
     };
     let node = bare_node();
 
@@ -1595,6 +1607,9 @@ fn publish_verified_output_rejects_workspace_target_outside_workspace() {
         metadata: None,
         next_fire_at_ms: None,
         last_fired_at_ms: None,
+        scope_policy: None,
+        watch_conditions: Vec::new(),
+        handoff_config: None,
     };
     let node = bare_node();
 

@@ -894,6 +894,9 @@ fn first_attempt_required_tools_prompt_requires_completed_status() {
         metadata: None,
         next_fire_at_ms: None,
         last_fired_at_ms: None,
+        scope_policy: None,
+        watch_conditions: Vec::new(),
+        handoff_config: None,
     };
     let node = AutomationFlowNode {
         knowledge: tandem_orchestrator::KnowledgeBinding::default(),
@@ -989,6 +992,9 @@ fn first_attempt_required_tools_prompt_without_output_path_requires_handoff() {
         metadata: None,
         next_fire_at_ms: None,
         last_fired_at_ms: None,
+        scope_policy: None,
+        watch_conditions: Vec::new(),
+        handoff_config: None,
     };
     let node = AutomationFlowNode {
         knowledge: tandem_orchestrator::KnowledgeBinding::default(),
@@ -1103,6 +1109,9 @@ fn prompt_includes_inline_metadata_inputs_and_temp_file_warning() {
         metadata: None,
         next_fire_at_ms: None,
         last_fired_at_ms: None,
+        scope_policy: None,
+        watch_conditions: Vec::new(),
+        handoff_config: None,
     };
     let node = AutomationFlowNode {
         knowledge: tandem_orchestrator::KnowledgeBinding::default(),
@@ -1200,6 +1209,9 @@ fn collect_inputs_prompt_requires_reading_before_writing() {
         metadata: None,
         next_fire_at_ms: None,
         last_fired_at_ms: None,
+        scope_policy: None,
+        watch_conditions: Vec::new(),
+        handoff_config: None,
     };
     let node = AutomationFlowNode {
         knowledge: tandem_orchestrator::KnowledgeBinding::default(),
@@ -1302,6 +1314,9 @@ fn prompt_includes_email_delivery_metadata_for_notify_user() {
         metadata: None,
         next_fire_at_ms: None,
         last_fired_at_ms: None,
+        scope_policy: None,
+        watch_conditions: Vec::new(),
+        handoff_config: None,
     };
     let node = AutomationFlowNode {
         knowledge: tandem_orchestrator::KnowledgeBinding::default(),
@@ -1425,6 +1440,9 @@ fn prompt_compacts_upstream_outputs_for_downstream_nodes() {
         metadata: None,
         next_fire_at_ms: None,
         last_fired_at_ms: None,
+        scope_policy: None,
+        watch_conditions: Vec::new(),
+        handoff_config: None,
     };
     let node = AutomationFlowNode {
         knowledge: tandem_orchestrator::KnowledgeBinding::default(),
@@ -1620,6 +1638,9 @@ async fn execute_collect_inputs_node_uses_deterministic_shortcut() {
         })),
         next_fire_at_ms: None,
         last_fired_at_ms: None,
+        scope_policy: None,
+        watch_conditions: Vec::new(),
+        handoff_config: None,
     };
 
     let state = ready_test_state().await;
@@ -1804,6 +1825,9 @@ async fn automation_run_requeue_increments_attempt_counter() {
         })),
         next_fire_at_ms: None,
         last_fired_at_ms: None,
+        scope_policy: None,
+        watch_conditions: Vec::new(),
+        handoff_config: None,
     };
 
     let state = ready_test_state().await;
@@ -1921,6 +1945,9 @@ async fn automation_run_requires_stored_runtime_context_partition_at_startup() {
         })),
         next_fire_at_ms: None,
         last_fired_at_ms: None,
+        scope_policy: None,
+        watch_conditions: Vec::new(),
+        handoff_config: None,
     };
     let state = ready_test_state().await;
     state
@@ -2001,6 +2028,9 @@ async fn automation_run_without_runtime_context_requirement_can_start_and_comple
         metadata: None,
         next_fire_at_ms: None,
         last_fired_at_ms: None,
+        scope_policy: None,
+        watch_conditions: Vec::new(),
+        handoff_config: None,
     };
     let state = ready_test_state().await;
     let run = state
@@ -2190,6 +2220,9 @@ async fn automation_run_rejects_invalid_activation_validation_snapshot() {
         })),
         next_fire_at_ms: None,
         last_fired_at_ms: None,
+        scope_policy: None,
+        watch_conditions: Vec::new(),
+        handoff_config: None,
     };
     let state = ready_test_state().await;
     let run = state
@@ -2290,6 +2323,9 @@ async fn automation_v2_approved_plan_materialization_is_recovered_from_snapshot(
         })),
         next_fire_at_ms: None,
         last_fired_at_ms: None,
+        scope_policy: None,
+        watch_conditions: Vec::new(),
+        handoff_config: None,
     };
 
     let state = ready_test_state().await;
@@ -2427,6 +2463,9 @@ async fn automation_runtime_context_merges_shared_context_packs() {
         })),
         next_fire_at_ms: None,
         last_fired_at_ms: None,
+        scope_policy: None,
+        watch_conditions: Vec::new(),
+        handoff_config: None,
     };
 
     let run = state
@@ -2479,6 +2518,9 @@ fn first_attempt_structured_json_prompt_without_output_path_requires_handoff_eve
         metadata: None,
         next_fire_at_ms: None,
         last_fired_at_ms: None,
+        scope_policy: None,
+        watch_conditions: Vec::new(),
+        handoff_config: None,
     };
     let node = AutomationFlowNode {
         knowledge: tandem_orchestrator::KnowledgeBinding::default(),
@@ -3246,6 +3288,9 @@ fn marketing_template_automation_migrates_to_split_research_flow() {
         })),
         next_fire_at_ms: None,
         last_fired_at_ms: None,
+        scope_policy: None,
+        watch_conditions: Vec::new(),
+        handoff_config: None,
     };
 
     assert!(migrate_bundled_studio_research_split_automation(

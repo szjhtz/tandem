@@ -196,6 +196,9 @@ pub(super) fn build_composed_automation(
         metadata: desc.metadata,
         next_fire_at_ms: None,
         last_fired_at_ms: None,
+        scope_policy: None,
+        watch_conditions: Vec::new(),
+        handoff_config: None,
     }
 }
 

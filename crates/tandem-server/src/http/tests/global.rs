@@ -856,6 +856,9 @@ async fn create_test_automation_v2(
         })),
         next_fire_at_ms: None,
         last_fired_at_ms: None,
+        scope_policy: None,
+        watch_conditions: Vec::new(),
+        handoff_config: None,
     };
     state
         .put_automation_v2(automation)
@@ -1021,6 +1024,9 @@ async fn create_branched_test_automation_v2(
         })),
         next_fire_at_ms: None,
         last_fired_at_ms: None,
+        scope_policy: None,
+        watch_conditions: Vec::new(),
+        handoff_config: None,
     };
     state
         .put_automation_v2(automation)
@@ -1789,6 +1795,9 @@ async fn automation_v2_run_projects_backlog_tasks_into_context_blackboard() {
         workspace_root: Some("/tmp".to_string()),
         next_fire_at_ms: None,
         last_fired_at_ms: None,
+        scope_policy: None,
+        watch_conditions: Vec::new(),
+        handoff_config: None,
     };
     state
         .put_automation_v2(automation.clone())
@@ -1962,6 +1971,9 @@ async fn automation_v2_backlog_task_claim_and_requeue_routes_work() {
         workspace_root: Some("/tmp".to_string()),
         next_fire_at_ms: None,
         last_fired_at_ms: None,
+        scope_policy: None,
+        watch_conditions: Vec::new(),
+        handoff_config: None,
     };
     state
         .put_automation_v2(automation.clone())
@@ -4543,6 +4555,9 @@ async fn automation_v2_research_workflow_smoke_exposes_blocked_artifact_state() 
         metadata: None,
         next_fire_at_ms: None,
         last_fired_at_ms: None,
+        scope_policy: None,
+        watch_conditions: Vec::new(),
+        handoff_config: None,
     };
     state
         .put_automation_v2(automation.clone())
@@ -4871,6 +4886,9 @@ async fn automation_v2_research_workflow_smoke_exposes_citation_validation_state
         metadata: None,
         next_fire_at_ms: None,
         last_fired_at_ms: None,
+        scope_policy: None,
+        watch_conditions: Vec::new(),
+        handoff_config: None,
     };
     state
         .put_automation_v2(automation.clone())
@@ -5162,6 +5180,9 @@ async fn automation_v2_code_workflow_smoke_exposes_verify_failed_state() {
         metadata: None,
         next_fire_at_ms: None,
         last_fired_at_ms: None,
+        scope_policy: None,
+        watch_conditions: Vec::new(),
+        handoff_config: None,
     };
     state
         .put_automation_v2(automation.clone())
@@ -5346,6 +5367,9 @@ async fn automation_v2_editorial_workflow_smoke_exposes_quality_validation_state
         metadata: None,
         next_fire_at_ms: None,
         last_fired_at_ms: None,
+        scope_policy: None,
+        watch_conditions: Vec::new(),
+        handoff_config: None,
     };
     state
         .put_automation_v2(automation.clone())
@@ -5551,6 +5575,9 @@ async fn automation_v2_publish_block_smoke_skips_external_action_receipts() {
         metadata: None,
         next_fire_at_ms: None,
         last_fired_at_ms: None,
+        scope_policy: None,
+        watch_conditions: Vec::new(),
+        handoff_config: None,
     };
     state
         .put_automation_v2(automation.clone())

@@ -453,6 +453,12 @@ pub(super) struct AutomationV2CreateInput {
     pub workspace_root: Option<String>,
     #[serde(default)]
     pub metadata: Option<Value>,
+    #[serde(default)]
+    pub scope_policy: Option<crate::automation_v2::types::AutomationScopePolicy>,
+    #[serde(default)]
+    pub watch_conditions: Option<Vec<crate::automation_v2::types::WatchCondition>>,
+    #[serde(default)]
+    pub handoff_config: Option<crate::automation_v2::types::AutomationHandoffConfig>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -477,6 +483,12 @@ pub(super) struct AutomationV2PatchInput {
     pub workspace_root: Option<String>,
     #[serde(default)]
     pub metadata: Option<Value>,
+    #[serde(default)]
+    pub scope_policy: Option<crate::automation_v2::types::AutomationScopePolicy>,
+    #[serde(default)]
+    pub watch_conditions: Option<Vec<crate::automation_v2::types::WatchCondition>>,
+    #[serde(default)]
+    pub handoff_config: Option<crate::automation_v2::types::AutomationHandoffConfig>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -2298,6 +2310,9 @@ pub(super) async fn automations_v2_create(
         metadata: input.metadata,
         next_fire_at_ms: None,
         last_fired_at_ms: None,
+        scope_policy: input.scope_policy,
+        watch_conditions: input.watch_conditions.unwrap_or_default(),
+        handoff_config: input.handoff_config,
     };
     validate_shared_context_pack_bindings(
         &state,
@@ -2395,6 +2410,15 @@ pub(super) async fn automations_v2_patch(
     }
     if let Some(metadata) = input.metadata {
         automation.metadata = Some(metadata);
+    }
+    if let Some(scope_policy) = input.scope_policy {
+        automation.scope_policy = Some(scope_policy);
+    }
+    if let Some(watch_conditions) = input.watch_conditions {
+        automation.watch_conditions = watch_conditions;
+    }
+    if let Some(handoff_config) = input.handoff_config {
+        automation.handoff_config = Some(handoff_config);
     }
     validate_shared_context_pack_bindings(
         &state,

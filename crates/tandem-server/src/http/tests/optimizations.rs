@@ -75,6 +75,9 @@ fn sample_automation(workspace_root: &str) -> crate::AutomationV2Spec {
         metadata: None,
         next_fire_at_ms: None,
         last_fired_at_ms: None,
+        scope_policy: None,
+        watch_conditions: Vec::new(),
+        handoff_config: None,
     }
 }
 

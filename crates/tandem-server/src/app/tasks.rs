@@ -855,6 +855,8 @@ pub async fn run_automation_v2_scheduler(state: AppState) {
             continue;
         }
         let now = now_ms();
+
+        // --- Existing: timer-based misfires ---
         let due = state.evaluate_automation_v2_misfires(now).await;
         for automation_id in due {
             let Some(automation) = state.get_automation_v2(&automation_id).await else {
@@ -872,6 +874,83 @@ pub async fn run_automation_v2_scheduler(state: AppState) {
                         "triggerType": "scheduled",
                     }),
                 ));
+            }
+        }
+
+        // --- New (Phase 1): watch-condition-based triggers ---
+        let watch_due = state.evaluate_automation_v2_watches().await;
+        for (automation_id, trigger_reason, maybe_handoff) in watch_due {
+            let Some(automation) = state.get_automation_v2(&automation_id).await else {
+                continue;
+            };
+
+            // If this watch was triggered by a handoff, consume it before creating
+            // the run so no other automation on this tick can claim the same handoff.
+            let consumed_handoff_id = if let Some(ref handoff) = maybe_handoff {
+                let workspace_root = state.workspace_index.snapshot().await.root;
+                let handoff_cfg = automation.effective_handoff_config();
+                match state
+                    .consume_automation_v2_handoff(
+                        &workspace_root,
+                        handoff,
+                        &handoff_cfg,
+                        // Use a placeholder run ID; the real run ID is assigned below.
+                        // consume_automation_v2_handoff writes to the archive immediately,
+                        // so we pass the handoff_id so the audit trail is useful even
+                        // if run creation subsequently fails.
+                        &format!("pending-{}", handoff.handoff_id),
+                        &automation_id,
+                    )
+                    .await
+                {
+                    Ok(Some(_)) => Some(handoff.handoff_id.clone()),
+                    Ok(None) => {
+                        // Already consumed by a race — skip this trigger.
+                        tracing::warn!(
+                            automation_id = %automation_id,
+                            handoff_id = %handoff.handoff_id,
+                            "handoff watch: skipping — handoff already consumed (race)"
+                        );
+                        continue;
+                    }
+                    Err(err) => {
+                        tracing::warn!(
+                            automation_id = %automation_id,
+                            handoff_id = %handoff.handoff_id,
+                            "handoff watch: failed to consume handoff: {err}"
+                        );
+                        continue;
+                    }
+                }
+            } else {
+                None
+            };
+
+            match state
+                .create_automation_v2_watch_run(
+                    &automation,
+                    trigger_reason.clone(),
+                    consumed_handoff_id,
+                )
+                .await
+            {
+                Ok(run) => {
+                    state.event_bus.publish(EngineEvent::new(
+                        "automation.v2.run.created",
+                        serde_json::json!({
+                            "automationID": automation_id,
+                            "run": run,
+                            "triggerType": "watch_condition",
+                            "triggerReason": trigger_reason,
+                        }),
+                    ));
+                }
+                Err(err) => {
+                    tracing::warn!(
+                        automation_id = %automation_id,
+                        "watch condition run creation failed: {err}"
+                    );
+                }
             }
         }
     }

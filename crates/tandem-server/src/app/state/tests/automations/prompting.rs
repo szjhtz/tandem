@@ -32,6 +32,9 @@ fn knowledge_context_is_injected_into_automation_prompt() {
         metadata: None,
         next_fire_at_ms: None,
         last_fired_at_ms: None,
+        scope_policy: None,
+        watch_conditions: Vec::new(),
+        handoff_config: None,
     };
     let node = AutomationFlowNode {
         node_id: "strategy-planning".to_string(),
@@ -121,6 +124,9 @@ fn connector_backed_automation_prompt_surfaces_mcp_discovery_guidance() {
         metadata: None,
         next_fire_at_ms: None,
         last_fired_at_ms: None,
+        scope_policy: None,
+        watch_conditions: Vec::new(),
+        handoff_config: None,
     };
     let node = AutomationFlowNode {
         node_id: "research_sources".to_string(),
@@ -211,6 +217,9 @@ fn first_attempt_research_prompt_requires_completed_status() {
         metadata: None,
         next_fire_at_ms: None,
         last_fired_at_ms: None,
+        scope_policy: None,
+        watch_conditions: Vec::new(),
+        handoff_config: None,
     };
     let node = AutomationFlowNode {
         knowledge: tandem_orchestrator::KnowledgeBinding::default(),
@@ -317,6 +326,9 @@ fn code_patch_prompt_includes_code_agent_contract_instructions() {
         metadata: None,
         next_fire_at_ms: None,
         last_fired_at_ms: None,
+        scope_policy: None,
+        watch_conditions: Vec::new(),
+        handoff_config: None,
     };
     let node = AutomationFlowNode {
         knowledge: tandem_orchestrator::KnowledgeBinding::default(),
@@ -639,6 +651,9 @@ fn structured_json_prompt_requires_json_only_without_follow_up_questions() {
         metadata: None,
         next_fire_at_ms: None,
         last_fired_at_ms: None,
+        scope_policy: None,
+        watch_conditions: Vec::new(),
+        handoff_config: None,
     };
     let node = AutomationFlowNode {
         knowledge: tandem_orchestrator::KnowledgeBinding::default(),
@@ -743,6 +758,9 @@ fn external_research_prompt_handles_missing_websearch_tool() {
         metadata: None,
         next_fire_at_ms: None,
         last_fired_at_ms: None,
+        scope_policy: None,
+        watch_conditions: Vec::new(),
+        handoff_config: None,
     };
     let node = AutomationFlowNode {
         knowledge: tandem_orchestrator::KnowledgeBinding::default(),
@@ -871,6 +889,9 @@ fn render_prompt_normalizes_upstream_research_paths_from_sources_root() {
         metadata: None,
         next_fire_at_ms: None,
         last_fired_at_ms: None,
+        scope_policy: None,
+        watch_conditions: Vec::new(),
+        handoff_config: None,
     };
     let node = AutomationFlowNode {
         knowledge: tandem_orchestrator::KnowledgeBinding::default(),

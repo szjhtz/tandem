@@ -35,6 +35,147 @@ pub enum AutomationV2Status {
     Draft,
 }
 
+// ---------------------------------------------------------------------------
+// Connected-agent coordination types
+// ---------------------------------------------------------------------------
+
+/// A file-based handoff envelope written by an upstream automation and consumed
+/// by a downstream automation. Deposited in the workspace `shared/handoffs/`
+/// directory and processed by the scheduler's watch-condition loop.
+///
+/// Lifecycle: `inbox/` → (auto-approve) → `approved/` → (consumed) → `archived/`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HandoffArtifact {
+    /// Stable unique ID for this handoff, e.g. `hoff-20260406-<uuid>`.
+    pub handoff_id: String,
+    /// The automation that produced this handoff.
+    pub source_automation_id: String,
+    /// The run that produced this handoff.
+    pub source_run_id: String,
+    /// The node within that run that produced this handoff.
+    pub source_node_id: String,
+    /// The downstream automation that should consume this handoff.
+    /// The watch evaluator enforces this match.
+    pub target_automation_id: String,
+    /// Semantic type of the artifact, e.g. `"shortlist"`, `"brief"`, `"report"`.
+    /// Used to match against watch condition `artifact_type` filters.
+    pub artifact_type: String,
+    /// Unix epoch milliseconds when the handoff was created.
+    pub created_at_ms: u64,
+    /// Relative path (from workspace root) of the real content file.
+    /// For example `"job-search/shortlists/2026-04-06.md"`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content_path: Option<String>,
+    /// SHA-256 hex digest of the content at `content_path`, if computed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content_digest: Option<String>,
+    /// Arbitrary operator-controlled metadata.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<serde_json::Value>,
+    // --- Fields added when the handoff is consumed and the file is archived ---
+    /// The run ID of the automation that consumed this handoff.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub consumed_by_run_id: Option<String>,
+    /// The automation ID of the consumer (mirrors `target_automation_id`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub consumed_by_automation_id: Option<String>,
+    /// Unix epoch milliseconds when the handoff was consumed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub consumed_at_ms: Option<u64>,
+}
+
+/// The kind of watch condition. Only `HandoffAvailable` is implemented in Phase 1.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case", tag = "kind")]
+pub enum WatchCondition {
+    /// Fire when at least one handoff artifact is available in the `approved/`
+    /// directory that matches all specified filter fields.
+    HandoffAvailable {
+        /// Optional filter: only match handoffs from this source automation.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        source_automation_id: Option<String>,
+        /// Optional filter: only match handoffs with this `artifact_type` value.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        artifact_type: Option<String>,
+    },
+    // Phase 2: FileExists, FlagSet, UpstreamCompleted
+}
+
+/// Per-automation filesystem scope restriction.
+///
+/// When present, all paths accessed by agents in this automation are validated
+/// against this policy in addition to the existing workspace-root sandbox.
+/// Paths are relative to `workspace_root`.
+///
+/// If absent, the automation has full workspace-root access (backward-compatible).
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct AutomationScopePolicy {
+    /// Paths readable by agents in this automation.
+    /// An empty list means "inherit workspace root" (no extra restriction).
+    #[serde(default)]
+    pub readable_paths: Vec<String>,
+    /// Paths writable by agents in this automation.
+    /// A write-allowed path is implicitly also readable.
+    #[serde(default)]
+    pub writable_paths: Vec<String>,
+    /// Paths explicitly denied even if they fall inside readable/writable.
+    /// Deny-wins: this list is checked first.
+    #[serde(default)]
+    pub denied_paths: Vec<String>,
+    /// Paths the scheduler watch evaluator may scan on behalf of this automation.
+    /// Defaults to readable_paths. Watching does not grant write access.
+    #[serde(default)]
+    pub watch_paths: Vec<String>,
+}
+
+/// Per-automation handoff directory configuration.
+///
+/// Paths are relative to `workspace_root` (or the automation's scoped workspace).
+/// Defaults follow the standard layout: `shared/handoffs/{inbox,approved,archived}`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AutomationHandoffConfig {
+    /// Directory where newly created handoffs are deposited.
+    /// Default: `"shared/handoffs/inbox"`
+    #[serde(default = "default_handoff_inbox_dir")]
+    pub inbox_dir: String,
+    /// Directory where approved handoffs wait for consumption.
+    /// Default: `"shared/handoffs/approved"`
+    #[serde(default = "default_handoff_approved_dir")]
+    pub approved_dir: String,
+    /// Directory where consumed handoffs are archived.
+    /// Default: `"shared/handoffs/archived"`
+    #[serde(default = "default_handoff_archived_dir")]
+    pub archived_dir: String,
+    /// When `true`, newly created handoffs bypass the approval step and are
+    /// moved directly from `inbox/` to `approved/`. Default: `true` (Phase 1).
+    #[serde(default = "default_auto_approve")]
+    pub auto_approve: bool,
+}
+
+fn default_handoff_inbox_dir() -> String {
+    "shared/handoffs/inbox".to_string()
+}
+fn default_handoff_approved_dir() -> String {
+    "shared/handoffs/approved".to_string()
+}
+fn default_handoff_archived_dir() -> String {
+    "shared/handoffs/archived".to_string()
+}
+fn default_auto_approve() -> bool {
+    true
+}
+
+impl Default for AutomationHandoffConfig {
+    fn default() -> Self {
+        Self {
+            inbox_dir: default_handoff_inbox_dir(),
+            approved_dir: default_handoff_approved_dir(),
+            archived_dir: default_handoff_archived_dir(),
+            auto_approve: default_auto_approve(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AutomationAgentToolPolicy {
     #[serde(default)]
@@ -470,6 +611,29 @@ pub struct AutomationV2Spec {
     pub next_fire_at_ms: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_fired_at_ms: Option<u64>,
+    /// Optional per-automation filesystem scope restrictions.
+    /// When absent, the automation has full workspace-root access (backward-compatible).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope_policy: Option<AutomationScopePolicy>,
+    /// Watch conditions evaluated by the scheduler on each tick.
+    /// When any condition matches, a new run is created with `trigger_type: "watch_condition"`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub watch_conditions: Vec<WatchCondition>,
+    /// Handoff directory configuration. Uses defaults if absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub handoff_config: Option<AutomationHandoffConfig>,
+}
+
+impl AutomationV2Spec {
+    /// Returns the effective handoff config, using defaults if none is set.
+    pub fn effective_handoff_config(&self) -> AutomationHandoffConfig {
+        self.handoff_config.clone().unwrap_or_default()
+    }
+
+    /// Returns true if this automation has any watch conditions configured.
+    pub fn has_watch_conditions(&self) -> bool {
+        !self.watch_conditions.is_empty()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -715,6 +879,15 @@ pub struct AutomationV2RunRecord {
     pub estimated_cost_usd: f64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scheduler: Option<crate::app::state::automation::scheduler::SchedulerMetadata>,
+    /// Human-readable description of why this run was triggered, e.g.
+    /// `"handoff shortlist from opportunity-scout approved"`.
+    /// Populated for `trigger_type: "watch_condition"` runs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trigger_reason: Option<String>,
+    /// The `handoff_id` of the `HandoffArtifact` that triggered this run, if any.
+    /// Used for idempotency: a retry of this run will not re-consume a second handoff.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub consumed_handoff_id: Option<String>,
 }
 
 #[cfg(test)]

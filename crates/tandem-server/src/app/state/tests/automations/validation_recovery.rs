@@ -1278,6 +1278,9 @@ fn marketing_template_automation_migrates_to_split_research_flow() {
         })),
         next_fire_at_ms: None,
         last_fired_at_ms: None,
+        scope_policy: None,
+        watch_conditions: Vec::new(),
+        handoff_config: None,
     };
 
     assert!(migrate_bundled_studio_research_split_automation(
