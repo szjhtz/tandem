@@ -54,6 +54,9 @@ export function workflowStatusDisplay(run: any) {
 }
 
 export function workflowStatusSubtleDetail(run: any) {
+  if (workflowDerivedRunStatus(run) === "stalled") {
+    return "Run appears stalled: no active session or instance heartbeat";
+  }
   const reason = workflowQueueReason(run);
   if (!reason) return "";
   if (reason === "workspace_lock") {

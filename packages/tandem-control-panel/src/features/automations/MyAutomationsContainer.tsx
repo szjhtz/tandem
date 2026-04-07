@@ -1222,7 +1222,9 @@ export function MyAutomationsContainer({
   }, [isActiveRunStatus, workflowQueueReason, workflowRuns]);
   const failedRuns = runs.filter((run: any) => {
     const status = workflowDerivedRunStatus(run);
-    return status === "failed" || status === "error" || status === "blocked";
+    return (
+      status === "failed" || status === "error" || status === "blocked" || status === "stalled"
+    );
   });
   const selectedRun = (runDetailQuery.data as any)?.run || null;
   const workflowBlackboard = (workflowContextBlackboardQuery.data as any)?.blackboard || null;

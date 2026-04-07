@@ -84,13 +84,61 @@ function isCodeLikeOutputPath(value: string) {
   ].includes(ext);
 }
 
-function isCodeLikeNode(node: StudioNodeDraft) {
-  const taskKind = safeString(node.taskKind).toLowerCase();
+function outputPathExtension(value: string) {
+  const normalized = safeString(value).toLowerCase();
+  return normalized.includes(".") ? normalized.split(".").pop() || "" : "";
+}
+
+function isCodeLikeTaskKind(value: string) {
+  const normalized = safeString(value).toLowerCase();
   return (
-    taskKind === "code_change" ||
-    taskKind === "repo_fix" ||
-    taskKind === "implementation" ||
-    isCodeLikeOutputPath(node.outputPath)
+    normalized === "code_change" || normalized === "repo_fix" || normalized === "implementation"
+  );
+}
+
+function nodeHasCodeWorkflowMetadata(node: StudioNodeDraft) {
+  return Boolean(
+    node.projectBacklogTasks ||
+    safeString(node.repoRoot) ||
+    safeString(node.writeScope) ||
+    safeString(node.verificationCommand)
+  );
+}
+
+function inferredArtifactOutputKind(node: StudioNodeDraft) {
+  const ext = outputPathExtension(node.outputPath);
+  if (ext === "md" || ext === "markdown") return "report_markdown";
+  if (ext === "json") return "structured_json";
+  if (ext === "txt") return "text_summary";
+  return "artifact";
+}
+
+function normalizeNodeWorkflowClassification(node: StudioNodeDraft): StudioNodeDraft {
+  const staleCodeTaskKind =
+    isCodeLikeTaskKind(node.taskKind || "") &&
+    !isCodeLikeOutputPath(node.outputPath) &&
+    !nodeHasCodeWorkflowMetadata(node);
+  const staleCodeOutputKind =
+    safeString(node.outputKind).toLowerCase() === "code_patch" &&
+    !isCodeLikeOutputPath(node.outputPath) &&
+    !nodeHasCodeWorkflowMetadata(node);
+  if (!staleCodeTaskKind && !staleCodeOutputKind) {
+    return node;
+  }
+  return {
+    ...node,
+    taskKind: staleCodeTaskKind ? "" : node.taskKind,
+    outputKind: staleCodeOutputKind ? inferredArtifactOutputKind(node) : node.outputKind,
+  };
+}
+
+function isCodeLikeNode(node: StudioNodeDraft) {
+  const normalizedNode = normalizeNodeWorkflowClassification(node);
+  const taskKind = safeString(normalizedNode.taskKind).toLowerCase();
+  return (
+    isCodeLikeTaskKind(taskKind) ||
+    safeString(normalizedNode.outputKind).toLowerCase() === "code_patch" ||
+    isCodeLikeOutputPath(normalizedNode.outputPath)
   );
 }
 
@@ -423,7 +471,7 @@ function normalizeNodeDraft(row: any): StudioNodeDraft {
     : [];
   const metadataBuilder =
     row?.metadata?.builder && typeof row.metadata.builder === "object" ? row.metadata.builder : {};
-  return {
+  return normalizeNodeWorkflowClassification({
     nodeId: safeString(row?.nodeId || row?.node_id || row?.id),
     title: safeString(row?.title || row?.objective || row?.nodeId || row?.node_id),
     agentId: safeString(row?.agentId || row?.agent_id),
@@ -475,7 +523,7 @@ function normalizeNodeDraft(row: any): StudioNodeDraft {
     verificationCommand: safeString(
       row?.verificationCommand || row?.verification_command || metadataBuilder?.verification_command
     ),
-  };
+  });
 }
 
 function composeNodeExecutionPrompt(node: StudioNodeDraft, agent: StudioAgentDraft) {
@@ -924,12 +972,12 @@ function normalizeNodesForSave(nodes: StudioNodeDraft[]) {
         alias: ref.alias,
       }))
     );
-    return {
+    return normalizeNodeWorkflowClassification({
       ...node,
       nodeId: nextNodeId,
       dependsOn,
       inputRefs,
-    };
+    });
   });
 }
 

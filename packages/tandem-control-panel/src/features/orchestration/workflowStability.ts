@@ -151,10 +151,36 @@ export function workflowBlockedNodeCount(run: any) {
   return workflowBlockedNodeIds(run).length;
 }
 
+const WORKFLOW_RUNNING_STALE_AFTER_MS = 120_000;
+
+export function workflowRunLooksStalled(run: any) {
+  const raw = String(run?.status || "")
+    .trim()
+    .toLowerCase();
+  if (raw !== "running") return false;
+  const activeSessionIds = Array.isArray(run?.active_session_ids)
+    ? run.active_session_ids
+    : Array.isArray(run?.activeSessionIds)
+      ? run.activeSessionIds
+      : [];
+  const activeInstanceIds = Array.isArray(run?.active_instance_ids)
+    ? run.active_instance_ids
+    : Array.isArray(run?.activeInstanceIds)
+      ? run.activeInstanceIds
+      : [];
+  if (activeSessionIds.length > 0 || activeInstanceIds.length > 0) return false;
+  const updatedAt = Number(run?.updated_at_ms || run?.updatedAtMs || run?.started_at_ms || 0);
+  if (!Number.isFinite(updatedAt) || updatedAt <= 0) return false;
+  return Date.now() - updatedAt >= WORKFLOW_RUNNING_STALE_AFTER_MS;
+}
+
 export function workflowDerivedRunStatus(run: any) {
   const raw = String(run?.status || "")
     .trim()
     .toLowerCase();
+  if (workflowRunLooksStalled(run)) {
+    return "stalled";
+  }
   if ((raw === "completed" || raw === "done") && workflowBlockedNodeCount(run) > 0) {
     return "blocked";
   }

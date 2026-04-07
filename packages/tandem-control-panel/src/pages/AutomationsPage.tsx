@@ -1059,7 +1059,11 @@ function MyAutomations({
     if (normalizedStatus === "blocked") {
       return "border border-emerald-400/60 bg-emerald-400/10 text-emerald-200";
     }
-    if (normalizedStatus === "failed" || normalizedStatus === "error") {
+    if (
+      normalizedStatus === "failed" ||
+      normalizedStatus === "error" ||
+      normalizedStatus === "stalled"
+    ) {
       return "tcp-badge-err";
     }
     return "tcp-badge-info";
