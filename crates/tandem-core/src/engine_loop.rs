@@ -1448,7 +1448,11 @@ impl EngineLoop {
                                     continue;
                                 }
                             }
-                            if !requested_write_required && required_tool_retry_count == 0 {
+                            if should_retry_nonproductive_required_tool_cycle(
+                                requested_write_required,
+                                write_tool_attempted_in_cycle,
+                                required_tool_retry_count,
+                            ) {
                                 required_tool_retry_count += 1;
                                 followup_context =
                                     Some(build_required_tool_retry_context_for_task(
@@ -1859,7 +1863,11 @@ impl EngineLoop {
                         ));
                         continue;
                     }
-                    if !requested_write_required && required_tool_retry_count == 0 {
+                    if should_retry_nonproductive_required_tool_cycle(
+                        requested_write_required,
+                        false,
+                        required_tool_retry_count,
+                    ) {
                         required_tool_retry_count += 1;
                         followup_context = Some(build_required_tool_retry_context_for_task(
                             &offered_tool_preview,
@@ -3927,6 +3935,9 @@ fn is_productive_tool_output(tool_name: &str, output: &str) -> bool {
     if is_auth_required_tool_output(output) {
         return false;
     }
+    if normalized_tool == "glob" {
+        return true;
+    }
     let Some(result_body) = extract_tool_result_body(output) else {
         return false;
     };
@@ -4447,6 +4458,14 @@ fn is_write_invalid_args_failure_kind(reason: RequiredToolFailureKind) -> bool {
             | RequiredToolFailureKind::WriteArgsEmptyFromProvider
             | RequiredToolFailureKind::WriteArgsUnparseableFromProvider
     )
+}
+
+fn should_retry_nonproductive_required_tool_cycle(
+    requested_write_required: bool,
+    write_tool_attempted_in_cycle: bool,
+    required_tool_retry_count: usize,
+) -> bool {
+    required_tool_retry_count == 0 && (!requested_write_required || !write_tool_attempted_in_cycle)
 }
 
 fn build_write_required_retry_context(
@@ -9087,6 +9106,32 @@ Call: todowrite(task_id=3, status="in_progress")
         assert!(!is_productive_tool_output(
             "write",
             "Authorization required for `write`.\nAuthorize here: https://example.com"
+        ));
+    }
+
+    #[test]
+    fn glob_empty_result_is_productive() {
+        assert!(is_productive_tool_output("glob", "Tool `glob` result:\n"));
+        assert!(is_productive_tool_output("glob", ""));
+    }
+
+    #[test]
+    fn write_required_node_retries_after_empty_glob() {
+        assert!(should_retry_nonproductive_required_tool_cycle(
+            true, false, 0
+        ));
+        assert!(!should_retry_nonproductive_required_tool_cycle(
+            true, false, 1
+        ));
+    }
+
+    #[test]
+    fn write_required_node_does_not_take_preparatory_retry_after_write_attempt() {
+        assert!(!should_retry_nonproductive_required_tool_cycle(
+            true, true, 0
+        ));
+        assert!(should_retry_nonproductive_required_tool_cycle(
+            false, true, 0
         ));
     }
 

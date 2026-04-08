@@ -1607,6 +1607,7 @@ pub(crate) fn render_automation_repair_brief(
     prior_output: Option<&Value>,
     attempt: u32,
     max_attempts: u32,
+    run_id: Option<&str>,
 ) -> Option<String> {
     if attempt <= 1 {
         return None;
@@ -1662,13 +1663,14 @@ pub(crate) fn render_automation_repair_brief(
         })
         .unwrap_or("the previous attempt did not satisfy the runtime validator");
     let unmet_requirements = unmet_requirements_from_summary;
-    let blocking_classification = artifact_validation
+    let mut blocking_classification = artifact_validation
         .and_then(|value| value.get("blocking_classification"))
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .unwrap_or("unspecified");
-    let required_next_tool_actions = artifact_validation
+        .unwrap_or("unspecified")
+        .to_string();
+    let mut required_next_tool_actions = artifact_validation
         .and_then(|value| value.get("required_next_tool_actions"))
         .and_then(Value::as_array)
         .map(|rows| {
@@ -1683,6 +1685,10 @@ pub(crate) fn render_automation_repair_brief(
     let validation_basis = artifact_validation
         .and_then(|value| value.get("validation_basis"))
         .and_then(Value::as_object);
+    let current_attempt_has_recorded_activity = validation_basis
+        .and_then(|basis| basis.get("current_attempt_has_recorded_activity"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
     let validation_basis_line = validation_basis
         .map(|basis| {
             let authority = basis
@@ -1720,6 +1726,19 @@ pub(crate) fn render_automation_repair_brief(
             )
         })
         .unwrap_or_else(|| "none recorded".to_string());
+    if blocking_classification == "execution_error" && current_attempt_has_recorded_activity {
+        blocking_classification = "artifact_write_missing".to_string();
+    }
+    if current_attempt_has_recorded_activity
+        && required_next_tool_actions.iter().any(|action| {
+            action
+                .to_ascii_lowercase()
+                .contains("retry after provider connectivity recovers")
+        })
+    {
+        required_next_tool_actions =
+            vec!["write the required run artifact to the declared output path".to_string()];
+    }
     let tools_offered = tool_telemetry
         .as_ref()
         .and_then(|value| value.get("requested_tools"))
@@ -1775,7 +1794,11 @@ pub(crate) fn render_automation_repair_brief(
         unmet_requirements.join(", ")
     };
     let tools_offered_line = if tools_offered.is_empty() {
-        "none recorded".to_string()
+        if current_attempt_has_recorded_activity {
+            "not recorded (but session activity was detected)".to_string()
+        } else {
+            "none recorded".to_string()
+        }
     } else {
         tools_offered.join(", ")
     };
@@ -1810,7 +1833,7 @@ pub(crate) fn render_automation_repair_brief(
         String::new()
     };
     let final_attempt_line = if repair_attempts_remaining <= 1 {
-        let output_path = automation_node_required_output_path(node)
+        let output_path = automation_node_required_output_path_for_run(node, run_id)
             .unwrap_or_else(|| "the declared output path".to_string());
         format!(
             "\n\nFINAL ATTEMPT:\n- This is the last retry.\n- The engine will accept the output file at `{}` as-is if it exists when this attempt ends.\n- Do not ask follow-up questions.\n- Do not end with a summary.\n- Write the complete artifact to the output path and include {{\"status\":\"completed\"}} as the last line of your response.",
@@ -5105,18 +5128,25 @@ pub(crate) fn validate_automation_artifact_output_with_upstream(
                 });
             }
         }
-        let writes_blocked_handoff_artifact = accepted_output
+        let explicit_completed = parsed_status
             .as_ref()
-            .map(|(_, accepted_text)| accepted_text.to_ascii_lowercase())
-            .is_some_and(|lowered| {
-                (lowered.contains("status: blocked")
-                    || lowered.contains("blocked pending")
-                    || lowered.contains("node produced a blocked handoff artifact"))
-                    && (lowered.contains("cannot be finalized")
-                        || lowered.contains("required source reads")
-                        || lowered.contains("web research")
-                        || lowered.contains("toolset available"))
-            });
+            .and_then(|value| value.get("status"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .is_some_and(|value| value.eq_ignore_ascii_case("completed"));
+        let writes_blocked_handoff_artifact = !explicit_completed
+            && accepted_output
+                .as_ref()
+                .map(|(_, accepted_text)| accepted_text.to_ascii_lowercase())
+                .is_some_and(|lowered| {
+                    (lowered.contains("status: blocked")
+                        || lowered.contains("blocked pending")
+                        || lowered.contains("node produced a blocked handoff artifact"))
+                        && (lowered.contains("cannot be finalized")
+                            || lowered.contains("required source reads")
+                            || lowered.contains("web research")
+                            || lowered.contains("toolset available"))
+                });
         if has_research_contract
             && semantic_block_reason.is_some()
             && writes_blocked_handoff_artifact
@@ -7049,6 +7079,7 @@ pub(crate) async fn execute_automation_v2_node(
         run.checkpoint.node_outputs.get(&node.node_id),
         attempt,
         max_attempts,
+        Some(run_id),
     ) {
         prompt.push_str("\n\n");
         prompt.push_str(&repair_brief);

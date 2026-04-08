@@ -909,13 +909,18 @@ pub(crate) fn detect_automation_node_status(
         .and_then(Value::as_str)
         .map(str::trim)
         .is_some_and(|value| !value.is_empty());
+    let explicit_status_is_completed = parsed
+        .as_ref()
+        .and_then(|value| value.get("status"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .is_some_and(|value| value.eq_ignore_ascii_case("completed"));
     let artifact_materialized = verified_output.is_some();
     let status_signal_present = explicit_status_present || structured_handoff_present;
     // TODO(coding-hardening): Replace these content markers with structured node
     // status signals from the runtime/session wrapper. Prompt text should not be the
     // primary source of truth for blocked vs completed vs verify_failed decisions.
     let blocked_markers = [
-        "status: blocked",
         "status blocked",
         "## status blocked",
         "blocked pending",
@@ -944,9 +949,10 @@ pub(crate) fn detect_automation_node_status(
         "lint failed",
         "verify failed",
     ];
-    if verify_failed_markers
-        .iter()
-        .any(|marker| lowered.contains(marker))
+    if !explicit_status_is_completed
+        && verify_failed_markers
+            .iter()
+            .any(|marker| lowered.contains(marker))
     {
         return (
             "verify_failed".to_string(),
@@ -954,9 +960,10 @@ pub(crate) fn detect_automation_node_status(
             approved,
         );
     }
-    if blocked_markers
-        .iter()
-        .any(|marker| lowered.contains(marker))
+    if !explicit_status_is_completed
+        && blocked_markers
+            .iter()
+            .any(|marker| lowered.contains(marker))
     {
         let reason = explicit_reason.or_else(|| {
             if automation_output_validator_kind(node)
@@ -1093,8 +1100,11 @@ pub(crate) fn detect_automation_node_status(
         .and_then(|value| value.get("semantic_block_reason"))
         .and_then(Value::as_str)
         .is_some_and(|value| !value.trim().is_empty());
-    if ((is_brief_contract && requested_has_read && !executed_has_read)
-        || (requires_read && requested_has_read && !executed_has_read))
+    let skip_read_gate_because_explicitly_completed =
+        explicit_status_is_completed && artifact_materialized;
+    if !skip_read_gate_because_explicitly_completed
+        && ((is_brief_contract && requested_has_read && !executed_has_read)
+            || (requires_read && requested_has_read && !executed_has_read))
         && (artifact_semantic_block || verified_output.is_none())
     {
         return (

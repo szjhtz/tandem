@@ -17,9 +17,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Stale run handling**: Stale automation runs are now paused instead of failed, using a new `last_activity_at_ms` timestamp for more accurate detection.
 - **Capability resolution hardening**: The automation runtime now fails closed when required capabilities are missing after MCP sync, and clears stale tool failure labels on retry.
 - **Provider transport failure classification**: Network and authentication issues during tool execution are now classified as `provider_transport_failure` instead of generic workflow errors.
+- **Explicit completion now outranks heuristic content scans**: When a node returns structured `{"status":"completed"}` and the artifact exists, status classification now trusts that signal instead of overriding it with free-text blocked/verify-failed phrases or read-audit overreach.
 
 ### Fixed
 
+- **Clean-run workflow survival**: Write-required sessions no longer die on a fresh workspace just because the first `glob` returns empty; empty `glob` results now count as productive discovery and preparatory tool cycles get a retry instead of immediate termination.
+- **False-positive blocked/verify_failed workflow states**: Report-style artifacts can now describe blocked upstream conditions or failed tests without being misclassified as blocked/verify_failed when the node explicitly completed.
+- **Validation overreach on completed artifacts**: Structured completed outputs with materialized artifacts no longer get downgraded by secondary concrete-read heuristics or blocked-handoff cleanup logic.
 - **MCP workflow scoping**: Automation runs now only surface `mcp_list` when MCP servers are explicitly selected, and the inventory snapshot is filtered to the allowed servers instead of leaking the full connector registry.
 - **Inspect run UI crash**: Fixed a UI crash in the WorkflowRequiredActionsPanel when `blockedNodeIds` or `needsRepairNodeIds` were undefined.
 - **Grey/dark screen after vault unlock on desktop**: Eliminated the 1-9+ second blank window that appeared immediately after entering the PIN on Tauri-packaged installs.

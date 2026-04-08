@@ -868,6 +868,151 @@ fn research_workflow_status_keeps_blocked_when_repair_is_exhausted_even_if_llm_d
 }
 
 #[test]
+fn report_with_blocked_content_and_completed_status_is_not_blocked() {
+    let node = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
+        node_id: "generate_report".to_string(),
+        agent_id: "writer".to_string(),
+        objective: "Generate the final report".to_string(),
+        depends_on: Vec::new(),
+        input_refs: Vec::new(),
+        output_contract: Some(AutomationFlowOutputContract {
+            kind: "report_markdown".to_string(),
+            validator: Some(crate::AutomationOutputValidatorKind::GenericArtifact),
+            enforcement: None,
+            schema: None,
+            summary_guidance: None,
+        }),
+        retry_policy: None,
+        timeout_ms: None,
+        stage_kind: None,
+        gate: None,
+        metadata: Some(json!({
+            "builder": {
+                "output_path": "outputs/generate-report.md"
+            }
+        })),
+    };
+    let tool_telemetry = json!({
+        "requested_tools": ["write"],
+        "executed_tools": ["write"],
+    });
+
+    let (status, reason, approved): (String, Option<String>, Option<bool>) =
+        detect_automation_node_status(
+            &node,
+            "{\"status\":\"completed\"}",
+            Some(&(
+                "outputs/generate-report.md".to_string(),
+                "# Report\n\nPipeline status: blocked by missing resume grounding artifacts.\n\nThe report is complete for the available evidence.".to_string(),
+            )),
+            &tool_telemetry,
+            None,
+        );
+
+    assert_eq!(status, "completed");
+    assert_eq!(reason, None);
+    assert_eq!(approved, None);
+}
+
+#[test]
+fn report_describing_test_failures_with_completed_status_passes() {
+    let node = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
+        node_id: "generate_report".to_string(),
+        agent_id: "writer".to_string(),
+        objective: "Generate the final report".to_string(),
+        depends_on: Vec::new(),
+        input_refs: Vec::new(),
+        output_contract: Some(AutomationFlowOutputContract {
+            kind: "report_markdown".to_string(),
+            validator: Some(crate::AutomationOutputValidatorKind::GenericArtifact),
+            enforcement: None,
+            schema: None,
+            summary_guidance: None,
+        }),
+        retry_policy: None,
+        timeout_ms: None,
+        stage_kind: None,
+        gate: None,
+        metadata: Some(json!({
+            "builder": {
+                "output_path": "outputs/generate-report.md"
+            }
+        })),
+    };
+    let tool_telemetry = json!({
+        "requested_tools": ["write"],
+        "executed_tools": ["write"],
+    });
+
+    let (status, reason, approved): (String, Option<String>, Option<bool>) =
+        detect_automation_node_status(
+            &node,
+            "{\"status\":\"completed\"}",
+            Some(&(
+                "outputs/generate-report.md".to_string(),
+                "# CI Summary\n\nSeveral integration tests failed in the prior run, but this report artifact was generated successfully.".to_string(),
+            )),
+            &tool_telemetry,
+            None,
+        );
+
+    assert_eq!(status, "completed");
+    assert_eq!(reason, None);
+    assert_eq!(approved, None);
+}
+
+#[test]
+fn explicit_blocked_status_still_detected() {
+    let node = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
+        node_id: "generate_report".to_string(),
+        agent_id: "writer".to_string(),
+        objective: "Generate the final report".to_string(),
+        depends_on: Vec::new(),
+        input_refs: Vec::new(),
+        output_contract: Some(AutomationFlowOutputContract {
+            kind: "report_markdown".to_string(),
+            validator: Some(crate::AutomationOutputValidatorKind::GenericArtifact),
+            enforcement: None,
+            schema: None,
+            summary_guidance: None,
+        }),
+        retry_policy: None,
+        timeout_ms: None,
+        stage_kind: None,
+        gate: None,
+        metadata: Some(json!({
+            "builder": {
+                "output_path": "outputs/generate-report.md"
+            }
+        })),
+    };
+    let tool_telemetry = json!({
+        "requested_tools": ["write"],
+        "executed_tools": ["write"],
+    });
+
+    let (status, reason, approved): (String, Option<String>, Option<bool>) =
+        detect_automation_node_status(
+            &node,
+            "{\"status\":\"blocked\",\"reason\":\"waiting for more evidence\"}",
+            Some(&(
+                "outputs/generate-report.md".to_string(),
+                "# Report\n\nPipeline status: blocked by missing resume grounding artifacts."
+                    .to_string(),
+            )),
+            &tool_telemetry,
+            None,
+        );
+
+    assert_eq!(status, "blocked");
+    assert_eq!(reason.as_deref(), Some("waiting for more evidence"));
+    assert_eq!(approved, None);
+}
+
+#[test]
 fn render_automation_repair_brief_summarizes_previous_research_miss() {
     let node = AutomationFlowNode {
         knowledge: tandem_orchestrator::KnowledgeBinding::default(),
@@ -928,8 +1073,8 @@ fn render_automation_repair_brief_summarizes_previous_research_miss() {
         }
     });
 
-    let brief =
-        render_automation_repair_brief(&node, Some(&prior_output), 2, 5).expect("repair brief");
+    let brief = render_automation_repair_brief(&node, Some(&prior_output), 2, 5, Some("run-123"))
+        .expect("repair brief");
 
     assert!(brief.contains("needs_repair"));
     assert!(brief.contains("missing_successful_web_research"));
@@ -993,8 +1138,8 @@ fn code_patch_repair_brief_mentions_patch_apply_test_loop() {
         }
     });
 
-    let brief =
-        render_automation_repair_brief(&node, Some(&prior_output), 2, 5).expect("repair brief");
+    let brief = render_automation_repair_brief(&node, Some(&prior_output), 2, 5, Some("run-123"))
+        .expect("repair brief");
 
     assert!(brief.contains("Code workflow repair path"));
     assert!(brief.contains("inspect the touched files"));
@@ -1025,7 +1170,7 @@ fn render_automation_repair_brief_adds_final_attempt_escalation() {
         gate: None,
         metadata: Some(json!({
             "builder": {
-                "output_path": "marketing-brief.md"
+                "output_path": ".tandem/artifacts/marketing-brief.md"
             }
         })),
     };
@@ -1042,13 +1187,80 @@ fn render_automation_repair_brief_adds_final_attempt_escalation() {
         }
     });
 
-    let brief =
-        render_automation_repair_brief(&node, Some(&prior_output), 3, 3).expect("repair brief");
+    let brief = render_automation_repair_brief(&node, Some(&prior_output), 3, 3, Some("run-123"))
+        .expect("repair brief");
 
     assert!(brief.contains("FINAL ATTEMPT"));
-    assert!(brief.contains("marketing-brief.md"));
+    assert!(brief.contains(".tandem/runs/run-123/artifacts/marketing-brief.md"));
+    assert!(!brief.contains("The engine will accept the output file at `.tandem/artifacts/"));
     assert!(brief.contains("{\"status\":\"completed\"}"));
     assert!(brief.contains("Do not ask follow-up questions."));
+}
+
+#[test]
+fn repair_brief_detects_activity_despite_empty_telemetry() {
+    let node = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
+        node_id: "analyze-findings".to_string(),
+        agent_id: "analyst".to_string(),
+        objective: "Write analyze-findings.json".to_string(),
+        depends_on: Vec::new(),
+        input_refs: Vec::new(),
+        output_contract: Some(AutomationFlowOutputContract {
+            kind: "structured_json".to_string(),
+            validator: Some(crate::AutomationOutputValidatorKind::StructuredJson),
+            enforcement: None,
+            schema: None,
+            summary_guidance: None,
+        }),
+        retry_policy: None,
+        timeout_ms: None,
+        stage_kind: None,
+        gate: None,
+        metadata: Some(json!({
+            "builder": {
+                "output_path": ".tandem/artifacts/analyze-findings.json"
+            }
+        })),
+    };
+    let prior_output = json!({
+        "status": "needs_repair",
+        "validator_summary": {
+            "reason": "required output was not created",
+            "unmet_requirements": []
+        },
+        "tool_telemetry": {
+            "requested_tools": [],
+            "executed_tools": []
+        },
+        "artifact_validation": {
+            "blocking_classification": "execution_error",
+            "repair_attempt": 2,
+            "repair_attempts_remaining": 1,
+            "required_next_tool_actions": [
+                "Retry after provider connectivity recovers."
+            ],
+            "validation_basis": {
+                "authority": "filesystem_and_receipts",
+                "current_attempt_has_recorded_activity": true,
+                "current_attempt_output_materialized": false,
+                "current_attempt_has_read": true,
+                "current_attempt_has_web_research": false,
+                "workspace_inspection_satisfied": true
+            }
+        }
+    });
+
+    let brief = render_automation_repair_brief(&node, Some(&prior_output), 3, 3, Some("run-123"))
+        .expect("repair brief");
+
+    assert!(brief
+        .contains("Tools offered last attempt: not recorded (but session activity was detected)."));
+    assert!(brief.contains("Blocking classification: artifact_write_missing."));
+    assert!(brief.contains(
+        "Required next tool actions: write the required run artifact to the declared output path."
+    ));
+    assert!(brief.contains(".tandem/runs/run-123/artifacts/analyze-findings.json"));
 }
 
 #[test]

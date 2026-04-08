@@ -328,6 +328,80 @@ async fn automation_attempt_receipt_collects_tool_and_artifact_events() {
         ]
     );
 }
+
+#[test]
+fn report_markdown_completed_status_does_not_trigger_blocked_handoff_cleanup() {
+    let workspace_root = std::env::temp_dir().join(format!(
+        "tandem-report-completed-status-{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&workspace_root).expect("workspace dir");
+    let node = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
+        node_id: "generate_report".to_string(),
+        agent_id: "writer".to_string(),
+        objective: "Draft the final report".to_string(),
+        depends_on: Vec::new(),
+        input_refs: Vec::new(),
+        output_contract: Some(AutomationFlowOutputContract {
+            kind: "report_markdown".to_string(),
+            validator: Some(crate::AutomationOutputValidatorKind::GenericArtifact),
+            enforcement: None,
+            schema: None,
+            summary_guidance: None,
+        }),
+        retry_policy: None,
+        timeout_ms: None,
+        stage_kind: None,
+        gate: None,
+        metadata: Some(json!({
+            "builder": {
+                "output_path": "report.md",
+                "web_research_expected": true,
+                "source_coverage_required": true
+            }
+        })),
+    };
+    let session = Session::new(
+        Some("editorial".to_string()),
+        Some(workspace_root.to_string_lossy().to_string()),
+    );
+    let tool_telemetry = json!({
+        "requested_tools": ["write"],
+        "executed_tools": ["write"],
+        "tool_call_counts": {
+            "write": 1
+        }
+    });
+    let report_text = "# Report\n\nPipeline status: blocked by missing resume grounding artifacts.\n\nThis artifact cannot be finalized until required source reads and web research are available.\n";
+    let (accepted_output, artifact_validation, _) = validate_automation_artifact_output(
+        &node,
+        &session,
+        workspace_root.to_str().expect("workspace root"),
+        "{\"status\":\"completed\"}",
+        &tool_telemetry,
+        None,
+        Some(("report.md".to_string(), report_text.to_string())),
+        &std::collections::BTreeSet::new(),
+    );
+
+    assert_eq!(
+        accepted_output.as_ref().map(|(path, _)| path.as_str()),
+        Some("report.md")
+    );
+    assert_eq!(
+        artifact_validation
+            .get("accepted_artifact_path")
+            .and_then(Value::as_str),
+        Some("report.md")
+    );
+    assert!(artifact_validation
+        .get("semantic_block_reason")
+        .and_then(Value::as_str)
+        .is_some());
+
+    let _ = std::fs::remove_dir_all(&workspace_root);
+}
 #[test]
 fn automation_blocked_nodes_respects_barrier_open_phase() {
     let automation = test_phase_automation(
