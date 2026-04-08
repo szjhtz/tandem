@@ -22,9 +22,9 @@ async fn initialize_keystore_after_unlock(app: AppHandle, master_key: Vec<u8>) {
 }
 
 fn spawn_sidecar_start_in_background(app: AppHandle) {
-    tauri::async_runtime::spawn_blocking(move || {
+    tauri::async_runtime::spawn(async move {
         let result = match app.try_state::<AppState>() {
-            Some(state) => tauri::async_runtime::block_on(start_sidecar_inner(&app, state.inner())),
+            Some(state) => start_sidecar_inner(&app, state.inner()).await,
             None => Err(TandemError::Sidecar(
                 "App state unavailable for background sidecar start".to_string(),
             )),

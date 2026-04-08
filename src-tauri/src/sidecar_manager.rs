@@ -331,6 +331,36 @@ pub async fn check_sidecar_status(app: &AppHandle) -> Result<SidecarStatus> {
     })
 }
 
+/// Fast sidecar status check — local binary only, no network calls.
+/// Used on the critical startup path to avoid blocking on the GitHub API.
+pub async fn check_sidecar_status_fast(app: &AppHandle) -> Result<SidecarStatus> {
+    let binary_path_result = get_sidecar_binary_path(app);
+    let installed = binary_path_result.is_ok()
+        && binary_path_result
+            .as_ref()
+            .unwrap()
+            .metadata()
+            .map(|m| m.len() >= MIN_BINARY_SIZE)
+            .unwrap_or(false);
+
+    let binary_path = binary_path_result.ok();
+    let version = if installed {
+        get_installed_version(app, binary_path.as_deref())
+    } else {
+        None
+    };
+
+    Ok(SidecarStatus {
+        installed,
+        version,
+        latest_version: None,
+        latest_overall_version: None,
+        update_available: false,
+        compatibility_message: None,
+        binary_path: binary_path.map(|p| p.to_string_lossy().to_string()),
+    })
+}
+
 fn is_dev_sidecar_path(app: &AppHandle, path: &Path) -> bool {
     let in_app_data = shared_app_data_dir(app)
         .map(|dir| path.starts_with(dir))

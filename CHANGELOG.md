@@ -21,6 +21,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **Inspect run UI crash**: Fixed a UI crash in the WorkflowRequiredActionsPanel when `blockedNodeIds` or `needsRepairNodeIds` were undefined.
+- **Grey/dark screen after vault unlock on desktop**: Eliminated the 1-9+ second blank window that appeared immediately after entering the PIN on Tauri-packaged installs.
+  - Added `check_sidecar_status_fast` — a new Tauri command that checks only the local binary (exists + ≥ 100 KB), with no GitHub API call.
+  - `SidecarDownloader` now calls the fast-path command on startup (100 ms initial delay, down from 500 ms) and proceeds immediately when the binary is present; a background call to `check_sidecar_status` still detects available updates without blocking the app.
+  - Replaced `spawn_blocking` + `block_on` with a proper `tauri::async_runtime::spawn` in the vault unlock background sidecar start path, preventing Tokio blocking-thread-pool starvation during sidecar process launch.
 
 ### Added
 

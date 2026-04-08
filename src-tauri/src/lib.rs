@@ -803,6 +803,7 @@ pub fn run() {
             commands::get_staged_count,
             // Sidecar binary management
             commands::check_sidecar_status,
+            commands::check_sidecar_status_fast,
             commands::download_sidecar,
             // Tool guidance
             commands::get_tool_guidance,

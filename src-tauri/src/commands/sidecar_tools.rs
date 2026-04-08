@@ -8,6 +8,13 @@ pub async fn check_sidecar_status(app: AppHandle) -> Result<SidecarStatus> {
     sidecar_manager::check_sidecar_status(&app).await
 }
 
+/// Fast sidecar status check — local binary only, no network calls.
+/// Used on the critical startup path to avoid blocking on GitHub API.
+#[tauri::command]
+pub async fn check_sidecar_status_fast(app: AppHandle) -> Result<SidecarStatus> {
+    sidecar_manager::check_sidecar_status_fast(&app).await
+}
+
 /// Download/update the sidecar binary
 #[tauri::command]
 pub async fn download_sidecar(app: AppHandle, state: State<'_, AppState>) -> Result<()> {

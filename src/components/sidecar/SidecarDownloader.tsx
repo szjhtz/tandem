@@ -64,14 +64,27 @@ export function SidecarDownloader({
     setError(null);
 
     try {
-      const sidecarStatus = await invoke<SidecarStatus>("check_sidecar_status");
+      const sidecarStatus = await invoke<SidecarStatus>("check_sidecar_status_fast");
       setStatus(sidecarStatus);
 
-      if (sidecarStatus.installed && !sidecarStatus.updateAvailable) {
+      if (sidecarStatus.installed) {
+        // Binary is present — let the app proceed immediately.
         setState("complete");
         setTimeout(onComplete, 500);
+
+        // Run the full network check in the background to detect updates.
+        // This will not block the startup path.
+        invoke<SidecarStatus>("check_sidecar_status")
+          .then((fullStatus) => {
+            setStatus(fullStatus);
+            // If an update is available, we may need to surface it but
+            // the user is already in the app — don't interrupt the flow.
+          })
+          .catch((err) => {
+            console.warn("Background sidecar update check failed:", err);
+          });
       } else {
-        // Not installed or update available -> Show download UI
+        // Not installed -> Show download UI
         setState("idle");
       }
     } catch (err) {
@@ -91,10 +104,10 @@ export function SidecarDownloader({
   }, [onComplete]);
 
   useEffect(() => {
-    // Small delay to allow fade-in transition to complete
+    // Small delay to allow fade-in transition to complete (reduced from 500ms)
     const timer = setTimeout(() => {
       checkSidecar();
-    }, 500);
+    }, 100);
     return () => clearTimeout(timer);
   }, [checkSidecar]);
 
