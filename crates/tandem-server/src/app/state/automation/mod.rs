@@ -508,11 +508,20 @@ pub(crate) fn automation_infer_selected_mcp_servers(
     if !selected_servers.is_empty() {
         return selected_servers;
     }
-    let wildcard_allowed = allowlist.iter().any(|entry| entry.trim() == "*");
-    if wildcard_allowed || requires_email_delivery {
+    if requires_email_delivery {
         return enabled_server_names.to_vec();
     }
     Vec::new()
+}
+
+fn automation_add_mcp_list_when_scoped(
+    mut requested_tools: Vec<String>,
+    has_selected_mcp_servers: bool,
+) -> Vec<String> {
+    if has_selected_mcp_servers && !requested_tools.iter().any(|tool| tool == "mcp_list") {
+        requested_tools.push("mcp_list".to_string());
+    }
+    requested_tools
 }
 
 async fn sync_automation_allowed_mcp_servers(
@@ -6748,10 +6757,19 @@ pub(crate) async fn execute_automation_v2_node(
         allowlist.clone(),
         &available_tool_names,
     );
-    let mut requested_tools = requested_tools;
-    if !requested_tools.iter().any(|tool| tool == "mcp_list") {
-        requested_tools.push("mcp_list".to_string());
-    }
+    let selected_mcp_server_names = mcp_tool_diagnostics
+        .get("selected_servers")
+        .and_then(Value::as_array)
+        .map(|rows| {
+            rows.iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let has_selected_mcp_servers = !selected_mcp_server_names.is_empty();
+    let requested_tools =
+        automation_add_mcp_list_when_scoped(requested_tools, has_selected_mcp_servers);
     let effective_offered_tools =
         automation_expand_effective_offered_tools(&requested_tools, &available_tool_names);
     let execution_mode = automation_node_execution_mode(node, &workspace_root);
@@ -6762,11 +6780,7 @@ pub(crate) async fn execute_automation_v2_node(
         &available_tool_names,
         &available_tool_schemas,
     );
-    let selected_mcp_servers = mcp_tool_diagnostics
-        .get("selected_servers")
-        .and_then(Value::as_array)
-        .is_some_and(|rows| !rows.is_empty());
-    if automation_node_requires_email_delivery(node) || selected_mcp_servers {
+    if automation_node_requires_email_delivery(node) || has_selected_mcp_servers {
         automation_merge_mcp_capability_diagnostics(
             &mut capability_resolution,
             &mcp_tool_diagnostics,
@@ -6852,6 +6866,9 @@ pub(crate) async fn execute_automation_v2_node(
         }
         return Ok(output);
     }
+    state
+        .set_automation_v2_session_mcp_servers(&session_id, selected_mcp_server_names.clone())
+        .await;
     state
         .engine_loop
         .set_session_allowed_tools(&session_id, requested_tools.clone())
@@ -7062,6 +7079,9 @@ pub(crate) async fn execute_automation_v2_node(
     state
         .engine_loop
         .clear_session_auto_approve_permissions(&session_id)
+        .await;
+    state
+        .clear_automation_v2_session_mcp_servers(&session_id)
         .await;
     state.clear_automation_v2_session(run_id, &session_id).await;
 

@@ -9,6 +9,7 @@ This is the canonical release-notes file used by release tooling.
 - **Stale run handling**: Stale automation runs are now paused instead of failed, using a new `last_activity_at_ms` timestamp for more accurate detection.
 - **Capability resolution hardening**: The automation runtime now fails closed when required capabilities are missing after MCP sync, and clears stale tool failure labels on retry.
 - **Provider transport failure classification**: Network and authentication issues during tool execution are now classified as `provider_transport_failure` instead of generic workflow errors.
+- **MCP workflow scoping**: Automation runs now only surface `mcp_list` when MCP servers are explicitly selected, and the inventory snapshot is filtered to the allowed servers instead of leaking the full connector registry.
 - **Inspect run UI crash**: Fixed a UI crash in the WorkflowRequiredActionsPanel when `blockedNodeIds` or `needsRepairNodeIds` were undefined.
 - **Grey/dark screen after vault unlock on desktop**: The 1-9+ second blank window that appeared immediately after entering the PIN on Tauri-packaged installs is now fixed. The sidecar status check on the startup path no longer blocks on a GitHub API call; a fast local-only binary check lets the app proceed in ~100 ms, while update detection continues in the background.
 

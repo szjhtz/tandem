@@ -106,6 +106,8 @@ pub struct AppState {
     pub routine_session_policies:
         Arc<RwLock<std::collections::HashMap<String, RoutineSessionPolicy>>>,
     pub automation_v2_session_runs: Arc<RwLock<std::collections::HashMap<String, String>>>,
+    pub automation_v2_session_mcp_servers:
+        Arc<RwLock<std::collections::HashMap<String, Vec<String>>>>,
     pub token_cost_per_1k_usd: f64,
     pub routines_path: PathBuf,
     pub routine_history_path: PathBuf,
@@ -216,6 +218,9 @@ impl AppState {
             workflow_dispatch_seen: Arc::new(RwLock::new(std::collections::HashMap::new())),
             routine_session_policies: Arc::new(RwLock::new(std::collections::HashMap::new())),
             automation_v2_session_runs: Arc::new(RwLock::new(std::collections::HashMap::new())),
+            automation_v2_session_mcp_servers: Arc::new(RwLock::new(
+                std::collections::HashMap::new(),
+            )),
             routines_path: config::paths::resolve_routines_path(),
             routine_history_path: config::paths::resolve_routine_history_path(),
             routine_runs_path: config::paths::resolve_routine_runs_path(),
@@ -4974,6 +4979,31 @@ impl AppState {
         updated
     }
 
+    pub async fn set_automation_v2_session_mcp_servers(
+        &self,
+        session_id: &str,
+        servers: Vec<String>,
+    ) {
+        if servers.is_empty() {
+            self.automation_v2_session_mcp_servers
+                .write()
+                .await
+                .remove(session_id);
+        } else {
+            self.automation_v2_session_mcp_servers
+                .write()
+                .await
+                .insert(session_id.to_string(), servers);
+        }
+    }
+
+    pub async fn clear_automation_v2_session_mcp_servers(&self, session_id: &str) {
+        self.automation_v2_session_mcp_servers
+            .write()
+            .await
+            .remove(session_id);
+    }
+
     pub async fn clear_automation_v2_session(
         &self,
         run_id: &str,
@@ -4993,6 +5023,10 @@ impl AppState {
         let mut guard = self.automation_v2_session_runs.write().await;
         for session_id in session_ids {
             guard.remove(session_id);
+        }
+        let mut mcp_guard = self.automation_v2_session_mcp_servers.write().await;
+        for session_id in session_ids {
+            mcp_guard.remove(session_id);
         }
     }
 

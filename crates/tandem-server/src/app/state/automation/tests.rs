@@ -204,6 +204,26 @@ fn connector_backed_intent_surfaces_mcp_discovery() {
 }
 
 #[test]
+fn mcp_list_is_only_added_when_servers_are_selected() {
+    let requested = automation_add_mcp_list_when_scoped(vec!["read".to_string()], false);
+    assert_eq!(requested, vec!["read".to_string()]);
+
+    let requested = automation_add_mcp_list_when_scoped(vec!["read".to_string()], true);
+    assert!(requested.iter().any(|tool| tool == "mcp_list"));
+}
+
+#[test]
+fn wildcard_tool_allowlist_does_not_select_mcp_servers() {
+    let selected = automation_infer_selected_mcp_servers(
+        &Vec::new(),
+        &vec!["*".to_string()],
+        &vec!["github".to_string(), "slack".to_string()],
+        false,
+    );
+    assert!(selected.is_empty());
+}
+
+#[test]
 fn automation_quality_mode_defaults_to_strict_and_requires_rollback_for_legacy_metadata() {
     let strict_mode =
         super::enforcement::automation_quality_mode_resolution_from_metadata(None, true, false);

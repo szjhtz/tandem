@@ -320,6 +320,69 @@ pub(crate) async fn mcp_inventory_snapshot(state: &AppState) -> Value {
     })
 }
 
+fn filter_mcp_inventory_snapshot_to_servers(snapshot: Value, allowed_servers: &[String]) -> Value {
+    let mut snapshot = snapshot;
+    let allowed_servers = allowed_servers
+        .iter()
+        .map(|server| server.trim().to_string())
+        .filter(|server| !server.is_empty())
+        .collect::<std::collections::HashSet<_>>();
+    if allowed_servers.is_empty() {
+        return snapshot;
+    }
+    let allowed_tool_prefixes = allowed_servers
+        .iter()
+        .map(|server| format!("mcp.{}.", mcp_namespace_segment(server)))
+        .collect::<Vec<_>>();
+
+    let keep_server = |name: &str| allowed_servers.contains(name);
+
+    if let Some(root) = snapshot.as_object_mut() {
+        if let Some(Value::Array(rows)) = root.get_mut("servers") {
+            rows.retain(|row| {
+                row.get("name")
+                    .and_then(Value::as_str)
+                    .is_some_and(keep_server)
+            });
+        }
+        if let Some(Value::Array(rows)) = root.get_mut("connected_server_names") {
+            rows.retain(|row| row.as_str().is_some_and(keep_server));
+        }
+        if let Some(Value::Array(rows)) = root.get_mut("enabled_server_names") {
+            rows.retain(|row| row.as_str().is_some_and(keep_server));
+        }
+        if let Some(Value::Array(rows)) = root.get_mut("remote_tools") {
+            rows.retain(|row| {
+                row.get("server_name")
+                    .and_then(Value::as_str)
+                    .is_some_and(keep_server)
+            });
+        }
+        if let Some(Value::Array(rows)) = root.get_mut("registered_tools") {
+            rows.retain(|row| {
+                row.as_str().is_some_and(|tool_name| {
+                    tool_name == "mcp_list"
+                        || allowed_tool_prefixes
+                            .iter()
+                            .any(|prefix| tool_name.starts_with(prefix))
+                })
+            });
+        }
+    }
+
+    snapshot
+}
+
+async fn scoped_mcp_servers_for_session(state: &AppState, session_id: &str) -> Vec<String> {
+    state
+        .automation_v2_session_mcp_servers
+        .read()
+        .await
+        .get(session_id)
+        .cloned()
+        .unwrap_or_default()
+}
+
 #[derive(Clone)]
 pub(crate) struct McpListTool {
     state: AppState,
@@ -345,8 +408,17 @@ impl Tool for McpListTool {
         )
     }
 
-    async fn execute(&self, _args: Value) -> anyhow::Result<ToolResult> {
-        let snapshot = mcp_inventory_snapshot(&self.state).await;
+    async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
+        let mut snapshot = mcp_inventory_snapshot(&self.state).await;
+        let allowed_servers =
+            if let Some(session_id) = args.get("__session_id").and_then(Value::as_str) {
+                scoped_mcp_servers_for_session(&self.state, session_id).await
+            } else {
+                Vec::new()
+            };
+        if !allowed_servers.is_empty() {
+            snapshot = filter_mcp_inventory_snapshot_to_servers(snapshot, &allowed_servers);
+        }
         let output =
             serde_json::to_string_pretty(&snapshot).unwrap_or_else(|_| snapshot.to_string());
         Ok(ToolResult {

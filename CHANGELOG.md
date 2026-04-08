@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **MCP workflow scoping**: Automation runs now only surface `mcp_list` when MCP servers are explicitly selected, and the inventory snapshot is filtered to the allowed servers instead of leaking the full connector registry.
 - **Inspect run UI crash**: Fixed a UI crash in the WorkflowRequiredActionsPanel when `blockedNodeIds` or `needsRepairNodeIds` were undefined.
 - **Grey/dark screen after vault unlock on desktop**: Eliminated the 1-9+ second blank window that appeared immediately after entering the PIN on Tauri-packaged installs.
   - Added `check_sidecar_status_fast` — a new Tauri command that checks only the local binary (exists + ≥ 100 KB), with no GitHub API call.
