@@ -3147,6 +3147,7 @@ pub(super) async fn automations_v2_run_gate_decide(
                     let reset_nodes = crate::collect_automation_descendants(&automation, &roots);
                     for node_id in &reset_nodes {
                         run.checkpoint.node_outputs.remove(node_id);
+                        run.checkpoint.node_attempts.remove(node_id);
                     }
                     run.checkpoint
                         .completed_nodes
@@ -3289,6 +3290,7 @@ pub(super) async fn automations_v2_run_recover(
             if !reset_nodes.is_empty() {
                 for node_id in &reset_nodes {
                     run.checkpoint.node_outputs.remove(node_id);
+                    run.checkpoint.node_attempts.remove(node_id);
                 }
                 run.checkpoint
                     .completed_nodes
@@ -3497,6 +3499,7 @@ pub(super) async fn automations_v2_run_repair(
             clear_automation_run_execution_handles(run);
             for reset_node_id in &reset_nodes {
                 run.checkpoint.node_outputs.remove(reset_node_id);
+                run.checkpoint.node_attempts.remove(reset_node_id);
             }
             run.checkpoint
                 .completed_nodes
@@ -3656,6 +3659,7 @@ async fn automation_v2_reset_task_subtree(
             clear_automation_run_execution_handles(run);
             for reset_node_id in &reset_nodes {
                 run.checkpoint.node_outputs.remove(reset_node_id);
+                run.checkpoint.node_attempts.remove(reset_node_id);
             }
             run.checkpoint
                 .completed_nodes
@@ -3955,6 +3959,7 @@ pub(super) async fn automations_v2_run_task_continue(
             run.checkpoint.awaiting_gate = None;
             clear_automation_run_execution_handles(run);
             run.checkpoint.node_outputs.remove(&node_id);
+            run.checkpoint.node_attempts.remove(&node_id);
             run.checkpoint
                 .completed_nodes
                 .retain(|completed_id| completed_id != &node_id);

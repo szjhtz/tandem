@@ -154,9 +154,28 @@ const AUTOMATION_TOOL_SCHEMA_WARNING_CHARS: u64 = 18_000;
 const AUTOMATION_TOOL_SCHEMA_HIGH_CHARS: u64 = 26_000;
 
 #[derive(Clone, Debug, Default)]
+pub(crate) struct AutomationPromptRuntimeValues {
+    pub(crate) current_date: String,
+    pub(crate) current_time: String,
+    pub(crate) current_timestamp: String,
+}
+
+#[derive(Clone, Debug, Default)]
 pub(crate) struct AutomationPromptRenderOptions {
     pub(crate) summary_only_upstream: bool,
     pub(crate) knowledge_context: Option<String>,
+    pub(crate) runtime_values: Option<AutomationPromptRuntimeValues>,
+}
+
+fn automation_prompt_runtime_values(started_at_ms: Option<u64>) -> AutomationPromptRuntimeValues {
+    let started_at_ms = started_at_ms.unwrap_or_else(now_ms);
+    let timestamp = chrono::DateTime::<chrono::Utc>::from_timestamp_millis(started_at_ms as i64)
+        .unwrap_or_else(chrono::Utc::now);
+    AutomationPromptRuntimeValues {
+        current_date: timestamp.format("%Y-%m-%d").to_string(),
+        current_time: timestamp.format("%H%M").to_string(),
+        current_timestamp: timestamp.format("%Y-%m-%d %H:%M").to_string(),
+    }
 }
 
 fn automation_effective_knowledge_binding(
@@ -537,6 +556,64 @@ fn automation_add_mcp_list_when_scoped(
         requested_tools.push("mcp_list".to_string());
     }
     requested_tools
+}
+
+fn automation_connector_hint_text(node: &AutomationFlowNode) -> String {
+    [
+        node.objective.as_str(),
+        node.metadata
+            .as_ref()
+            .and_then(|metadata| metadata.get("builder"))
+            .and_then(Value::as_object)
+            .and_then(|builder| builder.get("prompt"))
+            .and_then(Value::as_str)
+            .unwrap_or_default(),
+    ]
+    .join("\n")
+}
+
+fn automation_text_mentions_mcp_server(text: &str, server_name: &str) -> bool {
+    let lowered = text.to_ascii_lowercase();
+    let lowered_server = server_name.to_ascii_lowercase();
+    let namespace = crate::http::mcp::mcp_namespace_segment(server_name);
+    [
+        lowered_server.clone(),
+        lowered_server.replace('-', "_"),
+        lowered_server.replace('-', " "),
+        namespace.clone(),
+        namespace.replace('_', "-"),
+        format!("mcp.{namespace}"),
+    ]
+    .iter()
+    .filter(|needle| !needle.trim().is_empty())
+    .any(|needle| lowered.contains(needle))
+}
+
+fn automation_requested_server_scoped_mcp_tools(
+    node: &AutomationFlowNode,
+    selected_server_names: &[String],
+) -> Vec<String> {
+    let connector_hint_text = automation_connector_hint_text(node);
+    if !tandem_plan_compiler::api::workflow_plan_mentions_connector_backed_sources(
+        &connector_hint_text,
+    ) {
+        return Vec::new();
+    }
+    let mut requested = selected_server_names
+        .iter()
+        .filter(|server_name| {
+            automation_text_mentions_mcp_server(&connector_hint_text, server_name)
+        })
+        .map(|server_name| {
+            format!(
+                "mcp.{}.*",
+                crate::http::mcp::mcp_namespace_segment(server_name)
+            )
+        })
+        .collect::<Vec<_>>();
+    requested.sort();
+    requested.dedup();
+    requested
 }
 
 async fn sync_automation_allowed_mcp_servers(
@@ -2666,6 +2743,140 @@ fn automation_node_must_write_files(node: &AutomationFlowNode) -> Vec<String> {
     files
 }
 
+fn automation_runtime_placeholder_replace(
+    text: &str,
+    runtime_values: Option<&AutomationPromptRuntimeValues>,
+) -> String {
+    let Some(runtime_values) = runtime_values else {
+        return text.to_string();
+    };
+    text.replace("{current_date}", &runtime_values.current_date)
+        .replace("{current_time}", &runtime_values.current_time)
+        .replace("{current_timestamp}", &runtime_values.current_timestamp)
+}
+
+fn automation_keyword_variants(token: &str) -> Vec<String> {
+    let lowered = token.trim().to_ascii_lowercase();
+    if lowered.len() < 3
+        || lowered.chars().all(|ch| ch.is_ascii_digit())
+        || matches!(
+            lowered.as_str(),
+            "md" | "json"
+                | "jsonl"
+                | "yaml"
+                | "yml"
+                | "txt"
+                | "csv"
+                | "toml"
+                | "current"
+                | "date"
+                | "time"
+                | "timestamp"
+        )
+    {
+        return Vec::new();
+    }
+    let mut variants = vec![lowered.clone()];
+    if let Some(stripped) = lowered.strip_suffix("ies") {
+        if stripped.len() >= 2 {
+            variants.push(format!("{stripped}y"));
+        }
+    } else if let Some(stripped) = lowered.strip_suffix('s') {
+        if stripped.len() >= 3 {
+            variants.push(stripped.to_string());
+        }
+    }
+    variants.sort();
+    variants.dedup();
+    variants
+}
+
+fn automation_keyword_set(text: &str) -> HashSet<String> {
+    text.split(|ch: char| !ch.is_ascii_alphanumeric())
+        .flat_map(automation_keyword_variants)
+        .collect()
+}
+
+fn automation_output_target_matches_node_objective(
+    output_target: &str,
+    objective_text: &str,
+) -> bool {
+    let objective_lower = objective_text.to_ascii_lowercase();
+    let output_lower = output_target.to_ascii_lowercase();
+    if objective_lower.contains(&output_lower) {
+        return true;
+    }
+    let basename = std::path::Path::new(output_target)
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or(output_target)
+        .to_ascii_lowercase();
+    if !basename.is_empty() && objective_lower.contains(&basename) {
+        return true;
+    }
+    let objective_keywords = automation_keyword_set(objective_text);
+    let target_keywords = automation_keyword_set(output_target);
+    let overlap = target_keywords
+        .intersection(&objective_keywords)
+        .cloned()
+        .collect::<HashSet<_>>();
+    if overlap.len() >= 2 {
+        return true;
+    }
+    overlap.iter().any(|keyword| {
+        matches!(
+            keyword.as_str(),
+            "pipeline"
+                | "shortlist"
+                | "recap"
+                | "ledger"
+                | "finding"
+                | "findings"
+                | "overview"
+                | "positioning"
+                | "resume"
+                | "target"
+                | "state"
+        )
+    })
+}
+
+pub(crate) fn automation_node_must_write_files_for_automation(
+    automation: &AutomationV2Spec,
+    node: &AutomationFlowNode,
+    runtime_values: Option<&AutomationPromptRuntimeValues>,
+) -> Vec<String> {
+    let mut files = automation_node_must_write_files(node)
+        .into_iter()
+        .map(|path| automation_runtime_placeholder_replace(&path, runtime_values))
+        .collect::<Vec<_>>();
+    let objective_text = format!(
+        "{}\n{}",
+        node.objective,
+        node.metadata
+            .as_ref()
+            .and_then(|metadata| metadata.get("builder"))
+            .and_then(Value::as_object)
+            .and_then(|builder| builder.get("prompt"))
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+    );
+    files.extend(
+        automation
+            .output_targets
+            .iter()
+            .filter(|output_target| {
+                automation_output_target_matches_node_objective(output_target, &objective_text)
+            })
+            .map(|output_target| {
+                automation_runtime_placeholder_replace(output_target, runtime_values)
+            }),
+    );
+    files.sort();
+    files.dedup();
+    files
+}
+
 fn automation_node_bootstrap_missing_files(node: &AutomationFlowNode) -> Vec<String> {
     enforcement::automation_node_inferred_bootstrap_required_files(node)
 }
@@ -4206,6 +4417,70 @@ pub(crate) fn validate_automation_artifact_output_with_upstream(
     workspace_snapshot_before: &std::collections::BTreeSet<String>,
     upstream_evidence: Option<&AutomationUpstreamEvidence>,
 ) -> (Option<(String, String)>, Value, Option<String>) {
+    let automation = AutomationV2Spec {
+        automation_id: "validation".to_string(),
+        name: "validation".to_string(),
+        description: None,
+        status: crate::AutomationV2Status::Draft,
+        schedule: crate::AutomationV2Schedule {
+            schedule_type: crate::AutomationV2ScheduleType::Manual,
+            cron_expression: None,
+            interval_seconds: None,
+            timezone: "UTC".to_string(),
+            misfire_policy: crate::RoutineMisfirePolicy::RunOnce,
+        },
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
+        agents: Vec::new(),
+        flow: crate::AutomationFlowSpec { nodes: Vec::new() },
+        execution: crate::AutomationExecutionPolicy {
+            max_parallel_agents: None,
+            max_total_runtime_ms: None,
+            max_total_tool_calls: None,
+            max_total_tokens: None,
+            max_total_cost_usd: None,
+        },
+        output_targets: Vec::new(),
+        created_at_ms: 0,
+        updated_at_ms: 0,
+        creator_id: "validation".to_string(),
+        workspace_root: None,
+        metadata: None,
+        next_fire_at_ms: None,
+        last_fired_at_ms: None,
+        scope_policy: None,
+        watch_conditions: Vec::new(),
+        handoff_config: None,
+    };
+    validate_automation_artifact_output_with_context(
+        &automation,
+        node,
+        session,
+        workspace_root,
+        run_id,
+        None,
+        session_text,
+        tool_telemetry,
+        preexisting_output,
+        verified_output,
+        workspace_snapshot_before,
+        upstream_evidence,
+    )
+}
+
+pub(crate) fn validate_automation_artifact_output_with_context(
+    automation: &AutomationV2Spec,
+    node: &AutomationFlowNode,
+    session: &Session,
+    workspace_root: &str,
+    run_id: Option<&str>,
+    runtime_values: Option<&AutomationPromptRuntimeValues>,
+    session_text: &str,
+    tool_telemetry: &Value,
+    preexisting_output: Option<&str>,
+    verified_output: Option<(String, String)>,
+    workspace_snapshot_before: &std::collections::BTreeSet<String>,
+    upstream_evidence: Option<&AutomationUpstreamEvidence>,
+) -> (Option<(String, String)>, Value, Option<String>) {
     let suspicious_after = list_suspicious_automation_marker_files(workspace_root);
     let undeclared_files_created = suspicious_after
         .iter()
@@ -4221,7 +4496,8 @@ pub(crate) fn validate_automation_artifact_output_with_upstream(
     let enforcement = automation_node_output_enforcement(node);
     let validator_kind = automation_output_validator_kind(node);
     let execution_policy = automation_node_execution_policy(node, workspace_root);
-    let must_write_files = automation_node_must_write_files(node);
+    let must_write_files =
+        automation_node_must_write_files_for_automation(automation, node, runtime_values);
     let mutation_summary = session_file_mutation_summary(session, workspace_root);
     let verification_summary = session_verification_summary(node, session);
     let touched_files = mutation_summary
@@ -4415,21 +4691,36 @@ pub(crate) fn validate_automation_artifact_output_with_upstream(
         let web_research_succeeded = current_web_research_succeeded
             || (use_upstream_evidence
                 && upstream_evidence.is_some_and(|evidence| evidence.web_research_succeeded));
-        let connector_discovery_text = [
-            node.objective.as_str(),
-            node.metadata
-                .as_ref()
-                .and_then(|metadata| metadata.get("builder"))
-                .and_then(Value::as_object)
-                .and_then(|builder| builder.get("prompt"))
-                .and_then(Value::as_str)
-                .unwrap_or_default(),
-        ]
-        .join("\n");
+        let connector_discovery_text = automation_connector_hint_text(node);
         let connector_discovery_required =
             tandem_plan_compiler::api::workflow_plan_mentions_connector_backed_sources(
                 &connector_discovery_text,
             );
+        let selected_mcp_server_names = tool_telemetry
+            .get("capability_resolution")
+            .and_then(|value| value.get("mcp_tool_diagnostics"))
+            .and_then(|value| value.get("selected_servers"))
+            .and_then(Value::as_array)
+            .map(|rows| {
+                rows.iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_string)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        let connector_action_patterns =
+            automation_requested_server_scoped_mcp_tools(node, &selected_mcp_server_names);
+        let executed_concrete_mcp_tool = tool_telemetry
+            .get("executed_tools")
+            .and_then(Value::as_array)
+            .is_some_and(|tools| {
+                tools.iter().filter_map(Value::as_str).any(|tool_name| {
+                    tool_name != "mcp_list"
+                        && connector_action_patterns.iter().any(|pattern| {
+                            tandem_core::tool_name_matches_policy(pattern, tool_name)
+                        })
+                })
+            });
         let workspace_inspection_satisfied = tool_telemetry
             .get("workspace_inspection_used")
             .and_then(Value::as_bool)
@@ -4438,6 +4729,13 @@ pub(crate) fn validate_automation_artifact_output_with_upstream(
             || (use_upstream_evidence && !discovered_relevant_paths.is_empty());
         if connector_discovery_required && !executed_has_mcp_list {
             unmet_requirements.push("mcp_discovery_missing".to_string());
+        }
+        if automation_node_is_outbound_action(node)
+            && !automation_node_requires_email_delivery(node)
+            && !connector_action_patterns.is_empty()
+            && !executed_concrete_mcp_tool
+        {
+            unmet_requirements.push("mcp_connector_action_missing".to_string());
         }
         let prewrite_requirements =
             automation_node_prewrite_requirements(node, &requested_tools_for_contract);
@@ -6609,6 +6907,13 @@ pub(crate) async fn execute_automation_v2_node(
         .and_then(Value::as_str)
         .unwrap_or("none")
         .to_string();
+    let mut requested_tools = requested_tools;
+    requested_tools.extend(automation_requested_server_scoped_mcp_tools(
+        node,
+        &selected_mcp_server_names,
+    ));
+    requested_tools.sort();
+    requested_tools.dedup();
     let has_selected_mcp_servers_policy =
         !selected_mcp_server_names.is_empty() && selected_mcp_source == "policy";
     let requested_tools =
@@ -6808,6 +7113,7 @@ pub(crate) async fn execute_automation_v2_node(
         }
     };
     let max_attempts = automation_node_max_attempts(node);
+    let runtime_values = automation_prompt_runtime_values(run.started_at_ms);
     let mut prompt = render_automation_v2_prompt_with_options(
         automation,
         &workspace_root,
@@ -6829,6 +7135,7 @@ pub(crate) async fn execute_automation_v2_node(
         AutomationPromptRenderOptions {
             summary_only_upstream: false,
             knowledge_context: knowledge_context.clone(),
+            runtime_values: Some(runtime_values.clone()),
         },
     );
     let preserve_full_upstream_inputs = automation_node_preserves_full_upstream_inputs(node);
@@ -6874,6 +7181,7 @@ pub(crate) async fn execute_automation_v2_node(
                 AutomationPromptRenderOptions {
                     summary_only_upstream: true,
                     knowledge_context: knowledge_context.clone(),
+                    runtime_values: Some(runtime_values.clone()),
                 },
             );
             preflight = build_automation_prompt_preflight(
@@ -7034,11 +7342,13 @@ pub(crate) async fn execute_automation_v2_node(
     };
     let verified_output = verified_output.map(|(path, text, _)| (path, text));
     let (verified_output, mut artifact_validation, artifact_rejected_reason) =
-        validate_automation_artifact_output_with_upstream(
+        validate_automation_artifact_output_with_context(
+            automation,
             node,
             &session,
             &workspace_root,
             Some(run_id.as_ref()),
+            Some(&runtime_values),
             &session_text,
             &tool_telemetry,
             preexisting_output.as_deref(),

@@ -3086,6 +3086,7 @@ async fn automations_v2_run_recover_from_pause_preserves_completed_state_and_rec
         vec!["approval".to_string()]
     );
     assert_eq!(recovered.checkpoint.node_attempts.get("draft"), Some(&2));
+    assert!(recovered.checkpoint.node_attempts.get("review").is_none());
     assert!(recovered.active_session_ids.is_empty());
     assert!(recovered.active_instance_ids.is_empty());
     assert!(recovered.latest_session_id.is_none());
@@ -3169,6 +3170,7 @@ async fn automations_v2_run_recover_allows_completed_runs_with_blocked_node_evid
         .any(|node_id| node_id == "review"));
     assert!(recovered.checkpoint.node_outputs.contains_key("draft"));
     assert!(!recovered.checkpoint.node_outputs.contains_key("review"));
+    assert!(recovered.checkpoint.node_attempts.get("review").is_none());
     assert!(recovered
         .checkpoint
         .pending_nodes
@@ -3517,7 +3519,7 @@ async fn automations_v2_run_recover_on_failed_branch_preserves_completed_sibling
         .pending_nodes
         .iter()
         .any(|node_id| node_id == "analysis"));
-    assert_eq!(recovered.checkpoint.node_attempts.get("draft"), Some(&2));
+    assert!(recovered.checkpoint.node_attempts.get("draft").is_none());
     assert!(recovered.active_session_ids.is_empty());
     assert!(recovered.active_instance_ids.is_empty());
     assert!(recovered.latest_session_id.is_none());
@@ -3816,7 +3818,7 @@ async fn automations_v2_gate_rework_on_failed_branch_preserves_completed_sibling
         .iter()
         .any(|node_id| node_id == "analysis"));
     assert!(updated.checkpoint.awaiting_gate.is_none());
-    assert_eq!(updated.checkpoint.node_attempts.get("draft"), Some(&2));
+    assert!(updated.checkpoint.node_attempts.get("draft").is_none());
     assert!(updated.active_session_ids.is_empty());
     assert!(updated.active_instance_ids.is_empty());
     assert!(updated.latest_session_id.is_none());
@@ -3940,7 +3942,7 @@ async fn automations_v2_run_repair_preserves_completed_sibling_branch() {
     assert!(repaired.checkpoint.node_outputs.contains_key("analysis"));
     assert!(!repaired.checkpoint.node_outputs.contains_key("draft"));
     assert!(!repaired.checkpoint.node_outputs.contains_key("publish"));
-    assert_eq!(repaired.checkpoint.node_attempts.get("draft"), Some(&2));
+    assert!(repaired.checkpoint.node_attempts.get("draft").is_none());
     assert!(repaired
         .checkpoint
         .pending_nodes
@@ -4062,18 +4064,9 @@ async fn automations_v2_run_repair_resets_descendants_and_records_diff_metadata(
         .any(|id| id == "approval"));
     assert!(!repaired.checkpoint.node_outputs.contains_key("draft"));
     assert!(!repaired.checkpoint.node_outputs.contains_key("review"));
-    assert_eq!(
-        repaired.checkpoint.node_attempts.get("draft").copied(),
-        Some(3)
-    );
-    assert_eq!(
-        repaired.checkpoint.node_attempts.get("review").copied(),
-        Some(2)
-    );
-    assert_eq!(
-        repaired.checkpoint.node_attempts.get("approval").copied(),
-        Some(1)
-    );
+    assert!(repaired.checkpoint.node_attempts.get("draft").is_none());
+    assert!(repaired.checkpoint.node_attempts.get("review").is_none());
+    assert!(repaired.checkpoint.node_attempts.get("approval").is_none());
     let repair_event = repaired
         .checkpoint
         .lifecycle_history
@@ -4208,7 +4201,7 @@ async fn automations_v2_run_task_retry_resets_selected_subtree() {
         .any(|node_id| node_id == "approval"));
     assert!(retried.checkpoint.node_outputs.contains_key("draft"));
     assert!(!retried.checkpoint.node_outputs.contains_key("review"));
-    assert_eq!(retried.checkpoint.node_attempts.get("review"), Some(&2));
+    assert!(retried.checkpoint.node_attempts.get("review").is_none());
     assert!(retried
         .checkpoint
         .pending_nodes
@@ -4314,7 +4307,7 @@ async fn automations_v2_run_task_requeue_resets_selected_subtree() {
         .any(|node_id| node_id == "review"));
     assert!(!requeued.checkpoint.node_outputs.contains_key("draft"));
     assert!(!requeued.checkpoint.node_outputs.contains_key("review"));
-    assert_eq!(requeued.checkpoint.node_attempts.get("draft"), Some(&2));
+    assert!(requeued.checkpoint.node_attempts.get("draft").is_none());
     assert!(requeued.active_session_ids.is_empty());
     assert!(requeued.active_instance_ids.is_empty());
     assert!(requeued.latest_session_id.is_none());
@@ -4504,7 +4497,7 @@ async fn automations_v2_run_task_continue_minimally_resets_blocked_node() {
         .pending_nodes
         .iter()
         .any(|node_id| node_id == "review"));
-    assert_eq!(continued.checkpoint.node_attempts.get("review"), Some(&2));
+    assert!(continued.checkpoint.node_attempts.get("review").is_none());
     assert!(continued.active_session_ids.is_empty());
     assert!(continued.active_instance_ids.is_empty());
     assert!(continued.latest_session_id.is_none());

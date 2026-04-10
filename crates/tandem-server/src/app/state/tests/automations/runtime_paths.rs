@@ -298,3 +298,34 @@ fn collect_inputs_nodes_write_deterministic_inline_artifacts() {
 
     let _ = std::fs::remove_dir_all(&workspace_root);
 }
+
+#[test]
+fn collect_inputs_without_explicit_inputs_do_not_use_deterministic_inline_artifacts() {
+    let node = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
+        node_id: "collect_inputs".to_string(),
+        agent_id: "planner".to_string(),
+        objective: "Inspect the workspace and resolve runtime values.".to_string(),
+        depends_on: Vec::new(),
+        input_refs: Vec::new(),
+        output_contract: Some(AutomationFlowOutputContract {
+            kind: "structured_json".to_string(),
+            validator: Some(crate::AutomationOutputValidatorKind::StructuredJson),
+            enforcement: None,
+            schema: None,
+            summary_guidance: None,
+        }),
+        retry_policy: None,
+        timeout_ms: None,
+        stage_kind: None,
+        gate: None,
+        metadata: Some(json!({
+            "builder": {
+                "web_research_expected": false
+            }
+        })),
+    };
+
+    assert!(automation_node_required_output_path(&node).is_some());
+    assert!(automation_node_inline_artifact_payload(&node).is_none());
+}

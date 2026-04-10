@@ -662,9 +662,16 @@ export function workflowSessionIds(run: any) {
     String(run?.latestSessionId || "").trim(),
   ].filter(Boolean);
   const nodeOutputSessionIds = Object.values(workflowNodeOutputs(run))
-    .map((entry: any) => {
+    .flatMap((entry: any) => {
       const content = entry?.content || {};
-      return String(content?.session_id || content?.sessionId || "").trim();
+      const provenance = entry?.provenance || {};
+      const attemptEvidence = entry?.attempt_evidence || entry?.attemptEvidence || {};
+      return [
+        String(entry?.session_id || entry?.sessionId || "").trim(),
+        String(content?.session_id || content?.sessionId || "").trim(),
+        String(provenance?.session_id || provenance?.sessionId || "").trim(),
+        String(attemptEvidence?.session_id || attemptEvidence?.sessionId || "").trim(),
+      ];
     })
     .filter(Boolean);
   return Array.from(

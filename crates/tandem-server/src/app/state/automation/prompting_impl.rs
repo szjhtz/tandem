@@ -15,6 +15,59 @@ fn automation_prompt_html_escape(text: &str) -> String {
     escaped
 }
 
+fn automation_prompt_render_path_bullets(paths: &[String]) -> String {
+    paths
+        .iter()
+        .map(|path| format!("- `{}`", path))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn automation_prompt_apply_runtime_placeholders(
+    text: &str,
+    runtime_values: Option<&AutomationPromptRuntimeValues>,
+) -> String {
+    let Some(runtime_values) = runtime_values else {
+        return text.to_string();
+    };
+    text.replace("{current_date}", &runtime_values.current_date)
+        .replace("{current_time}", &runtime_values.current_time)
+        .replace("{current_timestamp}", &runtime_values.current_timestamp)
+}
+
+fn automation_prompt_apply_runtime_placeholders_to_value(
+    value: &Value,
+    runtime_values: Option<&AutomationPromptRuntimeValues>,
+) -> Value {
+    match value {
+        Value::String(text) => Value::String(automation_prompt_apply_runtime_placeholders(
+            text,
+            runtime_values,
+        )),
+        Value::Array(rows) => Value::Array(
+            rows.iter()
+                .map(|row| {
+                    automation_prompt_apply_runtime_placeholders_to_value(row, runtime_values)
+                })
+                .collect(),
+        ),
+        Value::Object(map) => Value::Object(
+            map.iter()
+                .map(|(key, value)| {
+                    (
+                        key.clone(),
+                        automation_prompt_apply_runtime_placeholders_to_value(
+                            value,
+                            runtime_values,
+                        ),
+                    )
+                })
+                .collect(),
+        ),
+        _ => value.clone(),
+    }
+}
+
 fn automation_prompt_render_canonical_html_body(text: &str) -> String {
     let trimmed = text.trim();
     if trimmed.is_empty() {
@@ -220,6 +273,7 @@ pub(crate) fn render_automation_v2_prompt_with_options(
     memory_project_id: Option<&str>,
     options: AutomationPromptRenderOptions,
 ) -> String {
+    let runtime_values = options.runtime_values.as_ref();
     let contract_kind = node
         .output_contract
         .as_ref()
@@ -253,7 +307,7 @@ pub(crate) fn render_automation_v2_prompt_with_options(
                     automation_prompt_strip_context_writes(output);
                 }
             }
-            normalized_input
+            automation_prompt_apply_runtime_placeholders_to_value(&normalized_input, runtime_values)
         })
         .collect::<Vec<_>>();
     let preserve_full_upstream_inputs = automation_node_preserves_full_upstream_inputs(node);
@@ -274,25 +328,39 @@ pub(crate) fn render_automation_v2_prompt_with_options(
             .get("title")
             .and_then(Value::as_str)
             .unwrap_or(automation.name.as_str());
-        let mission_goal = mission
-            .get("goal")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
+        let mission_goal = automation_prompt_apply_runtime_placeholders(
+            mission
+                .get("goal")
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+            runtime_values,
+        );
         let success_criteria = mission
             .get("success_criteria")
             .and_then(Value::as_array)
             .map(|rows| {
                 rows.iter()
                     .filter_map(Value::as_str)
-                    .map(|row| format!("- {}", row.trim()))
+                    .map(|row| {
+                        format!(
+                            "- {}",
+                            automation_prompt_apply_runtime_placeholders(
+                                row.trim(),
+                                runtime_values
+                            )
+                        )
+                    })
                     .collect::<Vec<_>>()
                     .join("\n")
             })
             .unwrap_or_default();
-        let shared_context = mission
-            .get("shared_context")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
+        let shared_context = automation_prompt_apply_runtime_placeholders(
+            mission
+                .get("shared_context")
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+            runtime_values,
+        );
         sections.push(format!(
             "Mission Brief:\nTitle: {mission_title}\nGoal: {mission_goal}\nShared context: {shared_context}\nSuccess criteria:\n{}",
             if success_criteria.is_empty() {
@@ -302,9 +370,22 @@ pub(crate) fn render_automation_v2_prompt_with_options(
             }
         ));
     }
+    if let Some(runtime_values) = runtime_values {
+        sections.push(format!(
+            "Resolved Runtime Values:\n- Use these exact values for this run.\n- `current_date` = `{}`\n- `current_time` = `{}`\n- `current_timestamp` = `{}`\n- Replace any literal `{{current_date}}`, `{{current_time}}`, and `{{current_timestamp}}` tokens in objectives, paths, or file contents before reading or writing workspace files.",
+            runtime_values.current_date,
+            runtime_values.current_time,
+            runtime_values.current_timestamp,
+        ));
+    }
     sections.push(format!(
         "Automation ID: {}\nRun ID: {}\nNode ID: {}\nAgent: {}\nObjective: {}\nOutput contract kind: {}",
-        automation.automation_id, run_id, node.node_id, agent.display_name, node.objective, contract_kind
+        automation.automation_id,
+        run_id,
+        node.node_id,
+        agent.display_name,
+        automation_prompt_apply_runtime_placeholders(&node.objective, runtime_values),
+        contract_kind
     ));
     if let Some(contract) = node.output_contract.as_ref() {
         let schema = contract
@@ -328,14 +409,20 @@ pub(crate) fn render_automation_v2_prompt_with_options(
             .get("title")
             .and_then(Value::as_str)
             .unwrap_or(node.node_id.as_str());
-        let local_prompt = builder
-            .get("prompt")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
-        let local_role = builder
-            .get("role")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
+        let local_prompt = automation_prompt_apply_runtime_placeholders(
+            builder
+                .get("prompt")
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+            runtime_values,
+        );
+        let local_role = automation_prompt_apply_runtime_placeholders(
+            builder
+                .get("role")
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+            runtime_values,
+        );
         sections.push(format!(
             "Local Assignment:\nTitle: {local_title}\nRole: {local_role}\nInstructions: {local_prompt}"
         ));
@@ -349,7 +436,11 @@ pub(crate) fn render_automation_v2_prompt_with_options(
             .and_then(|builder| builder.get("prompt"))
             .and_then(Value::as_str)
             .unwrap_or_default();
-        format!("{}\n{}", node.objective, local_prompt)
+        format!(
+            "{}\n{}",
+            automation_prompt_apply_runtime_placeholders(&node.objective, runtime_values),
+            automation_prompt_apply_runtime_placeholders(local_prompt, runtime_values)
+        )
     };
     if tandem_plan_compiler::api::workflow_plan_should_surface_mcp_discovery(
         &connector_discovery_text,
@@ -367,7 +458,10 @@ pub(crate) fn render_automation_v2_prompt_with_options(
         .and_then(|metadata| metadata.get("inputs"))
         .filter(|value| !value.is_null())
     {
-        let rendered = serde_json::to_string_pretty(inputs).unwrap_or_else(|_| inputs.to_string());
+        let rendered = serde_json::to_string_pretty(
+            &automation_prompt_apply_runtime_placeholders_to_value(inputs, runtime_values),
+        )
+        .unwrap_or_else(|_| inputs.to_string());
         sections.push(format!(
             "Node Inputs:\n- Use these values directly when they satisfy the objective.\n- Do not search `/tmp`, shell history, or undeclared temp files for duplicate copies of these inputs.\n{}",
             rendered
@@ -378,9 +472,33 @@ pub(crate) fn render_automation_v2_prompt_with_options(
         ));
     }
     let execution_mode = automation_node_execution_mode(node, workspace_root);
+    let required_output_path = automation_node_required_output_path_for_run(node, Some(run_id));
+    let required_workspace_write_targets =
+        automation_node_must_write_files_for_automation(automation, node, runtime_values)
+            .into_iter()
+            .map(|path| automation_prompt_apply_runtime_placeholders(&path, runtime_values))
+            .filter(|path| {
+                required_output_path
+                    .as_ref()
+                    .is_none_or(|output_path| path != output_path)
+            })
+            .collect::<Vec<_>>();
+    let write_scope_rule = if required_workspace_write_targets.is_empty() {
+        "- Use only declared workflow artifact paths.".to_string()
+    } else {
+        format!(
+            "- Use only approved write targets for this node: the declared run artifact plus these required workspace files: {}.",
+            required_workspace_write_targets
+                .iter()
+                .map(|path| format!("`{}`", path))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    };
     sections.push(format!(
-        "Execution Policy:\n- Mode: `{}`.\n- Use only declared workflow artifact paths.\n- Create only parent folders as directories; treat paths ending in file-like suffixes such as `.md`, `.json`, `.jsonl`, `.yaml`, `.yml`, `.toml`, `.txt`, or `.csv` as files.\n- Do not use `bash`/`mkdir` to create a file path itself; use `write` with the full file contents when a file must be created.\n- Keep status and blocker notes in the response JSON, not as placeholder file contents.",
-        execution_mode
+        "Execution Policy:\n- Mode: `{}`.\n{}\n- Create only parent folders as directories; treat paths ending in file-like suffixes such as `.md`, `.json`, `.jsonl`, `.yaml`, `.yml`, `.toml`, `.txt`, or `.csv` as files.\n- Do not use `bash`/`mkdir` to create a file path itself; use `write` with the full file contents when a file must be created.\n- Keep status and blocker notes in the response JSON, not as placeholder file contents.",
+        execution_mode,
+        write_scope_rule
     ));
     if automation_node_is_code_workflow(node) {
         let task_kind =
@@ -407,22 +525,43 @@ pub(crate) fn render_automation_v2_prompt_with_options(
             task_id, task_kind, repo_root, write_scope, acceptance_criteria, task_dependencies, verification_state, task_owner, verification_command, if project_backlog_tasks { "yes" } else { "no" }
         ));
     }
-    if let Some(output_path) = automation_node_required_output_path_for_run(node, Some(run_id)) {
+    if let Some(output_path) = required_output_path {
+        let approved_write_targets_rule = if required_workspace_write_targets.is_empty() {
+            "- Only write declared workflow artifact files.".to_string()
+        } else {
+            format!(
+                "- In addition to the run artifact, create or update these required workspace files when needed: {}.\n- Do not create other auxiliary touch files, status files, marker files, or placeholder preservation notes.",
+                required_workspace_write_targets
+                    .iter()
+                    .map(|path| format!("`{}`", path))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        };
         let output_rules = match execution_mode {
             "git_patch" => format!(
-                "Required Run Artifact:\n- Create or update `{}` for this run.\n- Use `glob` to discover candidate paths and `read` only for concrete file paths.\n- Prefer `apply_patch` for multi-line source edits and `edit` for localized replacements.\n- Use `write` only for brand-new files or when patch/edit cannot express the change.\n- Do not replace an existing source file with a status note, preservation note, or placeholder summary.\n- Only write declared workflow artifact files.\n- Do not report success unless this run artifact exists when the stage ends.",
-                output_path
+                "Required Run Artifact:\n- Create or update `{}` for this run.\n- Use `glob` to discover candidate paths and `read` only for concrete file paths.\n- Prefer `apply_patch` for multi-line source edits and `edit` for localized replacements.\n- Use `write` only for brand-new files or when patch/edit cannot express the change.\n- Do not replace an existing source file with a status note, preservation note, or placeholder summary.\n{}\n- Do not report success unless this run artifact exists when the stage ends.",
+                output_path,
+                approved_write_targets_rule
             ),
             "filesystem_patch" => format!(
-                "Required Run Artifact:\n- Create or update `{}` for this run.\n- Use `glob` to discover candidate paths and `read` only for concrete file paths.\n- Prefer `edit` for existing-file changes.\n- Use `write` for brand-new files or as a last resort when an edit cannot express the change.\n- Do not replace an existing file with a status note, preservation note, or placeholder summary.\n- Only write declared workflow artifact files.\n- Do not report success unless this run artifact exists when the stage ends.",
-                output_path
+                "Required Run Artifact:\n- Create or update `{}` for this run.\n- Use `glob` to discover candidate paths and `read` only for concrete file paths.\n- Prefer `edit` for existing-file changes.\n- Use `write` for brand-new files or as a last resort when an edit cannot express the change.\n- Do not replace an existing file with a status note, preservation note, or placeholder summary.\n{}\n- Do not report success unless this run artifact exists when the stage ends.",
+                output_path,
+                approved_write_targets_rule
             ),
             _ => format!(
-                "Required Run Artifact:\n- Create or update `{}` for this run.\n- When calling the `write` tool, include the full file body in the `content` field; do not call `write` with only a path or an empty body.\n- If this output path is already known, use `write` immediately to create the full file contents.\n- On every retry attempt, rewrite the required output in this attempt even if the content would be identical; do not rely on a prior attempt’s file.\n- Use `glob` and `read` only when you must inspect existing companion files or verify a preexisting artifact before updating it.\n- Do not let an empty `glob` end the run; still create the required artifact.\n- Only write declared workflow artifact files; do not create auxiliary touch files, status files, marker files, or placeholder preservation notes.\n- Overwrite the declared output with the actual artifact contents for this run instead of preserving a prior placeholder.\n- If the required run artifact is JSON, also include the exact JSON artifact body in the final response before the compact status object so the engine can recover the artifact when provider-side write delivery is flaky.\n- Do not report success unless this run artifact exists when the stage ends.",
-                output_path
+                "Required Run Artifact:\n- Create or update `{}` for this run.\n- When calling the `write` tool, include the full file body in the `content` field; do not call `write` with only a path or an empty body.\n- If this output path is already known, use `write` immediately to create the full file contents.\n- On every retry attempt, rewrite the required output in this attempt even if the content would be identical; do not rely on a prior attempt’s file.\n- Use `glob` and `read` only when you must inspect existing companion files or verify a preexisting artifact before updating it.\n- Do not let an empty `glob` end the run; still create the required artifact.\n{}\n- Overwrite the declared output with the actual artifact contents for this run instead of preserving a prior placeholder.\n- If the required run artifact is JSON, also include the exact JSON artifact body in the final response before the compact status object so the engine can recover the artifact when provider-side write delivery is flaky.\n- Do not report success unless this run artifact exists when the stage ends.",
+                output_path,
+                approved_write_targets_rule
             ),
         };
         sections.push(output_rules);
+    }
+    if !required_workspace_write_targets.is_empty() {
+        sections.push(format!(
+            "Required Workspace Writes:\n- These workspace files are part of the node objective and are approved write targets for this run.\n{}\n- Keep these writes inside the workspace root and use full file contents when creating a file.",
+            automation_prompt_render_path_bullets(&required_workspace_write_targets)
+        ));
     }
     let triage_gate = node
         .metadata

@@ -453,6 +453,9 @@ pub(crate) fn automation_node_requires_email_delivery(node: &AutomationFlowNode)
     if !automation_node_is_outbound_action(node) {
         return false;
     }
+    if automation_node_delivery_target(node).is_some() {
+        return true;
+    }
     let objective = node.objective.to_ascii_lowercase();
     let contains_phrase = [
         "send email",
@@ -473,17 +476,7 @@ pub(crate) fn automation_node_requires_email_delivery(node: &AutomationFlowNode)
     if contains_phrase {
         return true;
     }
-
-    let mentions_email_channel = objective.contains("email")
-        || objective.contains("gmail")
-        || objective.contains("mail tool")
-        || objective.contains("mail tools");
-    let mentions_delivery_action = objective.contains("send")
-        || objective.contains("draft")
-        || objective.contains("notify")
-        || objective.contains("deliver");
-
-    mentions_email_channel && mentions_delivery_action
+    false
 }
 
 pub(crate) fn automation_tool_name_is_email_delivery(tool_name: &str) -> bool {
@@ -658,19 +651,12 @@ fn resolve_automation_agent_model(
 
 pub(crate) fn automation_node_inline_artifact_payload(node: &AutomationFlowNode) -> Option<Value> {
     if node.node_id == "collect_inputs" {
-        if let Some(value) = node
+        return node
             .metadata
             .as_ref()
             .and_then(|metadata| metadata.get("inputs"))
             .filter(|value| !value.is_null())
-            .cloned()
-        {
-            return Some(value);
-        }
-        return Some(json!({
-            "inputs": {},
-            "status": "completed"
-        }));
+            .cloned();
     }
     None
 }

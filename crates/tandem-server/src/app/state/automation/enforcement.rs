@@ -216,9 +216,6 @@ pub(crate) fn automation_node_allows_optional_workspace_reads(node: &AutomationF
 pub(crate) fn automation_node_inferred_bootstrap_required_files(
     node: &AutomationFlowNode,
 ) -> Vec<String> {
-    if !node.depends_on.is_empty() {
-        return Vec::new();
-    }
     if node.output_contract.as_ref().is_some_and(|contract| {
         matches!(
             contract.kind.trim().to_ascii_lowercase().as_str(),

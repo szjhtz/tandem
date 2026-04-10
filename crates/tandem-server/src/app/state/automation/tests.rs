@@ -213,6 +213,50 @@ fn mcp_list_is_only_added_when_servers_are_selected() {
 }
 
 #[test]
+fn connector_backed_publish_node_requests_named_server_mcp_tools() {
+    let mut node = bare_node();
+    node.objective =
+        "Use blog-mcp to inspect the publishing flow and submit the draft.".to_string();
+    node.metadata = Some(json!({
+        "builder": {
+            "prompt": "Create or update the post with blog-mcp and submit it for review."
+        }
+    }));
+
+    let requested = automation_requested_server_scoped_mcp_tools(
+        &node,
+        &["blog-mcp".to_string(), "tandem-mcp".to_string()],
+    );
+
+    assert_eq!(requested, vec!["mcp.blog_mcp.*".to_string()]);
+}
+
+#[test]
+fn server_scoped_mcp_patterns_expand_into_concrete_tools() {
+    let available_tool_names = std::collections::HashSet::from([
+        "mcp.blog_mcp.create_blog_draft".to_string(),
+        "mcp.blog_mcp.submit_blog_for_review".to_string(),
+        "mcp.tandem_mcp.search_docs".to_string(),
+        "read".to_string(),
+    ]);
+
+    let effective = automation_expand_effective_offered_tools(
+        &["read".to_string(), "mcp.blog_mcp.*".to_string()],
+        &available_tool_names,
+    );
+
+    assert!(effective
+        .iter()
+        .any(|tool| tool == "mcp.blog_mcp.create_blog_draft"));
+    assert!(effective
+        .iter()
+        .any(|tool| tool == "mcp.blog_mcp.submit_blog_for_review"));
+    assert!(!effective
+        .iter()
+        .any(|tool| tool == "mcp.tandem_mcp.search_docs"));
+}
+
+#[test]
 fn handoff_only_structured_json_removes_write_tool() {
     let mut node = bare_node();
     node.output_contract = Some(AutomationFlowOutputContract {
@@ -288,6 +332,290 @@ fn bootstrap_inference_skips_optional_slash_separated_input_files() {
     assert!(must_write_files
         .iter()
         .any(|path| path == "daily-recaps/2026-04-09-job-search-recap.md"));
+}
+
+#[test]
+fn bootstrap_inference_applies_to_dependent_workspace_bootstrap_nodes() {
+    let mut node = bare_node();
+    node.node_id = "execute_goal".to_string();
+    node.depends_on = vec!["collect_inputs".to_string()];
+    node.objective = "Initialize any missing directories and files, create tracker/search-ledger/{current_date}.json and daily-recaps/{current_date}-job-search-recap.md, and update tracker/pipeline.md as needed.".to_string();
+    node.output_contract = Some(AutomationFlowOutputContract {
+        kind: "structured_json".to_string(),
+        validator: Some(crate::AutomationOutputValidatorKind::StructuredJson),
+        enforcement: None,
+        schema: None,
+        summary_guidance: Some("Return a structured handoff.".to_string()),
+    });
+
+    let must_write_files = automation_node_must_write_files(&node);
+
+    assert!(must_write_files
+        .iter()
+        .any(|path| path == "tracker/search-ledger/{current_date}.json"));
+    assert!(must_write_files
+        .iter()
+        .any(|path| path == "daily-recaps/{current_date}-job-search-recap.md"));
+    assert!(must_write_files
+        .iter()
+        .any(|path| path == "tracker/pipeline.md"));
+}
+
+#[test]
+fn automation_output_targets_fill_in_final_node_workspace_writes() {
+    let automation = AutomationV2Spec {
+        automation_id: "automation-final-targets".to_string(),
+        name: "Final Targets".to_string(),
+        description: None,
+        status: crate::AutomationV2Status::Active,
+        schedule: crate::AutomationV2Schedule {
+            schedule_type: crate::AutomationV2ScheduleType::Manual,
+            cron_expression: None,
+            interval_seconds: None,
+            timezone: "UTC".to_string(),
+            misfire_policy: crate::RoutineMisfirePolicy::RunOnce,
+        },
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
+        agents: Vec::new(),
+        flow: crate::AutomationFlowSpec { nodes: Vec::new() },
+        execution: crate::AutomationExecutionPolicy {
+            max_parallel_agents: Some(1),
+            max_total_runtime_ms: None,
+            max_total_tool_calls: None,
+            max_total_tokens: None,
+            max_total_cost_usd: None,
+        },
+        output_targets: vec![
+            "daily-recaps/{current_date}-job-search-recap.md".to_string(),
+            "opportunities/ranked/{current_date}-ranked-opportunities.md".to_string(),
+            "opportunities/shortlisted/{current_date}-shortlist.md".to_string(),
+            "tracker/pipeline.md".to_string(),
+            "tracker/search-ledger/{current_date}.json".to_string(),
+        ],
+        created_at_ms: 0,
+        updated_at_ms: 0,
+        creator_id: "test".to_string(),
+        workspace_root: Some("/tmp".to_string()),
+        metadata: None,
+        next_fire_at_ms: None,
+        last_fired_at_ms: None,
+        scope_policy: None,
+        watch_conditions: Vec::new(),
+        handoff_config: None,
+    };
+    let mut node = bare_node();
+    node.node_id = "analyze_findings".to_string();
+    node.depends_on = vec!["research_sources".to_string()];
+    node.objective = "Normalize worthwhile jobs, update daily ranked opportunities, shortlist, and pipeline views, then merge the daily recap.".to_string();
+    node.output_contract = Some(AutomationFlowOutputContract {
+        kind: "report_markdown".to_string(),
+        validator: Some(crate::AutomationOutputValidatorKind::GenericArtifact),
+        enforcement: None,
+        schema: None,
+        summary_guidance: None,
+    });
+
+    let must_write_files = automation_node_must_write_files_for_automation(
+        &automation,
+        &node,
+        Some(&AutomationPromptRuntimeValues {
+            current_date: "2026-04-09".to_string(),
+            current_time: "1304".to_string(),
+            current_timestamp: "2026-04-09 13:04".to_string(),
+        }),
+    );
+
+    assert!(must_write_files
+        .iter()
+        .any(|path| path == "daily-recaps/2026-04-09-job-search-recap.md"));
+    assert!(must_write_files
+        .iter()
+        .any(|path| path == "opportunities/ranked/2026-04-09-ranked-opportunities.md"));
+    assert!(must_write_files
+        .iter()
+        .any(|path| path == "opportunities/shortlisted/2026-04-09-shortlist.md"));
+    assert!(must_write_files
+        .iter()
+        .any(|path| path == "tracker/pipeline.md"));
+    assert!(!must_write_files
+        .iter()
+        .any(|path| path == "tracker/search-ledger/2026-04-09.json"));
+}
+
+#[test]
+fn automation_output_targets_replace_runtime_placeholders_before_dedup() {
+    let automation = AutomationV2Spec {
+        automation_id: "automation-runtime-dedup".to_string(),
+        name: "Runtime Dedup".to_string(),
+        description: None,
+        status: crate::AutomationV2Status::Active,
+        schedule: crate::AutomationV2Schedule {
+            schedule_type: crate::AutomationV2ScheduleType::Manual,
+            cron_expression: None,
+            interval_seconds: None,
+            timezone: "UTC".to_string(),
+            misfire_policy: crate::RoutineMisfirePolicy::RunOnce,
+        },
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
+        agents: Vec::new(),
+        flow: crate::AutomationFlowSpec { nodes: Vec::new() },
+        execution: crate::AutomationExecutionPolicy {
+            max_parallel_agents: Some(1),
+            max_total_runtime_ms: None,
+            max_total_tool_calls: None,
+            max_total_tokens: None,
+            max_total_cost_usd: None,
+        },
+        output_targets: vec![
+            "opportunities/raw/{current_date}/{current_time}-findings.json".to_string(),
+            "opportunities/raw/{current_date}/{current_time}-findings.md".to_string(),
+            "tracker/search-ledger/{current_date}.json".to_string(),
+        ],
+        created_at_ms: 0,
+        updated_at_ms: 0,
+        creator_id: "test".to_string(),
+        workspace_root: Some("/tmp".to_string()),
+        metadata: None,
+        next_fire_at_ms: None,
+        last_fired_at_ms: None,
+        scope_policy: None,
+        watch_conditions: Vec::new(),
+        handoff_config: None,
+    };
+    let mut node = bare_node();
+    node.node_id = "research_sources".to_string();
+    node.objective = "Inspect tracker/search-ledger/2026-04-09.json, avoid duplicate work, and write raw findings immediately to opportunities/raw/2026-04-09/2138-findings.md and opportunities/raw/2026-04-09/2138-findings.json.".to_string();
+    node.output_contract = Some(AutomationFlowOutputContract {
+        kind: "structured_json".to_string(),
+        validator: Some(crate::AutomationOutputValidatorKind::StructuredJson),
+        enforcement: None,
+        schema: None,
+        summary_guidance: Some("Return a structured handoff.".to_string()),
+    });
+
+    let must_write_files = automation_node_must_write_files_for_automation(
+        &automation,
+        &node,
+        Some(&AutomationPromptRuntimeValues {
+            current_date: "2026-04-09".to_string(),
+            current_time: "2138".to_string(),
+            current_timestamp: "2026-04-09 21:38".to_string(),
+        }),
+    );
+
+    assert_eq!(
+        must_write_files
+            .iter()
+            .filter(|path| *path == "opportunities/raw/2026-04-09/2138-findings.json")
+            .count(),
+        1
+    );
+    assert_eq!(
+        must_write_files
+            .iter()
+            .filter(|path| *path == "opportunities/raw/2026-04-09/2138-findings.md")
+            .count(),
+        1
+    );
+    assert_eq!(
+        must_write_files
+            .iter()
+            .filter(|path| *path == "tracker/search-ledger/2026-04-09.json")
+            .count(),
+        1
+    );
+    assert!(!must_write_files
+        .iter()
+        .any(|path| path.contains("{current_date}") || path.contains("{current_time}")));
+}
+
+#[test]
+fn report_markdown_nodes_do_not_infer_template_filenames_as_workspace_writes() {
+    let automation = AutomationV2Spec {
+        automation_id: "automation-report-markdown".to_string(),
+        name: "Report Markdown".to_string(),
+        description: None,
+        status: crate::AutomationV2Status::Active,
+        schedule: crate::AutomationV2Schedule {
+            schedule_type: crate::AutomationV2ScheduleType::Manual,
+            cron_expression: None,
+            interval_seconds: None,
+            timezone: "UTC".to_string(),
+            misfire_policy: crate::RoutineMisfirePolicy::RunOnce,
+        },
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
+        agents: Vec::new(),
+        flow: crate::AutomationFlowSpec { nodes: Vec::new() },
+        execution: crate::AutomationExecutionPolicy {
+            max_parallel_agents: Some(1),
+            max_total_runtime_ms: None,
+            max_total_tool_calls: None,
+            max_total_tokens: None,
+            max_total_cost_usd: None,
+        },
+        output_targets: vec![
+            "daily-recaps/{current_date}-job-search-recap.md".to_string(),
+            "opportunities/ranked/{current_date}-ranked-opportunities.md".to_string(),
+            "opportunities/shortlisted/{current_date}-shortlist.md".to_string(),
+            "tracker/pipeline.md".to_string(),
+        ],
+        created_at_ms: 0,
+        updated_at_ms: 0,
+        creator_id: "test".to_string(),
+        workspace_root: Some("/tmp".to_string()),
+        metadata: None,
+        next_fire_at_ms: None,
+        last_fired_at_ms: None,
+        scope_policy: None,
+        watch_conditions: Vec::new(),
+        handoff_config: None,
+    };
+    let mut node = bare_node();
+    node.node_id = "analyze_findings".to_string();
+    node.objective = "Normalize only worthwhile jobs into per-role folders with `source.md`, `normalized-job.md`, `fit-analysis.md`, `apply-details.md`, and `status.json`; score fit honestly using `RESUME.md`, `resume-overview.md`, and `resume-positioning.md`; update daily ranked opportunities, shortlist, and pipeline views; then merge the daily recap so ratings, links, company names, role titles, and concise next steps are present.".to_string();
+    node.output_contract = Some(AutomationFlowOutputContract {
+        kind: "report_markdown".to_string(),
+        validator: Some(crate::AutomationOutputValidatorKind::GenericArtifact),
+        enforcement: None,
+        schema: None,
+        summary_guidance: None,
+    });
+
+    let must_write_files = automation_node_must_write_files_for_automation(
+        &automation,
+        &node,
+        Some(&AutomationPromptRuntimeValues {
+            current_date: "2026-04-09".to_string(),
+            current_time: "2138".to_string(),
+            current_timestamp: "2026-04-09 21:38".to_string(),
+        }),
+    );
+
+    assert!(!must_write_files.iter().any(|path| {
+        matches!(
+            path.as_str(),
+            "source.md"
+                | "normalized-job.md"
+                | "fit-analysis.md"
+                | "apply-details.md"
+                | "status.json"
+                | "RESUME.md"
+                | "resume-overview.md"
+                | "resume-positioning.md"
+        )
+    }));
+    assert!(must_write_files
+        .iter()
+        .any(|path| path == "daily-recaps/2026-04-09-job-search-recap.md"));
+    assert!(must_write_files
+        .iter()
+        .any(|path| path == "opportunities/ranked/2026-04-09-ranked-opportunities.md"));
+    assert!(must_write_files
+        .iter()
+        .any(|path| path == "opportunities/shortlisted/2026-04-09-shortlist.md"));
+    assert!(must_write_files
+        .iter()
+        .any(|path| path == "tracker/pipeline.md"));
 }
 
 #[test]
@@ -439,6 +767,26 @@ fn report_markdown_preserves_full_upstream_inputs() {
     assert!(automation_node_preserves_full_upstream_inputs(
         &text_summary
     ));
+}
+
+#[test]
+fn blog_draft_objective_with_negative_gmail_mentions_does_not_require_email_delivery() {
+    let mut node = report_markdown_node();
+    node.node_id = "generate_report".to_string();
+    node.objective = "The blog post is NOT about Gmail/Reddit/blog integrations as product marketing. Before drafting the article, write article-thesis.md, then produce blog-draft.md and blog-package.md with a publish-ready article.".to_string();
+
+    assert!(!automation_node_requires_email_delivery(&node));
+}
+
+#[test]
+fn explicit_gmail_draft_objective_requires_email_delivery() {
+    let mut node = bare_node();
+    node.node_id = "execute_goal".to_string();
+    node.objective =
+        "Create a Gmail draft or send the final HTML summary email to recipient@example.com."
+            .to_string();
+
+    assert!(automation_node_requires_email_delivery(&node));
 }
 
 #[test]

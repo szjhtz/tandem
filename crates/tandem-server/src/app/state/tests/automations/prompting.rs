@@ -85,6 +85,7 @@ fn knowledge_context_is_injected_into_automation_prompt() {
             knowledge_context: Some(
                 "<knowledge_context>\n- reused evidence\n</knowledge_context>".to_string(),
             ),
+            runtime_values: None,
         },
     );
 
@@ -276,6 +277,334 @@ fn automation_prompt_clarifies_file_paths_are_not_directories() {
 
     assert!(prompt.contains("Create only parent folders as directories"));
     assert!(prompt.contains("Do not use `bash`/`mkdir` to create a file path itself"));
+}
+
+#[test]
+fn bootstrap_prompt_allows_required_workspace_writes_beyond_run_artifact() {
+    let automation = AutomationV2Spec {
+        automation_id: "automation-bootstrap".to_string(),
+        name: "Bootstrap Prompt".to_string(),
+        description: None,
+        status: crate::AutomationV2Status::Active,
+        schedule: crate::AutomationV2Schedule {
+            schedule_type: crate::AutomationV2ScheduleType::Manual,
+            cron_expression: None,
+            interval_seconds: None,
+            timezone: "UTC".to_string(),
+            misfire_policy: crate::RoutineMisfirePolicy::RunOnce,
+        },
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
+        agents: Vec::new(),
+        flow: crate::AutomationFlowSpec { nodes: Vec::new() },
+        execution: crate::AutomationExecutionPolicy {
+            max_parallel_agents: Some(1),
+            max_total_runtime_ms: None,
+            max_total_tool_calls: None,
+            max_total_tokens: None,
+            max_total_cost_usd: None,
+        },
+        output_targets: Vec::new(),
+        created_at_ms: 0,
+        updated_at_ms: 0,
+        creator_id: "test".to_string(),
+        workspace_root: Some("/tmp".to_string()),
+        metadata: None,
+        next_fire_at_ms: None,
+        last_fired_at_ms: None,
+        scope_policy: None,
+        watch_conditions: Vec::new(),
+        handoff_config: None,
+    };
+    let node = AutomationFlowNode {
+        node_id: "collect_inputs".to_string(),
+        agent_id: "worker".to_string(),
+        objective: "Initialize any missing job-search workspace directories and files, read README.md/AGENTS.md/RESUME.md if present, and update resume-overview.md, resume-positioning.md, resume-state.json, sources/search-targets.md, tracker/search-ledger/2026-04-09.json, tracker/seen-jobs.jsonl, tracker/pipeline.md, and daily-recaps/2026-04-09-job-search-recap.md as needed before any search begins.".to_string(),
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
+        depends_on: Vec::new(),
+        input_refs: Vec::new(),
+        output_contract: Some(AutomationFlowOutputContract {
+            kind: "structured_json".to_string(),
+            validator: Some(crate::AutomationOutputValidatorKind::StructuredJson),
+            enforcement: None,
+            schema: None,
+            summary_guidance: None,
+        }),
+        retry_policy: None,
+        timeout_ms: None,
+        stage_kind: None,
+        gate: None,
+        metadata: Some(json!({
+            "builder": {
+                "output_path": ".tandem/artifacts/collect-inputs.json"
+            }
+        })),
+    };
+    let agent = AutomationAgentProfile {
+        agent_id: "worker".to_string(),
+        template_id: None,
+        display_name: "Worker".to_string(),
+        avatar_url: None,
+        model_policy: None,
+        skills: Vec::new(),
+        tool_policy: crate::AutomationAgentToolPolicy {
+            allowlist: vec!["glob".to_string(), "read".to_string(), "write".to_string()],
+            denylist: Vec::new(),
+        },
+        mcp_policy: crate::AutomationAgentMcpPolicy {
+            allowed_servers: Vec::new(),
+            allowed_tools: None,
+        },
+        approval_policy: None,
+    };
+
+    let prompt = render_automation_v2_prompt(
+        &automation,
+        "/tmp",
+        "run-bootstrap",
+        &node,
+        1,
+        &agent,
+        &[],
+        &["glob".to_string(), "read".to_string(), "write".to_string()],
+        None,
+        None,
+        None,
+    );
+
+    assert!(prompt.contains("Required Workspace Writes:"));
+    assert!(prompt.contains("resume-overview.md"));
+    assert!(prompt.contains("tracker/pipeline.md"));
+    assert!(prompt.contains("daily-recaps/2026-04-09-job-search-recap.md"));
+    assert!(prompt.contains(
+        "Use only approved write targets for this node: the declared run artifact plus these required workspace files"
+    ));
+    assert!(!prompt.contains("Use only declared workflow artifact paths."));
+    assert!(!prompt.contains("Only write declared workflow artifact files."));
+}
+
+#[test]
+fn prompt_resolves_reserved_runtime_placeholders_for_run() {
+    let automation = AutomationV2Spec {
+        automation_id: "automation-runtime-placeholders".to_string(),
+        name: "Runtime Placeholder Prompt".to_string(),
+        description: None,
+        status: crate::AutomationV2Status::Active,
+        schedule: crate::AutomationV2Schedule {
+            schedule_type: crate::AutomationV2ScheduleType::Manual,
+            cron_expression: None,
+            interval_seconds: None,
+            timezone: "UTC".to_string(),
+            misfire_policy: crate::RoutineMisfirePolicy::RunOnce,
+        },
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
+        agents: Vec::new(),
+        flow: crate::AutomationFlowSpec { nodes: Vec::new() },
+        execution: crate::AutomationExecutionPolicy {
+            max_parallel_agents: Some(1),
+            max_total_runtime_ms: None,
+            max_total_tool_calls: None,
+            max_total_tokens: None,
+            max_total_cost_usd: None,
+        },
+        output_targets: vec!["daily-recaps/{current_date}-job-search-recap.md".to_string()],
+        created_at_ms: 0,
+        updated_at_ms: 0,
+        creator_id: "test".to_string(),
+        workspace_root: Some("/tmp".to_string()),
+        metadata: Some(json!({
+            "mission": {
+                "goal": "Write daily-recaps/{current_date}-job-search-recap.md and opportunities/raw/{current_date}/{current_time}-findings.md."
+            }
+        })),
+        next_fire_at_ms: None,
+        last_fired_at_ms: None,
+        scope_policy: None,
+        watch_conditions: Vec::new(),
+        handoff_config: None,
+    };
+    let node = AutomationFlowNode {
+        node_id: "execute_goal".to_string(),
+        agent_id: "worker".to_string(),
+        objective: "Write tracker/search-ledger/{current_date}.json and use {current_timestamp} inside the recap.".to_string(),
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
+        depends_on: vec!["collect_inputs".to_string()],
+        input_refs: Vec::new(),
+        output_contract: Some(AutomationFlowOutputContract {
+            kind: "structured_json".to_string(),
+            validator: Some(crate::AutomationOutputValidatorKind::StructuredJson),
+            enforcement: None,
+            schema: None,
+            summary_guidance: None,
+        }),
+        retry_policy: None,
+        timeout_ms: None,
+        stage_kind: None,
+        gate: None,
+        metadata: Some(json!({
+            "builder": {
+                "prompt": "Also preserve opportunities/raw/{current_date}/{current_time}-findings.json."
+            }
+        })),
+    };
+    let agent = AutomationAgentProfile {
+        agent_id: "worker".to_string(),
+        template_id: None,
+        display_name: "Worker".to_string(),
+        avatar_url: None,
+        model_policy: None,
+        skills: Vec::new(),
+        tool_policy: crate::AutomationAgentToolPolicy {
+            allowlist: vec!["glob".to_string(), "read".to_string(), "write".to_string()],
+            denylist: Vec::new(),
+        },
+        mcp_policy: crate::AutomationAgentMcpPolicy {
+            allowed_servers: Vec::new(),
+            allowed_tools: None,
+        },
+        approval_policy: None,
+    };
+
+    let prompt = render_automation_v2_prompt_with_options(
+        &automation,
+        "/tmp",
+        "run-runtime-placeholders",
+        &node,
+        1,
+        &agent,
+        &[],
+        &["glob".to_string(), "read".to_string(), "write".to_string()],
+        None,
+        None,
+        None,
+        AutomationPromptRenderOptions {
+            summary_only_upstream: false,
+            knowledge_context: None,
+            runtime_values: Some(AutomationPromptRuntimeValues {
+                current_date: "2026-04-09".to_string(),
+                current_time: "0935".to_string(),
+                current_timestamp: "2026-04-09 09:35".to_string(),
+            }),
+        },
+    );
+
+    assert!(prompt.contains("Resolved Runtime Values:"));
+    assert!(prompt.contains("`current_date` = `2026-04-09`"));
+    assert!(prompt.contains("tracker/search-ledger/2026-04-09.json"));
+    assert!(prompt.contains("opportunities/raw/2026-04-09/0935-findings.json"));
+    assert!(prompt.contains("2026-04-09 09:35"));
+    assert!(!prompt.contains("tracker/search-ledger/{current_date}.json"));
+    assert!(!prompt.contains("opportunities/raw/{current_date}/{current_time}-findings.json"));
+    assert!(!prompt.contains("use {current_timestamp} inside the recap"));
+}
+
+#[test]
+fn final_prompt_surfaces_automation_output_targets_as_required_workspace_writes() {
+    let automation = AutomationV2Spec {
+        automation_id: "automation-final-targets".to_string(),
+        name: "Final Targets".to_string(),
+        description: None,
+        status: crate::AutomationV2Status::Active,
+        schedule: crate::AutomationV2Schedule {
+            schedule_type: crate::AutomationV2ScheduleType::Manual,
+            cron_expression: None,
+            interval_seconds: None,
+            timezone: "UTC".to_string(),
+            misfire_policy: crate::RoutineMisfirePolicy::RunOnce,
+        },
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
+        agents: Vec::new(),
+        flow: crate::AutomationFlowSpec { nodes: Vec::new() },
+        execution: crate::AutomationExecutionPolicy {
+            max_parallel_agents: Some(1),
+            max_total_runtime_ms: None,
+            max_total_tool_calls: None,
+            max_total_tokens: None,
+            max_total_cost_usd: None,
+        },
+        output_targets: vec![
+            "daily-recaps/{current_date}-job-search-recap.md".to_string(),
+            "opportunities/ranked/{current_date}-ranked-opportunities.md".to_string(),
+            "opportunities/shortlisted/{current_date}-shortlist.md".to_string(),
+            "tracker/pipeline.md".to_string(),
+            "opportunities/raw/{current_date}/{current_time}-findings.md".to_string(),
+        ],
+        created_at_ms: 0,
+        updated_at_ms: 0,
+        creator_id: "test".to_string(),
+        workspace_root: Some("/tmp".to_string()),
+        metadata: None,
+        next_fire_at_ms: None,
+        last_fired_at_ms: None,
+        scope_policy: None,
+        watch_conditions: Vec::new(),
+        handoff_config: None,
+    };
+    let node = AutomationFlowNode {
+        node_id: "analyze_findings".to_string(),
+        agent_id: "worker".to_string(),
+        objective: "Normalize worthwhile jobs, update daily ranked opportunities, shortlist, and pipeline views, then merge the daily recap.".to_string(),
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
+        depends_on: vec!["research_sources".to_string()],
+        input_refs: Vec::new(),
+        output_contract: Some(AutomationFlowOutputContract {
+            kind: "report_markdown".to_string(),
+            validator: Some(crate::AutomationOutputValidatorKind::GenericArtifact),
+            enforcement: None,
+            schema: None,
+            summary_guidance: None,
+        }),
+        retry_policy: None,
+        timeout_ms: None,
+        stage_kind: None,
+        gate: None,
+        metadata: None,
+    };
+    let agent = AutomationAgentProfile {
+        agent_id: "worker".to_string(),
+        template_id: None,
+        display_name: "Worker".to_string(),
+        avatar_url: None,
+        model_policy: None,
+        skills: Vec::new(),
+        tool_policy: crate::AutomationAgentToolPolicy {
+            allowlist: vec!["glob".to_string(), "read".to_string(), "write".to_string()],
+            denylist: Vec::new(),
+        },
+        mcp_policy: crate::AutomationAgentMcpPolicy {
+            allowed_servers: Vec::new(),
+            allowed_tools: None,
+        },
+        approval_policy: None,
+    };
+
+    let prompt = render_automation_v2_prompt_with_options(
+        &automation,
+        "/tmp",
+        "run-final-targets",
+        &node,
+        1,
+        &agent,
+        &[],
+        &["glob".to_string(), "read".to_string(), "write".to_string()],
+        None,
+        None,
+        None,
+        AutomationPromptRenderOptions {
+            summary_only_upstream: false,
+            knowledge_context: None,
+            runtime_values: Some(AutomationPromptRuntimeValues {
+                current_date: "2026-04-09".to_string(),
+                current_time: "1304".to_string(),
+                current_timestamp: "2026-04-09 13:04".to_string(),
+            }),
+        },
+    );
+
+    assert!(prompt.contains("Required Workspace Writes:"));
+    assert!(prompt.contains("daily-recaps/2026-04-09-job-search-recap.md"));
+    assert!(prompt.contains("opportunities/ranked/2026-04-09-ranked-opportunities.md"));
+    assert!(prompt.contains("opportunities/shortlisted/2026-04-09-shortlist.md"));
+    assert!(prompt.contains("tracker/pipeline.md"));
 }
 
 #[test]
