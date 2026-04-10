@@ -381,8 +381,8 @@ mod tests {
                 json!({
                     "path": ".tandem/runs/run-123/artifacts/research-sources.json",
                     "content": "draft",
-                    "__workspace_root": "/home/evan/marketing-tandem",
-                    "__effective_cwd": "/home/evan/marketing-tandem"
+                    "__workspace_root": "/home/user/marketing-tandem",
+                    "__effective_cwd": "/home/user/marketing-tandem"
                 }),
                 Some(json!("ok")),
                 None,
@@ -399,7 +399,7 @@ mod tests {
                     args["path"],
                     ".tandem/runs/run-123/artifacts/research-sources.json"
                 );
-                assert_eq!(args["__workspace_root"], "/home/evan/marketing-tandem");
+                assert_eq!(args["__workspace_root"], "/home/user/marketing-tandem");
             }
             other => panic!("expected tool part, got {other:?}"),
         }

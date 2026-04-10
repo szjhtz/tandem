@@ -104,7 +104,7 @@ fn rollback_engine_routes() -> HashMap<String, MockHttpResponse> {
             "/api/session".to_string(),
             MockHttpResponse::json(
                 "200 OK",
-                r#"[{"id":"s-rollback","title":"Rollback Session","directory":"/home/evan/tandem","workspaceRoot":"/home/evan/tandem","time":{"created":1,"updated":2}}]"#,
+                r#"[{"id":"s-rollback","title":"Rollback Session","directory":"/home/user/tandem","workspaceRoot":"/home/user/tandem","time":{"created":1,"updated":2}}]"#,
             ),
         ),
         (

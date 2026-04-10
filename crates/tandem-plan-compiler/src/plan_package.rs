@@ -1876,7 +1876,7 @@ mod tests {
             plan_revision: 3,
             lifecycle_state: PlanLifecycleState::Preview,
             owner: PlanOwner {
-                owner_id: "evan".to_string(),
+                owner_id: "user".to_string(),
                 scope: "workspace".to_string(),
                 audience: "internal".to_string(),
             },
@@ -2219,11 +2219,11 @@ mod tests {
             save_options: json!({"can_export_pack": true}),
         };
 
-        let package = compile_workflow_plan_preview_package(&plan, Some("evan"));
+        let package = compile_workflow_plan_preview_package(&plan, Some("user"));
 
         assert_eq!(package.plan_id, "plan_preview");
         assert_eq!(package.lifecycle_state, PlanLifecycleState::Preview);
-        assert_eq!(package.owner.owner_id, "evan");
+        assert_eq!(package.owner.owner_id, "user");
         assert_eq!(package.routine_graph.len(), 1);
         assert_eq!(package.routine_graph[0].steps.len(), 1);
         assert_eq!(

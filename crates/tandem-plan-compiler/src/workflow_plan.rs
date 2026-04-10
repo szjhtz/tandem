@@ -1867,14 +1867,14 @@ Here is the planner response:
 
     #[test]
     fn infer_explicit_output_targets_extracts_path_like_workspace_targets() {
-        let prompt = "Generate and save /home/evan/marketing-tandem/YOUTUBE_TANDEM_MARKETING_RESEARCH_AND_SCRIPTS.md and also summarize the findings.";
+        let prompt = "Generate and save /home/user/marketing-tandem/YOUTUBE_TANDEM_MARKETING_RESEARCH_AND_SCRIPTS.md and also summarize the findings.";
 
         let targets = infer_explicit_output_targets(prompt);
 
         assert_eq!(
             targets,
             vec![
-                "/home/evan/marketing-tandem/YOUTUBE_TANDEM_MARKETING_RESEARCH_AND_SCRIPTS.md"
+                "/home/user/marketing-tandem/YOUTUBE_TANDEM_MARKETING_RESEARCH_AND_SCRIPTS.md"
                     .to_string()
             ]
         );

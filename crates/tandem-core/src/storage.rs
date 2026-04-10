@@ -2222,8 +2222,8 @@ mod tests {
                     args: json!({
                         "path":".tandem/runs/run-123/artifacts/research-sources.json",
                         "content":"draft",
-                        "__workspace_root":"/home/evan/marketing-tandem",
-                        "__effective_cwd":"/home/evan/marketing-tandem"
+                        "__workspace_root":"/home/user/marketing-tandem",
+                        "__effective_cwd":"/home/user/marketing-tandem"
                     }),
                     result: Some(json!("ok")),
                     error: None,
@@ -2252,7 +2252,7 @@ mod tests {
                     ".tandem/runs/run-123/artifacts/research-sources.json"
                 );
                 assert_eq!(args["content"], "draft");
-                assert_eq!(args["__workspace_root"], "/home/evan/marketing-tandem");
+                assert_eq!(args["__workspace_root"], "/home/user/marketing-tandem");
                 assert_eq!(result.as_ref(), Some(&json!("ok")));
                 assert_eq!(error.as_deref(), None);
             }

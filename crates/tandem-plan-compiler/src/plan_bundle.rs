@@ -684,7 +684,7 @@ mod tests {
             plan_revision: 3,
             lifecycle_state: PlanLifecycleState::Preview,
             owner: PlanOwner {
-                owner_id: "evan".to_string(),
+                owner_id: "user".to_string(),
                 scope: "workspace".to_string(),
                 audience: "internal".to_string(),
             },
