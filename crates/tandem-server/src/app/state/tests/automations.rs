@@ -4148,6 +4148,101 @@ fn generic_artifact_validation_rejects_stale_verified_output_on_retry() {
 }
 
 #[test]
+fn mcp_grounding_citations_accept_verified_output_without_local_read_gates() {
+    let workspace_root =
+        std::env::temp_dir().join(format!("tandem-mcp-grounding-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&workspace_root).expect("workspace dir");
+    let node = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
+        node_id: "research_sources".to_string(),
+        agent_id: "researcher".to_string(),
+        objective:
+            "Use tandem-mcp first to study Tandem's supported product truths and save grounded notes."
+                .to_string(),
+        depends_on: Vec::new(),
+        input_refs: Vec::new(),
+        output_contract: Some(AutomationFlowOutputContract {
+            kind: "citations".to_string(),
+            validator: Some(crate::AutomationOutputValidatorKind::GenericArtifact),
+            enforcement: None,
+            schema: None,
+            summary_guidance: None,
+        }),
+        retry_policy: None,
+        timeout_ms: None,
+        stage_kind: None,
+        gate: None,
+        metadata: Some(json!({
+            "builder": {
+                "output_path": ".tandem/artifacts/research-sources.json",
+                "preferred_mcp_servers": ["tandem-mcp"],
+                "web_research_expected": false
+            }
+        })),
+    };
+
+    let mut session = Session::new(Some("mcp grounding".to_string()), None);
+    session.messages.push(tandem_types::Message::new(
+        MessageRole::Assistant,
+        vec![tandem_types::MessagePart::ToolInvocation {
+            tool: "mcp_list".to_string(),
+            args: json!({}),
+            result: Some(json!({
+                "servers": [
+                    {
+                        "name": "tandem-mcp"
+                    }
+                ]
+            })),
+            error: None,
+        }],
+    ));
+    let mut tool_telemetry =
+        summarize_automation_tool_activity(&node, &session, &["write".to_string()]);
+    tool_telemetry
+        .as_object_mut()
+        .expect("tool telemetry object")
+        .insert(
+            "verified_output_materialized_by_current_attempt".to_string(),
+            json!(true),
+        );
+
+    let (accepted_output, artifact_validation, rejected) =
+        validate_automation_artifact_output_with_upstream(
+            &node,
+            &session,
+            workspace_root.to_str().expect("workspace root"),
+            Some("run-mcp-grounding"),
+            "{\"status\":\"completed\"}",
+            &tool_telemetry,
+            None,
+            Some((
+                ".tandem/runs/run-mcp-grounding/artifacts/research-sources.json".to_string(),
+                "{\n  \"status\": \"completed\",\n  \"approved\": true,\n  \"notes\": \"Grounded notes captured from tandem-mcp.\"\n}".to_string(),
+            )),
+            &std::collections::BTreeSet::new(),
+            None,
+        );
+
+    assert!(accepted_output.is_some(), "{artifact_validation:?}");
+    assert!(rejected.is_none(), "{artifact_validation:?}");
+    assert_eq!(
+        artifact_validation
+            .get("validation_profile")
+            .and_then(Value::as_str),
+        Some("artifact_only")
+    );
+    assert!(!artifact_validation
+        .get("unmet_requirements")
+        .and_then(Value::as_array)
+        .is_some_and(|items| items
+            .iter()
+            .any(|value| value.as_str() == Some("no_concrete_reads"))));
+
+    let _ = std::fs::remove_dir_all(&workspace_root);
+}
+
+#[test]
 fn generic_artifact_validation_warns_on_weak_report_markdown() {
     let workspace_root =
         std::env::temp_dir().join(format!("tandem-editorial-{}", uuid::Uuid::new_v4()));

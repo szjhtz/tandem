@@ -94,3 +94,5 @@ guide/book
 # Starlight/Astro generated cache
 guide/.astro/
 target-workflow-planner/
+
+error.log

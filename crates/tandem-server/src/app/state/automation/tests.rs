@@ -142,6 +142,28 @@ fn local_citations_contract_node() -> AutomationFlowNode {
     node
 }
 
+fn mcp_citations_contract_node() -> AutomationFlowNode {
+    let mut node = bare_node();
+    node.node_id = "research_sources".to_string();
+    node.objective =
+        "Use tandem-mcp first to study Tandem's supported product truths and save grounded notes."
+            .to_string();
+    node.output_contract = Some(AutomationFlowOutputContract {
+        kind: "citations".to_string(),
+        validator: Some(crate::AutomationOutputValidatorKind::GenericArtifact),
+        enforcement: None,
+        schema: None,
+        summary_guidance: None,
+    });
+    node.metadata = Some(json!({
+        "builder": {
+            "preferred_mcp_servers": ["tandem-mcp"],
+            "web_research_expected": false
+        }
+    }));
+    node
+}
+
 #[test]
 fn knowledge_task_family_prefers_explicit_override() {
     let mut node = bare_node();
@@ -1053,6 +1075,26 @@ fn local_citations_contract_defaults_to_local_research_not_external_research() {
         .prewrite_gates
         .iter()
         .any(|gate| gate == "workspace_inspection"));
+}
+
+#[test]
+fn mcp_citations_contract_defaults_to_artifact_only_without_local_read_gates() {
+    let enforcement = automation_node_output_enforcement(&mcp_citations_contract_node());
+    assert_eq!(
+        enforcement.validation_profile.as_deref(),
+        Some("artifact_only")
+    );
+    assert!(!enforcement.required_tools.iter().any(|tool| tool == "glob"));
+    assert!(!enforcement.required_tools.iter().any(|tool| tool == "read"));
+    assert!(!enforcement
+        .required_evidence
+        .iter()
+        .any(|value| value == "local_source_reads"));
+    assert!(!enforcement
+        .prewrite_gates
+        .iter()
+        .any(|gate| gate == "workspace_inspection"));
+    assert_eq!(enforcement.session_text_recovery.as_deref(), Some("allow"));
 }
 
 #[test]

@@ -10,6 +10,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **Vault unlock startup safety net**: The desktop unlock flow now keeps the splash visible until the React app reports it is actually ready, and startup crashes show a visible recovery screen instead of a blank window.
+- **Workflow stale-run recovery and operator actions**:
+  - Automation node prompts now time out cleanly instead of hanging forever and holding the workspace lock.
+  - Stale-run detection now uses live session activity, API `lastActivityAtMs` matches that session-aware view, and stale pauses mark in-flight nodes as repairable.
+  - Recovering a stale-paused run now clears stale pending outputs and attempts so retries actually requeue work instead of immediately refailing.
+  - The control panel no longer gets stuck hiding retry, continue, or resume actions behind stale pending run-action state.
+- **MCP-backed citations grounding no longer false-blocks on local read gates**:
+  - Citations nodes that explicitly target MCP grounding, such as `tandem-mcp` research steps, now validate as artifact-only instead of local workspace research.
+  - This prevents recovered workflows from being blocked by incorrect `no_concrete_reads` / `local_research` enforcement when the node's real job is to capture MCP-grounded notes into the required artifact.
 
 ## [0.4.22] - Unreleased
 

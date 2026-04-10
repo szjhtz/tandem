@@ -5,6 +5,14 @@ This is the canonical release-notes file used by release tooling.
 ## v0.4.23 (Unreleased)
 
 - **Vault unlock startup safety net**: The desktop unlock flow now keeps the splash visible until the React app reports it is actually ready, and startup crashes show a visible recovery screen instead of a blank window.
+- **Workflow stale-run recovery and operator actions**
+  - Automation node prompts now time out cleanly instead of hanging forever and pinning the workspace lock.
+  - Stale-run detection now uses live session activity, API `lastActivityAtMs` reflects the same session-aware view, and stale pauses mark in-flight nodes as repairable instead of leaving them opaque.
+  - Recovering a stale-paused run now clears stale pending outputs and attempts so retry/recover actually requeue work instead of immediately refailing.
+  - The control panel no longer gets stuck hiding retry, continue, or resume actions behind stale pending run-action state.
+- **MCP-backed citations grounding retry fix**
+  - Citations nodes that explicitly prefer MCP servers, such as `tandem-mcp` grounding steps, now validate as artifact-only instead of local workspace research.
+  - This removes false `local_research` / `no_concrete_reads` blocking on recovered retries when the node's actual responsibility is to write grounded MCP notes into the required run artifact.
 
 ## v0.4.22 (Unreleased)
 

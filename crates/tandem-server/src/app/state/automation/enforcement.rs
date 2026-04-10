@@ -56,6 +56,19 @@ fn automation_node_legacy_web_research_expected(node: &AutomationFlowNode) -> bo
         .unwrap_or(false)
 }
 
+fn automation_node_prefers_mcp_servers(node: &AutomationFlowNode) -> bool {
+    automation_node_legacy_builder(node)
+        .and_then(|builder| builder.get("preferred_mcp_servers"))
+        .and_then(Value::as_array)
+        .is_some_and(|servers| {
+            servers
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::trim)
+                .any(|value| !value.is_empty())
+        })
+}
+
 fn automation_node_legacy_required_tools(node: &AutomationFlowNode) -> Vec<String> {
     automation_node_legacy_builder(node)
         .and_then(|builder| builder.get("required_tools"))
@@ -365,6 +378,7 @@ pub(crate) fn automation_node_output_enforcement(
     let validator_kind = automation_output_validator_kind(node);
     let legacy_required_tools = automation_node_legacy_required_tools(node);
     let legacy_web_research_expected = automation_node_legacy_web_research_expected(node);
+    let prefers_mcp_servers = automation_node_prefers_mcp_servers(node);
     let optional_workspace_reads = automation_node_allows_optional_workspace_reads(node);
     let is_research_contract =
         validator_kind == crate::AutomationOutputValidatorKind::ResearchBrief;
@@ -398,6 +412,8 @@ pub(crate) fn automation_node_output_enforcement(
                 || legacy_required_tools.iter().any(|tool| tool == "websearch")
             {
                 "external_research".to_string()
+            } else if citations_contract && prefers_mcp_servers {
+                "artifact_only".to_string()
             } else if automation_node_is_research_finalize(node)
                 || ((is_research_contract || citations_contract)
                     && matches!(
