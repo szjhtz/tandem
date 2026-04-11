@@ -90,6 +90,9 @@ graph TD
 | tandem-wire | 传输/有线转换 | [crates/tandem-wire](file:///workspace/crates/tandem-wire) |
 | tandem-observability | 进程日志记录 | [crates/tandem-observability](file:///workspace/crates/tandem-observability) |
 | tandem-document | 文档实用程序 | [crates/tandem-document](file:///workspace/crates/tandem-document) |
+| tandem-orchestrator | 多智能体编排和任务管理 | [crates/tandem-orchestrator](file:///workspace/crates/tandem-orchestrator) |
+| tandem-plan-compiler | 计划编译和工作流生成（BSL 许可证） | [crates/tandem-plan-compiler](file:///workspace/crates/tandem-plan-compiler) |
+| tandem-tui | 终端用户界面 | [crates/tandem-tui](file:///workspace/crates/tandem-tui) |
 
 ### 3.2 前端模块 (`src/`)
 
