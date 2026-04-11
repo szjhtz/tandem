@@ -2932,7 +2932,8 @@ Start with task #1 and continue through each one. IMPORTANT: After verifying eac
           const selected = providerConfig.selected_model;
           if (selected?.model_id && selected?.provider_id) {
             selectedModelForDispatch = selected.model_id;
-            selectedProviderForDispatch = selected.provider_id;
+            // Convert opencode_zen to opencode for sidecar compatibility
+            selectedProviderForDispatch = selected.provider_id === "opencode_zen" ? "opencode" : selected.provider_id;
           }
         } catch {
           // Best-effort only.
