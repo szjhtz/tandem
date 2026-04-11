@@ -818,8 +818,13 @@ export function Chat({
   useEffect(() => {
     let disposed = false;
     const hydrateSessionModelSelection = async () => {
+      console.log("[hydrateSessionModelSelection] Starting...");
+      console.log("[hydrateSessionModelSelection] selectedModelRef.current:", selectedModelRef.current);
+      console.log("[hydrateSessionModelSelection] selectedProviderRef.current:", selectedProviderRef.current);
+      
       // Keep existing explicit in-session selection if present.
       if (selectedModelRef.current && selectedProviderRef.current) {
+        console.log("[hydrateSessionModelSelection] Using existing selection");
         if (!disposed) {
           setSessionModelId(selectedModelRef.current);
           setSessionProviderId(selectedProviderRef.current);
@@ -828,18 +833,33 @@ export function Chat({
       }
       try {
         const config = await getProvidersConfig();
+        console.log("[hydrateSessionModelSelection] config:", config);
         if (disposed) return;
-        const modelId = config.selected_model?.model_id?.trim();
-        const providerRaw = config.selected_model?.provider_id?.trim();
+        
+        let modelId = config.selected_model?.model_id?.trim();
+        let providerRaw = config.selected_model?.provider_id?.trim();
+        
+        // Fallback to default opencode_zen if no selected_model
+        if (!modelId || !providerRaw) {
+          console.log("[hydrateSessionModelSelection] No selected_model found, using default opencode_zen");
+          modelId = config.opencode_zen?.model?.trim();
+          providerRaw = "opencode_zen";
+        }
+        
         const providerId = providerRaw === "opencode_zen" ? "opencode" : providerRaw;
+        console.log("[hydrateSessionModelSelection] modelId:", modelId);
+        console.log("[hydrateSessionModelSelection] providerRaw:", providerRaw);
+        console.log("[hydrateSessionModelSelection] providerId:", providerId);
+        
         if (modelId && providerId) {
           selectedModelRef.current = modelId;
           selectedProviderRef.current = providerId;
           setSessionModelId(modelId);
           setSessionProviderId(providerId);
+          console.log("[hydrateSessionModelSelection] Set refs and state");
         }
-      } catch {
-        // Best effort only.
+      } catch (e) {
+        console.error("[hydrateSessionModelSelection] Error:", e);
       }
     };
     void hydrateSessionModelSelection();
@@ -2926,17 +2946,34 @@ Start with task #1 and continue through each one. IMPORTANT: After verifying eac
       let sessionId = currentSessionId;
       let selectedModelForDispatch = selectedModelRef.current;
       let selectedProviderForDispatch = selectedProviderRef.current;
+      
+      console.log("[Chat.handleSend] Initial state - selectedModelRef:", selectedModelRef.current);
+      console.log("[Chat.handleSend] Initial state - selectedProviderRef:", selectedProviderRef.current);
+      
       if (!selectedModelForDispatch || !selectedProviderForDispatch) {
         try {
           const providerConfig = await getProvidersConfig();
-          const selected = providerConfig.selected_model;
+          let selected = providerConfig.selected_model;
+          console.log("[Chat.handleSend] Loading from config - selected_model:", selected);
+          
+          // Fallback to default opencode_zen if no selected_model
+          if (!selected?.model_id || !selected?.provider_id) {
+            console.log("[Chat.handleSend] No selected_model found, using default opencode_zen");
+            selected = {
+              model_id: providerConfig.opencode_zen?.model || "minimax-m2.1-free",
+              provider_id: "opencode_zen"
+            };
+          }
+          
           if (selected?.model_id && selected?.provider_id) {
             selectedModelForDispatch = selected.model_id;
             // Convert opencode_zen to opencode for sidecar compatibility
             selectedProviderForDispatch = selected.provider_id === "opencode_zen" ? "opencode" : selected.provider_id;
+            console.log("[Chat.handleSend] After conversion - selectedModelForDispatch:", selectedModelForDispatch);
+            console.log("[Chat.handleSend] After conversion - selectedProviderForDispatch:", selectedProviderForDispatch);
           }
-        } catch {
-          // Best-effort only.
+        } catch (e) {
+          console.error("[Chat.handleSend] Error loading from config:", e);
         }
       }
       if (!sessionId) {
@@ -4190,11 +4227,16 @@ Use the 'write' tool to create files immediately.`;
                 onLoopPanelOpen={() => setShowRalphPanel(true)}
                 onLogsOpen={() => setShowLogsDrawer(true)}
                 onModelSelect={async (modelId, providerIdRaw) => {
+                  console.log("[onModelSelect] modelId:", modelId);
+                  console.log("[onModelSelect] providerIdRaw:", providerIdRaw);
                   const providerId = providerIdRaw === "opencode" ? "opencode_zen" : providerIdRaw;
                   const providerIdForSidecar =
                     providerId === "opencode_zen" ? "opencode" : providerId;
+                  console.log("[onModelSelect] providerId (for config):", providerId);
+                  console.log("[onModelSelect] providerIdForSidecar:", providerIdForSidecar);
                   try {
                     const config = await getProvidersConfig();
+                    console.log("[onModelSelect] Current config:", config);
                     await setProvidersConfig({
                       ...config,
                       selected_model: {
@@ -4202,6 +4244,7 @@ Use the 'write' tool to create files immediately.`;
                         model_id: modelId,
                       },
                     });
+                    console.log("[onModelSelect] Config updated successfully");
                   } catch (error) {
                     console.error("Failed to persist chat model selection:", error);
                   }
@@ -4209,6 +4252,8 @@ Use the 'write' tool to create files immediately.`;
                   selectedProviderRef.current = providerIdForSidecar;
                   setSessionModelId(modelId);
                   setSessionProviderId(providerIdForSidecar);
+                  console.log("[onModelSelect] selectedModelRef.current set to:", selectedModelRef.current);
+                  console.log("[onModelSelect] selectedProviderRef.current set to:", selectedProviderRef.current);
                   onProviderChange?.();
                 }}
               />

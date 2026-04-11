@@ -133,16 +133,20 @@ fn default_poe() -> ProviderConfig {
 
 impl Default for ProvidersConfig {
     fn default() -> Self {
+        let opencode_zen_config = default_opencode_zen();
         Self {
             openrouter: default_openrouter(),
-            opencode_zen: default_opencode_zen(),
+            opencode_zen: opencode_zen_config.clone(),
             anthropic: default_anthropic(),
             openai: default_openai(),
             llama_cpp: default_llama_cpp(),
             ollama: default_ollama(),
             poe: default_poe(),
             custom: Vec::new(),
-            selected_model: None,
+            selected_model: Some(SelectedModel {
+                provider_id: "opencode_zen".to_string(),
+                model_id: opencode_zen_config.model.unwrap_or_else(|| "minimax-m2.1-free".to_string()),
+            }),
         }
     }
 }

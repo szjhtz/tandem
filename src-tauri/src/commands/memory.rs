@@ -238,8 +238,7 @@ pub fn lock_vault(vault_state: State<'_, VaultState>) -> Result<()> {
 }
 
 fn resolve_default_model_spec(config: &ProvidersConfig) -> Option<ModelSpec> {
-    // Strict routing: only use the explicit selected model/provider.
-    // Do not silently fall back to enabled/default provider slots.
+    tracing::info!("[resolve_default_model_spec] config.selected_model: {:?}", config.selected_model);
     if let Some(sel) = &config.selected_model {
         let provider_id = if sel.provider_id == "opencode_zen" {
             // Back-compat: frontend uses "opencode_zen", sidecar expects "opencode".
@@ -248,13 +247,33 @@ fn resolve_default_model_spec(config: &ProvidersConfig) -> Option<ModelSpec> {
             sel.provider_id.clone()
         };
 
+        tracing::info!("[resolve_default_model_spec] provider_id after conversion: {}", provider_id);
+        tracing::info!("[resolve_default_model_spec] sel.model_id: {}", sel.model_id);
+
         if !provider_id.trim().is_empty() && !sel.model_id.trim().is_empty() {
+            tracing::info!("[resolve_default_model_spec] Returning ModelSpec from selected_model: provider_id={}, model_id={}", provider_id, sel.model_id);
             return Some(ModelSpec {
                 provider_id,
                 model_id: sel.model_id.clone(),
             });
         }
     }
+    
+    // Fallback to default opencode_zen if no selected_model
+    tracing::warn!("[resolve_default_model_spec] No selected_model found, using default opencode_zen");
+    if config.opencode_zen.enabled {
+        if let Some(model_id) = &config.opencode_zen.model {
+            if !model_id.trim().is_empty() {
+                tracing::info!("[resolve_default_model_spec] Returning ModelSpec from default opencode_zen: provider_id=opencode, model_id={}", model_id);
+                return Some(ModelSpec {
+                    provider_id: "opencode".to_string(),
+                    model_id: model_id.clone(),
+                });
+            }
+        }
+    }
+    
+    tracing::warn!("[resolve_default_model_spec] No valid model/provider found");
     None
 }
 
@@ -264,6 +283,9 @@ fn resolve_required_model_spec(
     provider: Option<String>,
     context: &str,
 ) -> Result<ModelSpec> {
+    tracing::info!("[resolve_required_model_spec] model: {:?}", model);
+    tracing::info!("[resolve_required_model_spec] provider: {:?}", provider);
+    
     let explicit_provider = normalize_provider_id_for_sidecar(provider)
         .map(|p| p.trim().to_string())
         .filter(|p| !p.is_empty());
@@ -271,21 +293,30 @@ fn resolve_required_model_spec(
         .map(|m| m.trim().to_string())
         .filter(|m| !m.is_empty());
 
+    tracing::info!("[resolve_required_model_spec] explicit_provider after normalization: {:?}", explicit_provider);
+    tracing::info!("[resolve_required_model_spec] explicit_model: {:?}", explicit_model);
+
     match (explicit_provider, explicit_model) {
-        (Some(provider_id), Some(model_id)) => Ok(ModelSpec {
-            provider_id,
-            model_id,
-        }),
+        (Some(provider_id), Some(model_id)) => {
+            tracing::info!("[resolve_required_model_spec] Using explicit model/provider: provider_id={}, model_id={}", provider_id, model_id);
+            Ok(ModelSpec {
+                provider_id,
+                model_id,
+            })
+        },
         (Some(_), None) | (None, Some(_)) => Err(TandemError::InvalidConfig(format!(
             "{} requires both provider and model to be set together.",
             context
         ))),
-        (None, None) => resolve_default_model_spec(config).ok_or_else(|| {
-            TandemError::InvalidConfig(format!(
-                "{} could not resolve a model/provider. Select one in the model picker.",
-                context
-            ))
-        }),
+        (None, None) => {
+            tracing::info!("[resolve_required_model_spec] No explicit model/provider, trying to resolve default");
+            resolve_default_model_spec(config).ok_or_else(|| {
+                TandemError::InvalidConfig(format!(
+                    "{} could not resolve a model/provider. Select one in the model picker.",
+                    context
+                ))
+            })
+        },
     }
 }
 

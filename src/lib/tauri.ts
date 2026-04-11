@@ -2628,6 +2628,13 @@ export async function createSession(
   allowAllTools?: boolean,
   modeId?: string
 ): Promise<Session> {
+  console.log("[createSession] Calling create_session with params:");
+  console.log("[createSession] title:", title);
+  console.log("[createSession] model:", model);
+  console.log("[createSession] provider:", provider);
+  console.log("[createSession] allowAllTools:", allowAllTools);
+  console.log("[createSession] modeId:", modeId);
+  
   const session = await invoke<Session>("create_session", {
     title,
     model,
@@ -2635,6 +2642,9 @@ export async function createSession(
     allowAllTools,
     modeId,
   });
+  
+  console.log("[createSession] create_session returned:", session);
+  
   return normalizeSession(session);
 }
 
