@@ -19,6 +19,7 @@ This is the canonical release-notes file used by release tooling.
 ## v0.4.23 (Released 2026-04-11)
 
 - **Vault unlock startup safety net**: The desktop unlock flow now keeps the splash visible until the React app reports it is actually ready, and startup crashes show a visible recovery screen instead of a blank window.
+- **Vault unlock critical path fix**: Vault unlock now returns immediately after the master key is restored, while keystore initialization and sidecar startup continue in the background. This prevents the unlock screen from getting stuck waiting on startup work.
 - **Workflow stale-run recovery and operator actions**
   - Automation node prompts now time out cleanly instead of hanging forever and pinning the workspace lock.
   - Stale-run detection now uses live session activity, API `lastActivityAtMs` reflects the same session-aware view, and stale pauses mark in-flight nodes as repairable instead of leaving them opaque.

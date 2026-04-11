@@ -218,8 +218,8 @@ pub async fn unlock_vault(
     // Store master key and mark as unlocked
     vault_state.set_master_key(master_key.clone());
 
-    // Ensure keystore is initialized before sidecar startup so provider auth is available immediately.
-    initialize_keystore_after_unlock(app.clone(), master_key.clone()).await;
+    // Initialize keystore in the background so vault unlock can return immediately.
+    initialize_keystore_after_unlock(app.clone(), master_key.clone());
 
     // Start the sidecar as part of lock-screen unlock flow.
     // Startup failures must not block vault unlock.

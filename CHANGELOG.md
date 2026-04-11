@@ -31,6 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **Vault unlock startup safety net**: The desktop unlock flow now keeps the splash visible until the React app reports it is actually ready, and startup crashes show a visible recovery screen instead of a blank window.
+- **Vault unlock critical path fix**: Vault unlock now returns immediately after the master key is restored, while keystore initialization and sidecar startup continue in the background. This prevents the unlock screen from getting stuck waiting on startup work.
 - **Workflow stale-run recovery and operator actions**:
   - Automation node prompts now time out cleanly instead of hanging forever and holding the workspace lock.
   - Stale-run detection now uses live session activity, API `lastActivityAtMs` matches that session-aware view, and stale pauses mark in-flight nodes as repairable.

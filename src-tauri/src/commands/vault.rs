@@ -8,17 +8,19 @@ pub fn get_vault_status(vault_state: State<'_, VaultState>) -> VaultStatus {
     vault_state.get_status()
 }
 
-async fn initialize_keystore_after_unlock(app: AppHandle, master_key: Vec<u8>) {
-    let app_clone = app.clone();
-    let init_result = tauri::async_runtime::spawn_blocking(move || {
-        crate::init_keystore_and_keys(&app_clone, &master_key);
-    })
-    .await;
+fn initialize_keystore_after_unlock(app: AppHandle, master_key: Vec<u8>) {
+    tauri::async_runtime::spawn(async move {
+        let app_clone = app.clone();
+        let init_result = tauri::async_runtime::spawn_blocking(move || {
+            crate::init_keystore_and_keys(&app_clone, &master_key);
+        })
+        .await;
 
-    match init_result {
-        Ok(()) => tracing::info!("Keystore initialization complete"),
-        Err(err) => tracing::error!("Keystore initialization task failed: {}", err),
-    }
+        match init_result {
+            Ok(()) => tracing::info!("Keystore initialization complete"),
+            Err(err) => tracing::error!("Keystore initialization task failed: {}", err),
+        }
+    });
 }
 
 fn spawn_sidecar_start_in_background(app: AppHandle) {
@@ -74,8 +76,8 @@ pub async fn create_vault(
     // Store master key and mark as unlocked
     vault_state.set_master_key(master_key.clone());
 
-    // Ensure keystore is initialized before sidecar startup so provider auth is available immediately.
-    initialize_keystore_after_unlock(app.clone(), master_key.clone()).await;
+    // Initialize keystore in the background so vault creation can return immediately.
+    initialize_keystore_after_unlock(app.clone(), master_key.clone());
 
     // Start the sidecar as part of lock-screen unlock/create flow.
     // Startup failures must not block vault creation.

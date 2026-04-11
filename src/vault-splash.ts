@@ -15,6 +15,7 @@ let confirmPin = "";
 let isCreateMode = false;
 let isConfirmStep = false;
 let isLoading = false;
+let unlockWatchdog: number | null = null;
 
 type VaultStatus = "not_created" | "locked" | "unlocked";
 
@@ -219,6 +220,13 @@ function setLoading(loading: boolean) {
   pinSection.classList.toggle("loading", loading);
 }
 
+function clearUnlockWatchdog() {
+  if (unlockWatchdog) {
+    window.clearTimeout(unlockWatchdog);
+    unlockWatchdog = null;
+  }
+}
+
 function showPinUI(createMode: boolean) {
   isCreateMode = createMode;
   isConfirmStep = false;
@@ -263,6 +271,12 @@ async function submitPin() {
   }
 
   setLoading(true);
+  clearUnlockWatchdog();
+  unlockWatchdog = window.setTimeout(() => {
+    if (isLoading) {
+      loadingText.innerHTML = 'Starting Tandem<span class="loading-dots"></span>';
+    }
+  }, 5000);
 
   try {
     if (isCreateMode) {
@@ -291,6 +305,8 @@ async function submitPin() {
 
       await invoke("create_vault", { pin: currentPin });
       (window as any).__vaultUnlocked = true;
+      clearUnlockWatchdog();
+      loadingText.innerHTML = 'Starting Tandem<span class="loading-dots"></span>';
     } else {
       // Unlock existing vault
       loadingText.innerHTML = 'Unlocking vault<span class="loading-dots"></span>';
@@ -299,11 +315,14 @@ async function submitPin() {
 
       await invoke("unlock_vault", { pin: currentPin });
       (window as any).__vaultUnlocked = true;
+      clearUnlockWatchdog();
+      loadingText.innerHTML = 'Starting Tandem<span class="loading-dots"></span>';
     }
 
     // Success! The React app will handle the rest
     console.log("[Vault] Unlocked successfully");
   } catch (error: any) {
+    clearUnlockWatchdog();
     console.error("[Vault] Error:", error);
     setLoading(false);
     loadingSection.style.display = "none";
