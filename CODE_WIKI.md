@@ -483,40 +483,88 @@ Tandem 为 AI 辅助软件开发和自动化提供了一个强大、安全且灵
 
 ### 13.11 src/ 目录详细分析
 
-| 子目录 | 功能 | 关键组件 |
-|--------|------|---------|
+| 子目录/文件 | 功能 | 关键组件 |
+|-------------|------|---------|
+| [assets/](file:///workspace/src/assets) | 静态资源 | logo.png, react.svg |
 | [components/about/](file:///workspace/src/components/about) | 关于页面 | [About.tsx](file:///workspace/src/components/about/About.tsx) |
-| [components/agent-automation/](file:///workspace/src/components/agent-automation) | 智能体自动化 | [AdvancedMissionBuilder.tsx](file:///workspace/src/components/agent-automation/AdvancedMissionBuilder.tsx) |
-| [components/chat/](file:///workspace/src/components/chat) | 聊天界面 | [Chat.tsx](file:///workspace/src/components/chat/Chat.tsx), [ChatInput.tsx](file:///workspace/src/components/chat/ChatInput.tsx) |
+| [components/agent-automation/](file:///workspace/src/components/agent-automation) | 智能体自动化 | [AdvancedMissionBuilder.tsx](file:///workspace/src/components/agent-automation/AdvancedMissionBuilder.tsx), [AgentAutomationPage.tsx](file:///workspace/src/components/agent-automation/AgentAutomationPage.tsx), [AutomationCalendar.tsx](file:///workspace/src/components/agent-automation/AutomationCalendar.tsx), [GuidedScheduleBuilder.tsx](file:///workspace/src/components/agent-automation/GuidedScheduleBuilder.tsx) |
+| [components/chat/](file:///workspace/src/components/chat) | 聊天界面 | [Chat.tsx](file:///workspace/src/components/chat/Chat.tsx), [ChatInput.tsx](file:///workspace/src/components/chat/ChatInput.tsx), [AgentSelector.tsx](file:///workspace/src/components/chat/AgentSelector.tsx), [ActivityDrawer.tsx](file:///workspace/src/components/chat/ActivityDrawer.tsx) |
 | [components/coder/](file:///workspace/src/components/coder) | 编码工作区 | [CoderWorkspacePage.tsx](file:///workspace/src/components/coder/CoderWorkspacePage.tsx) |
 | [components/command-center/](file:///workspace/src/components/command-center) | 命令中心 | [CommandCenterPage.tsx](file:///workspace/src/components/command-center/CommandCenterPage.tsx) |
-| [components/extensions/](file:///workspace/src/components/extensions) | 扩展管理 | [Extensions.tsx](file:///workspace/src/components/extensions/Extensions.tsx) |
-| [components/files/](file:///workspace/src/components/files) | 文件浏览器 | [FileBrowser.tsx](file:///workspace/src/components/files/FileBrowser.tsx) |
-| [components/logs/](file:///workspace/src/components/logs) | 日志查看 | [LogsDrawer.tsx](file:///workspace/src/components/logs/LogsDrawer.tsx) |
-| [components/orchestrate/](file:///workspace/src/components/orchestrate) | 编排界面 | [BlackboardPanel.tsx](file:///workspace/src/components/orchestrate/BlackboardPanel.tsx), [TaskBoard.tsx](file:///workspace/src/components/orchestrate/TaskBoard.tsx) |
-| [components/plan/](file:///workspace/src/components/plan) | 计划查看 | [ExecutionPlanPanel.tsx](file:///workspace/src/components/plan/ExecutionPlanPanel.tsx) |
-| [components/ralph/](file:///workspace/src/components/ralph) | Ralph 模式 | [RalphPanel.tsx](file:///workspace/src/components/ralph/RalphPanel.tsx) |
-| [components/settings/](file:///workspace/src/components/settings) | 设置界面 | [Settings.tsx](file:///workspace/src/components/settings/Settings.tsx) |
-| [components/sidebar/](file:///workspace/src/components/sidebar) | 侧边栏 | [SessionSidebar.tsx](file:///workspace/src/components/sidebar/SessionSidebar.tsx) |
-| [components/skills/](file:///workspace/src/components/skills) | 技能管理 | [SkillsPanel.tsx](file:///workspace/src/components/skills/SkillsPanel.tsx) |
-| [components/ui/](file:///workspace/src/components/ui) | UI 组件库 | [Button.tsx](file:///workspace/src/components/ui/Button.tsx), [Card.tsx](file:///workspace/src/components/ui/Card.tsx) |
-| [hooks/](file:///workspace/src/hooks) | React 自定义钩子 | [useAppState.ts](file:///workspace/src/hooks/useAppState.ts) |
-| [i18n/](file:///workspace/src/i18n) | 国际化支持 | [index.ts](file:///workspace/src/i18n/index.ts) |
-| [lib/](file:///workspace/src/lib) | 工具库 | [tauri.ts](file:///workspace/src/lib/tauri.ts), [themes.ts](file:///workspace/src/lib/themes.ts) |
+| [components/developer/](file:///workspace/src/components/developer) | 开发者工具 | [DeveloperRunViewer.tsx](file:///workspace/src/components/developer/DeveloperRunViewer.tsx) |
+| [components/dialogs/](file:///workspace/src/components/dialogs) | 对话框组件 | [GitInitDialog.tsx](file:///workspace/src/components/dialogs/GitInitDialog.tsx) |
+| [components/extensions/](file:///workspace/src/components/extensions) | 扩展管理 | [Extensions.tsx](file:///workspace/src/components/extensions/Extensions.tsx), [AgentCatalogTab.tsx](file:///workspace/src/components/extensions/AgentCatalogTab.tsx), [IntegrationsTab.tsx](file:///workspace/src/components/extensions/IntegrationsTab.tsx) |
+| [components/files/](file:///workspace/src/components/files) | 文件浏览器 | [FileBrowser.tsx](file:///workspace/src/components/files/FileBrowser.tsx), [FilePreview.tsx](file:///workspace/src/components/files/FilePreview.tsx) |
+| [components/logs/](file:///workspace/src/components/logs) | 日志查看 | [LogsDrawer.tsx](file:///workspace/src/components/logs/LogsDrawer.tsx), [ConsoleTab.tsx](file:///workspace/src/components/logs/ConsoleTab.tsx) |
+| [components/migration/](file:///workspace/src/components/migration) | 数据迁移 | [StorageMigrationOverlay.tsx](file:///workspace/src/components/migration/StorageMigrationOverlay.tsx) |
+| [components/onboarding/](file:///workspace/src/components/onboarding) | 新用户引导 | [OnboardingWizard.tsx](file:///workspace/src/components/onboarding/OnboardingWizard.tsx) |
+| [components/orchestrate/](file:///workspace/src/components/orchestrate) | 编排界面 | [BlackboardPanel.tsx](file:///workspace/src/components/orchestrate/BlackboardPanel.tsx), [TaskBoard.tsx](file:///workspace/src/components/orchestrate/TaskBoard.tsx), [OrchestratorPanel.tsx](file:///workspace/src/components/orchestrate/OrchestratorPanel.tsx) |
+| [components/packs/](file:///workspace/src/components/packs) | 包管理 | [PacksPanel.tsx](file:///workspace/src/components/packs/PacksPanel.tsx) |
+| [components/permissions/](file:///workspace/src/components/permissions) | 权限管理 | [PermissionToast.tsx](file:///workspace/src/components/permissions/PermissionToast.tsx) |
+| [components/plan/](file:///workspace/src/components/plan) | 计划查看 | [ExecutionPlanPanel.tsx](file:///workspace/src/components/plan/ExecutionPlanPanel.tsx), [DiffViewer.tsx](file:///workspace/src/components/plan/DiffViewer.tsx) |
+| [components/python/](file:///workspace/src/components/python) | Python 设置 | [PythonSetupWizard.tsx](file:///workspace/src/components/python/PythonSetupWizard.tsx) |
+| [components/ralph/](file:///workspace/src/components/ralph) | Ralph 模式 | [RalphPanel.tsx](file:///workspace/src/components/ralph/RalphPanel.tsx), [LoopToggle.tsx](file:///workspace/src/components/ralph/LoopToggle.tsx) |
+| [components/settings/](file:///workspace/src/components/settings) | 设置界面 | [Settings.tsx](file:///workspace/src/components/settings/Settings.tsx), [ConnectionsSettings.tsx](file:///workspace/src/components/settings/ConnectionsSettings.tsx), [LanguageSettings.tsx](file:///workspace/src/components/settings/LanguageSettings.tsx) |
+| [components/sidebar/](file:///workspace/src/components/sidebar) | 侧边栏 | [SessionSidebar.tsx](file:///workspace/src/components/sidebar/SessionSidebar.tsx), [ProjectSwitcher.tsx](file:///workspace/src/components/sidebar/ProjectSwitcher.tsx) |
+| [components/sidecar/](file:///workspace/src/components/sidecar) | 侧车管理 | [SidecarDownloader.tsx](file:///workspace/src/components/sidecar/SidecarDownloader.tsx) |
+| [components/skills/](file:///workspace/src/components/skills) | 技能管理 | [SkillsPanel.tsx](file:///workspace/src/components/skills/SkillsPanel.tsx), [SkillCard.tsx](file:///workspace/src/components/skills/SkillCard.tsx) |
+| [components/tasks/](file:///workspace/src/components/tasks) | 任务管理 | [TaskItem.tsx](file:///workspace/src/components/tasks/TaskItem.tsx), [TaskSidebar.tsx](file:///workspace/src/components/tasks/TaskSidebar.tsx) |
+| [components/ui/](file:///workspace/src/components/ui) | UI 组件库 | [Button.tsx](file:///workspace/src/components/ui/Button.tsx), [Card.tsx](file:///workspace/src/components/ui/Card.tsx), [Input.tsx](file:///workspace/src/components/ui/Input.tsx) |
+| [components/updates/](file:///workspace/src/components/updates) | 更新管理 | [AppUpdateOverlay.tsx](file:///workspace/src/components/updates/AppUpdateOverlay.tsx), [WhatsNewOverlay.tsx](file:///workspace/src/components/updates/WhatsNewOverlay.tsx) |
+| [contexts/](file:///workspace/src/contexts) | React 上下文 | [MemoryIndexingContext.tsx](file:///workspace/src/contexts/MemoryIndexingContext.tsx) |
+| [generated/](file:///workspace/src/generated) | 生成文件 | [agent-catalog.json](file:///workspace/src/generated/agent-catalog.json) |
+| [hooks/](file:///workspace/src/hooks) | React 自定义钩子 | [useAppState.ts](file:///workspace/src/hooks/useAppState.ts), [useModes.ts](file:///workspace/src/hooks/useModes.ts), [usePlans.ts](file:///workspace/src/hooks/usePlans.ts) |
+| [i18n/](file:///workspace/src/i18n) | 国际化支持 | [index.ts](file:///workspace/src/i18n/index.ts), [languageSync.ts](file:///workspace/src/i18n/languageSync.ts) |
+| [lib/](file:///workspace/src/lib) | 工具库 | [tauri.ts](file:///workspace/src/lib/tauri.ts), [themes.ts](file:///workspace/src/lib/themes.ts), [utils.ts](file:///workspace/src/lib/utils.ts) |
+| [types/](file:///workspace/src/types) | TypeScript 类型定义 | [theme.ts](file:///workspace/src/types/theme.ts) |
 | [App.tsx](file:///workspace/src/App.tsx) | 应用主组件 |
 | [main.tsx](file:///workspace/src/main.tsx) | 应用入口点 |
+| [vault-splash.ts](file:///workspace/src/vault-splash.ts) | 密码库启动界面 |
+| [index.css](file:///workspace/src/index.css) | 全局样式 |
+| [vite-env.d.ts](file:///workspace/src/vite-env.d.ts) | Vite 环境类型声明 |
 
 ### 13.12 src-tauri/ 目录详细分析
 
-| 子目录 | 功能 | 关键文件 |
-|--------|------|---------|
-| [src/commands/](file:///workspace/src-tauri/src/commands) | Tauri 命令实现 | [api_keys.rs](file:///workspace/src-tauri/src/commands/api_keys.rs), [messages.rs](file:///workspace/src-tauri/src/commands/messages.rs) |
-| [src/memory/](file:///workspace/src-tauri/src/memory) | 内存索引 | [indexer.rs](file:///workspace/src-tauri/src/memory/indexer.rs) |
-| [src/orchestrator/](file:///workspace/src-tauri/src/orchestrator) | 编排器实现 | [agents.rs](file:///workspace/src-tauri/src/orchestrator/agents.rs), [scheduler.rs](file:///workspace/src-tauri/src/orchestrator/scheduler.rs) |
-| [src/ralph/](file:///workspace/src-tauri/src/ralph) | Ralph 服务 | [service.rs](file:///workspace/src-tauri/src/ralph/service.rs) |
+| 子目录/文件 | 功能 | 关键文件 |
+|-------------|------|---------|
+| [.cargo/](file:///workspace/src-tauri/.cargo) | Cargo 配置 | config.toml |
+| [binaries/](file:///workspace/src-tauri/binaries) | 二进制文件 | .gitkeep |
 | [capabilities/](file:///workspace/src-tauri/capabilities) | Tauri 权限配置 | [main.json](file:///workspace/src-tauri/capabilities/main.json) |
+| [icons/](file:///workspace/src-tauri/icons) | 应用图标 | 各种格式的图标文件 |
+| [resources/](file:///workspace/src-tauri/resources) | 资源文件 | default_config.json |
+| [src/commands/](file:///workspace/src-tauri/src/commands) | Tauri 命令实现 | [api_keys.rs](file:///workspace/src-tauri/src/commands/api_keys.rs), [messages.rs](file:///workspace/src-tauri/src/commands/messages.rs), [memory.rs](file:///workspace/src-tauri/src/commands/memory.rs), [orchestrator_core.rs](file:///workspace/src-tauri/src/commands/orchestrator_core.rs) |
+| [src/memory/](file:///workspace/src-tauri/src/memory) | 内存索引 | [indexer.rs](file:///workspace/src-tauri/src/memory/indexer.rs), [mod.rs](file:///workspace/src-tauri/src/memory/mod.rs) |
+| [src/orchestrator/](file:///workspace/src-tauri/src/orchestrator) | 编排器实现 | [agents.rs](file:///workspace/src-tauri/src/orchestrator/agents.rs), [scheduler.rs](file:///workspace/src-tauri/src/orchestrator/scheduler.rs), [mod.rs](file:///workspace/src-tauri/src/orchestrator/mod.rs) |
+| [src/ralph/](file:///workspace/src-tauri/src/ralph) | Ralph 服务 | [service.rs](file:///workspace/src-tauri/src/ralph/service.rs), [mod.rs](file:///workspace/src-tauri/src/ralph/mod.rs), [storage.rs](file:///workspace/src-tauri/src/ralph/storage.rs) |
+| [tests/](file:///workspace/src-tauri/tests) | 测试文件 | orchestrator_integration.rs |
+| [windows/](file:///workspace/src-tauri/windows) | Windows 特定配置 | nsis-hooks.nsh |
 | [src/lib.rs](file:///workspace/src-tauri/src/lib.rs) | Tauri 库入口 |
 | [src/main.rs](file:///workspace/src-tauri/src/main.rs) | Tauri 主入口 |
+| [src/commands.rs](file:///workspace/src-tauri/src/commands.rs) | 命令模块入口 |
+| [src/document_text.rs](file:///workspace/src-tauri/src/document_text.rs) | 文档文本处理 |
+| [src/error.rs](file:///workspace/src-tauri/src/error.rs) | 错误处理 |
+| [src/file_watcher.rs](file:///workspace/src-tauri/src/file_watcher.rs) | 文件监控 |
+| [src/keystore.rs](file:///workspace/src-tauri/src/keystore.rs) | 密钥存储 |
+| [src/llm_router.rs](file:///workspace/src-tauri/src/llm_router.rs) | LLM 路由 |
+| [src/logs.rs](file:///workspace/src-tauri/src/logs.rs) | 日志处理 |
+| [src/modes.rs](file:///workspace/src-tauri/src/modes.rs) | 模式管理 |
+| [src/packs.rs](file:///workspace/src-tauri/src/packs.rs) | 包管理 |
+| [src/presentation.rs](file:///workspace/src-tauri/src/presentation.rs) | 演示功能 |
+| [src/python_env.rs](file:///workspace/src-tauri/src/python_env.rs) | Python 环境管理 |
+| [src/sidecar.rs](file:///workspace/src-tauri/src/sidecar.rs) | 侧车管理 |
+| [src/sidecar_manager.rs](file:///workspace/src-tauri/src/sidecar_manager.rs) | 侧车管理器 |
+| [src/skill_templates.rs](file:///workspace/src-tauri/src/skill_templates.rs) | 技能模板 |
+| [src/skills.rs](file:///workspace/src-tauri/src/skills.rs) | 技能管理 |
+| [src/state.rs](file:///workspace/src-tauri/src/state.rs) | 状态管理 |
+| [src/stream_hub.rs](file:///workspace/src-tauri/src/stream_hub.rs) | 流管理 |
+| [src/tandem_config.rs](file:///workspace/src-tauri/src/tandem_config.rs) | Tandem 配置 |
+| [src/tool_history.rs](file:///workspace/src-tauri/src/tool_history.rs) | 工具历史 |
+| [src/tool_policy.rs](file:///workspace/src-tauri/src/tool_policy.rs) | 工具策略 |
+| [src/tool_proxy.rs](file:///workspace/src-tauri/src/tool_proxy.rs) | 工具代理 |
+| [src/vault.rs](file:///workspace/src-tauri/src/vault.rs) | 密码库 |
+| [Cargo.lock](file:///workspace/src-tauri/Cargo.lock) | Cargo 依赖锁文件 |
+| [Cargo.toml](file:///workspace/src-tauri/Cargo.toml) | Cargo 配置 |
+| [build.rs](file:///workspace/src-tauri/build.rs) | 构建脚本 |
 | [tauri.conf.json](file:///workspace/src-tauri/tauri.conf.json) | Tauri 配置 |
 
 ## 14. Crates 详细功能解读
@@ -600,12 +648,26 @@ Tandem 为 AI 辅助软件开发和自动化提供了一个强大、安全且灵
 **核心文件**：
 - **lib.rs**：核心功能入口
 - **engine_loop.rs**：引擎主循环
+- **engine_loop/loop_guards.rs**：引擎循环守卫
+- **engine_loop/prewrite_gate.rs**：写入前检查
 - **storage.rs**：存储管理
+- **storage_paths.rs**：存储路径管理
 - **permissions.rs**：权限管理
+- **permission_defaults.rs**：默认权限设置
 - **tool_router.rs**：工具路由
+- **tool_policy.rs**：工具执行策略
+- **tool_capabilities.rs**：工具能力管理
+- **tool_effect_ledger.rs**：工具效果 ledger
 - **event_bus.rs**：事件总线
 - **provider_auth_store.rs**：提供者认证存储
-- **engine_loop/**：引擎循环相关实现
+- **agents.rs**：智能体管理
+- **cancellation.rs**：取消操作处理
+- **config.rs**：配置管理
+- **engine_api_token.rs**：引擎 API 令牌管理
+- **message_part_reducer.rs**：消息部分 reducer
+- **mutation_checkpoints.rs**：变更检查点
+- **plugins.rs**：插件管理
+- **session_title.rs**：会话标题管理
 
 **关键实现**：
 - 引擎主循环和状态管理
@@ -614,6 +676,9 @@ Tandem 为 AI 辅助软件开发和自动化提供了一个强大、安全且灵
 - 工具路由和执行
 - 事件总线和消息处理
 - 存储和配置管理
+- 插件系统
+- 取消操作处理
+- 变更检查点机制
 
 **依赖关系**：
 - 依赖 `tandem-types`, `tandem-wire`, `tandem-tools`, `tandem-providers`, `tandem-observability`
@@ -628,8 +693,14 @@ Tandem 为 AI 辅助软件开发和自动化提供了一个强大、安全且灵
 - **embeddings.rs**：向量嵌入
 - **chunking.rs**：文本分块
 - **context_layers.rs**：上下文层
-- **recursive_retrieval.rs**：递归检索
+- **context_uri.rs**：上下文 URI 管理
+- **distillation.rs**：知识蒸馏
 - **governance.rs**：内存治理
+- **importer.rs**：内存导入
+- **manager.rs**：内存管理器
+- **recursive_retrieval.rs**：递归检索
+- **response_cache.rs**：响应缓存
+- **types.rs**：内存相关类型定义
 
 **关键实现**：
 - SQLite 数据库管理
@@ -637,6 +708,9 @@ Tandem 为 AI 辅助软件开发和自动化提供了一个强大、安全且灵
 - 文本分块和嵌入
 - 内存治理和权限
 - 上下文管理和检索
+- 知识蒸馏
+- 响应缓存
+- 内存导入
 
 **依赖关系**：
 - 依赖 `rusqlite`, `sqlite-vec`
@@ -663,9 +737,9 @@ Tandem 为 AI 辅助软件开发和自动化提供了一个强大、安全且灵
 
 **核心文件**：
 - **lib.rs**：核心功能入口
-- **pty.rs**：伪终端支持
 - **lsp.rs**：语言服务器协议集成
 - **mcp.rs**：模型控制协议集成
+- **pty.rs**：伪终端支持
 - **workspace_index.rs**：工作区索引
 
 **关键实现**：
@@ -686,10 +760,42 @@ Tandem 为 AI 辅助软件开发和自动化提供了一个强大、安全且灵
 - **lib.rs**：核心功能入口
 - **http.rs**：HTTP 服务器实现
 - **workflows.rs**：工作流管理
+- **agent_teams.rs**：智能体团队管理
+- **browser.rs**：浏览器集成
+- **bug_monitor.rs**：Bug 监控
+- **bug_monitor_github.rs**：GitHub Bug 监控
+- **capability_resolver.rs**：能力解析器
+- **mcp_catalog.rs**：MCP 目录管理
+- **mcp_catalog_generated.rs**：生成的 MCP 目录
+- **optimization.rs**：优化功能
+- **pack_builder.rs**：包构建器
+- **pack_manager.rs**：包管理器
+- **preset_composer.rs**：预设组合器
+- **preset_registry.rs**：预设注册表
+- **preset_summary.rs**：预设摘要
+
+**子目录**：
 - **app/**：应用状态和自动化
+  - **state/automation/**：自动化状态管理
+  - **state/tests/**：状态测试
+  - **routines.rs**：例行任务
+  - **startup.rs**：启动逻辑
+  - **tasks.rs**：任务管理
+- **automation_v2/**：自动化 v2 实现
+- **bug_monitor/**：Bug 监控服务
+- **config/**：配置管理
 - **http/**：HTTP 路由和处理
-- **runtime/**：运行时管理
+  - **tests/**：HTTP 测试
+- **memory/**：内存管理
 - **routines/**：例行任务管理
+- **runtime/**：运行时管理
+- **shared_resources/**：共享资源
+- **util/**：工具函数
+- **webui/**：Web UI 相关
+- **examples/**：示例代码
+- **resources/**：资源文件
+  - **issue_templates/**：问题模板
+  - **mcp-catalog/**：MCP 目录
 
 **关键实现**：
 - HTTP/SSE API 服务器
@@ -698,6 +804,10 @@ Tandem 为 AI 辅助软件开发和自动化提供了一个强大、安全且灵
 - 会话管理和状态
 - MCP 集成和管理
 - 权限和安全
+- Bug 监控
+- 智能体团队管理
+- 包管理
+- 预设管理
 
 **依赖关系**：
 - 依赖几乎所有其他 crates
@@ -728,17 +838,39 @@ Tandem 为 AI 辅助软件开发和自动化提供了一个强大、安全且灵
 
 **核心文件**：
 - **lib.rs**：核心功能入口
-- **planner_loop.rs**：计划器循环
-- **workflow_plan.rs**：工作流计划
-- **plan_bundle.rs**：计划捆绑
+- **api.rs**：API 接口
+- **automation_projection.rs**：自动化投影
+- **contracts.rs**：契约定义
+- **dependency_planner.rs**：依赖规划器
+- **host.rs**：主机适配
+- **materialization.rs**：物化逻辑
 - **mission_blueprint.rs**：任务蓝图
+- **mission_preview.rs**：任务预览
+- **mission_runtime.rs**：任务运行时
+- **plan_bundle.rs**：计划捆绑
+- **plan_overlap.rs**：计划重叠分析
+- **plan_package.rs**：计划包管理
+- **plan_validation.rs**：计划验证
+- **planner_build.rs**：计划器构建
+- **planner_drafts.rs**：计划器草稿
+- **planner_invoke.rs**：计划器调用
+- **planner_loop.rs**：计划器循环
+- **planner_messages.rs**：计划器消息
+- **planner_prompts.rs**：计划器提示
+- **planner_session.rs**：计划器会话
+- **planner_types.rs**：计划器类型
 - **runtime_projection.rs**：运行时投影
+- **workflow_plan.rs**：工作流计划
 
 **关键实现**：
 - 计划编译和生成
 - 工作流设计和管理
 - 任务蓝图和规划
 - 运行时投影和验证
+- 依赖分析和规划
+- 计划重叠分析
+- 计划验证
+- 任务预览和运行时
 
 **依赖关系**：
 - 依赖 `tandem-types`, `tandem-workflows`
@@ -801,17 +933,19 @@ Tandem 为 AI 辅助软件开发和自动化提供了一个强大、安全且灵
 
 **核心文件**：
 - **lib.rs**：核心功能入口
+- **config.rs**：配置管理
 - **discord.rs**：Discord 集成
+- **dispatcher.rs**：消息分发
 - **slack.rs**：Slack 集成
 - **telegram.rs**：Telegram 集成
-- **dispatcher.rs**：消息分发
-- **config.rs**：配置管理
+- **traits.rs**：通道接口定义
 
 **关键实现**：
 - 多渠道消息集成
 - 消息分发和处理
 - 渠道配置和管理
 - 安全和权限控制
+- 统一的通道接口
 
 **依赖关系**：
 - 依赖 `tandem-types`
@@ -853,9 +987,42 @@ Tandem 为 AI 辅助软件开发和自动化提供了一个强大、安全且灵
 **核心文件**：
 - **main.rs**：主入口
 - **app.rs**：应用逻辑
-- **ui/**：用户界面组件
-- **net/**：网络客户端
+- **activity.rs**：活动管理
+- **command_catalog.rs**：命令目录
+- **paste_burst.rs**：粘贴处理
+
+**子目录**：
+- **app/**：应用功能
+  - **agent_management.rs**：智能体管理
+  - **agent_team.rs**：智能体团队管理
+  - **commands.rs**：命令处理
+  - **overlay_actions.rs**：覆盖层操作
+  - **paste_actions.rs**：粘贴操作
+  - **plan_helpers.rs**：计划助手
+  - **prompt_actions.rs**：提示操作
+  - **state_sync.rs**：状态同步
+- **bin/**：二进制文件
+  - **tandem-tui-agent-runner.rs**：智能体运行器
 - **crypto/**：加密和安全
+  - **keystore.rs**：密钥存储
+  - **mod.rs**：模块入口
+  - **vault.rs**：密码库
+- **net/**：网络客户端
+  - **client.rs**：客户端实现
+  - **mod.rs**：模块入口
+- **ui/**：用户界面组件
+  - **components/**：UI 组件
+  - **diff_render.rs**：差异渲染
+  - **exec_cell.rs**：执行单元格
+  - **external_editor.rs**：外部编辑器
+  - **file_search.rs**：文件搜索
+  - **get_git_diff.rs**：Git 差异获取
+  - **markdown.rs**：Markdown 渲染
+  - **markdown_stream.rs**：Markdown 流处理
+  - **matrix.rs**：矩阵渲染
+  - **mod.rs**：模块入口
+  - **pager_overlay.rs**：分页覆盖层
+  - **spinner.rs**：加载 spinner
 
 **关键实现**：
 - 终端用户界面
@@ -863,6 +1030,10 @@ Tandem 为 AI 辅助软件开发和自动化提供了一个强大、安全且灵
 - 会话管理
 - 加密和安全
 - 交互和显示
+- 智能体管理
+- 计划助手
+- 差异渲染
+- Markdown 渲染
 
 **依赖关系**：
 - 依赖 `tandem-types`, `tandem-core`
