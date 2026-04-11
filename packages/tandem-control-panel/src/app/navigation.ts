@@ -5,7 +5,6 @@ export const NAV_VISIBILITY_STORAGE_KEY = "tcp.nav.visibility.v1";
 export const ACA_CORE_NAV_ROUTE_IDS = new Set<RouteId>([
   "dashboard",
   "chat",
-  "planner",
   "workflows",
   "coding",
   "settings",
@@ -14,7 +13,13 @@ export const ACA_CORE_NAV_ROUTE_IDS = new Set<RouteId>([
 export type NavigationVisibility = Record<RouteId, boolean>;
 
 export function getDefaultNavigationVisibility(acaMode: boolean): NavigationVisibility {
-  const standaloneHiddenRoutes = new Set<RouteId>(["coding", "memory", "feed", "marketplace"]);
+  const standaloneHiddenRoutes = new Set<RouteId>([
+    "planner",
+    "coding",
+    "memory",
+    "feed",
+    "marketplace",
+  ]);
 
   return Object.fromEntries(
     APP_NAV_ROUTES.map(([routeId]) => [
