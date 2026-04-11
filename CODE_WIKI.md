@@ -358,7 +358,168 @@ Tandem 是一个创新的引擎拥有的工作流运行时，为协调自主工�
 
 Tandem 为 AI 辅助软件开发和自动化提供了一个强大、安全且灵活的平台，通过将自主执行视为分布式系统问题，解决了当前 AI 智能体在规模上的局限性。
 
-## 13. 参考资料
+## 13. 详细目录结构分析
+
+### 13.1 根目录文件
+
+| 文件/目录 | 功能 |
+|-----------|------|
+| [.agents/](file:///workspace/.agents) | 包含智能体架构和工作流的配置文件 |
+| [.github/](file:///workspace/.github) | GitHub 相关配置，包括 Issue 模板、工作流和资源文件 |
+| [.husky/](file:///workspace/.husky) | Git hooks 配置 |
+| [agent-templates/](file:///workspace/agent-templates) | 智能体模板和包文档模板 |
+| [contracts/](file:///workspace/contracts) | 事件和 HTTP API 契约定义 |
+| [crates/](file:///workspace/crates) | Rust 工作区，包含所有核心 Rust crates |
+| [docs/](file:///workspace/docs) | 详细文档目录，包含设计文档、使用指南等 |
+| [engine/](file:///workspace/engine) | 独立引擎服务和 CLI 二进制文件 |
+| [guide/](file:///workspace/guide) | 使用指南，包含构建好的文档网站 |
+| [manifests/](file:///workspace/manifests) | 组件清单文件 |
+| [packages/](file:///workspace/packages) | npm 包，包括客户端 SDK、控制面板等 |
+| [public/](file:///workspace/public) | 公共静态资源 |
+| [scripts/](file:///workspace/scripts) | 构建、测试和发布脚本 |
+| [specs/](file:///workspace/specs) | 规范文档，包括包和预设规范 |
+| [src/](file:///workspace/src) | React 前端源代码 |
+| [src-tauri/](file:///workspace/src-tauri) | Tauri Rust 后端源代码 |
+| [third_party/](file:///workspace/third_party) | 第三方依赖库 |
+
+### 13.2 根目录配置文件
+
+| 文件 | 功能 |
+|------|------|
+| [Cargo.toml](file:///workspace/Cargo.toml) | Rust 工作区配置 |
+| [package.json](file:///workspace/package.json) | npm 包配置 |
+| [vite.config.ts](file:///workspace/vite.config.ts) | Vite 构建配置 |
+| [tsconfig.json](file:///workspace/tsconfig.json) | TypeScript 配置 |
+| [.prettierrc](file:///workspace/.prettierrc) | Prettier 代码格式化配置 |
+| [eslint.config.js](file:///workspace/eslint.config.js) | ESLint 代码检查配置 |
+| [.gitignore](file:///workspace/.gitignore) | Git 忽略文件配置 |
+
+### 13.3 .agents/ 目录
+
+| 子目录 | 功能 |
+|--------|------|
+| [architecture/](file:///workspace/.agents/architecture) | 架构相关的智能体工作流 |
+| [workflows/](file:///workspace/.agents/workflows) | 添加测试工作流（如 HTTP 测试、Rust 测试） |
+
+### 13.4 .github/ 目录
+
+| 子目录/文件 | 功能 |
+|-------------|------|
+| [ISSUE_TEMPLATE/](file:///workspace/.github/ISSUE_TEMPLATE) | Issue 报告模板 |
+| [assets/](file:///workspace/.github/assets) | 项目截图和资源文件 |
+| [workflows/](file:///workspace/.github/workflows) | GitHub Actions CI/CD 工作流 |
+| [PULL_REQUEST_TEMPLATE.md](file:///workspace/.github/PULL_REQUEST_TEMPLATE.md) | PR 模板 |
+| [FUNDING.yml](file:///workspace/.github/FUNDING.yml) | 资助信息 |
+
+### 13.5 agent-templates/ 目录
+
+| 子目录 | 功能 |
+|--------|------|
+| [pack-docs/](file:///workspace/agent-templates/pack-docs) | 包文档模板，包含多个示例包 |
+
+### 13.6 crates/ 目录详细分析
+
+| crate | 主要功能 | 关键文件 |
+|-------|---------|---------|
+| [tandem-types](file:///workspace/crates/tandem-types) | 共享域模型定义 | [src/lib.rs](file:///workspace/crates/tandem-types/src/lib.rs) |
+| [tandem-wire](file:///workspace/crates/tandem-wire) | 传输层转换，处理数据序列化和反序列化 | [src/convert.rs](file:///workspace/crates/tandem-wire/src/convert.rs), [src/session.rs](file:///workspace/crates/tandem-wire/src/session.rs) |
+| [tandem-core](file:///workspace/crates/tandem-core) | 核心引擎功能，包括会话管理、权限、工具路由等 | [src/engine_loop.rs](file:///workspace/crates/tandem-core/src/engine_loop.rs), [src/storage.rs](file:///workspace/crates/tandem-core/src/storage.rs) |
+| [tandem-server](file:///workspace/crates/tandem-server) | HTTP/SSE API 服务器，处理客户端请求 | [src/http.rs](file:///workspace/crates/tandem-server/src/http.rs), [src/lib.rs](file:///workspace/crates/tandem-server/src/lib.rs) |
+| [tandem-runtime](file:///workspace/crates/tandem-runtime) | 运行时支持，包括 PTY、LSP、MCP 集成 | [src/pty.rs](file:///workspace/crates/tandem-runtime/src/pty.rs), [src/mcp.rs](file:///workspace/crates/tandem-runtime/src/mcp.rs) |
+| [tandem-workflows](file:///workspace/crates/tandem-workflows) | 工作流规范处理 | [src/mission_builder.rs](file:///workspace/crates/tandem-workflows/src/mission_builder.rs) |
+| [tandem-agent-teams](file:///workspace/crates/tandem-agent-teams) | 智能体团队管理 | [src/paths.rs](file:///workspace/crates/tandem-agent-teams/src/paths.rs) |
+| [tandem-skills](file:///workspace/crates/tandem-skills) | 技能系统 | [src/lib.rs](file:///workspace/crates/tandem-skills/src/lib.rs) |
+| [tandem-tools](file:///workspace/crates/tandem-tools) | 工具注册和执行 | [src/builtin_tools.rs](file:///workspace/crates/tandem-tools/src/builtin_tools.rs) |
+| [tandem-memory](file:///workspace/crates/tandem-memory) | 向量存储和检索 | [src/db.rs](file:///workspace/crates/tandem-memory/src/db.rs), [src/embeddings.rs](file:///workspace/crates/tandem-memory/src/embeddings.rs) |
+| [tandem-providers](file:///workspace/crates/tandem-providers) | LLM 提供者集成 | [src/lib.rs](file:///workspace/crates/tandem-providers/src/lib.rs) |
+| [tandem-browser](file:///workspace/crates/tandem-browser) | 浏览器自动化 | [src/main.rs](file:///workspace/crates/tandem-browser/src/main.rs) |
+| [tandem-channels](file:///workspace/crates/tandem-channels) | Discord、Slack、Telegram 集成 | [src/lib.rs](file:///workspace/crates/tandem-channels/src/lib.rs) |
+| [tandem-observability](file:///workspace/crates/tandem-observability) | 可观测性和日志 | [src/lib.rs](file:///workspace/crates/tandem-observability/src/lib.rs) |
+| [tandem-document](file:///workspace/crates/tandem-document) | 文档处理 | [src/extractor.rs](file:///workspace/crates/tandem-document/src/extractor.rs) |
+| [tandem-orchestrator](file:///workspace/crates/tandem-orchestrator) | 多智能体编排 | [src/reducer.rs](file:///workspace/crates/tandem-orchestrator/src/reducer.rs) |
+| [tandem-plan-compiler](file:///workspace/crates/tandem-plan-compiler) | 计划编译（BSL 许可证） | [src/planner_loop.rs](file:///workspace/crates/tandem-plan-compiler/src/planner_loop.rs) |
+| [tandem-tui](file:///workspace/crates/tandem-tui) | 终端用户界面 | [src/lib.rs](file:///workspace/crates/tandem-tui/src/lib.rs) |
+
+### 13.7 docs/ 目录
+
+| 子目录/文件 | 功能 |
+|-------------|------|
+| [design/](file:///workspace/docs/design) | 设计文档，包括架构决策、实现计划等 |
+| [ENGINE_CLI.md](file:///workspace/docs/ENGINE_CLI.md) | 引擎 CLI 使用指南 |
+| [ENGINE_COMMUNICATION.md](file:///workspace/docs/ENGINE_COMMUNICATION.md) | 引擎通信契约 |
+| [OLLAMA_GUIDE.md](file:///workspace/docs/OLLAMA_GUIDE.md) | Ollama 设置指南 |
+| [TANDEM_TUI_GUIDE.md](file:///workspace/docs/TANDEM_TUI_GUIDE.md) | TUI 使用指南 |
+| [WORKFLOW_RUNTIME.md](file:///workspace/docs/WORKFLOW_RUNTIME.md) | 工作流运行时文档 |
+
+### 13.8 engine/ 目录
+
+| 子目录/文件 | 功能 |
+|-------------|------|
+| [resources/](file:///workspace/engine/resources) | 引擎资源，如默认知识包 |
+| [src/main.rs](file:///workspace/engine/src/main.rs) | 引擎主入口点 |
+| [Cargo.toml](file:///workspace/engine/Cargo.toml) | 引擎 crate 配置 |
+
+### 13.9 packages/ 目录
+
+| 包 | 功能 |
+|----|------|
+| [create-tandem-panel/](file:///workspace/packages/create-tandem-panel) | 创建控制面板应用的脚手架工具 |
+| [tandem-ai/](file:///workspace/packages/tandem-ai) | 主 npm 包 |
+| [tandem-client-ts/](file:///workspace/packages/tandem-client-ts) | TypeScript 客户端 SDK |
+| [tandem-client-py/](file:///workspace/packages/tandem-client-py) | Python 客户端 SDK |
+| [tandem-control-panel/](file:///workspace/packages/tandem-control-panel) | Web 控制面板 |
+| [tandem-engine/](file:///workspace/packages/tandem-engine) | 引擎 npm 包装器 |
+| [tandem-tui/](file:///workspace/packages/tandem-tui) | TUI npm 包装器 |
+
+### 13.10 scripts/ 目录
+
+| 子目录/文件 | 功能 |
+|-------------|------|
+| [bench-js/](file:///workspace/scripts/bench-js) | JavaScript 基准测试脚本 |
+| [loadtest/](file:///workspace/scripts/loadtest) | 负载测试脚本 |
+| [generate-agent-catalog.mjs](file:///workspace/scripts/generate-agent-catalog.mjs) | 生成智能体目录 |
+| [generate-engine-knowledge-bundle.mjs](file:///workspace/scripts/generate-engine-knowledge-bundle.mjs) | 生成引擎知识包 |
+| [engine_smoke.sh](file:///workspace/scripts/engine_smoke.sh) / [engine_smoke.ps1](file:///workspace/scripts/engine_smoke.ps1) | 引擎冒烟测试 |
+
+### 13.11 src/ 目录详细分析
+
+| 子目录 | 功能 | 关键组件 |
+|--------|------|---------|
+| [components/about/](file:///workspace/src/components/about) | 关于页面 | [About.tsx](file:///workspace/src/components/about/About.tsx) |
+| [components/agent-automation/](file:///workspace/src/components/agent-automation) | 智能体自动化 | [AdvancedMissionBuilder.tsx](file:///workspace/src/components/agent-automation/AdvancedMissionBuilder.tsx) |
+| [components/chat/](file:///workspace/src/components/chat) | 聊天界面 | [Chat.tsx](file:///workspace/src/components/chat/Chat.tsx), [ChatInput.tsx](file:///workspace/src/components/chat/ChatInput.tsx) |
+| [components/coder/](file:///workspace/src/components/coder) | 编码工作区 | [CoderWorkspacePage.tsx](file:///workspace/src/components/coder/CoderWorkspacePage.tsx) |
+| [components/command-center/](file:///workspace/src/components/command-center) | 命令中心 | [CommandCenterPage.tsx](file:///workspace/src/components/command-center/CommandCenterPage.tsx) |
+| [components/extensions/](file:///workspace/src/components/extensions) | 扩展管理 | [Extensions.tsx](file:///workspace/src/components/extensions/Extensions.tsx) |
+| [components/files/](file:///workspace/src/components/files) | 文件浏览器 | [FileBrowser.tsx](file:///workspace/src/components/files/FileBrowser.tsx) |
+| [components/logs/](file:///workspace/src/components/logs) | 日志查看 | [LogsDrawer.tsx](file:///workspace/src/components/logs/LogsDrawer.tsx) |
+| [components/orchestrate/](file:///workspace/src/components/orchestrate) | 编排界面 | [BlackboardPanel.tsx](file:///workspace/src/components/orchestrate/BlackboardPanel.tsx), [TaskBoard.tsx](file:///workspace/src/components/orchestrate/TaskBoard.tsx) |
+| [components/plan/](file:///workspace/src/components/plan) | 计划查看 | [ExecutionPlanPanel.tsx](file:///workspace/src/components/plan/ExecutionPlanPanel.tsx) |
+| [components/ralph/](file:///workspace/src/components/ralph) | Ralph 模式 | [RalphPanel.tsx](file:///workspace/src/components/ralph/RalphPanel.tsx) |
+| [components/settings/](file:///workspace/src/components/settings) | 设置界面 | [Settings.tsx](file:///workspace/src/components/settings/Settings.tsx) |
+| [components/sidebar/](file:///workspace/src/components/sidebar) | 侧边栏 | [SessionSidebar.tsx](file:///workspace/src/components/sidebar/SessionSidebar.tsx) |
+| [components/skills/](file:///workspace/src/components/skills) | 技能管理 | [SkillsPanel.tsx](file:///workspace/src/components/skills/SkillsPanel.tsx) |
+| [components/ui/](file:///workspace/src/components/ui) | UI 组件库 | [Button.tsx](file:///workspace/src/components/ui/Button.tsx), [Card.tsx](file:///workspace/src/components/ui/Card.tsx) |
+| [hooks/](file:///workspace/src/hooks) | React 自定义钩子 | [useAppState.ts](file:///workspace/src/hooks/useAppState.ts) |
+| [i18n/](file:///workspace/src/i18n) | 国际化支持 | [index.ts](file:///workspace/src/i18n/index.ts) |
+| [lib/](file:///workspace/src/lib) | 工具库 | [tauri.ts](file:///workspace/src/lib/tauri.ts), [themes.ts](file:///workspace/src/lib/themes.ts) |
+| [App.tsx](file:///workspace/src/App.tsx) | 应用主组件 |
+| [main.tsx](file:///workspace/src/main.tsx) | 应用入口点 |
+
+### 13.12 src-tauri/ 目录详细分析
+
+| 子目录 | 功能 | 关键文件 |
+|--------|------|---------|
+| [src/commands/](file:///workspace/src-tauri/src/commands) | Tauri 命令实现 | [api_keys.rs](file:///workspace/src-tauri/src/commands/api_keys.rs), [messages.rs](file:///workspace/src-tauri/src/commands/messages.rs) |
+| [src/memory/](file:///workspace/src-tauri/src/memory) | 内存索引 | [indexer.rs](file:///workspace/src-tauri/src/memory/indexer.rs) |
+| [src/orchestrator/](file:///workspace/src-tauri/src/orchestrator) | 编排器实现 | [agents.rs](file:///workspace/src-tauri/src/orchestrator/agents.rs), [scheduler.rs](file:///workspace/src-tauri/src/orchestrator/scheduler.rs) |
+| [src/ralph/](file:///workspace/src-tauri/src/ralph) | Ralph 服务 | [service.rs](file:///workspace/src-tauri/src/ralph/service.rs) |
+| [capabilities/](file:///workspace/src-tauri/capabilities) | Tauri 权限配置 | [main.json](file:///workspace/src-tauri/capabilities/main.json) |
+| [src/lib.rs](file:///workspace/src-tauri/src/lib.rs) | Tauri 库入口 |
+| [src/main.rs](file:///workspace/src-tauri/src/main.rs) | Tauri 主入口 |
+| [tauri.conf.json](file:///workspace/src-tauri/tauri.conf.json) | Tauri 配置 |
+
+## 14. 参考资料
 
 - [Tandem 官方网站](https://tandem.ac/)
 - [Tandem 文档](https://docs.tandem.ac/)
