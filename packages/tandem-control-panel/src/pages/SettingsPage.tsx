@@ -2116,7 +2116,7 @@ export function SettingsPage({
               {activeSection === "install" ? (
                 <PanelCard
                   title="Install config"
-                  subtitle="Durable non-secret install preferences stored in tandem-data and shared with ACA."
+                  subtitle="Durable non-secret install preferences stored in tandem-data for Tandem startup and navigation defaults."
                   actions={
                     <div className="flex flex-wrap items-center justify-end gap-2">
                       <Badge
@@ -2167,7 +2167,7 @@ export function SettingsPage({
                         <div className="font-medium">Startup profile</div>
                         <div className="tcp-subtle mt-1 text-xs">
                           {installProfileQuery.data?.control_panel_mode_reason ||
-                            "The control panel auto-detects ACA on startup and can be overridden with TANDEM_CONTROL_PANEL_MODE."}
+                            "The control panel auto-detects its startup mode and can be overridden with TANDEM_CONTROL_PANEL_MODE."}
                         </div>
                         <div className="mt-3 grid gap-2 text-xs">
                           <div className="flex items-center justify-between gap-3">
@@ -2177,7 +2177,7 @@ export function SettingsPage({
                             </span>
                           </div>
                           <div className="flex items-center justify-between gap-3">
-                            <span className="tcp-subtle">ACA detected</span>
+                            <span className="tcp-subtle">Integration detected</span>
                             <span>{installProfileQuery.data?.aca_integration ? "yes" : "no"}</span>
                           </div>
                           <div className="flex items-center justify-between gap-3">
@@ -2236,8 +2236,8 @@ export function SettingsPage({
 
                     <div className="tcp-subtle text-xs">
                       This file holds non-secret install state: repo binding, provider defaults,
-                      task source, swarm policy, GitHub MCP preferences, and ACA navigation
-                      defaults. Secrets should stay in `.env` or token files.
+                      task source, swarm policy, GitHub MCP preferences, and navigation defaults.
+                      Secrets should stay in `.env` or token files.
                     </div>
                   </div>
                 </PanelCard>
