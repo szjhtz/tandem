@@ -220,6 +220,9 @@ async fn workflows_list_validate_and_manual_run() {
             Request::builder()
                 .method("POST")
                 .uri("/workflows/build_feature/run")
+                .header("x-tandem-org-id", "acme")
+                .header("x-tandem-workspace-id", "north")
+                .header("x-user-id", "user-1")
                 .body(Body::empty())
                 .expect("run request"),
         )
@@ -231,6 +234,14 @@ async fn workflows_list_validate_and_manual_run() {
         .expect("run body");
     let run_payload: Value = serde_json::from_slice(&run_body).expect("run json");
     assert_eq!(run_payload["run"]["status"].as_str(), Some("completed"));
+    assert_eq!(
+        run_payload["run"]["tenant_context"]["org_id"].as_str(),
+        Some("acme")
+    );
+    assert_eq!(
+        run_payload["run"]["tenant_context"]["workspace_id"].as_str(),
+        Some("north")
+    );
     let automation_id = run_payload["run"]["automation_id"]
         .as_str()
         .expect("workflow automation id")
@@ -320,7 +331,12 @@ async fn workflow_dispatch_executes_hooks_and_dedupes() {
             "context.task.created",
             json!({
                 "event_id": "evt-task-created-1",
-                "task_id": "task-1"
+                "task_id": "task-1",
+                "tenantContext": {
+                    "org_id": "acme",
+                    "workspace_id": "north",
+                    "user_id": "user-1"
+                }
             }),
         ),
     )
@@ -331,7 +347,12 @@ async fn workflow_dispatch_executes_hooks_and_dedupes() {
             "context.task.created",
             json!({
                 "event_id": "evt-task-created-1",
-                "task_id": "task-1"
+                "task_id": "task-1",
+                "tenantContext": {
+                    "org_id": "acme",
+                    "workspace_id": "north",
+                    "user_id": "user-1"
+                }
             }),
         ),
     )
@@ -342,7 +363,12 @@ async fn workflow_dispatch_executes_hooks_and_dedupes() {
             "context.task.completed",
             json!({
                 "event_id": "evt-task-completed-1",
-                "task_id": "task-1"
+                "task_id": "task-1",
+                "tenantContext": {
+                    "org_id": "acme",
+                    "workspace_id": "north",
+                    "user_id": "user-1"
+                }
             }),
         ),
     )
@@ -490,6 +516,14 @@ async fn workflow_dispatch_executes_hooks_and_dedupes() {
                 if event.event_type == "workflow.action.started"
                     && event.properties.get("taskID").and_then(|v| v.as_str()) == Some("task-1")
                 {
+                    assert_eq!(
+                        event
+                            .properties
+                            .get("tenantContext")
+                            .and_then(|tenant| tenant.get("org_id"))
+                            .and_then(Value::as_str),
+                        Some("acme")
+                    );
                     saw_action_started = true;
                 }
                 if event.event_type == "workflow.run.completed"

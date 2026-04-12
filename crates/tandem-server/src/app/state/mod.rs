@@ -14,7 +14,7 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use tandem_memory::types::MemoryTier;
 use tandem_orchestrator::MissionState;
-use tandem_types::{EngineEvent, HostRuntimeContext, MessagePart, ModelSpec};
+use tandem_types::{EngineEvent, HostRuntimeContext, MessagePart, ModelSpec, TenantContext};
 use tokio::fs;
 use tokio::sync::RwLock;
 
@@ -64,6 +64,8 @@ pub struct AppState {
     pub run_stale_ms: u64,
     pub memory_records: Arc<RwLock<std::collections::HashMap<String, GovernedMemoryRecord>>>,
     pub memory_audit_log: Arc<RwLock<Vec<MemoryAuditEvent>>>,
+    pub memory_audit_path: PathBuf,
+    pub protected_audit_path: PathBuf,
     pub missions: Arc<RwLock<std::collections::HashMap<String, MissionState>>>,
     pub shared_resources: Arc<RwLock<std::collections::HashMap<String, SharedResourceRecord>>>,
     pub shared_resources_path: PathBuf,
@@ -186,6 +188,8 @@ impl AppState {
             run_stale_ms: config::env::resolve_run_stale_ms(),
             memory_records: Arc::new(RwLock::new(std::collections::HashMap::new())),
             memory_audit_log: Arc::new(RwLock::new(Vec::new())),
+            memory_audit_path: config::paths::resolve_memory_audit_path(),
+            protected_audit_path: config::paths::resolve_protected_audit_path(),
             missions: Arc::new(RwLock::new(std::collections::HashMap::new())),
             shared_resources: Arc::new(RwLock::new(std::collections::HashMap::new())),
             shared_resources_path: config::paths::resolve_shared_resources_path(),
@@ -4488,6 +4492,7 @@ impl AppState {
         let run = AutomationV2RunRecord {
             run_id: format!("automation-v2-run-{}", uuid::Uuid::new_v4()),
             automation_id: automation.automation_id.clone(),
+            tenant_context: TenantContext::local_implicit(),
             trigger_type: trigger_type.to_string(),
             status: AutomationRunStatus::Queued,
             created_at_ms: now,
@@ -4551,6 +4556,7 @@ impl AppState {
         let run = AutomationV2RunRecord {
             run_id: format!("automation-v2-run-{}", uuid::Uuid::new_v4()),
             automation_id: automation.automation_id.clone(),
+            tenant_context: TenantContext::local_implicit(),
             trigger_type: format!("{trigger_type}_dry_run"),
             status: AutomationRunStatus::Completed,
             created_at_ms: now,
@@ -5330,6 +5336,7 @@ impl AppState {
         let run = AutomationV2RunRecord {
             run_id: format!("automation-v2-run-{}", uuid::Uuid::new_v4()),
             automation_id: automation.automation_id.clone(),
+            tenant_context: TenantContext::local_implicit(),
             trigger_type: "watch_condition".to_string(),
             status: AutomationRunStatus::Queued,
             created_at_ms: now,

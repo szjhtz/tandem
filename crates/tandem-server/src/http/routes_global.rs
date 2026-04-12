@@ -8,11 +8,13 @@ use super::channels_api::{
     channels_config, channels_delete, channels_put, channels_status, channels_verify,
 };
 use super::config_providers::{global_config, global_config_patch};
+use super::enterprise::enterprise_status;
 use super::global::*;
 
 pub(super) fn apply(router: Router<AppState>) -> Router<AppState> {
     router
         .route("/global/health", get(global_health))
+        .route("/enterprise/status", get(enterprise_status))
         .route("/browser/status", get(browser_status))
         .route("/browser/install", post(browser_install))
         .route("/browser/smoke-test", post(browser_smoke_test))

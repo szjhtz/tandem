@@ -4007,11 +4007,23 @@ Attempt {attempt}/{max_attempts} did not persist workspace changes.\n\
         let run_id = self.run_id.clone();
         let store = self.store.clone();
         let event_for_log = event.clone();
-        let status = self
+        let (tenant_context, authority_chain, status) = self
             .run
             .try_read()
-            .map(|run| run.status)
-            .unwrap_or(RunStatus::Queued);
+            .map(|run| {
+                (
+                    run.tenant_context.clone(),
+                    run.authority_chain.clone(),
+                    run.status,
+                )
+            })
+            .unwrap_or_else(|_| {
+                (
+                    tandem_enterprise_contract::LocalImplicitTenant.into(),
+                    None,
+                    RunStatus::Queued,
+                )
+            });
         let seq = self.event_seq.fetch_add(1, Ordering::SeqCst) + 1;
 
         let payload = serde_json::to_value(&event_for_log).unwrap_or_else(|_| json!({}));
@@ -4023,6 +4035,8 @@ Attempt {attempt}/{max_attempts} did not persist workspace changes.\n\
             event_type: Self::event_type_name(&event_for_log).to_string(),
             status,
             step_id: event_for_log.step_id(),
+            tenant_context,
+            authority_chain,
             payload,
         };
         let blackboard_patches = self.blackboard_patches_for_event(&record, &event_for_log);
@@ -4668,6 +4682,8 @@ mod tests {
             event_type: "task_started".to_string(),
             status: RunStatus::Running,
             step_id: Some("task-1".to_string()),
+            tenant_context: tandem_enterprise_contract::LocalImplicitTenant.into(),
+            authority_chain: None,
             payload: serde_json::json!({}),
         }];
         let summary = OrchestratorEngine::compact_rolling_summary(

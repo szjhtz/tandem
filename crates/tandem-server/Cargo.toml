@@ -44,6 +44,7 @@ tandem-tools = { path = "../tandem-tools", version = "0.4.23" }
 tandem-skills = { path = "../tandem-skills", version = "0.4.23" }
 tandem-memory = { path = "../tandem-memory", version = "0.4.23", features = ["local-embeddings"] }
 tandem-orchestrator = { path = "../tandem-orchestrator", version = "0.4.23" }
+tandem-enterprise-contract = { path = "../tandem-enterprise-contract", version = "0.4.23" }
 tandem-types = { path = "../tandem-types", version = "0.4.23" }
 tandem-workflows = { path = "../tandem-workflows", version = "0.4.23" }
 tandem-wire = { path = "../tandem-wire", version = "0.4.23" }
@@ -54,22 +55,6 @@ tandem-plan-compiler = { path = "../tandem-plan-compiler", version = "0.4.23" }
 
 [dev-dependencies]
 tower = "0.5"
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 

@@ -111,6 +111,8 @@ async fn run_automation_v2_executor_multi(state: AppState) {
                         }
                     }
                     Err(meta) => {
+                        let mut meta = meta;
+                        meta.tenant_context = run.tenant_context.clone();
                         let mut scheduler = state.automation_scheduler.write().await;
                         scheduler.track_queue_state(&run.run_id, meta.clone());
                         if run.scheduler.as_ref() != Some(&meta) {

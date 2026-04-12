@@ -6,13 +6,14 @@ use serde_json::{json, Value};
 use std::path::PathBuf;
 use tandem_core::resolve_shared_paths;
 use tandem_observability::{emit_event, ObservabilityEvent, ProcessKind};
-use tandem_types::{MessagePart, Session};
+use tandem_types::{MessagePart, Session, TenantContext};
 use tauri::AppHandle;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolExecutionRow {
     pub id: String,
     pub session_id: String,
+    pub tenant_context: TenantContext,
     pub message_id: Option<String>,
     pub part_id: Option<String>,
     pub correlation_id: Option<String>,
@@ -43,6 +44,18 @@ fn now_ms_i64() -> Result<i64> {
     to_i64(crate::logs::now_ms())
 }
 
+fn tenant_context_json(tenant_context: &TenantContext) -> String {
+    serde_json::to_string(tenant_context).unwrap_or_else(|_| {
+        serde_json::to_string(&TenantContext::local_implicit())
+            .expect("local implicit tenant context should serialize")
+    })
+}
+
+fn parse_tenant_context(raw: Option<String>) -> TenantContext {
+    raw.and_then(|value| serde_json::from_str(&value).ok())
+        .unwrap_or_default()
+}
+
 fn app_tool_history_db_path(_app: &AppHandle) -> Result<PathBuf> {
     let app_data_dir = match resolve_shared_paths() {
         Ok(paths) => paths.canonical_root,
@@ -67,6 +80,7 @@ fn ensure_schema(conn: &Connection) -> Result<()> {
         CREATE TABLE IF NOT EXISTS tool_executions (
             id TEXT PRIMARY KEY,
             session_id TEXT NOT NULL,
+            tenant_context TEXT,
             message_id TEXT,
             part_id TEXT,
             correlation_id TEXT,
@@ -81,6 +95,8 @@ fn ensure_schema(conn: &Connection) -> Result<()> {
         );
         CREATE INDEX IF NOT EXISTS idx_tool_exec_session_time
             ON tool_executions(session_id, started_at_ms DESC);
+        CREATE INDEX IF NOT EXISTS idx_tool_exec_tenant_session_time
+            ON tool_executions(tenant_context, session_id, started_at_ms DESC);
         CREATE INDEX IF NOT EXISTS idx_tool_exec_updated
             ON tool_executions(updated_at_ms DESC);
         CREATE INDEX IF NOT EXISTS idx_tool_exec_status
@@ -111,6 +127,19 @@ fn ensure_schema(conn: &Connection) -> Result<()> {
             [],
         )
         .map_err(|e| to_memory_error("add correlation_id column", e))?;
+    }
+    if !known_cols.contains("tenant_context") {
+        conn.execute(
+            "ALTER TABLE tool_executions ADD COLUMN tenant_context TEXT",
+            [],
+        )
+        .map_err(|e| to_memory_error("add tenant_context column", e))?;
+        let tenant_json = tenant_context_json(&TenantContext::local_implicit());
+        conn.execute(
+            "UPDATE tool_executions SET tenant_context = ?1 WHERE tenant_context IS NULL OR trim(tenant_context) = ''",
+            params![tenant_json],
+        )
+        .map_err(|e| to_memory_error("backfill tenant_context column", e))?;
     }
 
     Ok(())
@@ -263,29 +292,35 @@ fn to_json_text(value: &Value) -> Option<String> {
 }
 
 fn map_row_to_tool_execution(row: &rusqlite::Row<'_>) -> rusqlite::Result<ToolExecutionRow> {
-    let started_at_i64: i64 = row.get(10)?;
-    let ended_at_i64: Option<i64> = row.get(11)?;
+    let started_at_i64: i64 = row.get(11)?;
+    let ended_at_i64: Option<i64> = row.get(12)?;
     Ok(ToolExecutionRow {
         id: row.get(0)?,
         session_id: row.get(1)?,
-        message_id: row.get(2)?,
-        part_id: row.get(3)?,
-        correlation_id: row.get(4)?,
-        tool: row.get(5)?,
-        status: row.get(6)?,
+        tenant_context: parse_tenant_context(row.get(2)?),
+        message_id: row.get(3)?,
+        part_id: row.get(4)?,
+        correlation_id: row.get(5)?,
+        tool: row.get(6)?,
+        status: row.get(7)?,
         args: row
-            .get::<_, Option<String>>(7)?
-            .and_then(|s| serde_json::from_str(&s).ok()),
-        result: row
             .get::<_, Option<String>>(8)?
             .and_then(|s| serde_json::from_str(&s).ok()),
-        error: row.get(9)?,
+        result: row
+            .get::<_, Option<String>>(9)?
+            .and_then(|s| serde_json::from_str(&s).ok()),
+        error: row.get(10)?,
         started_at_ms: u64::try_from(started_at_i64).unwrap_or_default(),
         ended_at_ms: ended_at_i64.and_then(|v| u64::try_from(v).ok()),
     })
 }
 
-pub fn record_stream_event(app: &AppHandle, event: &StreamEvent) -> Result<()> {
+pub fn record_stream_event(
+    app: &AppHandle,
+    tenant_context: &TenantContext,
+    event: &StreamEvent,
+) -> Result<()> {
+    let tenant_json = tenant_context_json(tenant_context);
     match event {
         StreamEvent::ToolStart {
             session_id,
@@ -309,11 +344,12 @@ pub fn record_stream_event(app: &AppHandle, event: &StreamEvent) -> Result<()> {
             conn.execute(
                 r#"
                 INSERT INTO tool_executions (
-                    id, session_id, message_id, part_id, correlation_id, tool, status, args_json,
+                    id, session_id, tenant_context, message_id, part_id, correlation_id, tool, status, args_json,
                     started_at_ms, ended_at_ms, updated_at_ms
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'running', ?7, ?8, NULL, ?9)
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'running', ?8, ?9, NULL, ?10)
                 ON CONFLICT(id) DO UPDATE SET
                     session_id = excluded.session_id,
+                    tenant_context = COALESCE(excluded.tenant_context, tool_executions.tenant_context),
                     message_id = excluded.message_id,
                     part_id = COALESCE(excluded.part_id, tool_executions.part_id),
                     correlation_id = COALESCE(excluded.correlation_id, tool_executions.correlation_id),
@@ -326,6 +362,7 @@ pub fn record_stream_event(app: &AppHandle, event: &StreamEvent) -> Result<()> {
                 params![
                     id,
                     session_id,
+                    tenant_json,
                     message_id,
                     part_id_norm,
                     correlation_id,
@@ -366,11 +403,12 @@ pub fn record_stream_event(app: &AppHandle, event: &StreamEvent) -> Result<()> {
             conn.execute(
                 r#"
                 INSERT INTO tool_executions (
-                    id, session_id, message_id, part_id, correlation_id, tool, status, result_json,
+                    id, session_id, tenant_context, message_id, part_id, correlation_id, tool, status, result_json,
                     error_text, started_at_ms, ended_at_ms, updated_at_ms
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
                 ON CONFLICT(id) DO UPDATE SET
                     session_id = excluded.session_id,
+                    tenant_context = COALESCE(excluded.tenant_context, tool_executions.tenant_context),
                     message_id = excluded.message_id,
                     part_id = COALESCE(excluded.part_id, tool_executions.part_id),
                     correlation_id = COALESCE(excluded.correlation_id, tool_executions.correlation_id),
@@ -384,6 +422,7 @@ pub fn record_stream_event(app: &AppHandle, event: &StreamEvent) -> Result<()> {
                 params![
                     id,
                     session_id,
+                    tenant_json,
                     message_id,
                     part_id_norm,
                     correlation_id,
@@ -453,11 +492,12 @@ pub fn record_stream_event(app: &AppHandle, event: &StreamEvent) -> Result<()> {
             conn.execute(
                 r#"
                 INSERT INTO tool_executions (
-                    id, session_id, message_id, part_id, correlation_id, tool, status, args_json, result_json,
+                    id, session_id, tenant_context, message_id, part_id, correlation_id, tool, status, args_json, result_json,
                     error_text, started_at_ms, ended_at_ms, updated_at_ms
-                ) VALUES (?1, ?2, NULL, NULL, ?3, 'memory.lookup', ?4, ?5, ?6, ?7, ?8, ?8, ?8)
+                ) VALUES (?1, ?2, ?3, NULL, NULL, ?4, 'memory.lookup', ?5, ?6, ?7, ?8, ?9, ?9, ?9)
                 ON CONFLICT(id) DO UPDATE SET
                     session_id = excluded.session_id,
+                    tenant_context = COALESCE(excluded.tenant_context, tool_executions.tenant_context),
                     correlation_id = COALESCE(excluded.correlation_id, tool_executions.correlation_id),
                     tool = excluded.tool,
                     status = excluded.status,
@@ -470,6 +510,7 @@ pub fn record_stream_event(app: &AppHandle, event: &StreamEvent) -> Result<()> {
                 params![
                     id,
                     session_id,
+                    tenant_json,
                     correlation_id,
                     tool_status,
                     args_json,
@@ -532,11 +573,12 @@ pub fn record_stream_event(app: &AppHandle, event: &StreamEvent) -> Result<()> {
             conn.execute(
                 r#"
                 INSERT INTO tool_executions (
-                    id, session_id, message_id, part_id, correlation_id, tool, status, args_json, result_json,
+                    id, session_id, tenant_context, message_id, part_id, correlation_id, tool, status, args_json, result_json,
                     error_text, started_at_ms, ended_at_ms, updated_at_ms
-                ) VALUES (?1, ?2, ?3, NULL, ?4, 'memory.store', ?5, ?6, ?7, ?8, ?9, ?9, ?9)
+                ) VALUES (?1, ?2, ?3, ?4, NULL, ?5, 'memory.store', ?6, ?7, ?8, ?9, ?10, ?10, ?10)
                 ON CONFLICT(id) DO UPDATE SET
                     session_id = excluded.session_id,
+                    tenant_context = COALESCE(excluded.tenant_context, tool_executions.tenant_context),
                     message_id = COALESCE(excluded.message_id, tool_executions.message_id),
                     correlation_id = COALESCE(excluded.correlation_id, tool_executions.correlation_id),
                     tool = excluded.tool,
@@ -550,6 +592,7 @@ pub fn record_stream_event(app: &AppHandle, event: &StreamEvent) -> Result<()> {
                 params![
                     id,
                     session_id,
+                    tenant_json,
                     message_id,
                     correlation_id,
                     tool_status,
@@ -579,32 +622,36 @@ pub fn record_stream_event(app: &AppHandle, event: &StreamEvent) -> Result<()> {
 pub fn list_tool_executions(
     app: &AppHandle,
     session_id: &str,
+    tenant_context: &TenantContext,
     limit: u32,
     before_ts_ms: Option<u64>,
 ) -> Result<Vec<ToolExecutionRow>> {
     let conn = open_conn(app)?;
     let limit = limit.clamp(1, 2000);
     let limit_i64 = i64::from(limit);
+    let tenant_json = tenant_context_json(tenant_context);
 
     let mut rows_out = Vec::new();
     let sql_with_before = r#"
         SELECT
-            id, session_id, message_id, part_id, correlation_id, tool, status, args_json, result_json,
+            id, session_id, tenant_context, message_id, part_id, correlation_id, tool, status, args_json, result_json,
             error_text, started_at_ms, ended_at_ms
         FROM tool_executions
-        WHERE session_id = ?1
-          AND COALESCE(ended_at_ms, started_at_ms) < ?2
+        WHERE tenant_context = ?1
+          AND session_id = ?2
+          AND COALESCE(ended_at_ms, started_at_ms) < ?3
         ORDER BY COALESCE(ended_at_ms, started_at_ms) DESC
-        LIMIT ?3
+        LIMIT ?4
     "#;
     let sql_no_before = r#"
         SELECT
-            id, session_id, message_id, part_id, correlation_id, tool, status, args_json, result_json,
+            id, session_id, tenant_context, message_id, part_id, correlation_id, tool, status, args_json, result_json,
             error_text, started_at_ms, ended_at_ms
         FROM tool_executions
-        WHERE session_id = ?1
+        WHERE tenant_context = ?1
+          AND session_id = ?2
         ORDER BY COALESCE(ended_at_ms, started_at_ms) DESC
-        LIMIT ?2
+        LIMIT ?3
     "#;
 
     if let Some(before) = before_ts_ms {
@@ -614,7 +661,7 @@ pub fn list_tool_executions(
             .map_err(|e| to_memory_error("prepare tool history query", e))?;
         let mapped = stmt
             .query_map(
-                params![session_id, before_i64, limit_i64],
+                params![tenant_json, session_id, before_i64, limit_i64],
                 map_row_to_tool_execution,
             )
             .map_err(|e| to_memory_error("query tool history", e))?;
@@ -626,7 +673,10 @@ pub fn list_tool_executions(
             .prepare(sql_no_before)
             .map_err(|e| to_memory_error("prepare tool history query", e))?;
         let mapped = stmt
-            .query_map(params![session_id, limit_i64], map_row_to_tool_execution)
+            .query_map(
+                params![tenant_json, session_id, limit_i64],
+                map_row_to_tool_execution,
+            )
             .map_err(|e| to_memory_error("query tool history", e))?;
         for row in mapped {
             rows_out.push(row.map_err(|e| to_memory_error("read tool history row", e))?);
@@ -730,15 +780,17 @@ pub fn backfill_tool_executions_from_sessions(
                 } else {
                     Some(created_ms_i64)
                 };
+                let tenant_json = tenant_context_json(&session.tenant_context);
 
                 tx.execute(
                     r#"
                     INSERT INTO tool_executions (
-                        id, session_id, message_id, tool, status, args_json,
+                        id, session_id, tenant_context, message_id, tool, status, args_json,
                         result_json, error_text, started_at_ms, ended_at_ms, updated_at_ms
-                    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+                    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
                     ON CONFLICT(id) DO UPDATE SET
                         session_id = excluded.session_id,
+                        tenant_context = COALESCE(excluded.tenant_context, tool_executions.tenant_context),
                         message_id = excluded.message_id,
                         tool = excluded.tool,
                         status = CASE
@@ -756,6 +808,7 @@ pub fn backfill_tool_executions_from_sessions(
                     params![
                         id,
                         session.id,
+                        tenant_json,
                         message.id,
                         tool,
                         status,

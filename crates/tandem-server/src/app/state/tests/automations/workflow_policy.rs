@@ -2619,6 +2619,7 @@ fn workflow_state_events_capture_typed_stability_transitions() {
     let mut run = AutomationV2RunRecord {
         run_id: "run-1".to_string(),
         automation_id: "automation-1".to_string(),
+        tenant_context: tandem_types::TenantContext::local_implicit(),
         trigger_type: "manual".to_string(),
         status: AutomationRunStatus::Running,
         created_at_ms: 0,

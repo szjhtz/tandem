@@ -208,6 +208,7 @@ pub(super) async fn add_mcp(
 ) -> Json<Value> {
     let name = input.name.unwrap_or_else(|| "default".to_string());
     let transport = input.transport.unwrap_or_else(|| "stdio".to_string());
+    let audit_transport = transport.clone();
     state
         .mcp
         .add_or_update_with_secret_refs(
@@ -224,6 +225,18 @@ pub(super) async fn add_mcp(
             "name": name,
         }),
     ));
+    let _ = crate::audit::append_protected_audit_event(
+        &state,
+        "mcp.server.updated",
+        &tandem_types::TenantContext::local_implicit(),
+        None,
+        json!({
+            "name": name,
+            "transport": audit_transport,
+            "enabled": input.enabled.unwrap_or(true),
+        }),
+    )
+    .await;
     Json(json!({"ok": true}))
 }
 
@@ -548,6 +561,17 @@ pub(super) async fn delete_mcp(
                 "removedToolCount": removed_tool_count,
             }),
         ));
+        let _ = crate::audit::append_protected_audit_event(
+            &state,
+            "mcp.server.deleted",
+            &tandem_types::TenantContext::local_implicit(),
+            None,
+            json!({
+                "name": name,
+                "removedToolCount": removed_tool_count,
+            }),
+        )
+        .await;
     }
     Json(json!({ "ok": ok, "removedToolCount": removed_tool_count }))
 }
@@ -582,6 +606,17 @@ pub(super) async fn patch_mcp(
                     "enabled": enabled,
                 }),
             ));
+            let _ = crate::audit::append_protected_audit_event(
+                &state,
+                "mcp.server.updated",
+                &tandem_types::TenantContext::local_implicit(),
+                None,
+                json!({
+                    "name": name,
+                    "enabled": enabled,
+                }),
+            )
+            .await;
         }
     }
     Json(json!({"ok": changed}))

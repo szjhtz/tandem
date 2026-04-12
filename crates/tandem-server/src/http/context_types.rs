@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
+use tandem_types::TenantContext;
 
 #[derive(Debug, Deserialize, Default, Clone, Copy)]
 pub(super) struct ContextRunReplayQuery {
@@ -58,6 +59,8 @@ pub(super) struct ContextRunStep {
 pub(super) struct ContextRunState {
     pub(super) run_id: String,
     pub(super) run_type: String,
+    #[serde(default = "default_tenant_context")]
+    pub(super) tenant_context: TenantContext,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) source_client: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -86,6 +89,10 @@ pub(super) struct ContextRunState {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) last_error: Option<String>,
     pub(super) updated_at_ms: u64,
+}
+
+fn default_tenant_context() -> TenantContext {
+    TenantContext::local_implicit()
 }
 
 #[derive(Debug, Clone, Deserialize)]

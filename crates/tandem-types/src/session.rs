@@ -2,7 +2,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::{HostRuntimeContext, Message, ModelSpec};
+use crate::{HostRuntimeContext, LocalImplicitTenant, Message, ModelSpec, TenantContext};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionTime {
@@ -30,6 +30,8 @@ pub struct Session {
     pub attach_timestamp_ms: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub attach_reason: Option<String>,
+    #[serde(default)]
+    pub tenant_context: TenantContext,
     pub time: SessionTime,
     pub model: Option<ModelSpec>,
     pub provider: Option<String>,
@@ -55,6 +57,7 @@ impl Session {
             attached_to_workspace: None,
             attach_timestamp_ms: None,
             attach_reason: None,
+            tenant_context: LocalImplicitTenant.into(),
             time: SessionTime {
                 created: now,
                 updated: now,
@@ -64,6 +67,21 @@ impl Session {
             environment: None,
             messages: Vec::new(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tandem_enterprise_contract::TenantSource;
+
+    #[test]
+    fn session_new_uses_local_implicit_tenant() {
+        let session = Session::new(Some("test".to_string()), Some(".".to_string()));
+        assert_eq!(session.tenant_context.org_id, "local");
+        assert_eq!(session.tenant_context.workspace_id, "local");
+        assert_eq!(session.tenant_context.source, TenantSource::LocalImplicit);
+        assert_eq!(session.tenant_context.actor_id, None);
     }
 }
 

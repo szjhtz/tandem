@@ -1,5 +1,5 @@
 use axum::{
-    extract::{Path, Query, State},
+    extract::{Extension, Path, Query, State},
     http::StatusCode,
     response::sse::{Event, KeepAlive, Sse},
     Json,
@@ -144,12 +144,14 @@ pub(super) async fn workflows_simulate(
 
 pub(super) async fn workflows_run(
     State(state): State<AppState>,
+    Extension(tenant_context): Extension<tandem_types::TenantContext>,
     Path(WorkflowRunPath { id }): Path<WorkflowRunPath>,
 ) -> Result<Json<Value>, StatusCode> {
     let workflow = state.get_workflow(&id).await.ok_or(StatusCode::NOT_FOUND)?;
     let run = execute_workflow(
         &state,
         &workflow,
+        tenant_context,
         Some("manual".to_string()),
         None,
         None,

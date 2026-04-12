@@ -1467,6 +1467,7 @@ mod tests {
         crate::automation_v2::types::AutomationV2RunRecord {
             run_id: "run-test".to_string(),
             automation_id: "automation-test".to_string(),
+            tenant_context: tandem_types::TenantContext::local_implicit(),
             trigger_type: "manual".to_string(),
             status: crate::automation_v2::types::AutomationRunStatus::Running,
             created_at_ms: 0,

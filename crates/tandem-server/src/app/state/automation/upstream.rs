@@ -194,6 +194,7 @@ mod tests {
         AutomationV2RunRecord {
             run_id: "run_1".to_string(),
             automation_id: "automation_1".to_string(),
+            tenant_context: tandem_types::TenantContext::local_implicit(),
             trigger_type: "manual".to_string(),
             status: AutomationRunStatus::Running,
             created_at_ms: 1,

@@ -5,6 +5,8 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+use tandem_enterprise_contract::{AuthorityChain, LocalImplicitTenant, TenantContext};
+
 // ============================================================================
 // Configuration
 // ============================================================================
@@ -230,6 +232,12 @@ pub struct Run {
     /// Last persisted checkpoint id for crash-safe resume.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub current_checkpoint_id: Option<String>,
+    /// Authority chain for delegation and approval tracking.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub authority_chain: Option<AuthorityChain>,
+    /// Explicit tenant context for tenant-aware execution.
+    #[serde(default)]
+    pub tenant_context: TenantContext,
 }
 
 impl Run {
@@ -259,7 +267,30 @@ impl Run {
             revision_feedback: None,
             why_next_step: None,
             current_checkpoint_id: None,
+            authority_chain: None,
+            tenant_context: LocalImplicitTenant.into(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tandem_enterprise_contract::TenantSource;
+
+    #[test]
+    fn run_new_uses_local_implicit_tenant() {
+        let run = Run::new(
+            "run-1".to_string(),
+            "session-1".to_string(),
+            "objective".to_string(),
+            OrchestratorConfig::default(),
+        );
+        assert_eq!(run.tenant_context.org_id, "local");
+        assert_eq!(run.tenant_context.workspace_id, "local");
+        assert_eq!(run.tenant_context.source, TenantSource::LocalImplicit);
+        assert_eq!(run.tenant_context.actor_id, None);
+        assert!(run.authority_chain.is_none());
     }
 }
 
@@ -571,6 +602,12 @@ pub struct Artifact {
     pub path: String,
     /// Optional content preview
     pub preview: Option<String>,
+    /// Explicit tenant context for artifact lineage.
+    #[serde(default)]
+    pub tenant_context: TenantContext,
+    /// Authority chain for the action that produced the artifact.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub authority_chain: Option<AuthorityChain>,
 }
 
 /// Result of validation
@@ -787,6 +824,10 @@ pub struct RunEventRecord {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub step_id: Option<String>,
     #[serde(default)]
+    pub tenant_context: TenantContext,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub authority_chain: Option<AuthorityChain>,
+    #[serde(default)]
     pub payload: serde_json::Value,
 }
 
@@ -954,6 +995,12 @@ pub struct ApprovalRequest {
     pub reason: String,
     /// Preview of the action (diff, command, etc.)
     pub preview: Option<String>,
+    /// Tenant context for the approval request.
+    #[serde(default)]
+    pub tenant_context: TenantContext,
+    /// Authority chain associated with the request.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub authority_chain: Option<AuthorityChain>,
     /// Request timestamp
     pub requested_at: chrono::DateTime<chrono::Utc>,
 }

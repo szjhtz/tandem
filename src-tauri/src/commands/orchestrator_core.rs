@@ -480,6 +480,8 @@ fn context_event_to_run_event(
         event_type: event.event_type,
         status: context_status_to_run_status(event.status),
         step_id: event.step_id,
+        tenant_context: tandem_enterprise_contract::LocalImplicitTenant.into(),
+        authority_chain: None,
         payload: event.payload,
     }
 }

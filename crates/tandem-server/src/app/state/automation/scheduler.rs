@@ -1,6 +1,7 @@
 use crate::app::state::automation::rate_limit::RateLimitManager;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use tandem_types::TenantContext;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AutomationSchedulerMetrics {
@@ -36,6 +37,8 @@ impl QueueReason {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SchedulerMetadata {
+    #[serde(default = "default_tenant_context")]
+    pub tenant_context: TenantContext,
     pub queue_reason: Option<QueueReason>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub resource_key: Option<String>,
@@ -43,6 +46,10 @@ pub struct SchedulerMetadata {
     pub rate_limited_provider: Option<String>,
     #[serde(default)]
     pub queued_at_ms: u64,
+}
+
+fn default_tenant_context() -> TenantContext {
+    TenantContext::local_implicit()
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -145,6 +152,7 @@ impl AutomationScheduler {
         for provider in required_providers {
             if self.rate_limits.is_provider_throttled(provider) {
                 return Err(SchedulerMetadata {
+                    tenant_context: TenantContext::local_implicit(),
                     queue_reason: Some(QueueReason::RateLimit),
                     resource_key: None,
                     rate_limited_provider: Some(provider.clone()),
@@ -157,6 +165,7 @@ impl AutomationScheduler {
         if let Some(root) = workspace_root {
             if self.locked_workspaces.contains_key(root) {
                 return Err(SchedulerMetadata {
+                    tenant_context: TenantContext::local_implicit(),
                     queue_reason: Some(QueueReason::WorkspaceLock),
                     resource_key: Some(root.to_string()),
                     rate_limited_provider: None,
@@ -168,6 +177,7 @@ impl AutomationScheduler {
         // 3. Check global capacity
         if self.active_runs.len() >= self.max_concurrent_runs {
             return Err(SchedulerMetadata {
+                tenant_context: TenantContext::local_implicit(),
                 queue_reason: Some(QueueReason::Capacity),
                 resource_key: None,
                 rate_limited_provider: None,

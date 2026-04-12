@@ -16,6 +16,7 @@ members = [
     "crates/tandem-skills",
     "crates/tandem-memory",
     "crates/tandem-orchestrator",
+    "crates/tandem-enterprise-contract",
     "crates/tandem-channels",
     "crates/tandem-agent-teams",
     "crates/tandem-workflows",

@@ -1325,6 +1325,7 @@ async fn process_channel_message(
         msg.attachment_filename.as_deref(),
         route.agent.as_deref(),
         effective_allowlist.as_ref(),
+        &msg.channel,
     )
     .await;
     if let Err(e) = channel.stop_typing(&msg.reply_target).await {
@@ -2639,6 +2640,7 @@ async fn run_in_session(
     attachment_filename: Option<&str>,
     agent: Option<&str>,
     tool_allowlist: Option<&Vec<String>>,
+    channel_name: &str,
 ) -> anyhow::Result<String> {
     let timeout_secs: u64 = std::env::var("TANDEM_CHANNEL_MAX_WAIT_SECONDS")
         .ok()
@@ -2667,7 +2669,15 @@ async fn run_in_session(
     if let Some(allowlist) = tool_allowlist {
         body["tool_allowlist"] = serde_json::json!(allowlist);
     }
-    if let Ok(Some(model)) = fetch_default_model_spec(&client, base_url, api_token).await {
+    let model_spec =
+        match fetch_channel_model_spec(&client, base_url, api_token, channel_name).await {
+            Ok(Some(model)) => Some(model),
+            _ => fetch_default_model_spec(&client, base_url, api_token)
+                .await
+                .ok()
+                .flatten(),
+        };
+    if let Some(model) = model_spec {
         body["model"] = model;
     }
 
@@ -3047,6 +3057,49 @@ async fn fetch_default_model_spec(
     Ok(Some(serde_json::json!({
         "provider_id": default_provider,
         "model_id": default_model
+    })))
+}
+
+async fn fetch_channel_model_spec(
+    client: &reqwest::Client,
+    base_url: &str,
+    api_token: &str,
+    channel_name: &str,
+) -> anyhow::Result<Option<serde_json::Value>> {
+    let channel_name = channel_name.trim().to_ascii_lowercase();
+    if channel_name.is_empty() {
+        return Ok(None);
+    }
+
+    let url = format!("{base_url}/channels/config");
+    let resp = add_auth(client.get(&url), api_token).send().await?;
+    if !resp.status().is_success() {
+        return Ok(None);
+    }
+
+    let cfg: serde_json::Value = resp.json().await?;
+    let Some(channel_cfg) = cfg.get(&channel_name) else {
+        return Ok(None);
+    };
+
+    let provider_id = channel_cfg
+        .get("model_provider_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim();
+    let model_id = channel_cfg
+        .get("model_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim();
+
+    if provider_id.is_empty() || model_id.is_empty() {
+        return Ok(None);
+    }
+
+    Ok(Some(serde_json::json!({
+        "provider_id": provider_id,
+        "model_id": model_id
     })))
 }
 

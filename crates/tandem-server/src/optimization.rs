@@ -1624,6 +1624,7 @@ mod tests {
         let run = AutomationV2RunRecord {
             run_id: "run-1".to_string(),
             automation_id: workflow.automation_id.clone(),
+            tenant_context: tandem_types::TenantContext::local_implicit(),
             trigger_type: "manual".to_string(),
             status: crate::AutomationRunStatus::Completed,
             created_at_ms: 1,

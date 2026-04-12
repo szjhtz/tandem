@@ -25,6 +25,12 @@ fn mask_saved_token(has_token: bool) -> Option<&'static str> {
     }
 }
 
+fn trim_optional_string(value: Option<String>) -> Option<String> {
+    value
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
 pub(super) async fn channels_config(State(state): State<AppState>) -> Json<Value> {
     let effective = state.config.get_effective_value().await;
     let channels = effective.get("channels").and_then(Value::as_object);
@@ -64,6 +70,12 @@ pub(super) async fn channels_config(State(state): State<AppState>) -> Json<Value
                 .and_then(|cfg| cfg.get("mention_only"))
                 .and_then(Value::as_bool)
                 .unwrap_or(false),
+            "model_provider_id": telegram
+                .and_then(|cfg| cfg.get("model_provider_id"))
+                .and_then(Value::as_str),
+            "model_id": telegram
+                .and_then(|cfg| cfg.get("model_id"))
+                .and_then(Value::as_str),
             "style_profile": telegram
                 .and_then(|cfg| cfg.get("style_profile"))
                 .and_then(Value::as_str)
@@ -84,6 +96,12 @@ pub(super) async fn channels_config(State(state): State<AppState>) -> Json<Value
             "guild_id": discord
                 .and_then(|cfg| cfg.get("guild_id"))
                 .and_then(Value::as_str),
+            "model_provider_id": discord
+                .and_then(|cfg| cfg.get("model_provider_id"))
+                .and_then(Value::as_str),
+            "model_id": discord
+                .and_then(|cfg| cfg.get("model_id"))
+                .and_then(Value::as_str),
             "security_profile": discord
                 .and_then(|cfg| cfg.get("security_profile"))
                 .and_then(Value::as_str)
@@ -99,6 +117,12 @@ pub(super) async fn channels_config(State(state): State<AppState>) -> Json<Value
                 .unwrap_or(false),
             "channel_id": slack
                 .and_then(|cfg| cfg.get("channel_id"))
+                .and_then(Value::as_str),
+            "model_provider_id": slack
+                .and_then(|cfg| cfg.get("model_provider_id"))
+                .and_then(Value::as_str),
+            "model_id": slack
+                .and_then(|cfg| cfg.get("model_id"))
                 .and_then(Value::as_str),
             "security_profile": slack
                 .and_then(|cfg| cfg.get("security_profile"))
@@ -337,10 +361,11 @@ async fn discord_channel_verify(state: &AppState, payload: &Value) -> Value {
 pub(super) async fn channels_put(
     State(state): State<AppState>,
     Path(name): Path<String>,
-    Json(input): Json<Value>,
+    Json(mut input): Json<Value>,
 ) -> Result<Json<Value>, StatusCode> {
     let normalized = name.to_ascii_lowercase();
     let effective = state.config.get_effective_value().await;
+    let statuses = state.channel_statuses().await;
     let existing_channel_cfg = |channel: &str| -> Option<&serde_json::Map<String, Value>> {
         effective
             .get("channels")
@@ -348,12 +373,30 @@ pub(super) async fn channels_put(
             .and_then(|obj| obj.get(channel))
             .and_then(Value::as_object)
     };
+    let channel_is_connected = |channel: &str| -> bool {
+        statuses
+            .get(channel)
+            .map(|status| status.connected)
+            .unwrap_or(false)
+    };
     let existing_bot_token = |channel: &str| -> Option<String> {
         existing_channel_cfg(channel)
             .and_then(|cfg| cfg.get("bot_token"))
             .and_then(Value::as_str)
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
+            .or_else(|| {
+                let env_key = match channel {
+                    "telegram" => "TANDEM_TELEGRAM_BOT_TOKEN",
+                    "discord" => "TANDEM_DISCORD_BOT_TOKEN",
+                    "slack" => "TANDEM_SLACK_BOT_TOKEN",
+                    _ => return None,
+                };
+                std::env::var(env_key)
+                    .ok()
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+            })
     };
     let existing_channel_id = |channel: &str| -> Option<String> {
         existing_channel_cfg(channel)
@@ -361,6 +404,16 @@ pub(super) async fn channels_put(
             .and_then(Value::as_str)
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
+            .or_else(|| {
+                if channel == "slack" {
+                    std::env::var("TANDEM_SLACK_CHANNEL_ID")
+                        .ok()
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty())
+                } else {
+                    None
+                }
+            })
     };
 
     let mut project = state.config.get_project_value().await;
@@ -375,40 +428,90 @@ pub(super) async fn channels_put(
     };
     match normalized.as_str() {
         "telegram" => {
+            if let Some(cfg) = input.as_object_mut() {
+                if cfg
+                    .get("bot_token")
+                    .and_then(Value::as_str)
+                    .is_none_or(|v| v.trim().is_empty())
+                {
+                    if let Some(existing) = existing_bot_token("telegram") {
+                        cfg.insert("bot_token".to_string(), Value::String(existing));
+                    }
+                }
+            }
             let mut cfg: TelegramConfigFile =
                 serde_json::from_value(input).map_err(|_| StatusCode::BAD_REQUEST)?;
             cfg.allowed_users = crate::normalize_allowed_users_or_wildcard(cfg.allowed_users);
+            cfg.model_provider_id = trim_optional_string(cfg.model_provider_id);
+            cfg.model_id = trim_optional_string(cfg.model_id);
             if cfg.bot_token.trim().is_empty() {
                 cfg.bot_token = existing_bot_token("telegram").unwrap_or_default();
             }
-            if cfg.bot_token.trim().is_empty() {
+            if cfg.bot_token.trim().is_empty() && !channel_is_connected("telegram") {
                 return Err(StatusCode::BAD_REQUEST);
             }
             channels_obj.insert("telegram".to_string(), json!(cfg));
         }
         "discord" => {
+            if let Some(cfg) = input.as_object_mut() {
+                if cfg
+                    .get("bot_token")
+                    .and_then(Value::as_str)
+                    .is_none_or(|v| v.trim().is_empty())
+                {
+                    if let Some(existing) = existing_bot_token("discord") {
+                        cfg.insert("bot_token".to_string(), Value::String(existing));
+                    }
+                }
+            }
             let mut cfg: DiscordConfigFile =
                 serde_json::from_value(input).map_err(|_| StatusCode::BAD_REQUEST)?;
             cfg.allowed_users = crate::normalize_allowed_users_or_wildcard(cfg.allowed_users);
+            cfg.model_provider_id = trim_optional_string(cfg.model_provider_id);
+            cfg.model_id = trim_optional_string(cfg.model_id);
             if cfg.bot_token.trim().is_empty() {
                 cfg.bot_token = existing_bot_token("discord").unwrap_or_default();
             }
-            if cfg.bot_token.trim().is_empty() {
+            if cfg.bot_token.trim().is_empty() && !channel_is_connected("discord") {
                 return Err(StatusCode::BAD_REQUEST);
             }
             channels_obj.insert("discord".to_string(), json!(cfg));
         }
         "slack" => {
+            if let Some(cfg) = input.as_object_mut() {
+                if cfg
+                    .get("bot_token")
+                    .and_then(Value::as_str)
+                    .is_none_or(|v| v.trim().is_empty())
+                {
+                    if let Some(existing) = existing_bot_token("slack") {
+                        cfg.insert("bot_token".to_string(), Value::String(existing));
+                    }
+                }
+                if cfg
+                    .get("channel_id")
+                    .and_then(Value::as_str)
+                    .is_none_or(|v| v.trim().is_empty())
+                {
+                    if let Some(existing) = existing_channel_id("slack") {
+                        cfg.insert("channel_id".to_string(), Value::String(existing));
+                    }
+                }
+            }
             let mut cfg: SlackConfigFile =
                 serde_json::from_value(input).map_err(|_| StatusCode::BAD_REQUEST)?;
             cfg.allowed_users = crate::normalize_allowed_users_or_wildcard(cfg.allowed_users);
+            cfg.model_provider_id = trim_optional_string(cfg.model_provider_id);
+            cfg.model_id = trim_optional_string(cfg.model_id);
             if cfg.bot_token.trim().is_empty() {
                 cfg.bot_token = existing_bot_token("slack").unwrap_or_default();
             }
             if cfg.channel_id.trim().is_empty() {
                 cfg.channel_id = existing_channel_id("slack").unwrap_or_default();
             }
-            if cfg.bot_token.trim().is_empty() || cfg.channel_id.trim().is_empty() {
+            if (cfg.bot_token.trim().is_empty() || cfg.channel_id.trim().is_empty())
+                && !channel_is_connected("slack")
+            {
                 return Err(StatusCode::BAD_REQUEST);
             }
             channels_obj.insert("slack".to_string(), json!(cfg));

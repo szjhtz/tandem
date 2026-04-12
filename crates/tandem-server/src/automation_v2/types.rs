@@ -9,6 +9,7 @@ use tandem_plan_compiler::api::{
     ProjectedAutomationContextMaterialization, ProjectedRoutineContextPartition,
     ProjectedStepContextBindings,
 };
+use tandem_types::TenantContext;
 
 use crate::routines::types::RoutineMisfirePolicy;
 
@@ -948,6 +949,8 @@ pub struct AutomationRunCheckpoint {
 pub struct AutomationV2RunRecord {
     pub run_id: String,
     pub automation_id: String,
+    #[serde(default = "default_tenant_context")]
+    pub tenant_context: TenantContext,
     pub trigger_type: String,
     pub status: AutomationRunStatus,
     pub created_at_ms: u64,
@@ -996,6 +999,10 @@ pub struct AutomationV2RunRecord {
     /// Used for idempotency: a retry of this run will not re-consume a second handoff.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub consumed_handoff_id: Option<String>,
+}
+
+fn default_tenant_context() -> TenantContext {
+    TenantContext::local_implicit()
 }
 
 #[cfg(test)]

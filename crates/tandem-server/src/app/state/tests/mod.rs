@@ -8,6 +8,7 @@ use tandem_core::{
 use tandem_providers::ProviderRegistry;
 use tandem_runtime::{LspManager, McpRegistry, PtyManager, WorkspaceIndex};
 use tandem_tools::ToolRegistry;
+use tandem_types::TenantContext;
 
 pub(crate) fn test_automation_node(
     node_id: &str,
@@ -103,6 +104,7 @@ pub(crate) fn test_phase_run(
     AutomationV2RunRecord {
         run_id: "run-phase-test".to_string(),
         automation_id: "auto-phase-test".to_string(),
+        tenant_context: TenantContext::local_implicit(),
         trigger_type: "manual".to_string(),
         status: AutomationRunStatus::Queued,
         created_at_ms: 1,

@@ -2,6 +2,7 @@
 
 pub mod agent_teams;
 pub mod app;
+pub mod audit;
 pub mod automation_v2;
 pub mod browser;
 pub mod bug_monitor;

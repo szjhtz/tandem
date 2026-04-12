@@ -7329,6 +7329,7 @@ dependencies = [
  "sqlite-vec",
  "tandem-core",
  "tandem-document",
+ "tandem-enterprise-contract",
  "tandem-memory",
  "tandem-observability",
  "tandem-skills",
@@ -7484,6 +7485,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "tandem-enterprise-contract"
+version = "0.4.23"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "tandem-memory"
 version = "0.4.23"
 dependencies = [
@@ -7606,6 +7614,7 @@ dependencies = [
  "tandem-browser",
  "tandem-channels",
  "tandem-core",
+ "tandem-enterprise-contract",
  "tandem-memory",
  "tandem-observability",
  "tandem-orchestrator",
@@ -7710,6 +7719,7 @@ dependencies = [
  "chrono",
  "serde",
  "serde_json",
+ "tandem-enterprise-contract",
  "uuid",
 ]
 
@@ -7732,6 +7742,7 @@ dependencies = [
  "serde_json",
  "serde_yaml",
  "tandem-orchestrator",
+ "tandem-types",
  "tempfile",
 ]
 

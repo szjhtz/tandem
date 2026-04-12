@@ -38,6 +38,14 @@ fn extract_event_session_id(properties: &Value) -> Option<String> {
         .map(|s| s.to_string())
 }
 
+fn event_tenant_context_value(event: &EngineEvent) -> Value {
+    event
+        .properties
+        .get("tenantContext")
+        .cloned()
+        .unwrap_or(Value::Null)
+}
+
 fn session_context_run_event_input(event: &EngineEvent) -> Option<ContextRunEventAppendInput> {
     match event.event_type.as_str() {
         "session.run.started" => Some(ContextRunEventAppendInput {
@@ -49,6 +57,7 @@ fn session_context_run_event_input(event: &EngineEvent) -> Option<ContextRunEven
                 "runID": event.properties.get("runID").cloned().unwrap_or(Value::Null),
                 "agentID": event.properties.get("agentID").cloned().unwrap_or(Value::Null),
                 "agentProfile": event.properties.get("agentProfile").cloned().unwrap_or(Value::Null),
+                "tenantContext": event_tenant_context_value(event),
                 "why_next_step": "session run in progress",
                 "step_status": "in_progress",
             }),
@@ -87,6 +96,7 @@ fn session_context_run_event_input(event: &EngineEvent) -> Option<ContextRunEven
                     "runID": event.properties.get("runID").cloned().unwrap_or(Value::Null),
                     "part": part.clone(),
                     "toolCallDelta": event.properties.get("toolCallDelta").cloned().unwrap_or(Value::Null),
+                    "tenantContext": event_tenant_context_value(event),
                     "why_next_step": why_next_step,
                     "step_status": if tool_state == "completed" { "done" } else { "in_progress" },
                     "error": part.get("error").cloned().unwrap_or(Value::Null),
@@ -108,6 +118,7 @@ fn session_context_run_event_input(event: &EngineEvent) -> Option<ContextRunEven
                     "runID": event.properties.get("runID").cloned().unwrap_or(Value::Null),
                     "status": status,
                     "error": event.properties.get("error").cloned().unwrap_or(Value::Null),
+                    "tenantContext": event_tenant_context_value(event),
                     "why_next_step": format!("session run finished with status `{status}`"),
                     "step_status": if matches!(status, "completed") { "done" } else if matches!(status, "cancelled") { "blocked" } else { "failed" },
                 }),
@@ -142,6 +153,7 @@ fn session_context_run_event_input(event: &EngineEvent) -> Option<ContextRunEven
                     "messageID": event.properties.get("messageID").cloned().unwrap_or(Value::Null),
                     "tool": event.properties.get("tool").cloned().unwrap_or(Value::Null),
                     "record": record.clone(),
+                    "tenantContext": event_tenant_context_value(event),
                     "why_next_step": summary,
                     "step_status": if matches!(status, "failed" | "blocked") {
                         "blocked"
@@ -174,6 +186,7 @@ fn session_context_run_event_input(event: &EngineEvent) -> Option<ContextRunEven
                     "messageID": event.properties.get("messageID").cloned().unwrap_or(Value::Null),
                     "tool": event.properties.get("tool").cloned().unwrap_or(Value::Null),
                     "record": record.clone(),
+                    "tenantContext": event_tenant_context_value(event),
                     "why_next_step": format!(
                         "mutation checkpoint for `{tool}` recorded with outcome `{outcome}` and {changed_file_count} changed files"
                     ),

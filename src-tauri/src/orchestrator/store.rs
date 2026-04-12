@@ -711,6 +711,8 @@ mod tests {
                         event_type: "task_trace".to_string(),
                         status: RunStatus::Running,
                         step_id: Some("task-1".to_string()),
+                        tenant_context: tandem_enterprise_contract::LocalImplicitTenant.into(),
+                        authority_chain: None,
                         payload: json!({ "idx": seq }),
                     },
                 )

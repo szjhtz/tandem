@@ -141,6 +141,49 @@ pub(super) struct MemoryDeleteQuery {
     channel_tag: Option<String>,
 }
 
+fn tenant_context_event_value(tenant_context: &TenantContext) -> Value {
+    serde_json::to_value(tenant_context).unwrap_or_else(|_| json!(tenant_context))
+}
+
+fn with_tenant_context(mut properties: Value, tenant_context: &TenantContext) -> Value {
+    if let Some(map) = properties.as_object_mut() {
+        map.insert(
+            "tenantContext".to_string(),
+            tenant_context_event_value(tenant_context),
+        );
+    }
+    properties
+}
+
+fn publish_tenant_event(
+    state: &AppState,
+    tenant_context: &TenantContext,
+    event_type: &str,
+    properties: Value,
+) {
+    state.event_bus.publish(EngineEvent::new(
+        event_type,
+        with_tenant_context(properties, tenant_context),
+    ));
+}
+
+fn event_tenant_context(event: &EngineEvent) -> Option<TenantContext> {
+    event
+        .properties
+        .get("tenantContext")
+        .cloned()
+        .and_then(|value| serde_json::from_value(value).ok())
+}
+
+fn record_tenant_context(record: &GlobalMemoryRecord) -> TenantContext {
+    record
+        .provenance
+        .as_ref()
+        .and_then(|value| value.get("tenant_context").cloned())
+        .and_then(|value| serde_json::from_value(value).ok())
+        .unwrap_or_default()
+}
+
 pub(super) fn skills_service() -> SkillService {
     SkillService::for_workspace(std::env::current_dir().ok())
 }
@@ -170,6 +213,7 @@ pub(super) async fn ensure_skill_router_context_run(
     let run = ContextRunState {
         run_id: run_id.to_string(),
         run_type: "skill_router".to_string(),
+        tenant_context: TenantContext::local_implicit(),
         source_client: Some("skills_api".to_string()),
         model_provider: None,
         model_id: None,
@@ -1115,11 +1159,13 @@ fn memory_put_provenance(
     request: &MemoryPutRequest,
     partition_key: &str,
     artifact_refs: &[String],
+    tenant_context: &TenantContext,
 ) -> Value {
     json!({
         "origin_event_type": "memory.put",
         "origin_run_id": request.run_id,
         "partition_key": partition_key,
+        "tenant_context": tenant_context,
         "partition": {
             "org_id": request.partition.org_id,
             "workspace_id": request.partition.workspace_id,
@@ -1132,6 +1178,7 @@ fn memory_put_provenance(
 
 async fn emit_blocked_memory_promote_guardrail(
     state: &AppState,
+    tenant_context: &TenantContext,
     request: &MemoryPromoteRequest,
     actor: String,
     detail: &str,
@@ -1158,10 +1205,12 @@ async fn emit_blocked_memory_promote_guardrail(
     });
     append_memory_audit(
         state,
+        tenant_context,
         crate::MemoryAuditEvent {
             audit_id: audit_id.clone(),
             action: "memory_promote".to_string(),
             run_id: request.run_id.clone(),
+            tenant_context: tenant_context.clone(),
             memory_id: None,
             source_memory_id: Some(request.source_memory_id.clone()),
             to_tier: Some(request.to_tier),
@@ -1173,7 +1222,9 @@ async fn emit_blocked_memory_promote_guardrail(
         },
     )
     .await?;
-    state.event_bus.publish(EngineEvent::new(
+    publish_tenant_event(
+        state,
+        tenant_context,
         "memory.promote",
         json!({
             "runID": request.run_id,
@@ -1190,12 +1241,13 @@ async fn emit_blocked_memory_promote_guardrail(
             "detail": detail,
             "auditID": audit_id,
         }),
-    ));
+    );
     Ok(())
 }
 
 async fn emit_blocked_memory_put_guardrail(
     state: &AppState,
+    tenant_context: &TenantContext,
     request: &MemoryPutRequest,
     actor: String,
     detail: &str,
@@ -1207,7 +1259,12 @@ async fn emit_blocked_memory_put_guardrail(
         &request.artifact_refs,
         request.classification,
     );
-    let provenance = memory_put_provenance(request, &partition_key, &request.artifact_refs);
+    let provenance = memory_put_provenance(
+        request,
+        &partition_key,
+        &request.artifact_refs,
+        tenant_context,
+    );
     let linkage = memory_linkage_from_parts(
         &request.run_id,
         Some(&request.partition.project_id),
@@ -1216,10 +1273,12 @@ async fn emit_blocked_memory_put_guardrail(
     );
     append_memory_audit(
         state,
+        tenant_context,
         crate::MemoryAuditEvent {
             audit_id: audit_id.clone(),
             action: "memory_put".to_string(),
             run_id: request.run_id.clone(),
+            tenant_context: tenant_context.clone(),
             memory_id: None,
             source_memory_id: None,
             to_tier: Some(request.partition.tier),
@@ -1231,7 +1290,9 @@ async fn emit_blocked_memory_put_guardrail(
         },
     )
     .await?;
-    state.event_bus.publish(EngineEvent::new(
+    publish_tenant_event(
+        state,
+        tenant_context,
         "memory.put",
         json!({
             "runID": request.run_id,
@@ -1246,7 +1307,7 @@ async fn emit_blocked_memory_put_guardrail(
             "detail": detail,
             "auditID": audit_id,
         }),
-    ));
+    );
     Ok(())
 }
 
@@ -1279,6 +1340,7 @@ fn validate_memory_capability_guardrail_context(
 
 async fn validate_memory_put_capability_with_guardrail(
     state: &AppState,
+    tenant_context: &TenantContext,
     request: &MemoryPutRequest,
     capability: Option<MemoryCapabilityToken>,
 ) -> Result<MemoryCapabilityToken, StatusCode> {
@@ -1289,7 +1351,8 @@ async fn validate_memory_put_capability_with_guardrail(
     ) {
         Ok(cap) => cap,
         Err((actor, detail, status)) => {
-            emit_blocked_memory_put_guardrail(state, request, actor, detail).await?;
+            emit_blocked_memory_put_guardrail(state, tenant_context, request, actor, detail)
+                .await?;
             return Err(status);
         }
     };
@@ -1298,6 +1361,7 @@ async fn validate_memory_put_capability_with_guardrail(
 
 async fn validate_memory_promote_capability_with_guardrail(
     state: &AppState,
+    tenant_context: &TenantContext,
     request: &MemoryPromoteRequest,
     capability: Option<MemoryCapabilityToken>,
 ) -> Result<MemoryCapabilityToken, StatusCode> {
@@ -1308,7 +1372,8 @@ async fn validate_memory_promote_capability_with_guardrail(
     ) {
         Ok(cap) => cap,
         Err((actor, detail, status)) => {
-            emit_blocked_memory_promote_guardrail(state, request, actor, detail).await?;
+            emit_blocked_memory_promote_guardrail(state, tenant_context, request, actor, detail)
+                .await?;
             return Err(status);
         }
     };
@@ -1317,6 +1382,7 @@ async fn validate_memory_promote_capability_with_guardrail(
 
 async fn validate_memory_search_capability_with_guardrail(
     state: &AppState,
+    tenant_context: &TenantContext,
     request: &MemorySearchRequest,
     capability: Option<MemoryCapabilityToken>,
 ) -> Result<MemoryCapabilityToken, StatusCode> {
@@ -1339,6 +1405,7 @@ async fn validate_memory_search_capability_with_guardrail(
                 detail,
                 actor,
                 state,
+                tenant_context,
                 request,
                 &requested_scopes,
                 &request.partition.key(),
@@ -1354,6 +1421,7 @@ async fn emit_blocked_memory_search_guardrail(
     detail: &str,
     actor: String,
     state: &AppState,
+    tenant_context: &TenantContext,
     request: &MemorySearchRequest,
     requested_scopes: &[tandem_memory::GovernedMemoryTier],
     partition_key: &str,
@@ -1389,10 +1457,12 @@ async fn emit_blocked_memory_search_guardrail(
     );
     append_memory_audit(
         state,
+        tenant_context,
         crate::MemoryAuditEvent {
             audit_id: audit_id.clone(),
             action: "memory_search".to_string(),
             run_id: request.run_id.clone(),
+            tenant_context: tenant_context.clone(),
             memory_id: None,
             source_memory_id: None,
             to_tier: None,
@@ -1404,7 +1474,9 @@ async fn emit_blocked_memory_search_guardrail(
         },
     )
     .await?;
-    state.event_bus.publish(EngineEvent::new(
+    publish_tenant_event(
+        state,
+        tenant_context,
         "memory.search",
         json!({
             "runID": request.run_id,
@@ -1421,12 +1493,13 @@ async fn emit_blocked_memory_search_guardrail(
             "detail": detail,
             "auditID": audit_id,
         }),
-    ));
+    );
     Err(status_code)
 }
 
 async fn emit_missing_memory_demote_audit(
     state: &AppState,
+    tenant_context: &TenantContext,
     run_id: &str,
     memory_id: &str,
     detail: &str,
@@ -1434,10 +1507,12 @@ async fn emit_missing_memory_demote_audit(
     let audit_id = Uuid::new_v4().to_string();
     append_memory_audit(
         state,
+        tenant_context,
         crate::MemoryAuditEvent {
             audit_id: audit_id.clone(),
             action: "memory_demote".to_string(),
             run_id: run_id.to_string(),
+            tenant_context: tenant_context.clone(),
             memory_id: Some(memory_id.to_string()),
             source_memory_id: None,
             to_tier: None,
@@ -1449,7 +1524,9 @@ async fn emit_missing_memory_demote_audit(
         },
     )
     .await?;
-    state.event_bus.publish(EngineEvent::new(
+    publish_tenant_event(
+        state,
+        tenant_context,
         "memory.updated",
         json!({
             "memoryID": memory_id,
@@ -1466,22 +1543,25 @@ async fn emit_missing_memory_demote_audit(
             "detail": detail,
             "auditID": audit_id,
         }),
-    ));
+    );
     Ok(())
 }
 
 async fn emit_missing_memory_delete_audit(
     state: &AppState,
+    tenant_context: &TenantContext,
     memory_id: &str,
     detail: &str,
 ) -> Result<(), StatusCode> {
     let audit_id = Uuid::new_v4().to_string();
     append_memory_audit(
         state,
+        tenant_context,
         crate::MemoryAuditEvent {
             audit_id: audit_id.clone(),
             action: "memory_delete".to_string(),
             run_id: "unknown".to_string(),
+            tenant_context: tenant_context.clone(),
             memory_id: Some(memory_id.to_string()),
             source_memory_id: None,
             to_tier: None,
@@ -1493,7 +1573,9 @@ async fn emit_missing_memory_delete_audit(
         },
     )
     .await?;
-    state.event_bus.publish(EngineEvent::new(
+    publish_tenant_event(
+        state,
+        tenant_context,
         "memory.deleted",
         json!({
             "memoryID": memory_id,
@@ -1509,7 +1591,7 @@ async fn emit_missing_memory_delete_audit(
             "detail": detail,
             "auditID": audit_id,
         }),
-    ));
+    );
     Ok(())
 }
 
@@ -1546,6 +1628,7 @@ fn memory_promote_provenance(
     request: &MemoryPromoteRequest,
     partition_key: &str,
     promoted_at_ms: u64,
+    tenant_context: &TenantContext,
 ) -> Value {
     let mut obj = provenance
         .and_then(Value::as_object)
@@ -1561,6 +1644,7 @@ fn memory_promote_provenance(
             "to_tier": request.to_tier,
             "reviewer_id": request.review.reviewer_id,
             "approval_id": request.review.approval_id,
+            "tenant_context": tenant_context,
         }),
     );
     Value::Object(obj)
@@ -1784,11 +1868,51 @@ pub(super) fn hash_text(input: &str) -> String {
 
 pub(super) async fn append_memory_audit(
     state: &AppState,
-    event: crate::MemoryAuditEvent,
+    tenant_context: &TenantContext,
+    mut event: crate::MemoryAuditEvent,
 ) -> Result<(), StatusCode> {
+    event.tenant_context = tenant_context.clone();
+    if let Some(parent) = state.memory_audit_path.parent() {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    }
+    let line = serde_json::to_string(&event).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let mut file = tokio::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&state.memory_audit_path)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    tokio::io::AsyncWriteExt::write_all(&mut file, line.as_bytes())
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    tokio::io::AsyncWriteExt::write_all(&mut file, b"\n")
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    file.sync_data()
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let mut audit = state.memory_audit_log.write().await;
     audit.push(event);
     Ok(())
+}
+
+async fn load_memory_audit_events(path: &std::path::Path) -> Vec<crate::MemoryAuditEvent> {
+    let Ok(content) = tokio::fs::read_to_string(path).await else {
+        return Vec::new();
+    };
+
+    content
+        .lines()
+        .filter_map(|line| {
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                return None;
+            }
+            serde_json::from_str::<crate::MemoryAuditEvent>(trimmed).ok()
+        })
+        .collect()
 }
 
 #[derive(Debug, Clone)]
@@ -1797,6 +1921,7 @@ pub(super) struct RunMemoryContext {
     user_id: String,
     started_at_ms: u64,
     host_tag: Option<String>,
+    tenant_context: TenantContext,
 }
 
 pub(super) async fn open_global_memory_db() -> Option<MemoryDatabase> {
@@ -1849,7 +1974,10 @@ pub(super) async fn persist_global_memory_record(
     db: &MemoryDatabase,
     mut record: GlobalMemoryRecord,
 ) {
-    state.event_bus.publish(EngineEvent::new(
+    let tenant_context = record_tenant_context(&record);
+    publish_tenant_event(
+        state,
+        &tenant_context,
         "memory.write.attempted",
         json!({
             "runID": record.run_id,
@@ -1857,10 +1985,12 @@ pub(super) async fn persist_global_memory_record(
             "sessionID": record.session_id,
             "messageID": record.message_id,
         }),
-    ));
+    );
     let (scrubbed, scrub) = scrub_content_for_memory(&record.content);
     if scrub.status == ScrubStatus::Blocked || scrubbed.trim().is_empty() {
-        state.event_bus.publish(EngineEvent::new(
+        publish_tenant_event(
+            state,
+            &tenant_context,
             "memory.write.skipped",
             json!({
                 "runID": record.run_id,
@@ -1869,7 +1999,7 @@ pub(super) async fn persist_global_memory_record(
                 "sessionID": record.session_id,
                 "messageID": record.message_id,
             }),
-        ));
+        );
         return;
     }
     record.content = scrubbed;
@@ -1887,7 +2017,9 @@ pub(super) async fn persist_global_memory_record(
             } else {
                 "memory.write.succeeded"
             };
-            state.event_bus.publish(EngineEvent::new(
+            publish_tenant_event(
+                state,
+                &tenant_context,
                 event_name,
                 json!({
                     "runID": record.run_id,
@@ -1899,10 +2031,12 @@ pub(super) async fn persist_global_memory_record(
                     "sessionID": record.session_id,
                     "messageID": record.message_id,
                 }),
-            ));
+            );
         }
         Err(err) => {
-            state.event_bus.publish(EngineEvent::new(
+            publish_tenant_event(
+                state,
+                &tenant_context,
                 "memory.write.skipped",
                 json!({
                     "runID": record.run_id,
@@ -1911,7 +2045,7 @@ pub(super) async fn persist_global_memory_record(
                     "sessionID": record.session_id,
                     "messageID": record.message_id,
                 }),
-            ));
+            );
         }
     }
 }
@@ -2024,7 +2158,10 @@ pub(super) async fn ingest_run_messages(
                             channel_tag: None,
                             host_tag: ctx.host_tag.clone(),
                             metadata: None,
-                            provenance: Some(json!({"origin_event_type": "session.run.finished"})),
+                            provenance: Some(json!({
+                                "origin_event_type": "session.run.finished",
+                                "tenant_context": ctx.tenant_context,
+                            })),
                             redaction_status: "passed".to_string(),
                             redaction_count: 0,
                             visibility: "private".to_string(),
@@ -2101,6 +2238,9 @@ pub(super) async fn ingest_event_memory_records(
         .map(|c| c.user_id.clone())
         .unwrap_or_else(|| "default".to_string());
     let host_tag = session_ctx.as_ref().and_then(|c| c.host_tag.clone());
+    let tenant_context = event_tenant_context(event)
+        .or_else(|| session_ctx.as_ref().map(|c| c.tenant_context.clone()))
+        .unwrap_or_default();
     let (source_type, content, ttl_ms): (&str, String, Option<u64>) =
         match event.event_type.as_str() {
             "permission.asked" => (
@@ -2213,6 +2353,7 @@ pub(super) async fn ingest_event_memory_records(
             metadata: None,
             provenance: Some(json!({
                 "origin_event_type": event.event_type,
+                "tenant_context": tenant_context,
             })),
             redaction_status: "passed".to_string(),
             redaction_count: 0,
@@ -2263,6 +2404,7 @@ pub(super) async fn run_global_memory_ingestor(state: AppState) {
                             .and_then(|v| v.get("os"))
                             .and_then(|v| v.as_str())
                             .map(ToString::to_string);
+                        let tenant_context = event_tenant_context(&event).unwrap_or_default();
                         by_session.insert(
                             session_id,
                             RunMemoryContext {
@@ -2270,6 +2412,7 @@ pub(super) async fn run_global_memory_ingestor(state: AppState) {
                                 user_id,
                                 started_at_ms,
                                 host_tag,
+                                tenant_context,
                             },
                         );
                     }
@@ -2295,19 +2438,23 @@ pub(super) async fn run_global_memory_ingestor(state: AppState) {
 
 pub(super) async fn memory_put(
     State(state): State<AppState>,
+    Extension(tenant_context): Extension<TenantContext>,
     Json(input): Json<MemoryPutInput>,
 ) -> Result<Json<MemoryPutResponse>, StatusCode> {
-    let response = memory_put_impl(&state, input.request, input.capability).await?;
+    let response =
+        memory_put_impl(&state, &tenant_context, input.request, input.capability).await?;
     Ok(Json(response))
 }
 
 pub(super) async fn memory_put_impl(
     state: &AppState,
+    tenant_context: &TenantContext,
     request: MemoryPutRequest,
     capability: Option<MemoryCapabilityToken>,
 ) -> Result<MemoryPutResponse, StatusCode> {
     let capability =
-        validate_memory_put_capability_with_guardrail(state, &request, capability).await?;
+        validate_memory_put_capability_with_guardrail(state, tenant_context, &request, capability)
+            .await?;
     if !capability
         .memory
         .write_tiers
@@ -2315,6 +2462,7 @@ pub(super) async fn memory_put_impl(
     {
         emit_blocked_memory_put_guardrail(
             state,
+            tenant_context,
             &request,
             capability.subject.clone(),
             "write tier not allowed by capability",
@@ -2365,6 +2513,7 @@ pub(super) async fn memory_put_impl(
             &request,
             &partition_key,
             &artifact_refs,
+            tenant_context,
         )),
         redaction_status: "passed".to_string(),
         redaction_count: 0,
@@ -2393,10 +2542,12 @@ pub(super) async fn memory_put_impl(
     persist_global_memory_record(&state, &db, record).await;
     append_memory_audit(
         &state,
+        tenant_context,
         crate::MemoryAuditEvent {
             audit_id: audit_id.clone(),
             action: "memory_put".to_string(),
             run_id: request.run_id.clone(),
+            tenant_context: tenant_context.clone(),
             memory_id: Some(id.clone()),
             source_memory_id: None,
             to_tier: Some(request.partition.tier),
@@ -2408,7 +2559,9 @@ pub(super) async fn memory_put_impl(
         },
     )
     .await?;
-    state.event_bus.publish(EngineEvent::new(
+    publish_tenant_event(
+        state,
+        tenant_context,
         "memory.put",
         json!({
             "runID": request.run_id,
@@ -2422,8 +2575,10 @@ pub(super) async fn memory_put_impl(
             "linkage": memory_linkage_value.clone(),
             "auditID": audit_id,
         }),
-    ));
-    state.event_bus.publish(EngineEvent::new(
+    );
+    publish_tenant_event(
+        state,
+        tenant_context,
         "memory.updated",
         json!({
             "memoryID": id,
@@ -2438,7 +2593,7 @@ pub(super) async fn memory_put_impl(
             "linkage": memory_linkage_value,
             "auditID": audit_id,
         }),
-    ));
+    );
     Ok(MemoryPutResponse {
         id,
         stored: true,
@@ -2450,23 +2605,32 @@ pub(super) async fn memory_put_impl(
 
 pub(super) async fn memory_promote(
     State(state): State<AppState>,
+    Extension(tenant_context): Extension<TenantContext>,
     Json(input): Json<MemoryPromoteInput>,
 ) -> Result<Json<MemoryPromoteResponse>, StatusCode> {
-    let response = memory_promote_impl(&state, input.request, input.capability).await?;
+    let response =
+        memory_promote_impl(&state, &tenant_context, input.request, input.capability).await?;
     Ok(Json(response))
 }
 
 pub(super) async fn memory_promote_impl(
     state: &AppState,
+    tenant_context: &TenantContext,
     request: MemoryPromoteRequest,
     capability: Option<MemoryCapabilityToken>,
 ) -> Result<MemoryPromoteResponse, StatusCode> {
     let source_memory_id = request.source_memory_id.clone();
-    let capability =
-        validate_memory_promote_capability_with_guardrail(state, &request, capability).await?;
+    let capability = validate_memory_promote_capability_with_guardrail(
+        state,
+        tenant_context,
+        &request,
+        capability,
+    )
+    .await?;
     if !capability.memory.promote_targets.contains(&request.to_tier) {
         emit_blocked_memory_promote_guardrail(
             state,
+            tenant_context,
             &request,
             capability.subject.clone(),
             "promotion target not allowed by capability",
@@ -2479,6 +2643,7 @@ pub(super) async fn memory_promote_impl(
     {
         emit_blocked_memory_promote_guardrail(
             state,
+            tenant_context,
             &request,
             capability.subject.clone(),
             "review approval required for promote",
@@ -2521,10 +2686,12 @@ pub(super) async fn memory_promote_impl(
         });
         append_memory_audit(
             &state,
+            tenant_context,
             crate::MemoryAuditEvent {
                 audit_id: audit_id.clone(),
                 action: "memory_promote".to_string(),
                 run_id: request.run_id.clone(),
+                tenant_context: tenant_context.clone(),
                 memory_id: None,
                 source_memory_id: Some(source_memory_id.clone()),
                 to_tier: Some(request.to_tier),
@@ -2539,7 +2706,9 @@ pub(super) async fn memory_promote_impl(
             },
         )
         .await?;
-        state.event_bus.publish(EngineEvent::new(
+        publish_tenant_event(
+            state,
+            tenant_context,
             "memory.promote",
             json!({
                 "runID": request.run_id,
@@ -2556,7 +2725,7 @@ pub(super) async fn memory_promote_impl(
                 "detail": scrub_report.block_reason.clone(),
                 "auditID": audit_id,
             }),
-        ));
+        );
         return Ok(MemoryPromoteResponse {
             promoted: false,
             new_memory_id: None,
@@ -2579,10 +2748,12 @@ pub(super) async fn memory_promote_impl(
     if scrub_report.status == ScrubStatus::Blocked {
         append_memory_audit(
             &state,
+            tenant_context,
             crate::MemoryAuditEvent {
                 audit_id: audit_id.clone(),
                 action: "memory_promote".to_string(),
                 run_id: request.run_id.clone(),
+                tenant_context: tenant_context.clone(),
                 memory_id: None,
                 source_memory_id: Some(source_memory_id.clone()),
                 to_tier: Some(request.to_tier),
@@ -2597,7 +2768,9 @@ pub(super) async fn memory_promote_impl(
             },
         )
         .await?;
-        state.event_bus.publish(EngineEvent::new(
+        publish_tenant_event(
+            state,
+            tenant_context,
             "memory.promote",
             json!({
                 "runID": request.run_id,
@@ -2614,7 +2787,7 @@ pub(super) async fn memory_promote_impl(
                 "detail": scrub_report.block_reason.clone(),
                 "auditID": audit_id,
             }),
-        ));
+        );
         return Ok(MemoryPromoteResponse {
             promoted: false,
             new_memory_id: None,
@@ -2625,8 +2798,13 @@ pub(super) async fn memory_promote_impl(
     }
     let new_id = source.id.clone();
     let next_metadata = memory_promote_metadata(source.metadata.as_ref(), &request, now);
-    let next_provenance =
-        memory_promote_provenance(source.provenance.as_ref(), &request, &partition_key, now);
+    let next_provenance = memory_promote_provenance(
+        source.provenance.as_ref(),
+        &request,
+        &partition_key,
+        now,
+        tenant_context,
+    );
     let classification = memory_classification_label(next_metadata.as_ref());
     let artifact_refs = memory_artifact_refs(next_metadata.as_ref());
     let artifact_ref_labels = artifact_refs
@@ -2662,10 +2840,12 @@ pub(super) async fn memory_promote_impl(
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     append_memory_audit(
         &state,
+        tenant_context,
         crate::MemoryAuditEvent {
             audit_id: audit_id.clone(),
             action: "memory_promote".to_string(),
             run_id: request.run_id.clone(),
+            tenant_context: tenant_context.clone(),
             memory_id: Some(new_id.clone()),
             source_memory_id: Some(source_memory_id.clone()),
             to_tier: Some(request.to_tier),
@@ -2683,7 +2863,9 @@ pub(super) async fn memory_promote_impl(
         },
     )
     .await?;
-    state.event_bus.publish(EngineEvent::new(
+    publish_tenant_event(
+        state,
+        tenant_context,
         "memory.promote",
         json!({
             "runID": request.run_id,
@@ -2705,8 +2887,10 @@ pub(super) async fn memory_promote_impl(
             "auditID": audit_id,
             "scrubStatus": scrub_report.status,
         }),
-    ));
-    state.event_bus.publish(EngineEvent::new(
+    );
+    publish_tenant_event(
+        state,
+        tenant_context,
         "memory.updated",
         json!({
             "memoryID": new_id,
@@ -2728,7 +2912,7 @@ pub(super) async fn memory_promote_impl(
             "approvalID": request.review.approval_id,
             "auditID": audit_id,
         }),
-    ));
+    );
     Ok(MemoryPromoteResponse {
         promoted: true,
         new_memory_id: Some(new_id),
@@ -2740,12 +2924,17 @@ pub(super) async fn memory_promote_impl(
 
 pub(super) async fn memory_search(
     State(state): State<AppState>,
+    Extension(tenant_context): Extension<TenantContext>,
     Json(input): Json<MemorySearchInput>,
 ) -> Result<Json<MemorySearchResponse>, StatusCode> {
     let request = input.request;
-    let capability =
-        validate_memory_search_capability_with_guardrail(&state, &request, input.capability)
-            .await?;
+    let capability = validate_memory_search_capability_with_guardrail(
+        &state,
+        &tenant_context,
+        &request,
+        input.capability,
+    )
+    .await?;
     let requested_scopes = if request.read_scopes.is_empty() {
         capability.memory.read_tiers.clone()
     } else {
@@ -2859,10 +3048,12 @@ pub(super) async fn memory_search(
     );
     append_memory_audit(
         &state,
+        &tenant_context,
         crate::MemoryAuditEvent {
             audit_id: audit_id.clone(),
             action: "memory_search".to_string(),
             run_id: request.run_id.clone(),
+            tenant_context: tenant_context.clone(),
             memory_id: None,
             source_memory_id: None,
             to_tier: None,
@@ -2874,7 +3065,9 @@ pub(super) async fn memory_search(
         },
     )
     .await?;
-    state.event_bus.publish(EngineEvent::new(
+    publish_tenant_event(
+        &state,
+        &tenant_context,
         "memory.search",
         json!({
             "runID": request.run_id,
@@ -2890,7 +3083,7 @@ pub(super) async fn memory_search(
             "status": search_status,
             "auditID": audit_id,
         }),
-    ));
+    );
     Ok(Json(MemorySearchResponse {
         results,
         scopes_used,
@@ -2901,6 +3094,7 @@ pub(super) async fn memory_search(
 
 pub(super) async fn memory_demote(
     State(state): State<AppState>,
+    Extension(tenant_context): Extension<TenantContext>,
     Json(input): Json<MemoryDemoteInput>,
 ) -> Result<Json<Value>, StatusCode> {
     let db = open_global_memory_db()
@@ -2911,8 +3105,14 @@ pub(super) async fn memory_demote(
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let Some(record) = record else {
-        emit_missing_memory_demote_audit(&state, &input.run_id, &input.id, "memory not found")
-            .await?;
+        emit_missing_memory_demote_audit(
+            &state,
+            &tenant_context,
+            &input.run_id,
+            &input.id,
+            "memory not found",
+        )
+        .await?;
         return Err(StatusCode::NOT_FOUND);
     };
     let changed = db
@@ -2920,8 +3120,14 @@ pub(super) async fn memory_demote(
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     if !changed {
-        emit_missing_memory_demote_audit(&state, &input.run_id, &input.id, "memory not found")
-            .await?;
+        emit_missing_memory_demote_audit(
+            &state,
+            &tenant_context,
+            &input.run_id,
+            &input.id,
+            "memory not found",
+        )
+        .await?;
         return Err(StatusCode::NOT_FOUND);
     }
     let partition_key = memory_linkage(&record)
@@ -2945,10 +3151,12 @@ pub(super) async fn memory_demote(
     let audit_id = Uuid::new_v4().to_string();
     append_memory_audit(
         &state,
+        &tenant_context,
         crate::MemoryAuditEvent {
             audit_id: audit_id.clone(),
             action: "memory_demote".to_string(),
             run_id: input.run_id.clone(),
+            tenant_context: tenant_context.clone(),
             memory_id: Some(input.id.clone()),
             source_memory_id: None,
             to_tier: None,
@@ -2960,7 +3168,9 @@ pub(super) async fn memory_demote(
         },
     )
     .await?;
-    state.event_bus.publish(EngineEvent::new(
+    publish_tenant_event(
+        &state,
+        &tenant_context,
         "memory.updated",
         json!({
             "memoryID": input.id,
@@ -2976,7 +3186,7 @@ pub(super) async fn memory_demote(
             "linkage": memory_linkage(&record),
             "auditID": audit_id,
         }),
-    ));
+    );
     Ok(Json(json!({
         "ok": true,
         "audit_id": audit_id,
@@ -3088,10 +3298,15 @@ pub(super) async fn context_distill(
 
 pub(super) async fn memory_audit(
     State(state): State<AppState>,
+    Extension(tenant_context): Extension<TenantContext>,
     Query(query): Query<MemoryAuditQuery>,
 ) -> Json<Value> {
     let limit = query.limit.unwrap_or(100).clamp(1, 500);
-    let mut entries = state.memory_audit_log.read().await.clone();
+    let mut entries = load_memory_audit_events(&state.memory_audit_path).await;
+    if entries.is_empty() {
+        entries = state.memory_audit_log.read().await.clone();
+    }
+    entries.retain(|event| event.tenant_context == tenant_context);
     if let Some(run_id) = query.run_id {
         entries.retain(|event| event.run_id == run_id);
     }
@@ -3105,12 +3320,20 @@ pub(super) async fn memory_audit(
 
 pub(super) async fn memory_list(
     State(_state): State<AppState>,
+    Extension(tenant_context): Extension<TenantContext>,
     Query(query): Query<MemoryListQuery>,
-) -> Json<Value> {
+) -> Result<Json<Value>, StatusCode> {
     let q = query.q.unwrap_or_default();
     let limit = query.limit.unwrap_or(100).clamp(1, 1000);
     let offset = query.offset.unwrap_or(0);
-    let user_id = query.user_id.unwrap_or_else(|| "default".to_string());
+    let user_id = match (query.user_id.as_deref(), tenant_context.actor_id.as_deref()) {
+        (Some(requested), Some(actor)) if requested != actor => {
+            return Err(StatusCode::FORBIDDEN);
+        }
+        (Some(requested), _) => requested.to_string(),
+        (None, Some(actor)) => actor.to_string(),
+        (None, None) => "default".to_string(),
+    };
     let page = if let Some(db) = open_global_memory_db().await {
         db.list_global_memory(
             &user_id,
@@ -3148,16 +3371,17 @@ pub(super) async fn memory_list(
         Vec::new()
     };
     let total = page.len();
-    Json(json!({
+    Ok(Json(json!({
         "items": page,
         "count": total,
         "offset": offset,
         "limit": limit,
-    }))
+    })))
 }
 
 pub(super) async fn memory_delete(
     State(state): State<AppState>,
+    Extension(tenant_context): Extension<TenantContext>,
     Path(id): Path<String>,
     Query(query): Query<MemoryDeleteQuery>,
 ) -> Result<Json<Value>, StatusCode> {
@@ -3169,7 +3393,7 @@ pub(super) async fn memory_delete(
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let Some(record) = record else {
-        emit_missing_memory_delete_audit(&state, &id, "memory not found").await?;
+        emit_missing_memory_delete_audit(&state, &tenant_context, &id, "memory not found").await?;
         return Err(StatusCode::NOT_FOUND);
     };
     if query
@@ -3177,7 +3401,7 @@ pub(super) async fn memory_delete(
         .as_deref()
         .is_some_and(|project_id| record.project_tag.as_deref() != Some(project_id))
     {
-        emit_missing_memory_delete_audit(&state, &id, "memory not found").await?;
+        emit_missing_memory_delete_audit(&state, &tenant_context, &id, "memory not found").await?;
         return Err(StatusCode::NOT_FOUND);
     }
     if query
@@ -3185,7 +3409,7 @@ pub(super) async fn memory_delete(
         .as_deref()
         .is_some_and(|channel_tag| record.channel_tag.as_deref() != Some(channel_tag))
     {
-        emit_missing_memory_delete_audit(&state, &id, "memory not found").await?;
+        emit_missing_memory_delete_audit(&state, &tenant_context, &id, "memory not found").await?;
         return Err(StatusCode::NOT_FOUND);
     }
     let deleted = db
@@ -3193,7 +3417,7 @@ pub(super) async fn memory_delete(
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     if !deleted {
-        emit_missing_memory_delete_audit(&state, &id, "memory not found").await?;
+        emit_missing_memory_delete_audit(&state, &tenant_context, &id, "memory not found").await?;
         return Err(StatusCode::NOT_FOUND);
     }
     let now = crate::now_ms();
@@ -3219,10 +3443,12 @@ pub(super) async fn memory_delete(
     );
     append_memory_audit(
         &state,
+        &tenant_context,
         crate::MemoryAuditEvent {
             audit_id: audit_id.clone(),
             action: "memory_delete".to_string(),
             run_id: run_id.clone(),
+            tenant_context: tenant_context.clone(),
             memory_id: Some(id.clone()),
             source_memory_id: None,
             to_tier: None,
@@ -3237,7 +3463,9 @@ pub(super) async fn memory_delete(
         },
     )
     .await?;
-    state.event_bus.publish(EngineEvent::new(
+    publish_tenant_event(
+        &state,
+        &tenant_context,
         "memory.deleted",
         json!({
             "memoryID": id,
@@ -3254,7 +3482,7 @@ pub(super) async fn memory_delete(
             "linkage": memory_linkage(&record),
             "auditID": audit_id,
         }),
-    ));
+    );
     Ok(Json(json!({
         "ok": true,
         "audit_id": audit_id,

@@ -11,12 +11,40 @@ pub(super) enum SessionScope {
     Global,
 }
 
+fn tenant_context_event_value(tenant_context: &TenantContext) -> Value {
+    serde_json::to_value(tenant_context).unwrap_or_else(|_| json!(tenant_context))
+}
+
+fn with_tenant_context(mut properties: Value, tenant_context: &TenantContext) -> Value {
+    if let Some(map) = properties.as_object_mut() {
+        map.insert(
+            "tenantContext".to_string(),
+            tenant_context_event_value(tenant_context),
+        );
+    }
+    properties
+}
+
+fn publish_tenant_event(
+    state: &AppState,
+    tenant_context: &TenantContext,
+    event_type: &str,
+    properties: Value,
+) {
+    state.event_bus.publish(EngineEvent::new(
+        event_type,
+        with_tenant_context(properties, tenant_context),
+    ));
+}
+
 pub(super) async fn create_session(
     State(state): State<AppState>,
+    Extension(tenant_context): Extension<TenantContext>,
     Json(req): Json<CreateSessionRequest>,
 ) -> Result<Json<WireSession>, StatusCode> {
     let requested_permission_rules = req.permission.clone();
     let mut session = Session::new(req.title, req.directory);
+    session.tenant_context = tenant_context.clone();
     session.project_id = req.project_id.clone();
     let workspace_from_runtime = {
         let snapshot = state.workspace_index.snapshot().await;
@@ -44,10 +72,12 @@ pub(super) async fn create_session(
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     apply_session_permission_rules(&state, requested_permission_rules).await;
-    state.event_bus.publish(EngineEvent::new(
+    publish_tenant_event(
+        &state,
+        &session.tenant_context,
         "session.created",
         json!({"sessionID": session.id, "projectID": session.project_id}),
-    ));
+    );
     Ok(Json(session.into()))
 }
 
@@ -402,7 +432,9 @@ pub(super) async fn attach_session(
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
-    state.event_bus.publish(EngineEvent::new(
+    publish_tenant_event(
+        &state,
+        &session.tenant_context,
         "session.attached",
         json!({
             "sessionID": session.id,
@@ -411,7 +443,7 @@ pub(super) async fn attach_session(
             "attachedToWorkspace": session.attached_to_workspace,
             "attachReason": session.attach_reason
         }),
-    ));
+    );
     Ok(Json(session.into()))
 }
 
@@ -420,22 +452,26 @@ pub(super) async fn grant_workspace_override(
     Path(id): Path<String>,
     Json(input): Json<WorkspaceOverrideInput>,
 ) -> Result<Json<Value>, StatusCode> {
-    if state.storage.get_session(&id).await.is_none() {
-        return Err(StatusCode::NOT_FOUND);
-    }
+    let session = state
+        .storage
+        .get_session(&id)
+        .await
+        .ok_or(StatusCode::NOT_FOUND)?;
     let ttl = input.ttl_seconds.unwrap_or(900).clamp(30, 86_400);
     let expires_at = state
         .engine_loop
         .grant_workspace_override_for_session(&id, ttl)
         .await;
-    state.event_bus.publish(EngineEvent::new(
+    publish_tenant_event(
+        &state,
+        &session.tenant_context,
         "session.workspace_override.granted",
         json!({
             "sessionID": id,
             "ttlSeconds": ttl,
             "expiresAtMs": expires_at
         }),
-    ));
+    );
     Ok(Json(json!({
         "ok": true,
         "ttlSeconds": ttl,
@@ -544,7 +580,9 @@ pub(super) async fn prompt_async(
         Ok(run) => run,
         Err(active) => {
             let payload = conflict_payload(&session_id, &active);
-            state.event_bus.publish(EngineEvent::new(
+            publish_tenant_event(
+                &state,
+                &session.tenant_context,
                 "session.run.conflict",
                 json!({
                     "sessionID": session_id,
@@ -552,7 +590,7 @@ pub(super) async fn prompt_async(
                     "retryAfterMs": 500,
                     "attachEventStream": attach_event_stream_path(&id, &active.run_id),
                 }),
-            ));
+            );
             return Ok((StatusCode::CONFLICT, Json(payload)).into_response());
         }
     };
@@ -565,7 +603,9 @@ pub(super) async fn prompt_async(
         correlation_id = %correlation_id.as_deref().unwrap_or(""),
         "prompt_async request accepted"
     );
-    state.event_bus.publish(EngineEvent::new(
+    publish_tenant_event(
+        &state,
+        &session.tenant_context,
         "session.run.started",
         json!({
             "sessionID": session_id,
@@ -576,7 +616,7 @@ pub(super) async fn prompt_async(
             "agentProfile": active_run.agent_profile,
             "environment": state.host_runtime_context(),
         }),
-    ));
+    );
 
     spawn_run_task(
         state.clone(),
@@ -585,6 +625,7 @@ pub(super) async fn prompt_async(
         req,
         correlation_id,
         client_id,
+        session.tenant_context.clone(),
     );
 
     if query.r#return.as_deref() == Some("run") {
@@ -617,9 +658,11 @@ pub(super) async fn prompt_sync(
     headers: HeaderMap,
     Json(req): Json<SendMessageRequest>,
 ) -> Result<Response, StatusCode> {
-    if state.storage.get_session(&id).await.is_none() {
-        return Err(StatusCode::NOT_FOUND);
-    }
+    let session = state
+        .storage
+        .get_session(&id)
+        .await
+        .ok_or(StatusCode::NOT_FOUND)?;
     let accept_sse = headers
         .get(header::ACCEPT)
         .and_then(|v| v.to_str().ok())
@@ -639,6 +682,7 @@ pub(super) async fn prompt_sync(
         .map(|s| s.to_string())
         .or_else(|| req.agent.clone());
     let agent_profile = req.agent.clone();
+    let tenant_context = session.tenant_context.clone();
     let run_id = Uuid::new_v4().to_string();
     let active_run = match state
         .run_registry
@@ -654,7 +698,9 @@ pub(super) async fn prompt_sync(
         Ok(run) => run,
         Err(active) => {
             let payload = conflict_payload(&id, &active);
-            state.event_bus.publish(EngineEvent::new(
+            publish_tenant_event(
+                &state,
+                &tenant_context,
                 "session.run.conflict",
                 json!({
                     "sessionID": id,
@@ -662,11 +708,13 @@ pub(super) async fn prompt_sync(
                     "retryAfterMs": 500,
                     "attachEventStream": attach_event_stream_path(&id, &active.run_id),
                 }),
-            ));
+            );
             return Ok((StatusCode::CONFLICT, Json(payload)).into_response());
         }
     };
-    state.event_bus.publish(EngineEvent::new(
+    publish_tenant_event(
+        &state,
+        &tenant_context,
         "session.run.started",
         json!({
             "sessionID": id,
@@ -677,7 +725,7 @@ pub(super) async fn prompt_sync(
             "agentProfile": active_run.agent_profile,
             "environment": state.host_runtime_context(),
         }),
-    ));
+    );
 
     if accept_sse {
         spawn_run_task(
@@ -687,6 +735,7 @@ pub(super) async fn prompt_sync(
             req,
             correlation_id,
             client_id,
+            tenant_context.clone(),
         );
         let stream = sse_run_stream(
             state.clone(),
@@ -694,6 +743,7 @@ pub(super) async fn prompt_sync(
             run_id.clone(),
             agent_id.clone(),
             agent_profile.clone(),
+            tenant_context.clone(),
         );
         return Ok(Sse::new(stream)
             .keep_alive(KeepAlive::new().interval(Duration::from_secs(10)))
@@ -707,6 +757,7 @@ pub(super) async fn prompt_sync(
         req,
         correlation_id,
         client_id,
+        tenant_context.clone(),
     )
     .await;
     let session = state
@@ -729,9 +780,19 @@ pub(super) fn spawn_run_task(
     req: SendMessageRequest,
     correlation_id: Option<String>,
     client_id: Option<String>,
+    tenant_context: TenantContext,
 ) {
     tokio::spawn(async move {
-        let _ = execute_run(state, session_id, run_id, req, correlation_id, client_id).await;
+        let _ = execute_run(
+            state,
+            session_id,
+            run_id,
+            req,
+            correlation_id,
+            client_id,
+            tenant_context,
+        )
+        .await;
     });
 }
 
@@ -742,6 +803,7 @@ pub(super) async fn execute_run(
     req: SendMessageRequest,
     correlation_id: Option<String>,
     _client_id: Option<String>,
+    tenant_context: TenantContext,
 ) -> anyhow::Result<()> {
     let mut run_fut = Box::pin(state.engine_loop.run_prompt_async_with_context(
         session_id.clone(),
@@ -761,7 +823,9 @@ pub(super) async fn execute_run(
                 let _ = state.cancellations.cancel(&session_id).await;
                 let timeout_text = "ENGINE_ERROR: ENGINE_TIMEOUT: prompt_async timed out";
                 let _ = persist_session_error_message(&state, &session_id, timeout_text).await;
-                state.event_bus.publish(EngineEvent::new(
+                publish_tenant_event(
+                    &state,
+                    &tenant_context,
                     "session.error",
                     json!({
                         "sessionID": session_id,
@@ -770,15 +834,19 @@ pub(super) async fn execute_run(
                             "message": "prompt_async timed out",
                         }
                     }),
-                ));
-                state.event_bus.publish(EngineEvent::new(
+                );
+                publish_tenant_event(
+                    &state,
+                    &tenant_context,
                     "session.status",
                     json!({"sessionID": session_id, "status":"error"}),
-                ));
-                state.event_bus.publish(EngineEvent::new(
+                );
+                publish_tenant_event(
+                    &state,
+                    &tenant_context,
                     "session.updated",
                     json!({"sessionID": session_id, "status":"error"}),
-                ));
+                );
                 break ("timeout", Some("prompt_async timed out".to_string()));
             }
             result = &mut run_fut => {
@@ -790,7 +858,9 @@ pub(super) async fn execute_run(
                         let session_error_text =
                             format!("ENGINE_ERROR: {error_code}: {}", truncate_text(&error_message, 500));
                         let _ = persist_session_error_message(&state, &session_id, &session_error_text).await;
-                        state.event_bus.publish(EngineEvent::new(
+                        publish_tenant_event(
+                            &state,
+                            &tenant_context,
                             "session.error",
                             json!({
                                 "sessionID": session_id,
@@ -799,15 +869,19 @@ pub(super) async fn execute_run(
                                     "message": truncate_text(&error_message, 500),
                                 }
                             }),
-                        ));
-                        state.event_bus.publish(EngineEvent::new(
+                        );
+                        publish_tenant_event(
+                            &state,
+                            &tenant_context,
                             "session.status",
                             json!({"sessionID": session_id, "status":"error"}),
-                        ));
-                        state.event_bus.publish(EngineEvent::new(
+                        );
+                        publish_tenant_event(
+                            &state,
+                            &tenant_context,
                             "session.updated",
                             json!({"sessionID": session_id, "status":"error"}),
-                        ));
+                        );
                         let _ = state.cancellations.cancel(&session_id).await;
                         break ("error", Some(truncate_text(&error_message, 500)));
                     }
@@ -820,7 +894,9 @@ pub(super) async fn execute_run(
         .run_registry
         .finish_if_match(&session_id, &run_id)
         .await;
-    state.event_bus.publish(EngineEvent::new(
+    publish_tenant_event(
+        &state,
+        &tenant_context,
         "session.run.finished",
         json!({
             "sessionID": session_id,
@@ -829,7 +905,7 @@ pub(super) async fn execute_run(
             "status": status,
             "error": error_msg,
         }),
-    ));
+    );
 
     if status == "completed" {
         let session_id_clone = session_id.clone();
@@ -865,11 +941,12 @@ pub(super) fn sse_run_stream(
     run_id: String,
     agent_id: Option<String>,
     agent_profile: Option<String>,
+    tenant_context: TenantContext,
 ) -> impl Stream<Item = Result<Event, std::convert::Infallible>> {
     let rx = state.event_bus.subscribe();
-    let started = tokio_stream::once(Ok(Event::default().data(
-        serde_json::to_string(&EngineEvent::new(
-            "session.run.started",
+    let started_event = EngineEvent::new(
+        "session.run.started",
+        with_tenant_context(
             json!({
                 "sessionID": session_id,
                 "runID": run_id,
@@ -879,9 +956,12 @@ pub(super) fn sse_run_stream(
                 "channel": "system",
                 "environment": state.host_runtime_context(),
             }),
-        ))
-        .unwrap_or_default(),
-    )));
+            &tenant_context,
+        ),
+    );
+    let started = tokio_stream::once(Ok(
+        Event::default().data(serde_json::to_string(&started_event).unwrap_or_default())
+    ));
     let filter_session_id = session_id.clone();
     let filter_run_id = run_id.clone();
     let end_run_id = run_id.clone();
@@ -903,7 +983,7 @@ pub(super) fn sse_run_stream(
         !is_finished
     });
     let mapped = live.map(move |event| {
-        let normalized = normalize_run_event(event, &map_session_id, &map_run_id);
+        let normalized = normalize_run_event(event, &map_session_id, &map_run_id, &tenant_context);
         let payload = serde_json::to_string(&normalized).unwrap_or_default();
         Ok(Event::default().data(payload))
     });
@@ -956,6 +1036,7 @@ pub(super) fn normalize_run_event(
     mut event: EngineEvent,
     session_id: &str,
     run_id: &str,
+    tenant_context: &TenantContext,
 ) -> EngineEvent {
     if !event.properties.is_object() {
         event.properties = json!({});
@@ -966,6 +1047,12 @@ pub(super) fn normalize_run_event(
         }
         if !props.contains_key("runID") {
             props.insert("runID".to_string(), json!(run_id));
+        }
+        if !props.contains_key("tenantContext") {
+            props.insert(
+                "tenantContext".to_string(),
+                tenant_context_event_value(tenant_context),
+            );
         }
         if !props.contains_key("agentID") {
             if let Some(agent) = props.get("agent").and_then(|v| v.as_str()) {
@@ -1230,15 +1317,19 @@ pub(super) async fn abort_session(
     let cancelled_run = state.run_registry.finish_active(&id).await;
     let closed_browser_sessions = state.close_browser_sessions_for_owner(&id).await;
     if let Some(run) = cancelled_run.as_ref() {
-        state.event_bus.publish(EngineEvent::new(
-            "session.run.finished",
-            json!({
-                "sessionID": id,
-                "runID": run.run_id,
-                "finishedAtMs": crate::now_ms(),
-                "status": "cancelled",
-            }),
-        ));
+        if let Some(session) = state.storage.get_session(&id).await {
+            publish_tenant_event(
+                &state,
+                &session.tenant_context,
+                "session.run.finished",
+                json!({
+                    "sessionID": id,
+                    "runID": run.run_id,
+                    "finishedAtMs": crate::now_ms(),
+                    "status": "cancelled",
+                }),
+            );
+        }
     }
     Json(json!({
         "ok": true,
@@ -1257,15 +1348,19 @@ pub(super) async fn cancel_run_by_id(
             let _cancelled = state.cancellations.cancel(&id).await;
             let _ = state.run_registry.finish_if_match(&id, &run_id).await;
             let closed_browser_sessions = state.close_browser_sessions_for_owner(&id).await;
-            state.event_bus.publish(EngineEvent::new(
-                "session.run.finished",
-                json!({
-                    "sessionID": id,
-                    "runID": run_id,
-                    "finishedAtMs": crate::now_ms(),
-                    "status": "cancelled",
-                }),
-            ));
+            if let Some(session) = state.storage.get_session(&id).await {
+                publish_tenant_event(
+                    &state,
+                    &session.tenant_context,
+                    "session.run.finished",
+                    json!({
+                        "sessionID": id,
+                        "runID": run_id,
+                        "finishedAtMs": crate::now_ms(),
+                        "status": "cancelled",
+                    }),
+                );
+            }
             return Json(json!({
                 "ok": true,
                 "cancelled": true,

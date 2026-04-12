@@ -62,7 +62,7 @@ pub(super) async fn reply_permission(
 
 pub(super) async fn approve_tool_by_call(
     State(state): State<AppState>,
-    Path((_session_id, tool_call_id)): Path<(String, String)>,
+    Path((session_id, tool_call_id)): Path<(String, String)>,
 ) -> Result<Json<Value>, (StatusCode, Json<ErrorEnvelope>)> {
     let ok = state.permissions.reply(&tool_call_id, "allow").await;
     if !ok {
@@ -74,12 +74,24 @@ pub(super) async fn approve_tool_by_call(
             }),
         ));
     }
+    let _ = crate::audit::append_protected_audit_event(
+        &state,
+        "approval.granted",
+        &tandem_types::TenantContext::local_implicit(),
+        None,
+        json!({
+            "sessionID": session_id,
+            "toolCallID": tool_call_id,
+            "decision": "allow",
+        }),
+    )
+    .await;
     Ok(Json(json!({"ok": true})))
 }
 
 pub(super) async fn deny_tool_by_call(
     State(state): State<AppState>,
-    Path((_session_id, tool_call_id)): Path<(String, String)>,
+    Path((session_id, tool_call_id)): Path<(String, String)>,
 ) -> Result<Json<Value>, (StatusCode, Json<ErrorEnvelope>)> {
     let ok = state.permissions.reply(&tool_call_id, "deny").await;
     if !ok {
@@ -91,6 +103,18 @@ pub(super) async fn deny_tool_by_call(
             }),
         ));
     }
+    let _ = crate::audit::append_protected_audit_event(
+        &state,
+        "approval.denied",
+        &tandem_types::TenantContext::local_implicit(),
+        None,
+        json!({
+            "sessionID": session_id,
+            "toolCallID": tool_call_id,
+            "decision": "deny",
+        }),
+    )
+    .await;
     Ok(Json(json!({"ok": true})))
 }
 

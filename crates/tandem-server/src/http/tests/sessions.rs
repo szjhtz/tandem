@@ -735,6 +735,83 @@ async fn create_session_binds_workspace_project_id() {
 }
 
 #[tokio::test]
+async fn create_session_uses_request_tenant_context_and_emits_tenant_scoped_event() {
+    let state = test_state().await;
+    let mut rx = state.event_bus.subscribe();
+    let app = app_router(state.clone());
+    let req = Request::builder()
+        .method("POST")
+        .uri("/session")
+        .header("content-type", "application/json")
+        .header("x-tandem-org-id", "acme")
+        .header("x-tandem-workspace-id", "north")
+        .header("x-user-id", "user-1")
+        .body(Body::from(
+            json!({
+                "title": "tenant-bound",
+                "directory": "."
+            })
+            .to_string(),
+        ))
+        .expect("request");
+    let resp = app.oneshot(req).await.expect("response");
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = to_bytes(resp.into_body(), usize::MAX).await.expect("body");
+    let payload: Value = serde_json::from_slice(&body).expect("json");
+    let session_id = payload
+        .get("id")
+        .and_then(|value| value.as_str())
+        .expect("session id");
+
+    let stored_session = state
+        .storage
+        .get_session(session_id)
+        .await
+        .expect("session");
+    assert_eq!(stored_session.tenant_context.org_id, "acme");
+    assert_eq!(stored_session.tenant_context.workspace_id, "north");
+    assert_eq!(
+        stored_session.tenant_context.actor_id.as_deref(),
+        Some("user-1")
+    );
+
+    let event = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let event = rx.recv().await.expect("event");
+            if event.event_type == "session.created" {
+                return event;
+            }
+        }
+    })
+    .await
+    .expect("session.created timeout");
+    assert_eq!(
+        event
+            .properties
+            .get("tenantContext")
+            .and_then(|value| value.get("org_id"))
+            .and_then(Value::as_str),
+        Some("acme")
+    );
+    assert_eq!(
+        event
+            .properties
+            .get("tenantContext")
+            .and_then(|value| value.get("workspace_id"))
+            .and_then(Value::as_str),
+        Some("north")
+    );
+    assert_eq!(
+        event
+            .properties
+            .get("tenantContext")
+            .and_then(|value| value.get("actor_id"))
+            .and_then(Value::as_str),
+        Some("user-1")
+    );
+}
+
+#[tokio::test]
 async fn post_session_message_returns_wire_message() {
     let state = test_state().await;
     let session = Session::new(Some("post-msg".to_string()), Some(".".to_string()));
@@ -1031,7 +1108,8 @@ fn normalize_run_event_adds_required_fields() {
             "delta": "hello"
         }),
     );
-    let normalized = normalize_run_event(event, "s-1", "r-1");
+    let tenant_context = tandem_types::TenantContext::local_implicit();
+    let normalized = normalize_run_event(event, "s-1", "r-1", &tenant_context);
     assert_eq!(
         normalized
             .properties
@@ -1425,6 +1503,7 @@ async fn session_context_run_journaler_persists_session_run_lineage() {
     session.project_id = Some("proj-session-journal".to_string());
     let session_id = session.id.clone();
     state.storage.save_session(session).await.expect("save");
+    let tenant_context = tandem_types::TenantContext::local_implicit();
 
     state.event_bus.publish(EngineEvent::new(
         "session.run.started",
@@ -1433,6 +1512,7 @@ async fn session_context_run_journaler_persists_session_run_lineage() {
             "runID": "run-session-journal-1",
             "agentID": "interactive",
             "agentProfile": "interactive",
+            "tenantContext": tenant_context.clone(),
         }),
     ));
     state.event_bus.publish(EngineEvent::new(
@@ -1445,7 +1525,8 @@ async fn session_context_run_journaler_persists_session_run_lineage() {
                 "tool": "read",
                 "state": "running",
                 "args": { "path": "README.md" }
-            }
+            },
+            "tenantContext": tenant_context.clone(),
         }),
     ));
     state.event_bus.publish(EngineEvent::new(
@@ -1454,6 +1535,7 @@ async fn session_context_run_journaler_persists_session_run_lineage() {
             "sessionID": session_id,
             "runID": "run-session-journal-1",
             "status": "completed",
+            "tenantContext": tenant_context,
         }),
     ));
 
@@ -1516,6 +1598,23 @@ async fn session_context_run_journaler_persists_session_run_lineage() {
             "session_tool_updated",
             "session_run_finished",
         ]
+    );
+    let first_event = events.first().cloned().expect("first event");
+    assert_eq!(
+        first_event
+            .get("payload")
+            .and_then(|payload| payload.get("tenantContext"))
+            .and_then(|value| value.get("org_id"))
+            .and_then(Value::as_str),
+        Some("local")
+    );
+    assert_eq!(
+        first_event
+            .get("payload")
+            .and_then(|payload| payload.get("tenantContext"))
+            .and_then(|value| value.get("workspace_id"))
+            .and_then(Value::as_str),
+        Some("local")
     );
 
     task.abort();

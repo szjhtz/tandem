@@ -130,13 +130,14 @@ fn queued_to_attachment_inputs(
     )
 }
 
-fn emit_stream_event_pair(
+async fn emit_stream_event_pair(
     app: &AppHandle,
+    tenant_context: &tandem_types::TenantContext,
     event: &StreamEvent,
     source: StreamEventSource,
     correlation_id: String,
 ) {
-    if let Err(err) = crate::tool_history::record_stream_event(app, event) {
+    if let Err(err) = crate::tool_history::record_stream_event(app, tenant_context, event) {
         tracing::warn!("Failed to persist stream event to tool history: {}", err);
     }
     let _ = app.emit("sidecar_event", event);
@@ -144,6 +145,7 @@ fn emit_stream_event_pair(
         event_id: Uuid::new_v4().to_string(),
         correlation_id,
         ts_ms: logs::now_ms(),
+        tenant_context: tenant_context.clone(),
         session_id: match event {
             StreamEvent::Content { session_id, .. }
             | StreamEvent::ToolStart { session_id, .. }
@@ -360,6 +362,7 @@ async fn store_user_message_in_memory(
         return;
     };
     let embedding_health = manager.embedding_health().await;
+    let tenant_context = crate::state::resolve_session_tenant_context(state, session_id).await;
     if embedding_health.status != "ok" {
         tracing::info!(
             target: "tandem.memory",
@@ -370,6 +373,7 @@ async fn store_user_message_in_memory(
         );
         emit_stream_event_pair(
             app,
+            &tenant_context,
             &memory_storage_event(
                 session_id,
                 None,
@@ -381,7 +385,8 @@ async fn store_user_message_in_memory(
             ),
             StreamEventSource::Memory,
             format!("{}:memory-store:user:{}", session_id, Uuid::new_v4()),
-        );
+        )
+        .await;
         return;
     }
     let active_project_id = resolve_memory_project_id_for_session(state, session_id).await;
@@ -475,6 +480,7 @@ async fn store_user_message_in_memory(
 
     emit_stream_event_pair(
         app,
+        &tenant_context,
         &memory_storage_event(
             session_id,
             None,
@@ -492,7 +498,8 @@ async fn store_user_message_in_memory(
         ),
         StreamEventSource::Memory,
         format!("{}:memory-store:user:{}", session_id, Uuid::new_v4()),
-    );
+    )
+    .await;
 }
 
 /// Send a message to a session (async, starts generation)
@@ -609,12 +616,15 @@ async fn send_message_and_start_run_internal(
     let (prepared_content, retrieval_event) =
         prepare_prompt_with_memory_context(state, &session_id, &base_prompt, &retrieval_query)
             .await;
+    let tenant_context = crate::state::resolve_session_tenant_context(state, &session_id).await;
     emit_stream_event_pair(
         app,
+        &tenant_context,
         &retrieval_event,
         StreamEventSource::Memory,
         format!("{}:memory:{}", session_id, Uuid::new_v4()),
-    );
+    )
+    .await;
 
     let mut request = if let Some(files) = attachments {
         let file_parts: Vec<FilePartInput> = files

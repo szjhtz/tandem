@@ -6,6 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
+use axum::extract::Extension;
 use axum::extract::{Path, Query, State};
 use axum::http::header::{self, HeaderValue};
 use axum::http::{HeaderMap, StatusCode};
@@ -33,7 +34,7 @@ use tandem_channels::start_channel_listeners;
 use tandem_tools::Tool;
 use tandem_types::{
     CreateSessionRequest, EngineEvent, Message, MessagePart, MessagePartInput, MessageRole,
-    SendMessageRequest, Session, TodoItem, ToolResult, ToolSchema,
+    SendMessageRequest, Session, TenantContext, TodoItem, ToolResult, ToolSchema,
 };
 use tandem_wire::{WireSession, WireSessionMessage};
 
@@ -60,6 +61,7 @@ mod context_run_ledger;
 mod context_run_mutation_checkpoints;
 pub(crate) mod context_runs;
 pub(crate) mod context_types;
+mod enterprise;
 mod external_actions;
 mod global;
 mod marketplace;

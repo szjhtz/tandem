@@ -44,6 +44,28 @@ async fn provider_route_returns_known_providers_without_synthetic_default_models
 }
 
 #[tokio::test]
+async fn provider_auth_set_writes_protected_audit_record() {
+    let state = test_state().await;
+    let app = app_router(state.clone());
+    let req = Request::builder()
+        .method("PUT")
+        .uri("/auth/openai")
+        .header("content-type", "application/json")
+        .body(Body::from(json!({"token": "sk-test"}).to_string()))
+        .expect("request");
+    let resp = app.oneshot(req).await.expect("response");
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = to_bytes(resp.into_body(), usize::MAX).await.expect("body");
+    let payload: Value = serde_json::from_slice(&body).expect("json");
+    assert_eq!(payload.get("ok").and_then(Value::as_bool), Some(true));
+    let audit = tokio::fs::read_to_string(&state.protected_audit_path)
+        .await
+        .expect("protected audit file");
+    assert!(audit.contains("\"event_type\":\"provider.secret.updated\""));
+    assert!(audit.contains("\"providerID\":\"openai\""));
+}
+
+#[tokio::test]
 async fn provider_route_marks_config_models_as_config_catalogs() {
     let state = test_state().await;
     state

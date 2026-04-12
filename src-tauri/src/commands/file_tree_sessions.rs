@@ -207,13 +207,24 @@ pub async fn get_session_messages(
 
 /// List persisted tool executions for a session (session-scoped only)
 #[tauri::command]
-pub fn list_tool_executions(
+pub async fn list_tool_executions(
     app: AppHandle,
+    state: State<'_, AppState>,
     session_id: String,
     limit: Option<u32>,
     before_ts_ms: Option<u64>,
 ) -> Result<Vec<ToolExecutionRow>> {
-    crate::tool_history::list_tool_executions(&app, &session_id, limit.unwrap_or(200), before_ts_ms)
+    let tenant_context = match state.sidecar.get_session(&session_id).await {
+        Ok(session) => session.tenant_context,
+        Err(_) => tandem_types::TenantContext::local_implicit(),
+    };
+    crate::tool_history::list_tool_executions(
+        &app,
+        &session_id,
+        &tenant_context,
+        limit.unwrap_or(200),
+        before_ts_ms,
+    )
 }
 
 /// Get todos for a session

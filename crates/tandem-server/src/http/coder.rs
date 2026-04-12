@@ -1,5 +1,5 @@
 use super::context_runs::{
-    claim_next_context_task, context_run_create, context_run_engine, context_run_task_transition,
+    claim_next_context_task, context_run_engine, context_run_task_transition,
     context_run_tasks_create, ensure_context_run_dir, load_context_blackboard,
     load_context_run_state, save_context_run_state,
 };
@@ -9134,6 +9134,7 @@ async fn run_issue_fix_worker_session(
         let run_id = Uuid::new_v4().to_string();
         let client_id = Some(record.coder_run_id.clone());
         let agent_id = Some("coder_issue_fix_worker".to_string());
+        let tenant_context = session.tenant_context.clone();
         let active_run = state
             .run_registry
             .acquire(
@@ -9147,7 +9148,7 @@ async fn run_issue_fix_worker_session(
             .map_err(|_| StatusCode::CONFLICT)?;
         state.event_bus.publish(EngineEvent::new(
             "session.run.started",
-            json!({
+            serde_json::json!({
                 "sessionID": session_id,
                 "runID": run_id,
                 "startedAtMs": active_run.started_at_ms,
@@ -9155,6 +9156,7 @@ async fn run_issue_fix_worker_session(
                 "agentID": active_run.agent_id,
                 "agentProfile": active_run.agent_profile,
                 "environment": state.host_runtime_context(),
+                "tenantContext": tenant_context.clone(),
             }),
         ));
 
@@ -9188,6 +9190,7 @@ async fn run_issue_fix_worker_session(
             request,
             Some(format!("coder:{}:{worker_kind}", record.coder_run_id)),
             client_id,
+            tenant_context.clone(),
         )
         .await;
         state
@@ -10064,7 +10067,12 @@ async fn coder_run_create_inner(
         model_id: normalize_source_client(input.model_id.as_deref()),
         mcp_servers: input.mcp_servers.clone(),
     };
-    let created = context_run_create(State(state.clone()), Json(create_input)).await?;
+    let created = super::context_runs::context_run_create_impl(
+        state.clone(),
+        tandem_types::TenantContext::local_implicit(),
+        create_input,
+    )
+    .await?;
     let _context_run: ContextRunState =
         serde_json::from_value(created.0.get("run").cloned().unwrap_or_default())
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -11272,6 +11280,7 @@ async fn coder_run_transition(
     status: ContextRunStatus,
     reason: Option<String>,
 ) -> Result<Value, StatusCode> {
+    let audit_status = status.clone();
     let outcome = context_run_engine()
         .commit_run_event(
             state,
@@ -11310,6 +11319,19 @@ async fn coder_run_transition(
             extra
         },
     );
+    let _ = crate::audit::append_protected_audit_event(
+        state,
+        event_type,
+        &tandem_types::TenantContext::local_implicit(),
+        None,
+        json!({
+            "coderRunID": record.coder_run_id,
+            "linkedContextRunID": record.linked_context_run_id,
+            "status": audit_status,
+            "reason": reason,
+        }),
+    )
+    .await;
     Ok(json!({
         "ok": true,
         "event": outcome.event,
@@ -11608,8 +11630,10 @@ pub(super) async fn coder_memory_candidate_promote(
         "context_run:{}/coder_memory/{}.json",
         record.linked_context_run_id, candidate_id
     )];
+    let tenant_context = tandem_types::TenantContext::local_implicit();
     let put_response = super::skills_memory::memory_put_impl(
         &state,
+        &tenant_context,
         MemoryPutRequest {
             run_id: record.linked_context_run_id.clone(),
             partition: session_partition.clone(),
@@ -11661,6 +11685,7 @@ pub(super) async fn coder_memory_candidate_promote(
             Some(
                 super::skills_memory::memory_promote_impl(
                     &state,
+                    &tenant_context,
                     MemoryPromoteRequest {
                         run_id: record.linked_context_run_id.clone(),
                         source_memory_id: put_response.id.clone(),

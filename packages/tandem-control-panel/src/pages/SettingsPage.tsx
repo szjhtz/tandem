@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { JsonObject } from "@frumu/tandem-client";
 import { renderIcons } from "../app/icons.js";
 import { renderMarkdownSafe } from "../lib/markdown";
+import { ProviderModelSelector } from "../components/ProviderModelSelector";
 import {
   AnimatedPage,
   Badge,
@@ -20,6 +21,7 @@ import { ACA_CORE_NAV_ROUTE_IDS } from "../app/navigation";
 import { EmptyState } from "./ui";
 import type { AppPageProps } from "./pageTypes";
 import type { RouteId } from "../app/routes";
+import { buildPlannerProviderOptions } from "../features/planner/plannerShared";
 
 type BrowserBlockingIssue = {
   code?: string;
@@ -245,6 +247,8 @@ type ChannelConfigRow = {
   mention_only?: boolean;
   guild_id?: string;
   channel_id?: string;
+  model_provider_id?: string;
+  model_id?: string;
   style_profile?: string;
   security_profile?: string;
 };
@@ -263,6 +267,8 @@ type ChannelDraft = {
   mentionOnly: boolean;
   guildId: string;
   channelId: string;
+  modelProviderId: string;
+  modelId: string;
   styleProfile: string;
   securityProfile: string;
 };
@@ -538,6 +544,8 @@ function normalizeChannelDraft(
     mentionOnly: row.mention_only !== false && channel === "discord" ? true : !!row.mention_only,
     guildId: String(row.guild_id || "").trim(),
     channelId: String(row.channel_id || "").trim(),
+    modelProviderId: String(row.model_provider_id || "").trim(),
+    modelId: String(row.model_id || "").trim(),
     styleProfile: String(row.style_profile || "default").trim() || "default",
     securityProfile: String(row.security_profile || "operator").trim() || "operator",
   };
@@ -661,6 +669,8 @@ function channelConfigHasSavedSettings(
     !!row.mention_only ||
     !!String(row.guild_id || "").trim() ||
     !!String(row.channel_id || "").trim() ||
+    !!String(row.model_provider_id || "").trim() ||
+    !!String(row.model_id || "").trim() ||
     String(row.style_profile || "default").trim() !== "default" ||
     String(row.security_profile || "operator").trim() !== "operator"
   );
@@ -678,6 +688,9 @@ function channelDraftMatchesConfig(
     !!draft.mentionOnly === !!savedDraft.mentionOnly &&
     String(draft.guildId || "").trim() === String(savedDraft.guildId || "").trim() &&
     String(draft.channelId || "").trim() === String(savedDraft.channelId || "").trim() &&
+    String(draft.modelProviderId || "").trim() ===
+      String(savedDraft.modelProviderId || "").trim() &&
+    String(draft.modelId || "").trim() === String(savedDraft.modelId || "").trim() &&
     String(draft.styleProfile || "default").trim() ===
       String(savedDraft.styleProfile || "default").trim() &&
     String(draft.securityProfile || "operator").trim() ===
@@ -886,6 +899,31 @@ export function SettingsPage({
     queryKey: ["settings", "providers", "config"],
     queryFn: () => client.providers.config().catch(() => ({ default: "", providers: {} })),
   });
+  const channelProviderOptions = useMemo(
+    () =>
+      buildPlannerProviderOptions({
+        providerCatalog: providersCatalog.data,
+        providerConfig: providersConfig.data,
+        defaultProvider: String(providersConfig.data?.default || "").trim(),
+        defaultModel: String(
+          providersConfig.data?.providers?.[String(providersConfig.data?.default || "").trim()]
+            ?.default_model ||
+            providersConfig.data?.providers?.[String(providersConfig.data?.default || "").trim()]
+              ?.defaultModel ||
+            ""
+        ).trim(),
+      }),
+    [providersCatalog.data, providersConfig.data]
+  );
+  const channelDefaultModel = useMemo(() => {
+    const defaultProvider = String(providersConfig.data?.default || "").trim();
+    const defaultModel = String(
+      providersConfig.data?.providers?.[defaultProvider]?.default_model ||
+        providersConfig.data?.providers?.[defaultProvider]?.defaultModel ||
+        ""
+    ).trim();
+    return { provider: defaultProvider, model: defaultModel };
+  }, [providersConfig.data]);
   const configuredProviders = useMemo(
     () =>
       ((providersConfig.data?.providers as Record<string, any> | undefined) || {}) as Record<
@@ -1462,10 +1500,14 @@ export function SettingsPage({
     mutationFn: async (channel: "telegram" | "discord" | "slack") => {
       const draft = channelDrafts[channel];
       if (!draft) throw new Error(`No draft found for ${channel}.`);
+      const modelProviderId = String(draft.modelProviderId || "").trim();
+      const modelId = String(draft.modelId || "").trim();
       const payload: Record<string, unknown> = {
         allowed_users: parseAllowedUsers(draft.allowedUsers),
         mention_only: !!draft.mentionOnly,
         security_profile: String(draft.securityProfile || "operator").trim() || "operator",
+        model_provider_id: modelProviderId || null,
+        model_id: modelId || null,
       };
       const token = String(draft.botToken || "").trim();
       if (token) payload.bot_token = token;
@@ -3238,10 +3280,10 @@ export function SettingsPage({
                               <div className="font-semibold capitalize">{channel}</div>
                               <div className="tcp-subtle text-xs">
                                 {channel === "telegram"
-                                  ? "Bot token, allowed users, and style profile."
+                                  ? "Bot token, allowed users, style profile, and optional model override."
                                   : channel === "discord"
-                                    ? "Bot token, allowed users, mention policy, and guild targeting."
-                                    : "Bot token, allowed users, mention policy, and default channel."}
+                                    ? "Bot token, allowed users, mention policy, guild targeting, and optional model override."
+                                    : "Bot token, allowed users, mention policy, default channel, and optional model override."}
                               </div>
                             </div>
                             <div className="flex flex-wrap gap-2">
@@ -3382,6 +3424,59 @@ export function SettingsPage({
                               />
                               Mention only
                             </label>
+                          </div>
+
+                          <div className="rounded-xl border border-slate-700/60 bg-slate-900/20 p-3">
+                            <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+                              <div>
+                                <div className="font-medium">Channel model override</div>
+                                <div className="tcp-subtle text-xs">
+                                  Pick the provider and model this channel should use. Leave both
+                                  blank to inherit Tandem&apos;s global default.
+                                </div>
+                              </div>
+                              <Badge tone={draft.modelProviderId && draft.modelId ? "ok" : "info"}>
+                                {draft.modelProviderId && draft.modelId
+                                  ? "Custom model"
+                                  : "Global default"}
+                              </Badge>
+                            </div>
+                            <ProviderModelSelector
+                              providerLabel="Provider"
+                              modelLabel="Model"
+                              draft={{
+                                provider: draft.modelProviderId,
+                                model: draft.modelId,
+                              }}
+                              providers={channelProviderOptions}
+                              onChange={({ provider, model }) =>
+                                setChannelDrafts((prev) => ({
+                                  ...prev,
+                                  [channel]: {
+                                    ...draft,
+                                    modelProviderId: provider,
+                                    modelId: model,
+                                  },
+                                }))
+                              }
+                              inheritLabel="Use global default"
+                            />
+                            <div className="mt-2 tcp-subtle text-xs">
+                              {draft.modelProviderId && draft.modelId ? (
+                                <span>
+                                  Selected model: <strong>{draft.modelProviderId}</strong> /{" "}
+                                  <strong>{draft.modelId}</strong>
+                                </span>
+                              ) : channelDefaultModel.provider && channelDefaultModel.model ? (
+                                <span>
+                                  Inheriting Tandem default:{" "}
+                                  <strong>{channelDefaultModel.provider}</strong> /{" "}
+                                  <strong>{channelDefaultModel.model}</strong>
+                                </span>
+                              ) : (
+                                <span>No global default model is configured yet.</span>
+                              )}
+                            </div>
                           </div>
 
                           {draft.securityProfile === "public_demo" ? (

@@ -125,6 +125,27 @@ async fn memory_put_enforces_default_write_scope() {
             .and_then(Value::as_str),
         blocked_put_exists.get("audit_id").and_then(Value::as_str)
     );
+    let persisted_audit = tokio::fs::read_to_string(&state.memory_audit_path)
+        .await
+        .expect("persisted audit file");
+    let persisted_audit_id = blocked_put_exists
+        .get("audit_id")
+        .and_then(Value::as_str)
+        .expect("blocked audit id");
+    let persisted_exists = persisted_audit.lines().any(|line| {
+        serde_json::from_str::<Value>(line)
+            .ok()
+            .and_then(|row| {
+                row.get("audit_id")
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+            })
+            .is_some_and(|audit_id| audit_id == persisted_audit_id)
+    });
+    assert!(
+        persisted_exists,
+        "blocked audit event should be written to disk"
+    );
 }
 
 #[tokio::test]
@@ -3533,4 +3554,192 @@ async fn memory_search_rejects_mismatched_capability_and_emits_blocked_audit() {
             .get("audit_id")
             .and_then(Value::as_str)
     );
+}
+
+#[tokio::test]
+async fn memory_audit_filters_by_tenant_context() {
+    let state = test_state().await;
+    let app = app_router(state.clone());
+
+    let put_req = Request::builder()
+        .method("POST")
+        .uri("/memory/put")
+        .header("content-type", "application/json")
+        .header("x-tandem-org-id", "acme")
+        .header("x-tandem-workspace-id", "north")
+        .header("x-tandem-actor-id", "user-a")
+        .body(Body::from(
+            json!({
+                "run_id": "tenant-a-run",
+                "partition": {
+                    "org_id": "acme",
+                    "workspace_id": "north",
+                    "project_id": "proj-a",
+                    "tier": "session"
+                },
+                "kind": "fact",
+                "content": "tenant scoped audit record",
+                "classification": "internal"
+            })
+            .to_string(),
+        ))
+        .expect("tenant put request");
+    let put_resp = app
+        .clone()
+        .oneshot(put_req)
+        .await
+        .expect("tenant put response");
+    assert_eq!(put_resp.status(), StatusCode::OK);
+
+    let audit_req = Request::builder()
+        .method("GET")
+        .uri("/memory/audit?run_id=tenant-a-run")
+        .header("x-tandem-org-id", "acme")
+        .header("x-tandem-workspace-id", "north")
+        .header("x-tandem-actor-id", "user-a")
+        .body(Body::empty())
+        .expect("tenant audit request");
+    let audit_resp = app
+        .clone()
+        .oneshot(audit_req)
+        .await
+        .expect("tenant audit response");
+    assert_eq!(audit_resp.status(), StatusCode::OK);
+    let audit_body = to_bytes(audit_resp.into_body(), usize::MAX)
+        .await
+        .expect("audit body");
+    let audit_payload: Value = serde_json::from_slice(&audit_body).expect("audit json");
+    let events = audit_payload
+        .get("events")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    assert!(!events.is_empty(), "expected tenant-a audit events");
+    assert!(events.iter().all(|row| {
+        row.get("tenant_context")
+            .and_then(|tenant| tenant.get("org_id"))
+            .and_then(Value::as_str)
+            == Some("acme")
+    }));
+
+    let foreign_audit_req = Request::builder()
+        .method("GET")
+        .uri("/memory/audit?run_id=tenant-a-run")
+        .header("x-tandem-org-id", "beta")
+        .header("x-tandem-workspace-id", "south")
+        .header("x-tandem-actor-id", "user-b")
+        .body(Body::empty())
+        .expect("foreign audit request");
+    let foreign_audit_resp = app
+        .clone()
+        .oneshot(foreign_audit_req)
+        .await
+        .expect("foreign audit response");
+    assert_eq!(foreign_audit_resp.status(), StatusCode::OK);
+    let foreign_audit_body = to_bytes(foreign_audit_resp.into_body(), usize::MAX)
+        .await
+        .expect("foreign audit body");
+    let foreign_audit_payload: Value =
+        serde_json::from_slice(&foreign_audit_body).expect("foreign audit json");
+    assert_eq!(
+        foreign_audit_payload.get("count").and_then(Value::as_u64),
+        Some(0)
+    );
+}
+
+#[tokio::test]
+async fn memory_list_uses_capability_subject_and_rejects_mismatched_user() {
+    let state = test_state().await;
+    let app = app_router(state.clone());
+
+    let capability = json!({
+        "run_id": "tenant-list-run",
+        "subject": "user-a",
+        "org_id": "acme",
+        "workspace_id": "north",
+        "project_id": "proj-a",
+        "memory": {
+            "read_tiers": ["session", "project"],
+            "write_tiers": ["session"],
+            "promote_targets": ["project"],
+            "require_review_for_promote": true,
+            "allow_auto_use_tiers": ["curated"]
+        },
+        "expires_at": 9999999999999u64
+    });
+
+    let put_req = Request::builder()
+        .method("POST")
+        .uri("/memory/put")
+        .header("content-type", "application/json")
+        .header("x-tandem-org-id", "acme")
+        .header("x-tandem-workspace-id", "north")
+        .header("x-tandem-actor-id", "user-a")
+        .body(Body::from(
+            json!({
+                "run_id": "tenant-list-run",
+                "partition": {
+                    "org_id": "acme",
+                    "workspace_id": "north",
+                    "project_id": "proj-a",
+                    "tier": "session"
+                },
+                "kind": "fact",
+                "content": "tenant list record",
+                "classification": "internal",
+                "capability": capability
+            })
+            .to_string(),
+        ))
+        .expect("tenant list put request");
+    let put_resp = app
+        .clone()
+        .oneshot(put_req)
+        .await
+        .expect("tenant list put response");
+    assert_eq!(put_resp.status(), StatusCode::OK);
+
+    let list_req = Request::builder()
+        .method("GET")
+        .uri("/memory?limit=20&user_id=user-a")
+        .header("x-tandem-org-id", "acme")
+        .header("x-tandem-workspace-id", "north")
+        .header("x-tandem-actor-id", "user-a")
+        .body(Body::empty())
+        .expect("tenant list request");
+    let list_resp = app
+        .clone()
+        .oneshot(list_req)
+        .await
+        .expect("tenant list response");
+    assert_eq!(list_resp.status(), StatusCode::OK);
+    let list_body = to_bytes(list_resp.into_body(), usize::MAX)
+        .await
+        .expect("tenant list body");
+    let list_payload: Value = serde_json::from_slice(&list_body).expect("tenant list json");
+    let found = list_payload
+        .get("items")
+        .and_then(Value::as_array)
+        .is_some_and(|rows| {
+            rows.iter().any(|row| {
+                row.get("run_id").and_then(Value::as_str) == Some("tenant-list-run")
+                    && row.get("user_id").and_then(Value::as_str) == Some("user-a")
+            })
+        });
+    assert!(found, "expected tenant-scoped memory item to be listed");
+
+    let forbidden_req = Request::builder()
+        .method("GET")
+        .uri("/memory?limit=20&user_id=user-a")
+        .header("x-tandem-org-id", "acme")
+        .header("x-tandem-workspace-id", "north")
+        .header("x-tandem-actor-id", "user-b")
+        .body(Body::empty())
+        .expect("forbidden list request");
+    let forbidden_resp = app
+        .clone()
+        .oneshot(forbidden_req)
+        .await
+        .expect("forbidden list response");
+    assert_eq!(forbidden_resp.status(), StatusCode::FORBIDDEN);
 }

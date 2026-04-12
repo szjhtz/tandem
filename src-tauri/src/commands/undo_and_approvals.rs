@@ -554,6 +554,14 @@ pub async fn approve_tool(
     let normalized_tool = effective_tool
         .as_deref()
         .map(normalize_tool_name_for_approval);
+    let tenant_context = crate::state::resolve_session_tenant_context(&state, &session_id).await;
+    let request_cache_key =
+        crate::state::tenant_scoped_cache_key("permission_args", &tenant_context, &tool_call_id);
+    let session_intent_cache_key = crate::state::tenant_scoped_cache_key(
+        "session_websearch_intent",
+        &tenant_context,
+        &session_id,
+    );
 
     if normalized_tool.as_deref() == Some("websearch")
         && !websearch_query_present(effective_args.as_ref())
@@ -563,7 +571,7 @@ pub async fn approve_tool(
             .permission_args_cache
             .lock()
             .await
-            .get(&tool_call_id)
+            .get(&request_cache_key)
             .cloned()
         {
             if let Some(query) = extract_websearch_query(&cached_args) {
@@ -588,7 +596,7 @@ pub async fn approve_tool(
             .session_websearch_intent
             .lock()
             .await
-            .get(&session_id)
+            .get(&session_intent_cache_key)
             .cloned()
         {
             tracing::warn!(
@@ -652,7 +660,7 @@ pub async fn approve_tool(
                 .permission_args_cache
                 .lock()
                 .await
-                .get(&tool_call_id)
+                .get(&request_cache_key)
                 .cloned()
             {
                 if missing_file_tool_arg_reason(
@@ -684,7 +692,7 @@ pub async fn approve_tool(
                 .permission_args_cache
                 .lock()
                 .await
-                .remove(&tool_call_id);
+                .remove(&request_cache_key);
             let _ = state.sidecar.deny_tool(&session_id, &tool_call_id).await;
             return Err(TandemError::PermissionDenied(reason.to_string()));
         }
@@ -698,7 +706,7 @@ pub async fn approve_tool(
                     .session_websearch_intent
                     .lock()
                     .await
-                    .insert(session_id.clone(), query);
+                    .insert(session_intent_cache_key, query);
             }
         }
     }
@@ -843,7 +851,7 @@ pub async fn approve_tool(
         .permission_args_cache
         .lock()
         .await
-        .remove(&tool_call_id);
+        .remove(&request_cache_key);
 
     state.sidecar.approve_tool(&session_id, &tool_call_id).await
 }
@@ -873,11 +881,15 @@ pub async fn deny_tool(
         state.operation_journal.record(entry, None);
     }
 
+    let tenant_context = crate::state::resolve_session_tenant_context(&state, &session_id).await;
+    let request_cache_key =
+        crate::state::tenant_scoped_cache_key("permission_args", &tenant_context, &tool_call_id);
+
     state
         .permission_args_cache
         .lock()
         .await
-        .remove(&tool_call_id);
+        .remove(&request_cache_key);
 
     state.sidecar.deny_tool(&session_id, &tool_call_id).await
 }

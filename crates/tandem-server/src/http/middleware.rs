@@ -5,13 +5,18 @@ use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 
+use tandem_types::{
+    HeaderTenantContextResolver, NoopRequestAuthorizationHook, RequestAuthorizationHook,
+    RequestPrincipal, TenantContext, TenantContextResolver,
+};
+
 use crate::{AppState, StartupStatus};
 
 use super::ErrorEnvelope;
 
 pub(super) async fn auth_gate(
     State(state): State<AppState>,
-    request: Request,
+    mut request: Request,
     next: Next,
 ) -> Response {
     if request.method() == Method::OPTIONS {
@@ -26,23 +31,71 @@ pub(super) async fn auth_gate(
     }
 
     let required = state.api_token().await;
-    let Some(expected) = required else {
-        return next.run(request).await;
-    };
-
-    let provided = extract_request_token(request.headers());
-    if provided.as_deref() == Some(expected.as_str()) {
-        return next.run(request).await;
+    if let Some(expected) = required {
+        let provided = extract_request_token(request.headers());
+        if provided.as_deref() != Some(expected.as_str()) {
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(ErrorEnvelope {
+                    error: "Unauthorized: missing or invalid API token".to_string(),
+                    code: Some("AUTH_REQUIRED".to_string()),
+                }),
+            )
+                .into_response();
+        }
     }
 
-    (
-        StatusCode::UNAUTHORIZED,
-        Json(ErrorEnvelope {
-            error: "Unauthorized: missing or invalid API token".to_string(),
-            code: Some("AUTH_REQUIRED".to_string()),
-        }),
-    )
-        .into_response()
+    if !attach_enterprise_request_context(&mut request) {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(ErrorEnvelope {
+                error: "Unauthorized: tenant context denied".to_string(),
+                code: Some("TENANT_CONTEXT_DENIED".to_string()),
+            }),
+        )
+            .into_response();
+    }
+    next.run(request).await
+}
+
+fn attach_enterprise_request_context(request: &mut Request) -> bool {
+    let headers = request.headers();
+    let (tenant_context, request_principal) = resolve_enterprise_request_context(headers);
+    let auth_hook = NoopRequestAuthorizationHook;
+    if !auth_hook.authorize(&request_principal, &tenant_context) {
+        return false;
+    }
+    request.extensions_mut().insert(tenant_context);
+    request.extensions_mut().insert(request_principal);
+    true
+}
+
+fn resolve_enterprise_request_context(headers: &HeaderMap) -> (TenantContext, RequestPrincipal) {
+    let resolver = HeaderTenantContextResolver;
+    let tenant_context = resolver.resolve_tenant_context(
+        first_header(headers, &["x-tandem-org-id", "x-tenant-org-id"]).as_deref(),
+        first_header(headers, &["x-tandem-workspace-id", "x-tenant-workspace-id"]).as_deref(),
+        first_header(headers, &["x-tandem-actor-id", "x-user-id"]).as_deref(),
+    );
+    let request_principal = RequestPrincipal {
+        actor_id: tenant_context.actor_id.clone(),
+        source: "api_token".to_string(),
+    };
+    (tenant_context, request_principal)
+}
+
+fn first_header(headers: &HeaderMap, names: &[&str]) -> Option<String> {
+    for name in names {
+        if let Some(value) = headers
+            .get(*name)
+            .and_then(|v| v.to_str().ok())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            return Some(value.to_string());
+        }
+    }
+    None
 }
 
 fn extract_request_token(headers: &HeaderMap) -> Option<String> {
@@ -75,6 +128,37 @@ fn extract_request_token(headers: &HeaderMap) -> Option<String> {
         None
     } else {
         Some(token.to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::http::HeaderValue;
+
+    #[test]
+    fn resolve_enterprise_request_context_defaults_to_local_tenant() {
+        let headers = HeaderMap::new();
+        let (tenant_context, principal) = resolve_enterprise_request_context(&headers);
+        assert_eq!(tenant_context.org_id, "local");
+        assert_eq!(tenant_context.workspace_id, "local");
+        assert!(tenant_context.actor_id.is_none());
+        assert_eq!(principal.actor_id, None);
+        assert_eq!(principal.source, "api_token");
+    }
+
+    #[test]
+    fn resolve_enterprise_request_context_uses_tenant_headers() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-tandem-org-id", HeaderValue::from_static("acme"));
+        headers.insert("x-tandem-workspace-id", HeaderValue::from_static("north"));
+        headers.insert("x-user-id", HeaderValue::from_static("user-1"));
+        let (tenant_context, principal) = resolve_enterprise_request_context(&headers);
+        assert_eq!(tenant_context.org_id, "acme");
+        assert_eq!(tenant_context.workspace_id, "north");
+        assert_eq!(tenant_context.actor_id.as_deref(), Some("user-1"));
+        assert_eq!(principal.actor_id.as_deref(), Some("user-1"));
+        assert_eq!(tenant_context.source, tandem_types::TenantSource::Explicit);
     }
 }
 

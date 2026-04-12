@@ -6,6 +6,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use tandem_orchestrator::KnowledgeBinding;
+use tandem_types::TenantContext;
 
 mod mission_builder;
 pub mod plan_package;
@@ -132,6 +133,8 @@ pub struct WorkflowActionRunRecord {
 pub struct WorkflowRunRecord {
     pub run_id: String,
     pub workflow_id: String,
+    #[serde(default = "default_tenant_context")]
+    pub tenant_context: TenantContext,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub automation_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -153,6 +156,10 @@ pub struct WorkflowRunRecord {
     pub actions: Vec<WorkflowActionRunRecord>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source: Option<WorkflowSourceRef>,
+}
+
+fn default_tenant_context() -> TenantContext {
+    TenantContext::local_implicit()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

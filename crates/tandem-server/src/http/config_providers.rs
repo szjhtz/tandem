@@ -439,6 +439,17 @@ pub(super) async fn set_auth(
             .providers
             .reload(state.config.get().await.into())
             .await;
+        let _ = crate::audit::append_protected_audit_event(
+            &state,
+            "provider.secret.updated",
+            &tandem_types::TenantContext::local_implicit(),
+            None,
+            json!({
+                "providerID": normalized_id,
+                "backend": backend,
+            }),
+        )
+        .await;
     }
     Json(json!({"ok": ok, "id": normalized_id, "backend": backend}))
 }
@@ -460,6 +471,20 @@ pub(super) async fn delete_auth(
         .delete_runtime_provider_key(&normalized_id)
         .await
         .is_ok();
+    if runtime_removed || persisted_removed || removed {
+        let _ = crate::audit::append_protected_audit_event(
+            &state,
+            "provider.secret.deleted",
+            &tandem_types::TenantContext::local_implicit(),
+            None,
+            json!({
+                "providerID": normalized_id,
+                "runtimeRemoved": runtime_removed,
+                "persistedRemoved": persisted_removed,
+            }),
+        )
+        .await;
+    }
     if runtime_removed {
         state
             .providers

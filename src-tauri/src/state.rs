@@ -9,6 +9,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex as StdMutex;
 use std::sync::{Arc, RwLock};
+use tandem_types::TenantContext;
 use tokio::sync::{Mutex, Semaphore};
 
 /// Selected model (provider + model id) for the OpenCode sidecar.
@@ -309,6 +310,23 @@ pub struct AppState {
     pub session_websearch_intent: Arc<Mutex<HashMap<String, String>>>,
 }
 
+pub fn tenant_scoped_cache_key(
+    prefix: &str,
+    tenant_context: &TenantContext,
+    scope: &str,
+) -> String {
+    let tenant_key = serde_json::to_string(tenant_context)
+        .unwrap_or_else(|_| TenantContext::local_implicit().org_id);
+    format!("{prefix}|{tenant_key}|{scope}")
+}
+
+pub async fn resolve_session_tenant_context(state: &AppState, session_id: &str) -> TenantContext {
+    match state.sidecar.get_session(session_id).await {
+        Ok(session) => session.tenant_context,
+        Err(_) => TenantContext::local_implicit(),
+    }
+}
+
 impl AppState {
     pub fn new() -> Self {
         let denied_patterns = vec![
@@ -431,5 +449,23 @@ impl From<&AppState> for AppStateInfo {
             active_project_id: active_project_id.clone(),
             providers_config: providers.clone(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tenant_scoped_cache_key_partitions_by_tenant() {
+        let tenant_a = TenantContext::explicit("acme", "north", Some("alice".to_string()));
+        let tenant_b = TenantContext::explicit("acme", "south", Some("alice".to_string()));
+
+        let key_a = tenant_scoped_cache_key("permission_args", &tenant_a, "req-1");
+        let key_b = tenant_scoped_cache_key("permission_args", &tenant_b, "req-1");
+        let key_a_again = tenant_scoped_cache_key("permission_args", &tenant_a, "req-1");
+
+        assert_eq!(key_a, key_a_again);
+        assert_ne!(key_a, key_b);
     }
 }

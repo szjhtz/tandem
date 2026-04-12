@@ -1142,6 +1142,18 @@ pub(super) async fn routines_run_approve(
             "reason": reason,
         }),
     ));
+    let _ = crate::audit::append_protected_audit_event(
+        &state,
+        "routine.run.approved",
+        &tandem_types::TenantContext::local_implicit(),
+        None,
+        json!({
+            "runID": run_id,
+            "routineID": updated.routine_id,
+            "reason": reason,
+        }),
+    )
+    .await;
     let context_run_id = super::context_runs::sync_routine_run_blackboard(&state, &updated)
         .await
         .unwrap_or_else(|_| super::context_runs::routine_context_run_id(&run_id));
@@ -1200,6 +1212,18 @@ pub(super) async fn routines_run_deny(
             "reason": reason,
         }),
     ));
+    let _ = crate::audit::append_protected_audit_event(
+        &state,
+        "routine.run.denied",
+        &tandem_types::TenantContext::local_implicit(),
+        None,
+        json!({
+            "runID": run_id,
+            "routineID": updated.routine_id,
+            "reason": reason,
+        }),
+    )
+    .await;
     let context_run_id = super::context_runs::sync_routine_run_blackboard(&state, &updated)
         .await
         .unwrap_or_else(|_| super::context_runs::routine_context_run_id(&run_id));
@@ -1271,6 +1295,19 @@ pub(super) async fn routines_run_pause(
             "cancelledSessionIDs": cancelled_sessions,
         }),
     ));
+    let _ = crate::audit::append_protected_audit_event(
+        &state,
+        "routine.run.paused",
+        &tandem_types::TenantContext::local_implicit(),
+        None,
+        json!({
+            "runID": run_id,
+            "routineID": updated.routine_id,
+            "reason": reason,
+            "cancelledSessionIDs": cancelled_sessions,
+        }),
+    )
+    .await;
     let context_run_id = super::context_runs::sync_routine_run_blackboard(&state, &updated)
         .await
         .unwrap_or_else(|_| super::context_runs::routine_context_run_id(&run_id));

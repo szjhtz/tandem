@@ -500,8 +500,10 @@ async fn persist_bug_monitor_failure_pattern_memory(
         "triage_run_id": triage_run_id,
         "source": "bug_monitor",
     });
+    let tenant_context = tandem_types::TenantContext::local_implicit();
     let put_response = super::skills_memory::memory_put_impl(
         state,
+        &tenant_context,
         MemoryPutRequest {
             run_id: triage_run_id.to_string(),
             partition: partition.clone(),
@@ -622,8 +624,10 @@ async fn persist_bug_monitor_regression_signal_memory(
         "logs": logs,
         "artifact_refs": [summary_artifact_path],
     });
+    let tenant_context = tandem_types::TenantContext::local_implicit();
     let put_response = super::skills_memory::memory_put_impl(
         state,
+        &tenant_context,
         MemoryPutRequest {
             run_id: triage_run_id.to_string(),
             partition: partition.clone(),
@@ -755,8 +759,10 @@ async fn persist_bug_monitor_failure_pattern_from_approved_draft(
         "draft_id": draft.draft_id,
         "source": "bug_monitor_approval",
     });
+    let tenant_context = tandem_types::TenantContext::local_implicit();
     let put_response = super::skills_memory::memory_put_impl(
         state,
+        &tenant_context,
         MemoryPutRequest {
             run_id,
             partition: partition.clone(),
@@ -2220,18 +2226,21 @@ pub(crate) async fn ensure_bug_monitor_triage_run(
         model_id,
         mcp_servers,
     };
-    let created_run =
-        match super::context_runs::context_run_create(State(state.clone()), Json(create_input))
-            .await
-        {
-            Ok(Json(payload)) => match serde_json::from_value::<ContextRunState>(
-                payload.get("run").cloned().unwrap_or_default(),
-            ) {
-                Ok(run) => run,
-                Err(_) => anyhow::bail!("Failed to deserialize triage context run"),
-            },
-            Err(status) => anyhow::bail!("Failed to create triage context run: HTTP {status}"),
-        };
+    let created_run = match super::context_runs::context_run_create_impl(
+        state.clone(),
+        tandem_types::TenantContext::local_implicit(),
+        create_input,
+    )
+    .await
+    {
+        Ok(Json(payload)) => match serde_json::from_value::<ContextRunState>(
+            payload.get("run").cloned().unwrap_or_default(),
+        ) {
+            Ok(run) => run,
+            Err(_) => anyhow::bail!("Failed to deserialize triage context run"),
+        },
+        Err(status) => anyhow::bail!("Failed to create triage context run: HTTP {status}"),
+    };
 
     let inspect_task_id = format!("triage-inspect-{}", Uuid::new_v4().simple());
     let validate_task_id = format!("triage-validate-{}", Uuid::new_v4().simple());

@@ -12,6 +12,14 @@ pub(super) struct BrowserSmokeTestInput {
     url: Option<String>,
 }
 
+fn event_tenant_context(event: &EngineEvent) -> TenantContext {
+    event
+        .properties
+        .get("tenantContext")
+        .and_then(|value| serde_json::from_value(value.clone()).ok())
+        .unwrap_or_else(TenantContext::local_implicit)
+}
+
 pub(super) async fn global_health(State(state): State<AppState>) -> impl IntoResponse {
     let lease_count = prune_expired_leases(&state).await;
     let startup = state.startup_snapshot().await;
@@ -326,7 +334,8 @@ fn sse_stream(
                     })
                     .unwrap_or_default()
                     .to_string();
-                normalize_run_event(event, &session_hint, run_id)
+                let tenant_context = event_tenant_context(&event);
+                normalize_run_event(event, &session_hint, run_id, &tenant_context)
             } else {
                 event
             };

@@ -8,6 +8,10 @@ pub struct TelegramConfigFile {
     #[serde(default)]
     pub mention_only: bool,
     #[serde(default)]
+    pub model_provider_id: Option<String>,
+    #[serde(default)]
+    pub model_id: Option<String>,
+    #[serde(default)]
     pub style_profile: tandem_channels::config::TelegramStyleProfile,
     #[serde(default)]
     pub security_profile: tandem_channels::config::ChannelSecurityProfile,
@@ -23,6 +27,10 @@ pub struct DiscordConfigFile {
     #[serde(default = "default_discord_mention_only")]
     pub mention_only: bool,
     #[serde(default)]
+    pub model_provider_id: Option<String>,
+    #[serde(default)]
+    pub model_id: Option<String>,
+    #[serde(default)]
     pub security_profile: tandem_channels::config::ChannelSecurityProfile,
 }
 
@@ -34,6 +42,10 @@ pub struct SlackConfigFile {
     pub allowed_users: Vec<String>,
     #[serde(default)]
     pub mention_only: bool,
+    #[serde(default)]
+    pub model_provider_id: Option<String>,
+    #[serde(default)]
+    pub model_id: Option<String>,
     #[serde(default)]
     pub security_profile: tandem_channels::config::ChannelSecurityProfile,
 }

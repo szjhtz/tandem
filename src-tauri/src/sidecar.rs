@@ -219,6 +219,10 @@ fn default_health_ready() -> bool {
     true
 }
 
+fn default_tenant_context() -> tandem_types::TenantContext {
+    tandem_types::TenantContext::local_implicit()
+}
+
 fn default_sidecar_port() -> u16 {
     std::env::var("TANDEM_ENGINE_PORT")
         .ok()
@@ -396,6 +400,8 @@ pub struct Session {
     pub directory: Option<String>,
     #[serde(rename = "workspaceRoot", skip_serializing_if = "Option::is_none")]
     pub workspace_root: Option<String>,
+    #[serde(default = "default_tenant_context")]
+    pub tenant_context: tandem_types::TenantContext,
     #[serde(
         rename = "originWorkspaceRoot",
         skip_serializing_if = "Option::is_none"

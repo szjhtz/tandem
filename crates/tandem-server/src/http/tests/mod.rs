@@ -9,6 +9,7 @@ pub(super) mod context_packs;
 pub(super) mod context_run_ledger;
 pub(super) mod context_run_mutation_checkpoints;
 pub(super) mod context_runs;
+pub(super) mod enterprise;
 pub(super) mod global;
 pub(super) mod marketplace;
 pub(super) mod mcp;
@@ -144,6 +145,8 @@ pub(super) async fn test_state() -> AppState {
     );
     let mut state = AppState::new_starting(Uuid::new_v4().to_string(), false);
     state.shared_resources_path = root.join("shared_resources.json");
+    state.memory_audit_path = root.join("memory").join("audit.log.jsonl");
+    state.protected_audit_path = root.join("audit").join("protected_events.log.jsonl");
     state
         .mark_ready(crate::RuntimeState {
             storage,

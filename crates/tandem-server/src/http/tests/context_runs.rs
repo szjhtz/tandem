@@ -38,6 +38,9 @@ async fn context_run_create_append_event_and_get() {
         .method("POST")
         .uri("/context/runs")
         .header("content-type", "application/json")
+        .header("x-tandem-org-id", "acme")
+        .header("x-tandem-workspace-id", "north")
+        .header("x-user-id", "user-1")
         .body(Body::from(
             json!({
                 "run_id": "ctx-run-1",
@@ -54,6 +57,26 @@ async fn context_run_create_append_event_and_get() {
         .await
         .expect("create response");
     assert_eq!(create_resp.status(), StatusCode::OK);
+    let create_body = to_bytes(create_resp.into_body(), usize::MAX)
+        .await
+        .expect("create body");
+    let create_payload: Value = serde_json::from_slice(&create_body).expect("create json");
+    assert_eq!(
+        create_payload
+            .get("run")
+            .and_then(|run| run.get("tenant_context"))
+            .and_then(|tenant| tenant.get("org_id"))
+            .and_then(Value::as_str),
+        Some("acme")
+    );
+    assert_eq!(
+        create_payload
+            .get("run")
+            .and_then(|run| run.get("tenant_context"))
+            .and_then(|tenant| tenant.get("workspace_id"))
+            .and_then(Value::as_str),
+        Some("north")
+    );
 
     let event_req = Request::builder()
         .method("POST")

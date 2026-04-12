@@ -1,4 +1,4 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tandem_memory::{GovernedMemoryTier, MemoryClassification, MemoryContentKind, MemoryPartition};
 
@@ -16,11 +16,13 @@ pub struct GovernedMemoryRecord {
     pub created_at_ms: u64,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemoryAuditEvent {
     pub audit_id: String,
     pub action: String,
     pub run_id: String,
+    #[serde(default)]
+    pub tenant_context: tandem_types::TenantContext,
     pub memory_id: Option<String>,
     pub source_memory_id: Option<String>,
     pub to_tier: Option<GovernedMemoryTier>,

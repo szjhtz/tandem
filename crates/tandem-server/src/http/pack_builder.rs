@@ -119,6 +119,7 @@ pub(super) async fn ensure_pack_builder_context_run(
     let now = crate::now_ms();
     let run = ContextRunState {
         run_id: run_id.to_string(),
+        tenant_context: tandem_types::TenantContext::local_implicit(),
         run_type: "pack_builder".to_string(),
         source_client: Some("pack_builder_api".to_string()),
         model_provider: None,

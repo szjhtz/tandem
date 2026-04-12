@@ -1,6 +1,6 @@
 use anyhow::Context;
 use serde_json::{json, Value};
-use tandem_types::{EngineEvent, MessagePartInput, SendMessageRequest, Session};
+use tandem_types::{EngineEvent, MessagePartInput, SendMessageRequest, Session, TenantContext};
 use tandem_workflows::{
     WorkflowActionRunRecord, WorkflowActionRunStatus, WorkflowActionSpec, WorkflowHookBinding,
     WorkflowRunRecord, WorkflowRunStatus, WorkflowSimulationResult, WorkflowSpec,
@@ -13,6 +13,26 @@ use crate::{now_ms, AppState, WorkflowSourceRef};
 struct PreparedWorkflowAction {
     action_id: String,
     spec: WorkflowActionSpec,
+}
+
+fn workflow_event_tenant_context_value(tenant_context: &TenantContext) -> Value {
+    serde_json::to_value(tenant_context).unwrap_or_else(|_| json!(tenant_context))
+}
+
+fn workflow_event_with_tenant_context(mut payload: Value, tenant_context: &TenantContext) -> Value {
+    if let Some(map) = payload.as_object_mut() {
+        map.entry("tenantContext".to_string())
+            .or_insert_with(|| workflow_event_tenant_context_value(tenant_context));
+    }
+    payload
+}
+
+fn event_tenant_context(event: &EngineEvent) -> TenantContext {
+    event
+        .properties
+        .get("tenantContext")
+        .and_then(|value| serde_json::from_value(value.clone()).ok())
+        .unwrap_or_else(TenantContext::local_implicit)
 }
 
 fn workflow_action_objective(action: &str, with: Option<&Value>) -> String {
@@ -570,6 +590,7 @@ pub async fn dispatch_workflow_event(state: &AppState, event: &EngineEvent) {
     for hook in simulation.matched_bindings {
         let source_event_id = source_event_id(event);
         let task_id = task_id_from_event(event);
+        let tenant_context = event_tenant_context(event);
         let dedupe_key = format!("{}::{source_event_id}", hook.binding_id);
         {
             let mut seen = state.workflow_dispatch_seen.write().await;
@@ -581,6 +602,7 @@ pub async fn dispatch_workflow_event(state: &AppState, event: &EngineEvent) {
         let _ = execute_hook_binding(
             state,
             &hook,
+            tenant_context.clone(),
             Some(event.event_type.clone()),
             Some(source_event_id),
             task_id,
@@ -604,6 +626,7 @@ pub async fn run_workflow_dispatcher(state: AppState) {
 pub async fn execute_workflow(
     state: &AppState,
     workflow: &WorkflowSpec,
+    tenant_context: TenantContext,
     trigger_event: Option<String>,
     source_event_id: Option<String>,
     task_id: Option<String>,
@@ -628,6 +651,7 @@ pub async fn execute_workflow(
         Some(workflow.name.clone()),
         workflow.description.clone(),
         workflow.source.clone(),
+        tenant_context,
         trigger_event,
         source_event_id,
         task_id,
@@ -639,6 +663,7 @@ pub async fn execute_workflow(
 pub async fn execute_hook_binding(
     state: &AppState,
     hook: &WorkflowHookBinding,
+    tenant_context: TenantContext,
     trigger_event: Option<String>,
     source_event_id: Option<String>,
     task_id: Option<String>,
@@ -663,6 +688,7 @@ pub async fn execute_hook_binding(
         None,
         None,
         workflow.source,
+        tenant_context,
         trigger_event,
         source_event_id,
         task_id,
@@ -679,6 +705,7 @@ async fn execute_actions(
     workflow_name: Option<String>,
     workflow_description: Option<String>,
     source: Option<WorkflowSourceRef>,
+    tenant_context: TenantContext,
     trigger_event: Option<String>,
     source_event_id: Option<String>,
     task_id: Option<String>,
@@ -704,6 +731,7 @@ async fn execute_actions(
     let mut run = WorkflowRunRecord {
         run_id: run_id.clone(),
         workflow_id: workflow_id.to_string(),
+        tenant_context: tenant_context.clone(),
         automation_id: Some(automation.automation_id.clone()),
         automation_run_id: Some(automation_run.run_id.clone()),
         binding_id,
@@ -740,7 +768,8 @@ async fn execute_actions(
     let _ = crate::http::sync_workflow_run_blackboard(state, &run).await;
     state.event_bus.publish(EngineEvent::new(
         "workflow.run.started",
-        json!({
+        workflow_event_with_tenant_context(
+            json!({
             "runID": run.run_id,
             "workflowID": run.workflow_id,
             "bindingID": run.binding_id,
@@ -748,7 +777,9 @@ async fn execute_actions(
             "sourceEventID": source_event_id,
             "taskID": task_id,
             "dryRun": dry_run,
-        }),
+            }),
+            &run.tenant_context,
+        ),
     ));
     if dry_run {
         return Ok(run);
@@ -780,13 +811,16 @@ async fn execute_actions(
         }
         state.event_bus.publish(EngineEvent::new(
             "workflow.action.started",
-            json!({
+            workflow_event_with_tenant_context(
+                json!({
                 "runID": run.run_id,
                 "workflowID": run.workflow_id,
                 "actionID": action_row.action_id,
                 "action": action_name,
                 "taskID": run.task_id,
-            }),
+                }),
+                &run.tenant_context,
+            ),
         ));
         match execute_action(
             state,
@@ -794,6 +828,7 @@ async fn execute_actions(
             workflow_id,
             &action_spec.spec,
             action_row,
+            &run.tenant_context,
             trigger_event.clone(),
         )
         .await
@@ -826,14 +861,17 @@ async fn execute_actions(
                 }
                 state.event_bus.publish(EngineEvent::new(
                     "workflow.action.completed",
-                    json!({
+                    workflow_event_with_tenant_context(
+                        json!({
                         "runID": run.run_id,
                         "workflowID": run.workflow_id,
                         "actionID": action_row.action_id,
                         "action": action_name,
                         "taskID": run.task_id,
                         "output": output,
-                    }),
+                        }),
+                        &run.tenant_context,
+                    ),
                 ));
             }
             Err(error) => {
@@ -869,24 +907,30 @@ async fn execute_actions(
                 }
                 state.event_bus.publish(EngineEvent::new(
                     "workflow.action.failed",
-                    json!({
+                    workflow_event_with_tenant_context(
+                        json!({
                         "runID": run.run_id,
                         "workflowID": run.workflow_id,
                         "actionID": action_row.action_id,
                         "action": action_name,
                         "taskID": run.task_id,
                         "error": detail,
-                    }),
+                        }),
+                        &run.tenant_context,
+                    ),
                 ));
                 state.event_bus.publish(EngineEvent::new(
                     "workflow.run.failed",
-                    json!({
+                    workflow_event_with_tenant_context(
+                        json!({
                         "runID": run.run_id,
                         "workflowID": run.workflow_id,
                         "actionID": action_row.action_id,
                         "taskID": run.task_id,
                         "error": action_row.detail,
-                    }),
+                        }),
+                        &run.tenant_context,
+                    ),
                 ));
                 return state.get_workflow_run(&run.run_id).await.with_context(|| {
                     format!("workflow run `{}` missing after failure", run.run_id)
@@ -906,12 +950,15 @@ async fn execute_actions(
     let _ = crate::http::sync_workflow_run_blackboard(state, &final_run).await;
     state.event_bus.publish(EngineEvent::new(
         "workflow.run.completed",
-        json!({
+        workflow_event_with_tenant_context(
+            json!({
             "runID": final_run.run_id,
             "workflowID": final_run.workflow_id,
             "bindingID": final_run.binding_id,
             "taskID": final_run.task_id,
-        }),
+            }),
+            &final_run.tenant_context,
+        ),
     ));
     Ok(final_run)
 }
@@ -922,6 +969,7 @@ async fn execute_action(
     workflow_id: &str,
     action_spec: &WorkflowActionSpec,
     action_row: &WorkflowActionRunRecord,
+    tenant_context: &TenantContext,
     trigger_event: Option<String>,
 ) -> anyhow::Result<Value> {
     let action_name = action_spec.action.as_str();
@@ -931,12 +979,15 @@ async fn execute_action(
             let payload = action_payload(action_spec, action_row);
             state.event_bus.publish(EngineEvent::new(
                 event_type.clone(),
-                json!({
+                workflow_event_with_tenant_context(
+                    json!({
                     "workflowID": workflow_id,
                     "actionID": action_row.action_id,
                     "triggerEvent": trigger_event,
                     "payload": payload,
-                }),
+                    }),
+                    tenant_context,
+                ),
             ));
             Ok(json!({ "eventType": event_type }))
         }

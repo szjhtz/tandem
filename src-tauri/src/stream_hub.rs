@@ -7,6 +7,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tandem_observability::{emit_event, ObservabilityEvent, ProcessKind};
+use tandem_types::TenantContext;
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::{broadcast, oneshot, Mutex};
 use uuid::Uuid;
@@ -32,6 +33,7 @@ pub struct StreamEventEnvelopeV2 {
     pub event_id: String,
     pub correlation_id: String,
     pub ts_ms: u64,
+    pub tenant_context: TenantContext,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub session_id: Option<String>,
     pub source: StreamEventSource,
@@ -187,6 +189,7 @@ impl StreamHub {
                                 event_id: Uuid::new_v4().to_string(),
                                 correlation_id: format!("engine-restart-{}", Uuid::new_v4()),
                                 ts_ms: crate::logs::now_ms(),
+                                tenant_context: TenantContext::local_implicit(),
                                 session_id: None,
                                 source: StreamEventSource::System,
                                 payload: restart_event.clone(),
@@ -387,10 +390,14 @@ impl StreamHub {
                                     ),
                                     error_code: Some("TOOL_TIMEOUT".to_string()),
                                 };
+                                let tenant_context =
+                                    resolve_session_tenant_context(&sidecar, Some(session_id.as_str()))
+                                        .await;
                                 let timeout_env = StreamEventEnvelopeV2 {
                                     event_id: Uuid::new_v4().to_string(),
                                     correlation_id: format!("tool-timeout-{}", Uuid::new_v4()),
                                     ts_ms: crate::logs::now_ms(),
+                                    tenant_context: tenant_context.clone(),
                                     session_id: Some(session_id.clone()),
                                     source: StreamEventSource::System,
                                     payload: timeout_event.clone(),
@@ -408,11 +415,16 @@ impl StreamHub {
                                     error: Some("failed_timeout".to_string()),
                                     error_code: Some("TOOL_TIMEOUT".to_string()),
                                 };
-                                let _ = crate::tool_history::record_stream_event(&app, &synthetic_end);
+                                let _ = crate::tool_history::record_stream_event(
+                                    &app,
+                                    &tenant_context,
+                                    &synthetic_end,
+                                );
                                 let synthetic_env = StreamEventEnvelopeV2 {
                                     event_id: Uuid::new_v4().to_string(),
                                     correlation_id: pending.correlation_id.clone(),
                                     ts_ms: crate::logs::now_ms(),
+                                    tenant_context: tenant_context.clone(),
                                     session_id: Some(session_id.clone()),
                                     source: StreamEventSource::System,
                                     payload: synthetic_end.clone(),
@@ -452,6 +464,7 @@ impl StreamHub {
                                     event_id: Uuid::new_v4().to_string(),
                                     correlation_id: format!("idle-timeout-{}", Uuid::new_v4()),
                                     ts_ms: crate::logs::now_ms(),
+                                    tenant_context: TenantContext::local_implicit(),
                                     session_id: None,
                                     source: StreamEventSource::System,
                                     payload: idle_raw,
@@ -589,7 +602,17 @@ impl StreamHub {
                                             }
                                         }
                                     }
-                                    if let Err(e) = crate::tool_history::record_stream_event(&app, &event) {
+                                    let event_session_id = extract_session_id(&event);
+                                    let tenant_context = resolve_session_tenant_context(
+                                        &sidecar,
+                                        event_session_id.as_deref(),
+                                    )
+                                    .await;
+                                    if let Err(e) = crate::tool_history::record_stream_event(
+                                        &app,
+                                        &tenant_context,
+                                        &event,
+                                    ) {
                                         tracing::warn!("Failed to persist tool history event: {}", e);
                                         if let StreamEvent::ToolEnd {
                                             session_id,
@@ -614,6 +637,7 @@ impl StreamHub {
                                                 event_id: Uuid::new_v4().to_string(),
                                                 correlation_id: format!("{}:{}", session_id, part_id),
                                                 ts_ms: crate::logs::now_ms(),
+                                                tenant_context: tenant_context.clone(),
                                                 session_id: Some(session_id.clone()),
                                                 source: StreamEventSource::System,
                                                 payload: synthetic.clone(),
@@ -893,11 +917,16 @@ impl StreamHub {
                                                         None
                                                     },
                                                 };
-                                                let _ = crate::tool_history::record_stream_event(&app, &synthetic);
+                                                let _ = crate::tool_history::record_stream_event(
+                                                    &app,
+                                                    &tenant_context,
+                                                    &synthetic,
+                                                );
                                                 let synthetic_env = StreamEventEnvelopeV2 {
                                                     event_id: Uuid::new_v4().to_string(),
                                                     correlation_id: pending.correlation_id.clone(),
                                                     ts_ms: crate::logs::now_ms(),
+                                                    tenant_context: tenant_context.clone(),
                                                     session_id: Some(pending_session.clone()),
                                                     source: StreamEventSource::System,
                                                     payload: synthetic.clone(),
@@ -973,12 +1002,24 @@ impl StreamHub {
                                             if let Some(app_state) =
                                                 app.try_state::<crate::state::AppState>()
                                             {
+                                                let tenant_context = resolve_session_tenant_context(
+                                                    &sidecar,
+                                                    Some(session_id.as_str()),
+                                                )
+                                                .await;
                                                 if let Some(args_value) = args.clone() {
                                                     app_state
                                                         .permission_args_cache
                                                         .lock()
                                                         .await
-                                                        .insert(request_id.clone(), args_value);
+                                                        .insert(
+                                                            crate::state::tenant_scoped_cache_key(
+                                                                "permission_args",
+                                                                &tenant_context,
+                                                                request_id,
+                                                            ),
+                                                            args_value,
+                                                        );
                                                 }
                                                 if tool
                                                     .as_deref()
@@ -994,7 +1035,11 @@ impl StreamHub {
                                                             .lock()
                                                             .await
                                                             .insert(
-                                                                session_id.clone(),
+                                                                crate::state::tenant_scoped_cache_key(
+                                                                    "session_websearch_intent",
+                                                                    &tenant_context,
+                                                                    session_id,
+                                                                ),
                                                                 query_text,
                                                             );
                                                     }
@@ -1030,11 +1075,18 @@ impl StreamHub {
                                         _ => {}
                                     }
 
+                                    let event_session_id = extract_session_id(&event);
+                                    let tenant_context = resolve_session_tenant_context(
+                                        &sidecar,
+                                        event_session_id.as_deref(),
+                                    )
+                                    .await;
                                     let env = StreamEventEnvelopeV2 {
                                         event_id: Uuid::new_v4().to_string(),
                                         correlation_id: derive_correlation_id(&event),
                                         ts_ms: crate::logs::now_ms(),
-                                        session_id: extract_session_id(&event),
+                                        tenant_context,
+                                        session_id: event_session_id,
                                         source: derive_source(&event),
                                         payload: event.clone(),
                                     };
@@ -1103,6 +1155,7 @@ async fn emit_stream_health(
         event_id: Uuid::new_v4().to_string(),
         correlation_id: format!("health-{}", Uuid::new_v4()),
         ts_ms: crate::logs::now_ms(),
+        tenant_context: TenantContext::local_implicit(),
         session_id: None,
         source: StreamEventSource::System,
         payload: raw,
@@ -1134,6 +1187,20 @@ fn extract_session_id(event: &StreamEvent) -> Option<String> {
         | StreamEvent::MemoryRetrieval { session_id, .. }
         | StreamEvent::MemoryStorage { session_id, .. } => Some(session_id.clone()),
         StreamEvent::Raw { .. } => None,
+    }
+}
+
+async fn resolve_session_tenant_context(
+    sidecar: &SidecarManager,
+    session_id: Option<&str>,
+) -> TenantContext {
+    let Some(session_id) = session_id else {
+        return TenantContext::local_implicit();
+    };
+
+    match sidecar.get_session(session_id).await {
+        Ok(session) => session.tenant_context,
+        Err(_) => TenantContext::local_implicit(),
     }
 }
 
@@ -1351,6 +1418,10 @@ async fn persist_assistant_message_memory(
     let Some(manager) = app_state.memory_manager.clone() else {
         return;
     };
+    let tenant_context = match app_state.sidecar.get_session(session_id).await {
+        Ok(session) => session.tenant_context,
+        Err(_) => TenantContext::local_implicit(),
+    };
     let embedding_health = manager.embedding_health().await;
     if embedding_health.status != "ok" {
         tracing::info!(
@@ -1370,7 +1441,7 @@ async fn persist_assistant_message_memory(
             status: Some("degraded_disabled".to_string()),
             error: embedding_health.reason,
         };
-        if let Err(err) = crate::tool_history::record_stream_event(app, &event) {
+        if let Err(err) = crate::tool_history::record_stream_event(app, &tenant_context, &event) {
             tracing::warn!("Failed to persist assistant memory storage event: {}", err);
         }
         let _ = app.emit("sidecar_event", &event);
@@ -1378,6 +1449,7 @@ async fn persist_assistant_message_memory(
             event_id: Uuid::new_v4().to_string(),
             correlation_id: format!("{}:memory-store:assistant:{}", session_id, Uuid::new_v4()),
             ts_ms: crate::logs::now_ms(),
+            tenant_context: tenant_context.clone(),
             session_id: Some(session_id.to_string()),
             source: StreamEventSource::Memory,
             payload: event,
@@ -1498,7 +1570,7 @@ async fn persist_assistant_message_memory(
         }),
         error: storage_error,
     };
-    if let Err(err) = crate::tool_history::record_stream_event(app, &event) {
+    if let Err(err) = crate::tool_history::record_stream_event(app, &tenant_context, &event) {
         tracing::warn!("Failed to persist assistant memory storage event: {}", err);
     }
     let _ = app.emit("sidecar_event", &event);
@@ -1506,6 +1578,7 @@ async fn persist_assistant_message_memory(
         event_id: Uuid::new_v4().to_string(),
         correlation_id: format!("{}:memory-store:assistant:{}", session_id, Uuid::new_v4()),
         ts_ms: crate::logs::now_ms(),
+        tenant_context: tenant_context.clone(),
         session_id: Some(session_id.to_string()),
         source: StreamEventSource::Memory,
         payload: event,

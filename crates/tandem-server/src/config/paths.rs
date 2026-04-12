@@ -12,6 +12,40 @@ pub(crate) fn resolve_shared_resources_path() -> PathBuf {
     default_state_dir().join("shared_resources.json")
 }
 
+pub(crate) fn resolve_memory_audit_path() -> PathBuf {
+    if let Ok(dir) = std::env::var("TANDEM_STATE_DIR") {
+        let trimmed = dir.trim();
+        if !trimmed.is_empty() {
+            let base = PathBuf::from(trimmed);
+            return if path_is_data_dir(&base) {
+                base.join("memory").join("audit.log.jsonl")
+            } else {
+                base.join("data").join("memory").join("audit.log.jsonl")
+            };
+        }
+    }
+    default_state_dir().join("memory").join("audit.log.jsonl")
+}
+
+pub(crate) fn resolve_protected_audit_path() -> PathBuf {
+    if let Ok(dir) = std::env::var("TANDEM_STATE_DIR") {
+        let trimmed = dir.trim();
+        if !trimmed.is_empty() {
+            let base = PathBuf::from(trimmed);
+            return if path_is_data_dir(&base) {
+                base.join("audit").join("protected_events.log.jsonl")
+            } else {
+                base.join("data")
+                    .join("audit")
+                    .join("protected_events.log.jsonl")
+            };
+        }
+    }
+    default_state_dir()
+        .join("audit")
+        .join("protected_events.log.jsonl")
+}
+
 pub(crate) fn resolve_routines_path() -> PathBuf {
     if let Ok(dir) = std::env::var("TANDEM_STATE_DIR") {
         let trimmed = dir.trim();

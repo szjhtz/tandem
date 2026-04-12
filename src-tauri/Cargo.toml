@@ -54,6 +54,7 @@ globset = "0.4"
 tokio-util = { version = "0.7", features = ["rt"] }
 semver = "1"
 tandem-core = { path = "../crates/tandem-core" }
+tandem-enterprise-contract = { path = "../crates/tandem-enterprise-contract" }
 tandem-types = { path = "../crates/tandem-types" }
 tandem-document = { path = "../crates/tandem-document" }
 tandem-observability = { path = "../crates/tandem-observability" }
@@ -85,22 +86,6 @@ debug = 1
 
 [profile.dev.package."*"]
 debug = 0
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 

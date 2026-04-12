@@ -1,5 +1,5 @@
 use axum::{
-    extract::{Path, Query, State},
+    extract::{Extension, Path, Query, State},
     http::StatusCode,
     response::sse::{Event, Sse},
     Json,
@@ -19,7 +19,7 @@ use uuid::Uuid;
 use crate::http::context_types::*;
 use crate::AppState;
 use base64::Engine;
-use tandem_types::EngineEvent;
+use tandem_types::{EngineEvent, TenantContext};
 use tandem_workflows::WorkflowActionRunStatus;
 
 #[derive(Debug, Clone)]
@@ -67,6 +67,26 @@ fn context_task_kind_str(kind: &ContextTaskKind) -> &'static str {
         ContextTaskKind::Research => "research",
         ContextTaskKind::Validation => "validation",
     }
+}
+
+fn tenant_context_event_value(tenant_context: &TenantContext) -> Value {
+    serde_json::to_value(tenant_context).unwrap_or_else(|_| json!(tenant_context))
+}
+
+fn with_tenant_context(mut properties: Value, tenant_context: &TenantContext) -> Value {
+    if let Some(map) = properties.as_object_mut() {
+        map.insert(
+            "tenantContext".to_string(),
+            tenant_context_event_value(tenant_context),
+        );
+    }
+    properties
+}
+
+fn load_context_run_tenant_context_sync(state: &AppState, run_id: &str) -> Option<TenantContext> {
+    load_context_run_state_sync(state, run_id)
+        .ok()
+        .map(|run| run.tenant_context)
 }
 
 fn context_task_execution_mode_str(mode: &ContextTaskExecutionMode) -> &'static str {
@@ -568,6 +588,9 @@ impl ContextRunEngine {
             payload
                 .entry("taskStatus".to_string())
                 .or_insert_with(|| json!(next_task.status.clone()));
+            payload
+                .entry("tenantContext".to_string())
+                .or_insert_with(|| tenant_context_event_value(&run.tenant_context));
         }
         state.event_bus.publish(EngineEvent::new(
             event.event_type.clone(),
@@ -723,7 +746,13 @@ pub(super) fn publish_context_run_stream_envelope(
     if envelope.run_id.trim().is_empty() {
         return;
     }
-    let payload = serde_json::to_value(envelope).unwrap_or_else(|_| json!({}));
+    let mut payload = serde_json::to_value(envelope).unwrap_or_else(|_| json!({}));
+    if let Some(tenant_context) = load_context_run_tenant_context_sync(state, &envelope.run_id) {
+        if let Some(map) = payload.as_object_mut() {
+            map.entry("tenantContext".to_string())
+                .or_insert_with(|| tenant_context_event_value(&tenant_context));
+        }
+    }
     state
         .event_bus
         .publish(EngineEvent::new("context.run.stream", payload));
@@ -1352,7 +1381,16 @@ pub(super) async fn context_run_lock_for(run_id: &str) -> Arc<tokio::sync::Mutex
 
 pub(super) async fn context_run_create(
     State(state): State<AppState>,
+    Extension(tenant_context): Extension<TenantContext>,
     Json(input): Json<ContextRunCreateInput>,
+) -> Result<Json<Value>, StatusCode> {
+    context_run_create_impl(state, tenant_context, input).await
+}
+
+pub(super) async fn context_run_create_impl(
+    state: AppState,
+    tenant_context: TenantContext,
+    input: ContextRunCreateInput,
 ) -> Result<Json<Value>, StatusCode> {
     let run_id = input
         .run_id
@@ -1370,6 +1408,7 @@ pub(super) async fn context_run_create(
     let run = ContextRunState {
         run_id: run_id.clone(),
         run_type: input.run_type.unwrap_or_else(|| "interactive".to_string()),
+        tenant_context,
         source_client: input
             .source_client
             .map(|v| v.trim().to_string())
@@ -3447,6 +3486,7 @@ pub(crate) async fn sync_automation_v2_run_blackboard(
         let context_run = ContextRunState {
             run_id: run_id.clone(),
             run_type: "automation_v2".to_string(),
+            tenant_context: TenantContext::local_implicit(),
             source_client: Some("automation_v2_scheduler".to_string()),
             model_provider: None,
             model_id: None,
@@ -3746,6 +3786,7 @@ pub(crate) async fn ensure_session_context_run(
     let run = ContextRunState {
         run_id: run_id.clone(),
         run_type: "session".to_string(),
+        tenant_context: session.tenant_context.clone(),
         source_client: Some("session_api".to_string()),
         model_provider: session.provider.clone(),
         model_id: session.model.as_ref().map(|model| model.model_id.clone()),
@@ -3838,6 +3879,7 @@ pub(crate) async fn sync_routine_run_blackboard(
         let context_run = ContextRunState {
             run_id: run_id.clone(),
             run_type: "routine".to_string(),
+            tenant_context: TenantContext::local_implicit(),
             source_client: Some("routine_runtime".to_string()),
             model_provider: None,
             model_id: None,
@@ -4338,6 +4380,7 @@ pub(crate) async fn sync_workflow_run_blackboard(
         let context_run = ContextRunState {
             run_id: run_id.clone(),
             run_type: "workflow".to_string(),
+            tenant_context: TenantContext::local_implicit(),
             source_client: Some("workflow_runtime".to_string()),
             model_provider: None,
             model_id: None,

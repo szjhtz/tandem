@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Enterprise transition groundwork**: added the public `/enterprise/status` surface, tenant-aware runtime propagation, and durable protected audit outbox coverage for approvals, provider secrets, MCP updates, workflow runs, and coder transitions.
+
 - **Marketplace browse split**: The control panel marketplace is now browse-only and links out to tandem.ac, while the new internal contract docs define the public marketplace/server ownership split.
 
 ### Changed
