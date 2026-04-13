@@ -42,6 +42,7 @@ type ChatInterfacePanelProps = {
   streamingText?: string;
   showThinking?: boolean;
   thinkingText?: string;
+  autoFocusKey?: string | number;
   attachments?: Array<{ path: string; name?: string; size?: number }>;
   onRemoveAttachment?: (index: number) => void;
   onAttach?: () => void;
@@ -70,6 +71,7 @@ export function ChatInterfacePanel({
   streamingText = "",
   showThinking = false,
   thinkingText = "Thinking",
+  autoFocusKey,
   attachments = [],
   onRemoveAttachment,
   onAttach,
@@ -100,6 +102,19 @@ export function ChatInterfacePanel({
     area.style.height = "0px";
     area.style.height = `${Math.min(area.scrollHeight, 180)}px`;
   }, [inputValue]);
+
+  useEffect(() => {
+    if (autoFocusKey == null || inputDisabled) return;
+    const area = inputRef.current;
+    if (!area) return;
+    area.focus();
+    try {
+      const len = area.value.length;
+      area.setSelectionRange(len, len);
+    } catch {
+      // ignore selection failures on older browsers
+    }
+  }, [autoFocusKey, inputDisabled]);
 
   useEffect(() => {
     if (panelRef.current) renderIcons(panelRef.current);
