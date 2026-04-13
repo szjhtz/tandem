@@ -2707,6 +2707,84 @@ async fn stale_running_automation_runs_ignore_recent_session_activity() {
 }
 
 #[tokio::test]
+async fn recover_in_flight_runs_does_not_relock_workspace_for_paused_runs() {
+    let workspace_root = "/tmp/paused-workspace-lock-recovery".to_string();
+    let automation = AutomationV2Spec {
+        automation_id: "auto-paused-workspace-lock-recovery".to_string(),
+        name: "Paused Workspace Lock Recovery".to_string(),
+        description: None,
+        status: AutomationV2Status::Active,
+        schedule: AutomationV2Schedule {
+            schedule_type: AutomationV2ScheduleType::Manual,
+            cron_expression: None,
+            interval_seconds: None,
+            timezone: "UTC".to_string(),
+            misfire_policy: RoutineMisfirePolicy::RunOnce,
+        },
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
+        agents: Vec::new(),
+        flow: AutomationFlowSpec { nodes: Vec::new() },
+        execution: AutomationExecutionPolicy {
+            max_parallel_agents: Some(2),
+            max_total_runtime_ms: None,
+            max_total_tool_calls: None,
+            max_total_tokens: None,
+            max_total_cost_usd: None,
+        },
+        output_targets: Vec::new(),
+        created_at_ms: 1,
+        updated_at_ms: 1,
+        creator_id: "test".to_string(),
+        workspace_root: Some(workspace_root.clone()),
+        metadata: None,
+        next_fire_at_ms: None,
+        last_fired_at_ms: None,
+        scope_policy: None,
+        watch_conditions: Vec::new(),
+        handoff_config: None,
+    };
+    let state = ready_test_state().await;
+    let paused_run = state
+        .create_automation_v2_run(&automation, "manual")
+        .await
+        .expect("create paused run");
+    let queued_run = state
+        .create_automation_v2_run(&automation, "manual")
+        .await
+        .expect("create queued run");
+
+    state
+        .claim_specific_automation_v2_run(&paused_run.run_id)
+        .await
+        .expect("claim paused run");
+    state
+        .update_automation_v2_run(&paused_run.run_id, |row| {
+            row.status = AutomationRunStatus::Paused;
+            row.pause_reason = Some("paused for restart test".to_string());
+            row.active_session_ids.clear();
+            row.active_instance_ids.clear();
+        })
+        .await
+        .expect("pause run");
+
+    {
+        let scheduler = state.automation_scheduler.read().await;
+        assert!(!scheduler.locked_workspaces.contains_key(&workspace_root));
+    }
+
+    let recovered = state.recover_in_flight_runs().await;
+    assert_eq!(recovered, 0);
+
+    {
+        let scheduler = state.automation_scheduler.read().await;
+        assert!(!scheduler.locked_workspaces.contains_key(&workspace_root));
+        assert!(scheduler
+            .can_admit(&queued_run.run_id, Some(&workspace_root), &[])
+            .is_ok());
+    }
+}
+
+#[tokio::test]
 async fn automation_node_prompt_timeout_cancels_the_session() {
     let state = ready_test_state().await;
     let session_id = "session-automation-timeout-test";

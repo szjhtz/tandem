@@ -4857,9 +4857,11 @@ impl AppState {
                 AutomationRunStatus::Paused
                 | AutomationRunStatus::Pausing
                 | AutomationRunStatus::AwaitingApproval => {
-                    let workspace_root = self.automation_v2_run_workspace_root(&run).await;
                     let mut scheduler = self.automation_scheduler.write().await;
-                    scheduler.reserve_workspace(&run.run_id, workspace_root.as_deref());
+                    if automation_status_holds_workspace_lock(&run.status) {
+                        let workspace_root = self.automation_v2_run_workspace_root(&run).await;
+                        scheduler.reserve_workspace(&run.run_id, workspace_root.as_deref());
+                    }
                     for (node_id, output) in &run.checkpoint.node_outputs {
                         if let Some((path, content_digest)) =
                             automation::node_output::automation_output_validated_artifact(output)
@@ -6942,10 +6944,7 @@ fn automation_status_uses_scheduler_capacity(status: &AutomationRunStatus) -> bo
 fn automation_status_holds_workspace_lock(status: &AutomationRunStatus) -> bool {
     matches!(
         status,
-        AutomationRunStatus::Running
-            | AutomationRunStatus::Pausing
-            | AutomationRunStatus::Paused
-            | AutomationRunStatus::AwaitingApproval
+        AutomationRunStatus::Running | AutomationRunStatus::Pausing
     )
 }
 
