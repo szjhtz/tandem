@@ -254,10 +254,28 @@ Workflow-specific expectations:
 Current fast-gate invariant candidates:
 
 ```bash
-cargo test -p tandem-server recover_in_flight_runs_does_not_relock_workspace_for_paused_runs -- --exact
-cargo test -p tandem-server automation_v2_run_projects_backlog_tasks_into_context_blackboard -- --exact
-cargo test -p tandem-server mcp_grounded_citations_artifact_passes_without_local_reads_or_websearch -- --exact
-cargo test -p tandem-server materialized_current_attempt_output_does_not_report_missing_output_requirement -- --exact
+cargo test -p tandem-server --lib --tests --no-run --message-format=json
+# then invoke the tandem_server test binary directly with:
+target/debug/deps/tandem_server-* 'app::state::tests::automations::recover_in_flight_runs_does_not_relock_workspace_for_paused_runs' --exact --nocapture
+target/debug/deps/tandem_server-* 'http::tests::global::automation_v2_run_projects_backlog_tasks_into_context_blackboard' --exact --nocapture
+target/debug/deps/tandem_server-* 'app::state::tests::automations::workflow_policy::mcp_grounded_citations_artifact_passes_without_local_reads_or_websearch' --exact --nocapture
+target/debug/deps/tandem_server-* 'app::state::tests::automations::workflow_policy::materialized_current_attempt_output_does_not_report_missing_output_requirement' --exact --nocapture
+```
+
+Current deep-gate workflow coverage:
+
+```bash
+target/debug/deps/tandem_server-* 'app::state::tests::automations::workflow_policy::research_brief_passes_local_only_when_websearch_is_not_offered' --exact --nocapture
+target/debug/deps/tandem_server-* 'app::state::tests::automations::workflow_policy::research_citations_validation_accepts_external_research_without_files_reviewed_section' --exact --nocapture
+target/debug/deps/tandem_server-* 'app::state::tests::automations::workflow_policy::missing_required_output_requests_repair_before_attempt_budget_is_exhausted' --exact --nocapture
+target/debug/deps/tandem_server-* 'app::state::tests::automations::integration::local_research_flow_completes_with_read_and_write_artifact' --exact --nocapture
+target/debug/deps/tandem_server-* 'app::state::tests::automations::integration::mcp_grounded_research_flow_completes_with_mcp_tool_usage' --exact --nocapture
+target/debug/deps/tandem_server-* 'app::state::tests::automations::integration::external_web_research_flow_completes_with_websearch_and_write' --exact --nocapture
+target/debug/deps/tandem_server-* 'app::state::tests::automations::integration::repair_retry_after_needs_repair_completes_on_second_attempt' --exact --nocapture
+target/debug/deps/tandem_server-* 'app::state::tests::automations::integration::restart_recovery_preserves_queued_and_paused_runs' --exact --nocapture
+target/debug/deps/tandem_server-* 'http::tests::global::automations_v2_run_recover_from_stale_pause_clears_pending_outputs_and_attempts' --exact --nocapture
+target/debug/deps/tandem_server-* 'http::tests::global::automations_v2_run_pause_clears_active_sessions_and_instances' --exact --nocapture
+target/debug/deps/tandem_server-* 'http::tests::global::automations_v2_run_cancel_records_operator_stop_kind_and_clears_active_ids' --exact --nocapture
 ```
 
 Desktop/CLI runtime contract closure tests:
