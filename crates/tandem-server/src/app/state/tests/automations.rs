@@ -19,6 +19,7 @@ use crate::capability_resolver;
 mod brief_coverage;
 mod brief_outcomes;
 mod brief_validation;
+mod integration;
 mod prompting;
 mod runtime_paths;
 mod structured_handoff;
