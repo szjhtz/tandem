@@ -112,6 +112,7 @@ declare global {
     __splashStartedAt?: number;
     __vaultUnlocked?: boolean;
     __tandemAppReady?: boolean;
+    __tandemDesktopVisible?: boolean;
   }
 }
 
@@ -305,6 +306,14 @@ function App() {
   }, [whatsNewVersion]);
 
   // Auto-index workspace files when a project becomes active (if enabled in settings).
+  useEffect(() => {
+    if (window.__tandemDesktopVisible) {
+      return;
+    }
+    window.__tandemDesktopVisible = true;
+    window.dispatchEvent(new window.Event("tandem-desktop-visible"));
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
 

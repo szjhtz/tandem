@@ -21,6 +21,7 @@ import {
 declare global {
   interface Window {
     __tandemAppReady?: boolean;
+    __tandemDesktopVisible?: boolean;
   }
 }
 
@@ -37,7 +38,9 @@ class AppErrorBoundary extends React.Component<
   componentDidCatch(error: Error) {
     console.error("[Startup] Unhandled UI error:", error);
     window.__tandemAppReady = true;
+    window.__tandemDesktopVisible = true;
     window.dispatchEvent(new window.Event("tandem-app-ready"));
+    window.dispatchEvent(new window.Event("tandem-desktop-visible"));
   }
 
   render() {

@@ -10,6 +10,7 @@ import type { ThemeId } from "./types/theme";
 const MIN_PIN_LENGTH = 4;
 const MAX_PIN_LENGTH = 4;
 const APP_READY_EVENT = "tandem-app-ready";
+const DESKTOP_VISIBLE_EVENT = "tandem-desktop-visible";
 const DESKTOP_STARTUP_PROGRESS_EVENT = "desktop-startup-progress";
 
 let currentPin = "";
@@ -21,6 +22,7 @@ let unlockWatchdog: number | null = null;
 let backendReady = false;
 let backendFailed = false;
 let sawBackendProgress = false;
+let desktopVisible = false;
 let splashDismissed = false;
 
 type VaultStatus = "not_created" | "locked" | "unlocked";
@@ -83,7 +85,7 @@ function dismissSplashScreen() {
 
 function attemptDismissSplash() {
   if (backendFailed) return;
-  if ((window as any).__tandemAppReady && backendReady) {
+  if (desktopVisible && backendReady) {
     dismissSplashScreen();
   }
 }
@@ -242,6 +244,14 @@ window.addEventListener(
   APP_READY_EVENT,
   () => {
     (window as any).__tandemAppReady = true;
+  },
+  { once: true }
+);
+
+window.addEventListener(
+  DESKTOP_VISIBLE_EVENT,
+  () => {
+    desktopVisible = true;
     attemptDismissSplash();
   },
   { once: true }
