@@ -48,6 +48,16 @@ struct ResearchEvidenceMatrixCase {
     expected_read_paths: Vec<&'static str>,
 }
 
+struct RepairStateMatrixCase {
+    name: &'static str,
+    session_text: &'static str,
+    repair_exhausted: bool,
+    expected_status: &'static str,
+    expected_reason: &'static str,
+    expected_failure_kind: &'static str,
+    expected_summary_outcome: &'static str,
+}
+
 fn structured_json_write_matrix_node(output_files: &[&str]) -> AutomationFlowNode {
     let mut builder = json!({
         "output_path": "extract.json"
@@ -387,6 +397,94 @@ fn run_research_evidence_matrix_case(case: ResearchEvidenceMatrixCase) {
     }
 
     let _ = std::fs::remove_dir_all(workspace_root);
+}
+
+fn research_retry_matrix_node() -> AutomationFlowNode {
+    AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
+        node_id: "research".to_string(),
+        agent_id: "agent-a".to_string(),
+        objective: "Research".to_string(),
+        depends_on: Vec::new(),
+        input_refs: Vec::new(),
+        output_contract: Some(AutomationFlowOutputContract {
+            kind: "brief".to_string(),
+            validator: None,
+            enforcement: None,
+            schema: None,
+            summary_guidance: None,
+        }),
+        retry_policy: None,
+        timeout_ms: None,
+        max_tool_calls: None,
+        stage_kind: None,
+        gate: None,
+        metadata: Some(json!({
+            "builder": {
+                "output_path": "marketing-brief.md",
+                "web_research_expected": true,
+                "source_coverage_required": true
+            }
+        })),
+    }
+}
+
+fn run_repair_state_matrix_case(case: RepairStateMatrixCase) {
+    let node = research_retry_matrix_node();
+    let tool_telemetry = json!({
+        "requested_tools": ["glob", "read", "websearch", "write"],
+        "executed_tools": ["glob", "write"],
+    });
+    let artifact_validation = json!({
+        "semantic_block_reason": "research completed without concrete file reads or required source coverage",
+        "unmet_requirements": ["no_concrete_reads", "missing_successful_web_research"],
+        "repair_exhausted": case.repair_exhausted,
+    });
+
+    let (status, reason, approved): (String, Option<String>, Option<bool>) =
+        detect_automation_node_status(
+            &node,
+            case.session_text,
+            Some(&(
+                "marketing-brief.md".to_string(),
+                "# Marketing Brief".to_string(),
+            )),
+            &tool_telemetry,
+            Some(&artifact_validation),
+        );
+
+    assert_eq!(status, case.expected_status, "case={}", case.name);
+    assert_eq!(
+        reason.as_deref(),
+        Some(case.expected_reason),
+        "case={}",
+        case.name
+    );
+    assert_eq!(approved, None, "case={}", case.name);
+    assert_eq!(
+        detect_automation_node_failure_kind(
+            &node,
+            &status,
+            approved,
+            reason.as_deref(),
+            Some(&artifact_validation),
+        )
+        .as_deref(),
+        Some(case.expected_failure_kind),
+        "case={}",
+        case.name
+    );
+    let summary = build_automation_validator_summary(
+        crate::AutomationOutputValidatorKind::ResearchBrief,
+        &status,
+        reason.as_deref(),
+        Some(&artifact_validation),
+    );
+    assert_eq!(
+        summary.outcome, case.expected_summary_outcome,
+        "case={}",
+        case.name
+    );
 }
 
 #[test]
@@ -1423,6 +1521,57 @@ fn research_evidence_validation_matrix_covers_local_web_mixed_and_mcp_grounding(
 
     for case in cases {
         run_research_evidence_matrix_case(case);
+    }
+}
+
+#[test]
+fn research_retry_state_matrix_covers_repairable_and_exhausted_statuses() {
+    let cases = vec![
+        RepairStateMatrixCase {
+            name: "repairable-completed-wrapper",
+            session_text: "Done — `marketing-brief.md` was written.",
+            repair_exhausted: false,
+            expected_status: "needs_repair",
+            expected_reason:
+                "research completed without concrete file reads or required source coverage",
+            expected_failure_kind: "research_missing_reads",
+            expected_summary_outcome: "needs_repair",
+        },
+        RepairStateMatrixCase {
+            name: "repair-exhausted-completed-wrapper",
+            session_text: "Done — `marketing-brief.md` was written.",
+            repair_exhausted: true,
+            expected_status: "blocked",
+            expected_reason:
+                "research completed without concrete file reads or required source coverage",
+            expected_failure_kind: "research_retry_exhausted",
+            expected_summary_outcome: "blocked",
+        },
+        RepairStateMatrixCase {
+            name: "repairable-overrides-llm-blocked",
+            session_text:
+                "The brief is blocked.\n\n{\"status\":\"blocked\",\"reason\":\"tools unavailable\"}",
+            repair_exhausted: false,
+            expected_status: "needs_repair",
+            expected_reason:
+                "research completed without concrete file reads or required source coverage",
+            expected_failure_kind: "research_missing_reads",
+            expected_summary_outcome: "needs_repair",
+        },
+        RepairStateMatrixCase {
+            name: "repair-exhausted-keeps-llm-blocked",
+            session_text:
+                "The brief is blocked.\n\n{\"status\":\"blocked\",\"reason\":\"tools unavailable\"}",
+            repair_exhausted: true,
+            expected_status: "blocked",
+            expected_reason: "tools unavailable",
+            expected_failure_kind: "research_retry_exhausted",
+            expected_summary_outcome: "blocked",
+        },
+    ];
+
+    for case in cases {
+        run_repair_state_matrix_case(case);
     }
 }
 
