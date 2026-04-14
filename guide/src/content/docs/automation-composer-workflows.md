@@ -61,6 +61,8 @@ The generated structure should be easy to inspect and reason about:
 
 That means you can safely preview, validate, and recreate the same payload from SDK code later.
 
+If the goal is recurring, the same payload should include a schedule field before it is created. The composer should not treat recurrence as a separate afterthought.
+
 ## From prompt to SDK call
 
 The important bridge is not just that Tandem can draft a payload. It is that the same payload can be passed directly into the engine.

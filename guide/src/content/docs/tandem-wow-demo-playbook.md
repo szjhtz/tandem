@@ -14,9 +14,10 @@ If an agent starts from a natural-language goal, the safest path is:
 1. Ask the docs MCP for the best starting page or how-to answer.
 2. Read the Tandem docs pages for the right abstraction.
 3. Choose the smallest Tandem shape that fits the goal.
-4. Turn the chosen shape into JSON.
-5. Hand that JSON directly to the matching SDK method.
-6. Run the created automation once and inspect the result.
+4. If the goal is recurring, choose the schedule shape first.
+5. Turn the chosen shape into JSON.
+6. Hand that JSON directly to the matching SDK method.
+7. Run the created automation once and inspect the result.
 
 Use these handoffs:
 
@@ -25,6 +26,57 @@ Use these handoffs:
 - planner conversation -> `client.workflowPlans.chatStart(...)` -> `chatMessage(...)` -> `apply(...)`
 
 If the payload is already a full automation object, do not route it through planner chat first.
+
+## Human intent to recurring schedule
+
+If the goal says things like:
+
+- run every day at 8am
+- check every 15 minutes
+- summarize weekly
+- repeat until a condition changes
+
+have the agent choose the schedule shape before it writes the rest of the payload.
+
+Use this mapping:
+
+- one-off run -> `{"type": "manual"}`
+- every N minutes or hours -> `{"type": "interval", ...}`
+- specific time on the calendar -> `{"type": "cron", ...}`
+
+The schedule should live in the same JSON object as the workflow or automation definition.
+
+For direct automation creation, the schedule travels with the payload:
+
+```ts
+const created = await client.automationsV2.create({
+  name: "Daily repo summary",
+  status: "active",
+  schedule: {
+    type: "interval",
+    interval_seconds: 24 * 60 * 60,
+    timezone: "UTC",
+    misfire_policy: { type: "run_once" },
+  },
+  // agents + flow here
+});
+```
+
+```python
+created = await client.automations_v2.create({
+    "name": "Daily repo summary",
+    "status": "active",
+    "schedule": {
+        "type": "interval",
+        "interval_seconds": 24 * 60 * 60,
+        "timezone": "UTC",
+        "misfire_policy": {"type": "run_once"},
+    },
+    # agents + flow here
+})
+```
+
+That lets an agent convert "run this every day" into a runnable recurring payload without guessing where the schedule lives.
 
 ## Start here
 
