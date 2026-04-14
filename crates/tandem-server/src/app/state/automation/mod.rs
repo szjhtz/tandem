@@ -2044,6 +2044,21 @@ fn resolve_standup_report_path_for_run(
     Some(template.replace("{{date}}", &date))
 }
 
+fn automation_effective_required_output_path_for_run(
+    automation: &AutomationV2Spec,
+    node: &AutomationFlowNode,
+    run_id: &str,
+    started_at_ms: u64,
+) -> Option<String> {
+    automation_node_required_output_path_for_run(node, Some(run_id)).or_else(|| {
+        if is_agent_standup_automation(automation) && node.node_id == "standup_synthesis" {
+            resolve_standup_report_path_for_run(automation, started_at_ms)
+        } else {
+            None
+        }
+    })
+}
+
 /// Derives the receipt path from the standup report path by inserting a
 /// "receipt-" prefix on the filename and replacing the extension with ".json".
 /// Example: "docs/standups/2026-04-05.md" → "docs/standups/receipt-2026-04-05.json"
@@ -6928,7 +6943,13 @@ pub(crate) async fn execute_automation_v2_node(
             automation.automation_id
         );
     }
-    let required_output_path = automation_node_required_output_path_for_run(node, Some(run_id));
+    let run_started_at_ms = run.started_at_ms.unwrap_or_else(now_ms);
+    let required_output_path = automation_effective_required_output_path_for_run(
+        automation,
+        node,
+        run_id,
+        run_started_at_ms,
+    );
     if let (Some(output_path), Some(payload)) = (
         required_output_path.as_deref(),
         automation_node_inline_artifact_payload(node),
@@ -7176,13 +7197,12 @@ pub(crate) async fn execute_automation_v2_node(
         })
         .and_then(|resolved| std::fs::read_to_string(resolved).ok());
     let workspace_snapshot_before = automation_workspace_root_file_snapshot(&workspace_root);
-    let standup_report_path = if is_agent_standup_automation(automation)
-        && node.node_id == "standup_synthesis"
-    {
-        resolve_standup_report_path_for_run(automation, run.started_at_ms.unwrap_or_else(now_ms))
-    } else {
-        None
-    };
+    let standup_report_path =
+        if is_agent_standup_automation(automation) && node.node_id == "standup_synthesis" {
+            resolve_standup_report_path_for_run(automation, run_started_at_ms)
+        } else {
+            None
+        };
     // P1: Delta-aware standup — read the most recent previous standup report and inject it.
     // This gives both participants and the coordinator awareness of what was already reported,
     // allowing them to report only new progress rather than re-discovering the same workspace state.

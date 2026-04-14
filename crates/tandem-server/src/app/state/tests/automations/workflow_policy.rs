@@ -5253,6 +5253,57 @@ fn artifact_workflow_with_materialized_output_completes_without_explicit_status_
 }
 
 #[test]
+fn standup_synthesis_accepts_inline_completed_status_without_verified_output() {
+    let node = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
+        node_id: "standup_synthesis".to_string(),
+        agent_id: "coordinator".to_string(),
+        objective: "Write the daily standup report".to_string(),
+        depends_on: vec!["standup_participants".to_string()],
+        input_refs: vec![AutomationFlowInputRef {
+            from_step_id: "standup_participants".to_string(),
+            alias: "participants".to_string(),
+        }],
+        output_contract: Some(AutomationFlowOutputContract {
+            kind: "report_markdown".to_string(),
+            validator: Some(crate::AutomationOutputValidatorKind::GenericArtifact),
+            enforcement: None,
+            schema: None,
+            summary_guidance: None,
+        }),
+        retry_policy: None,
+        timeout_ms: None,
+        max_tool_calls: None,
+        stage_kind: None,
+        gate: None,
+        metadata: Some(json!({
+            "builder": {
+                "workflow_template": "agent_standup",
+                "output_path": "docs/standups/2026-04-14.md",
+                "report_path_template": "docs/standups/{{date}}.md"
+            }
+        })),
+    };
+    let tool_telemetry = json!({
+        "requested_tools": ["read", "write", "memory_search", "memory_store"],
+        "executed_tools": ["write", "memory_store", "read", "memory_search"]
+    });
+
+    let (status, reason, approved): (String, Option<String>, Option<bool>) =
+        detect_automation_node_status(
+            &node,
+            "Standup report written to `docs/standups/2026-04-14.md` for 3 participants.\n\n{\"status\":\"completed\",\"approved\":true,\"report_path\":\"docs/standups/2026-04-14.md\",\"participant_count\":3}",
+            None,
+            &tool_telemetry,
+            None,
+        );
+
+    assert_eq!(status, "completed");
+    assert_eq!(reason, None);
+    assert_eq!(approved, Some(true));
+}
+
+#[test]
 fn code_workflow_accepts_status_json_when_it_appears_at_end_of_long_response() {
     let node = AutomationFlowNode {
         knowledge: tandem_orchestrator::KnowledgeBinding::default(),

@@ -2712,6 +2712,105 @@ fn standup_receipt_path_handles_nested_report() {
     assert_eq!(receipt, "team/standups/weekly/receipt-2026-04-05.json");
 }
 
+#[test]
+fn standup_synthesis_effective_required_output_path_uses_report_template() {
+    let automation = AutomationV2Spec {
+        automation_id: "automation-standup".to_string(),
+        name: "Daily Standup".to_string(),
+        description: None,
+        status: crate::AutomationV2Status::Active,
+        schedule: crate::AutomationV2Schedule {
+            schedule_type: crate::AutomationV2ScheduleType::Manual,
+            cron_expression: None,
+            interval_seconds: None,
+            timezone: "UTC".to_string(),
+            misfire_policy: crate::RoutineMisfirePolicy::RunOnce,
+        },
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
+        agents: Vec::new(),
+        flow: crate::AutomationFlowSpec { nodes: Vec::new() },
+        execution: crate::AutomationExecutionPolicy {
+            max_parallel_agents: Some(1),
+            max_total_runtime_ms: None,
+            max_total_tool_calls: None,
+            max_total_tokens: None,
+            max_total_cost_usd: None,
+        },
+        output_targets: vec!["docs/standups/{{date}}.md".to_string()],
+        created_at_ms: 0,
+        updated_at_ms: 0,
+        creator_id: "test".to_string(),
+        workspace_root: Some("/tmp".to_string()),
+        metadata: Some(json!({
+            "feature": "agent_standup",
+            "standup": {
+                "report_path_template": "docs/standups/{{date}}.md"
+            }
+        })),
+        next_fire_at_ms: None,
+        last_fired_at_ms: None,
+        scope_policy: None,
+        watch_conditions: Vec::new(),
+        handoff_config: None,
+    };
+    let node = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
+        node_id: "standup_synthesis".to_string(),
+        agent_id: "coordinator".to_string(),
+        objective: "Write the standup report".to_string(),
+        depends_on: vec!["participant_0".to_string()],
+        input_refs: vec![AutomationFlowInputRef {
+            from_step_id: "participant_0".to_string(),
+            alias: "participant_0".to_string(),
+        }],
+        output_contract: Some(AutomationFlowOutputContract {
+            kind: "report_markdown".to_string(),
+            validator: Some(crate::AutomationOutputValidatorKind::GenericArtifact),
+            enforcement: None,
+            schema: None,
+            summary_guidance: None,
+        }),
+        retry_policy: None,
+        timeout_ms: None,
+        max_tool_calls: None,
+        stage_kind: Some(crate::AutomationNodeStageKind::Orchestrator),
+        gate: None,
+        metadata: None,
+    };
+    let started_at_ms = chrono::DateTime::parse_from_rfc3339("2026-04-14T09:00:00Z")
+        .expect("timestamp")
+        .timestamp_millis() as u64;
+
+    let output_path = super::automation_effective_required_output_path_for_run(
+        &automation,
+        &node,
+        "automation-v2-run-standup",
+        started_at_ms,
+    );
+
+    assert_eq!(output_path.as_deref(), Some("docs/standups/2026-04-14.md"));
+}
+
+#[test]
+fn parse_status_json_accepts_standup_completion_metadata() {
+    let raw = "Standup report written to `docs/standups/2026-04-14.md` for 3 participants.\n\n{\"status\":\"completed\",\"approved\":true,\"report_path\":\"docs/standups/2026-04-14.md\",\"participant_count\":3}";
+
+    let parsed = super::parse_status_json(raw).expect("standup status payload should parse");
+
+    assert_eq!(
+        parsed.get("status").and_then(Value::as_str),
+        Some("completed")
+    );
+    assert_eq!(
+        parsed.get("report_path").and_then(Value::as_str),
+        Some("docs/standups/2026-04-14.md")
+    );
+    assert_eq!(
+        parsed.get("participant_count").and_then(Value::as_u64),
+        Some(3)
+    );
+}
+
 // -----------------------------------------------------------------------
 // Standup gap fill — T5: coordinator input formatting (item C)
 // -----------------------------------------------------------------------
