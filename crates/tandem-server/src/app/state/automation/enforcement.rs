@@ -283,6 +283,9 @@ pub(crate) fn automation_node_read_only_source_of_truth_files(
 
 pub(crate) fn automation_node_allows_optional_workspace_reads(node: &AutomationFlowNode) -> bool {
     let combined = automation_node_workspace_intent_text(node);
+    if !automation_node_read_only_source_of_truth_files(node).is_empty() {
+        return false;
+    }
     if !automation_text_has_workspace_tokens(&combined) {
         return false;
     }

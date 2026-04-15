@@ -401,6 +401,14 @@ fn bootstrap_inference_skips_read_only_source_of_truth_files() {
 }
 
 #[test]
+fn source_of_truth_files_disable_optional_workspace_reads() {
+    let mut node = bare_node();
+    node.objective = "Read RESUME.md as the source of truth for skills, role targets, and geography preferences. If resume_overview.md does not exist, create it. Create or append daily_results_2026-04-15.md in the workspace root and keep RESUME.md untouched.".to_string();
+
+    assert!(!automation_node_allows_optional_workspace_reads(&node));
+}
+
+#[test]
 fn explicit_output_files_skip_read_only_source_of_truth_files() {
     let mut node = bare_node();
     node.node_id = "compare_with_features".to_string();

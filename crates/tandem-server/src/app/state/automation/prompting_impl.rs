@@ -329,6 +329,7 @@ fn automation_prompt_render_concrete_source_coverage(
     let mut read_only_paths = automation_prompt_infer_read_only_workspace_paths(
         &automation_prompt_apply_runtime_placeholders(&node.objective, runtime_values),
     );
+    let mut explicit_input_files = Vec::new();
     if let Some(builder) = node
         .metadata
         .as_ref()
@@ -344,7 +345,7 @@ fn automation_prompt_render_concrete_source_coverage(
             ));
         }
         if let Some(input_files) = builder.get("input_files").and_then(Value::as_array) {
-            paths.extend(
+            explicit_input_files.extend(
                 input_files
                     .iter()
                     .filter_map(Value::as_str)
@@ -354,7 +355,14 @@ fn automation_prompt_render_concrete_source_coverage(
             );
         }
     }
-    if automation_node_allows_optional_workspace_reads(node) {
+    let mut source_paths = Vec::new();
+    source_paths.extend(read_only_paths.iter().cloned());
+    source_paths.extend(explicit_input_files.iter().cloned());
+    source_paths.sort();
+    source_paths.dedup();
+    if !source_paths.is_empty() {
+        paths = source_paths;
+    } else if automation_node_allows_optional_workspace_reads(node) {
         paths.clear();
     }
     paths.sort();
