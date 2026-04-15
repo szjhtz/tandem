@@ -3396,6 +3396,127 @@ fn automation_output_enforcement_backfills_research_contract_from_legacy_builder
 }
 
 #[test]
+fn upstream_evidence_can_satisfy_exact_required_source_read_paths() {
+    let workspace_root = std::env::temp_dir().join(format!(
+        "tandem-upstream-exact-source-reads-{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&workspace_root).expect("create workspace");
+    std::fs::write(
+        workspace_root.join("RESUME.md"),
+        "# Resume\n\nSource of truth.\n",
+    )
+    .expect("write resume");
+    std::fs::write(
+        workspace_root.join("resume_overview.md"),
+        "# Resume overview\n\nDerived summary.\n",
+    )
+    .expect("write overview");
+    let snapshot =
+        automation_workspace_root_file_snapshot(workspace_root.to_str().expect("workspace root"));
+    let node = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
+        node_id: "execute_goal".to_string(),
+        agent_id: "workspace-operator".to_string(),
+        objective: "Analyze the local `RESUME.md` file and use it as the source of truth for skills, role targets, seniority, technologies, and geography preferences.".to_string(),
+        depends_on: vec!["collect_inputs".to_string()],
+        input_refs: Vec::new(),
+        output_contract: Some(AutomationFlowOutputContract {
+            kind: "brief".to_string(),
+            validator: None,
+            enforcement: Some(crate::AutomationOutputEnforcement {
+                validation_profile: Some("artifact_only".to_string()),
+                required_tools: vec!["read".to_string(), "write".to_string()],
+                required_evidence: vec!["local_source_reads".to_string()],
+                required_sections: Vec::new(),
+                prewrite_gates: Vec::new(),
+                retry_on_missing: vec!["local_source_reads".to_string()],
+                terminal_on: Vec::new(),
+                repair_budget: Some(3),
+                session_text_recovery: Some("disabled".to_string()),
+            }),
+            schema: None,
+            summary_guidance: Some("Return a concise summary.".to_string()),
+        }),
+        retry_policy: None,
+        timeout_ms: None,
+        max_tool_calls: None,
+        stage_kind: Some(AutomationNodeStageKind::Workstream),
+        gate: None,
+        metadata: Some(json!({
+            "builder": {
+                "output_path": "execute-goal.md"
+            }
+        })),
+    };
+    let artifact_text =
+        "# Resume Summary\n\nCompleted summary using upstream evidence.".to_string();
+    let session_text = artifact_text.clone();
+    let artifact_path = ".tandem/runs/run-execute-goal/artifacts/execute-goal.md".to_string();
+
+    let mut session = Session::new(
+        Some("upstream-exact-source-reads".to_string()),
+        Some(workspace_root.to_str().expect("workspace root").to_string()),
+    );
+    session.messages.push(tandem_types::Message::new(
+        MessageRole::Assistant,
+        vec![
+            MessagePart::ToolInvocation {
+                tool: "read".to_string(),
+                args: json!({"path":"resume_overview.md"}),
+                result: Some(json!({"output":"# Resume overview"})),
+                error: None,
+            },
+            MessagePart::ToolInvocation {
+                tool: "write".to_string(),
+                args: json!({"path":"execute-goal.md","content":artifact_text.clone()}),
+                result: Some(json!({"ok": true})),
+                error: None,
+            },
+        ],
+    ));
+    let tool_telemetry = summarize_automation_tool_activity(
+        &node,
+        &session,
+        &["read".to_string(), "write".to_string()],
+    );
+    let upstream_evidence = AutomationUpstreamEvidence {
+        read_paths: vec!["RESUME.md".to_string()],
+        discovered_relevant_paths: vec!["RESUME.md".to_string()],
+        web_research_attempted: false,
+        web_research_succeeded: false,
+        citation_count: 0,
+        citations: Vec::new(),
+    };
+
+    std::fs::write(workspace_root.join("execute-goal.md"), &artifact_text).expect("write artifact");
+    let (accepted_output, artifact_validation, rejected) =
+        validate_automation_artifact_output_with_upstream(
+            &node,
+            &session,
+            workspace_root.to_str().expect("workspace root"),
+            Some("run-execute-goal"),
+            session_text.as_str(),
+            &tool_telemetry,
+            None,
+            Some((artifact_path, artifact_text.clone())),
+            &snapshot,
+            Some(&upstream_evidence),
+        );
+
+    assert!(accepted_output.is_some());
+    assert_eq!(rejected, None);
+    assert!(!artifact_validation
+        .get("unmet_requirements")
+        .and_then(Value::as_array)
+        .is_some_and(|values| values
+            .iter()
+            .any(|value| value.as_str() == Some("required_source_paths_not_read"))));
+
+    let _ = std::fs::remove_dir_all(&workspace_root);
+}
+
+#[test]
 fn structured_handoff_workspace_bootstrap_nodes_treat_reads_as_optional() {
     let node = AutomationFlowNode {
         knowledge: tandem_orchestrator::KnowledgeBinding::default(),

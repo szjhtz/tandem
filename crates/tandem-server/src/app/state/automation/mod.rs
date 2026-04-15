@@ -4859,6 +4859,10 @@ pub(crate) fn validate_automation_artifact_output_with_context(
     let current_read_paths = session_read_paths(session, workspace_root);
     let current_discovered_relevant_paths =
         session_discovered_relevant_paths(session, workspace_root);
+    let use_upstream_evidence = automation_node_uses_upstream_validation_evidence(node);
+    let upstream_read_paths = upstream_evidence
+        .map(|evidence| evidence.read_paths.clone())
+        .unwrap_or_default();
     let required_source_read_paths =
         enforcement::automation_node_required_source_read_paths_for_automation(
             automation,
@@ -4868,7 +4872,12 @@ pub(crate) fn validate_automation_artifact_output_with_context(
         );
     let missing_required_source_read_paths = required_source_read_paths
         .iter()
-        .filter(|path| !current_read_paths.iter().any(|read| read == *path))
+        .filter(|path| {
+            let current_read = current_read_paths.iter().any(|read| read == *path);
+            let upstream_read =
+                use_upstream_evidence && upstream_read_paths.iter().any(|read| read == *path);
+            !current_read && !upstream_read
+        })
         .cloned()
         .collect::<Vec<_>>();
     if let Some(object) = validation_basis.as_object_mut() {
@@ -4881,7 +4890,6 @@ pub(crate) fn validate_automation_artifact_output_with_context(
             json!(missing_required_source_read_paths),
         );
     }
-    let use_upstream_evidence = automation_node_uses_upstream_validation_evidence(node);
     let explicit_input_files = automation_node_explicit_input_files(node);
     let explicit_output_files = automation_node_explicit_output_files(node);
     let mut read_paths = current_read_paths.clone();
