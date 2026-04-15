@@ -718,12 +718,12 @@ pub fn automation_node_required_output_path(node: &AutomationFlowNode) -> Option
 }
 
 pub(crate) fn automation_node_default_output_path(node: &AutomationFlowNode) -> Option<String> {
-    let extension = match node
+    let contract_kind = node
         .output_contract
         .as_ref()
-        .map(|contract| contract.kind.as_str())
-        .unwrap_or("structured_json")
-    {
+        .map(|contract| contract.kind.trim().to_ascii_lowercase())
+        .unwrap_or_else(|| "structured_json".to_string());
+    let extension = match contract_kind.as_str() {
         "report_markdown" => {
             let format = node
                 .metadata
@@ -738,19 +738,12 @@ pub(crate) fn automation_node_default_output_path(node: &AutomationFlowNode) -> 
             }
         }
         "approval_gate" => return None,
+        "code_patch" => return None,
         _ => "json",
     };
-    let default_enabled = matches!(
-        node.node_id.as_str(),
-        "collect_inputs"
-            | "research_sources"
-            | "extract_pain_points"
-            | "cluster_topics"
-            | "analyze_findings"
-            | "compare_results"
-            | "compare_with_features"
-            | "generate_report"
-    );
+    let task_kind = automation_node_task_kind(node);
+    let default_enabled =
+        !automation_node_is_outbound_action(node) && task_kind.as_deref() != Some("delivery");
     if !default_enabled {
         return None;
     }

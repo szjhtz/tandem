@@ -25,6 +25,7 @@ fn research_required_next_tool_actions_summarize_missing_reads_and_websearch() {
         &executed_tools,
         true,
         &unmet_requirements,
+        &Vec::new(),
         &unreviewed_relevant_paths,
         None,
     );
@@ -61,6 +62,7 @@ fn research_required_next_tool_actions_surface_websearch_authorization() {
         true,
         &unmet_requirements,
         &Vec::new(),
+        &Vec::new(),
         Some("web research authorization required"),
     );
 
@@ -90,6 +92,7 @@ fn research_required_next_tool_actions_surface_generic_websearch_unavailability(
         true,
         &unmet_requirements,
         &Vec::new(),
+        &Vec::new(),
         Some("web research unavailable"),
     );
 
@@ -113,6 +116,7 @@ fn research_required_next_tool_actions_include_workspace_file_write_guidance() {
         false,
         &unmet_requirements,
         &Vec::new(),
+        &Vec::new(),
         None,
     );
 
@@ -122,6 +126,28 @@ fn research_required_next_tool_actions_include_workspace_file_write_guidance() {
     assert!(actions.iter().any(|value| value.contains(
         "Write the required workspace files approved for this node before ending this attempt."
     )));
+}
+
+#[test]
+fn research_required_next_tool_actions_surface_exact_required_source_reads() {
+    let requested_tools = vec![json!("glob"), json!("read"), json!("write")];
+    let executed_tools = vec![json!("glob"), json!("write")];
+    let unmet_requirements = vec!["required_source_paths_not_read".to_string()];
+    let missing_required_source_read_paths = vec!["RESUME.md".to_string()];
+
+    let actions = research_required_next_tool_actions(
+        &requested_tools,
+        &executed_tools,
+        false,
+        &unmet_requirements,
+        &missing_required_source_read_paths,
+        &Vec::new(),
+        None,
+    );
+
+    assert!(actions
+        .iter()
+        .any(|value| value.contains("exact required source files before finalizing: RESUME.md")));
 }
 
 #[test]

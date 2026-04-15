@@ -61,6 +61,18 @@ fn automation_v2_node_repair_guidance(output: &Value) -> Option<Value> {
         .and_then(|value| value.get("validation_basis"))
         .cloned()
         .filter(|value| !value.is_null());
+    let required_source_read_paths = validation_basis
+        .as_ref()
+        .and_then(|value| value.get("required_source_read_paths"))
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let missing_required_source_read_paths = validation_basis
+        .as_ref()
+        .and_then(|value| value.get("missing_required_source_read_paths"))
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
     let knowledge_preflight = output
         .get("knowledge_preflight")
         .cloned()
@@ -84,6 +96,8 @@ fn automation_v2_node_repair_guidance(output: &Value) -> Option<Value> {
         "blockingClassification": blocking_classification,
         "requiredNextToolActions": required_next_tool_actions,
         "validationBasis": validation_basis,
+        "requiredSourceReadPaths": required_source_read_paths,
+        "missingRequiredSourceReadPaths": missing_required_source_read_paths,
         "knowledgePreflight": knowledge_preflight,
         "knowledgeReuseReason": knowledge_preflight.as_ref().and_then(|value| value.get("reuse_reason")).and_then(Value::as_str),
         "knowledgeSkipReason": knowledge_preflight.as_ref().and_then(|value| value.get("skip_reason")).and_then(Value::as_str),
@@ -4387,6 +4401,47 @@ mod tests {
             Some(
                 "coverage `project::ops::workflow::incident-response` in space `project-default` expired at 1234"
             )
+        );
+    }
+
+    #[test]
+    fn automation_v2_node_repair_guidance_includes_exact_required_source_reads() {
+        let output = json!({
+            "status": "needs_repair",
+            "validator_summary": {
+                "reason": "research completed without reading the exact required source files",
+                "unmet_requirements": ["required_source_paths_not_read"]
+            },
+            "artifact_validation": {
+                "blocking_classification": "tool_available_but_not_used",
+                "required_next_tool_actions": [
+                    "Use `read` on the exact required source files before finalizing: RESUME.md, docs/resume.md. Similar backup or copy filenames do not satisfy the requirement."
+                ],
+                "validation_basis": {
+                    "authority": "filesystem_and_receipts",
+                    "required_source_read_paths": ["RESUME.md", "docs/resume.md"],
+                    "missing_required_source_read_paths": ["RESUME.md", "docs/resume.md"]
+                }
+            }
+        });
+
+        let guidance = automation_v2_node_repair_guidance(&output).expect("guidance");
+
+        assert_eq!(
+            guidance
+                .get("requiredSourceReadPaths")
+                .and_then(Value::as_array)
+                .and_then(|values| values.first())
+                .and_then(Value::as_str),
+            Some("RESUME.md")
+        );
+        assert_eq!(
+            guidance
+                .get("missingRequiredSourceReadPaths")
+                .and_then(Value::as_array)
+                .and_then(|values| values.get(1))
+                .and_then(Value::as_str),
+            Some("docs/resume.md")
         );
     }
 

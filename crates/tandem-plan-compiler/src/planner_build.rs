@@ -596,8 +596,8 @@ where
         crate::decomposition::WorkflowDecompositionTier::Simple => {}
         crate::decomposition::WorkflowDecompositionTier::Moderate => {
             push_step(
-                "analyze_findings",
-                "analyze",
+                "summarize_inputs",
+                "summarize",
                 format!(
                     "Turn the collected inputs into a concise working summary for {}.",
                     target_summary
@@ -606,27 +606,27 @@ where
                 vec!["collect_inputs".to_string()],
             );
             push_step(
-                "execute_goal",
-                "execute",
+                "finalize_outputs",
+                "finalize",
                 format!(
                     "Complete the workflow by creating or appending {} and keep any source-of-truth files untouched.",
                     target_summary
                 ),
                 "agent_workflow_executor",
-                vec!["analyze_findings".to_string()],
+                vec!["summarize_inputs".to_string()],
             );
         }
         crate::decomposition::WorkflowDecompositionTier::Complex => {
             push_step(
-                "extract_pain_points",
-                "extract",
+                "summarize_inputs",
+                "summarize",
                 "Turn the raw inputs into a structured working summary and isolate the important details."
                     .to_string(),
                 "agent_profile_analyst",
                 vec!["collect_inputs".to_string()],
             );
             push_step(
-                "research_sources",
+                "gather_supporting_sources",
                 "research",
                 if wants_web_research {
                     "Use websearch/webfetch to gather the relevant external sources for the workflow, then keep only supported matches."
@@ -636,55 +636,55 @@ where
                         .to_string()
                 },
                 "agent_researcher",
-                vec!["extract_pain_points".to_string()],
+                vec!["summarize_inputs".to_string()],
             );
             push_step(
-                "compare_results",
+                "refine_results",
                 "compare",
                 "Filter, compare, and deduplicate the gathered results so only supported matches remain."
                     .to_string(),
                 "agent_relevance_reviewer",
-                vec!["research_sources".to_string()],
+                vec!["gather_supporting_sources".to_string()],
             );
             push_step(
-                "generate_report",
-                "report",
+                "draft_deliverable",
+                "draft",
                 format!(
                     "Write the final report or daily artifact using the synthesized results for {}.",
                     target_summary
                 ),
                 "agent_report_writer",
-                vec!["compare_results".to_string()],
+                vec!["refine_results".to_string()],
             );
             push_step(
-                "execute_goal",
-                "execute",
+                "finalize_outputs",
+                "finalize",
                 format!(
                     "Complete the workflow by writing {} and preserve prior source-of-truth files.",
                     target_summary
                 ),
                 "agent_workflow_executor",
-                vec!["generate_report".to_string()],
+                vec!["draft_deliverable".to_string()],
             );
         }
         crate::decomposition::WorkflowDecompositionTier::VeryComplex => {
             push_step(
-                "extract_pain_points",
-                "extract",
+                "summarize_inputs",
+                "summarize",
                 "Turn the raw inputs into a structured working summary and isolate the important details."
                     .to_string(),
                 "agent_profile_analyst",
                 vec!["collect_inputs".to_string()],
             );
             push_step(
-                "cluster_topics",
+                "organize_workstreams",
                 "cluster",
                 "Group the summary into task themes, search buckets, or work phases.".to_string(),
                 "agent_topic_clusterer",
-                vec!["extract_pain_points".to_string()],
+                vec!["summarize_inputs".to_string()],
             );
             push_step(
-                "research_sources",
+                "gather_supporting_sources",
                 "research",
                 if wants_web_research {
                     "Use websearch/webfetch to gather the relevant external sources for the workflow, then keep only supported matches."
@@ -694,44 +694,44 @@ where
                         .to_string()
                 },
                 "agent_researcher",
-                vec!["cluster_topics".to_string()],
+                vec!["organize_workstreams".to_string()],
             );
             push_step(
-                "compare_results",
+                "refine_results",
                 "compare",
                 "Filter, compare, and deduplicate the gathered results so only supported matches remain."
                     .to_string(),
                 "agent_relevance_reviewer",
-                vec!["research_sources".to_string()],
+                vec!["gather_supporting_sources".to_string()],
             );
             push_step(
-                "generate_report",
-                "report",
+                "draft_deliverable",
+                "draft",
                 format!(
                     "Write the final report or daily artifact using the synthesized results for {}.",
                     target_summary
                 ),
                 "agent_report_writer",
-                vec!["compare_results".to_string()],
+                vec!["refine_results".to_string()],
             );
             push_step(
-                "execute_goal",
-                "execute",
+                "finalize_outputs",
+                "finalize",
                 format!(
                     "Complete the workflow by writing {} and preserve prior source-of-truth files.",
                     target_summary
                 ),
                 "agent_workflow_executor",
-                vec!["generate_report".to_string()],
+                vec!["draft_deliverable".to_string()],
             );
             if wants_delivery {
                 push_step(
-                    "notify_user",
-                    "notify",
+                    "deliver_summary",
+                    "deliver",
                     "Provide the concise completion summary after the deliverable exists."
                         .to_string(),
                     "agent_notifier",
-                    vec!["execute_goal".to_string()],
+                    vec!["finalize_outputs".to_string()],
                 );
             }
         }
@@ -1134,6 +1134,19 @@ Replace `YYYY-MM-DD` with the actual resolved date for the run.";
                 .any(|step| step.objective.contains("websearch")
                     || step.objective.contains("webfetch")),
             "fallback plan should preserve explicit web search tooling"
+        );
+        assert!(
+            !plan
+                .steps
+                .iter()
+                .any(|step| step.step_id == "extract_pain_points"),
+            "fallback plan should not emit legacy domain-specific scaffold names"
+        );
+        assert!(
+            plan.steps
+                .iter()
+                .any(|step| step.step_id == "summarize_inputs"),
+            "fallback plan should use generic summarization step ids"
         );
         assert!(
             !plan.steps.iter().any(|step| step.step_id == "notify_user"),

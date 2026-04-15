@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Control panel simplification**: Planner, Studio, Orchestrator, and other experimental surfaces are now hidden by default so new users land on the core experience first.
 - **Automation surface cleanup**: The Automations view now centers on Create, Calendar, Library, and Run History, keeping Calendar visible as the scheduling surface while removing clutter from the primary path.
 - **Workflow compiler prompt guidance**: Planner prompts now preserve exact source-file and output-file names, and keep explicit tools like `websearch` and `webfetch` visible in the step that uses them.
+- **Generalized workflow scaffolding**: Fallback workflow plans now use descriptive domain-neutral step IDs such as `summarize_inputs`, `gather_supporting_sources`, `draft_deliverable`, and `finalize_outputs` instead of leaking narrow research-marketing scaffolds like `extract_pain_points` into unrelated workflows.
 
 ### Fixed
 
@@ -24,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Read-only source-of-truth protection**: The workflow runtime now snapshots protected inputs and restores them on failure, preventing source files like `RESUME.md` from being used as scratch space or left deleted after a bad attempt.
 - **Concrete fallback workflow plans**: Fallback plan generation now keeps complex prompts grounded in concrete files and tools, so workflows that mention `RESUME.md`, `resume_overview.md`, `job_search_results_YYYY-MM-DD.md`, or web research no longer collapse into a generic triage scaffold.
 - **Planner decomposition fidelity**: The decomposition scorer now treats explicit web research as a stronger planning signal, helping complex prompts expand into phase-aware microtask DAGs instead of single generic steps.
+- **Repair guidance for exact source reads**: Repair briefs and API repair guidance now surface the exact missing source-file paths that must be read, helping blocked research nodes recover instead of looping on vague `required_source_paths_not_read` failures.
 - **Channel endpoint validation**: Unknown channel names now return `404` from the channel config/status/verify routes, and listener supervision now reports restart and failure state through diagnostics instead of dropping the signal on the floor.
 - **Channel registry follow-up hardening**: Registry-driven channel help/config paths now use the correct borrowed capability metadata and owned JSON string serialization, and listener startup correctly invokes per-channel security profile callbacks.
 

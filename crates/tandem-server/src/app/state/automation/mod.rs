@@ -1836,6 +1836,30 @@ pub(crate) fn render_automation_repair_brief(
         .and_then(|basis| basis.get("current_attempt_has_recorded_activity"))
         .and_then(Value::as_bool)
         .unwrap_or(false);
+    let required_source_read_paths = validation_basis
+        .and_then(|basis| basis.get("required_source_read_paths"))
+        .and_then(Value::as_array)
+        .map(|rows| {
+            rows.iter()
+                .filter_map(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let missing_required_source_read_paths = validation_basis
+        .and_then(|basis| basis.get("missing_required_source_read_paths"))
+        .and_then(Value::as_array)
+        .map(|rows| {
+            rows.iter()
+                .filter_map(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
     let validation_basis_line = validation_basis
         .map(|basis| {
             let authority = basis
@@ -1873,6 +1897,16 @@ pub(crate) fn render_automation_repair_brief(
             )
         })
         .unwrap_or_else(|| "none recorded".to_string());
+    let required_source_read_paths_line = if required_source_read_paths.is_empty() {
+        "none recorded".to_string()
+    } else {
+        required_source_read_paths.join(", ")
+    };
+    let missing_required_source_read_paths_line = if missing_required_source_read_paths.is_empty() {
+        "none recorded".to_string()
+    } else {
+        missing_required_source_read_paths.join(", ")
+    };
     if blocking_classification == "execution_error" && current_attempt_has_recorded_activity {
         blocking_classification = "artifact_write_missing".to_string();
     }
@@ -1991,10 +2025,12 @@ pub(crate) fn render_automation_repair_brief(
     };
 
     Some(format!(
-        "Repair Brief:\n- Node `{}` is being retried because the previous attempt ended in `needs_repair`.\n- Previous validation reason: {}.\n- Validation basis: {}.\n- Unmet requirements: {}.\n- Blocking classification: {}.\n- Required next tool actions: {}.\n- Tools offered last attempt: {}.\n- Tools executed last attempt: {}.\n- Relevant files still unread or explicitly unreviewed: {}.\n- Previous repair attempt count: {}.\n- Remaining repair attempts after this run: {}{}.\n- For this retry, satisfy the unmet requirements before finalizing the artifact.\n- Do not write a blocked handoff unless the required tools were actually attempted and remained unavailable or failed.{}",
+        "Repair Brief:\n- Node `{}` is being retried because the previous attempt ended in `needs_repair`.\n- Previous validation reason: {}.\n- Validation basis: {}.\n- Required source read paths: {}.\n- Missing required source read paths: {}.\n- Unmet requirements: {}.\n- Blocking classification: {}.\n- Required next tool actions: {}.\n- Tools offered last attempt: {}.\n- Tools executed last attempt: {}.\n- Relevant files still unread or explicitly unreviewed: {}.\n- Previous repair attempt count: {}.\n- Remaining repair attempts after this run: {}{}.\n- For this retry, satisfy the unmet requirements before finalizing the artifact.\n- Do not write a blocked handoff unless the required tools were actually attempted and remained unavailable or failed.{}",
         node.node_id,
         reason,
         validation_basis_line,
+        required_source_read_paths_line,
+        missing_required_source_read_paths_line,
         unmet_line,
         blocking_classification,
         next_actions_line,
@@ -6009,6 +6045,7 @@ pub(crate) fn validate_automation_artifact_output_with_context(
                 .unwrap_or_default(),
             web_research_expected_for_classification,
             &unmet_requirements,
+            &missing_required_source_read_paths,
             &unreviewed_relevant_paths,
             latest_web_research_failure,
         )

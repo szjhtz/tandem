@@ -3,15 +3,15 @@
 
 pub(crate) fn workflow_plan_common_sections() -> String {
     // Keep this formatted text stable: downstream behavior depends on the planner prompt shape.
-    let allowed_step_ids = crate::workflow_plan::ALLOWED_WORKFLOW_STEP_IDS.join(", ");
+    let step_id_examples = crate::workflow_plan::WORKFLOW_STEP_ID_EXAMPLES.join(", ");
     let teaching_library = workflow_plan_teaching_library_sections();
     format!(
         concat!(
-            "Allowed step ids: {}.\n",
+            "Step id guidance: use descriptive lowercase snake_case ids such as {}.\n",
             "Plan invariants:\n",
             "- execution_target must be automation_v2\n",
             "- workspace_root must be a non-empty absolute path\n",
-            "- do not invent unsupported step ids\n",
+            "- step ids must stay descriptive and stable instead of reusing legacy placeholder names from unrelated workflow domains\n",
             "- decompose complex work into phase-aware microtask DAGs instead of forcing every plan into a flat 7-10 step graph\n",
             "- keep each leaf task narrow enough to own one objective, one output contract, and one validation path\n",
             "- steps must form a valid DAG\n",
@@ -31,7 +31,7 @@ pub(crate) fn workflow_plan_common_sections() -> String {
             "- when a prompt names `websearch`, `webfetch`, or another explicit tool, preserve that tool name in the step objective that will use it\n",
             "{}",
         ),
-        allowed_step_ids,
+        step_id_examples,
         teaching_library
     )
 }

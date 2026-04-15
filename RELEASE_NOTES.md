@@ -10,7 +10,9 @@ This release trims the control panel down to the core path so new users can get 
 - **Automation cleanup**: The Automations view now focuses on Create, Calendar, Library, and Run History, with Calendar kept visible as the scheduling surface and the non-functional dry-run affordances removed from the automation views and mission builder.
 - **Brand icon polish**: Tandem now uses a clean default icon asset in the shell and settings preview, so the logo no longer gets clipped by the rounded frame.
 - **Workflow compiler hardening**: Fallback plans now stay concrete, preserve exact filenames, and keep explicit `websearch` / `webfetch` instructions visible in the step that uses them.
+- **Generalized workflow step scaffolding**: Fallback plans now use descriptive domain-neutral step IDs such as `summarize_inputs`, `gather_supporting_sources`, `draft_deliverable`, and `finalize_outputs` instead of reusing narrow built-in labels from unrelated workflow types.
 - **Read-only source protection**: Source-of-truth files are snapshotted and restored on failure, preventing workflows from deleting or repurposing files like `RESUME.md`.
+- **Exact-source repair guidance**: Repair briefs and repair-guidance payloads now include the exact source files that were still missing required `read` coverage, making blocked research-style retries much more actionable.
 - **Channel registry and diagnostics**: Built-in channel listeners are discovered through a registry, surfaced with runtime diagnostics, and validated so unknown channel names return `404` instead of behaving like hidden fallthrough cases.
 - **Channel registry hardening**: The new registry-backed channel help/config surfaces now serialize config values consistently and correctly invoke per-channel security profile callbacks during listener startup.
 

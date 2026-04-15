@@ -2937,6 +2937,78 @@ fn render_automation_repair_brief_summarizes_previous_research_miss() {
 }
 
 #[test]
+fn render_automation_repair_brief_includes_exact_missing_required_source_reads() {
+    let node = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
+        node_id: "research-source-brief".to_string(),
+        agent_id: "research".to_string(),
+        objective: "Write marketing-brief.md".to_string(),
+        depends_on: Vec::new(),
+        input_refs: Vec::new(),
+        output_contract: Some(AutomationFlowOutputContract {
+            kind: "brief".to_string(),
+            validator: None,
+            enforcement: None,
+            schema: None,
+            summary_guidance: None,
+        }),
+        retry_policy: None,
+        timeout_ms: None,
+        max_tool_calls: None,
+        stage_kind: None,
+        gate: None,
+        metadata: Some(json!({
+            "builder": {
+                "output_path": "marketing-brief.md",
+                "source_coverage_required": true
+            }
+        })),
+    };
+    let prior_output = json!({
+        "status": "needs_repair",
+        "validator_summary": {
+            "reason": "research completed without reading the exact required source files",
+            "unmet_requirements": [
+                "required_source_paths_not_read"
+            ]
+        },
+        "tool_telemetry": {
+            "requested_tools": ["glob", "read", "write"],
+            "executed_tools": ["glob", "write"]
+        },
+        "artifact_validation": {
+            "blocking_classification": "tool_available_but_not_used",
+            "unreviewed_relevant_paths": ["docs/pricing.md"],
+            "repair_attempt": 1,
+            "repair_attempts_remaining": 4,
+            "validation_basis": {
+                "authority": "filesystem_and_receipts",
+                "current_attempt_output_materialized": true,
+                "current_attempt_has_recorded_activity": true,
+                "current_attempt_has_read": false,
+                "current_attempt_has_web_research": false,
+                "workspace_inspection_satisfied": false,
+                "required_source_read_paths": ["RESUME.md", "docs/resume.md"],
+                "missing_required_source_read_paths": ["RESUME.md", "docs/resume.md"]
+            },
+            "required_next_tool_actions": [
+                "Use `read` on the exact required source files before finalizing: RESUME.md, docs/resume.md. Similar backup or copy filenames do not satisfy the requirement."
+            ]
+        }
+    });
+
+    let brief = render_automation_repair_brief(&node, Some(&prior_output), 2, 5, Some("run-123"))
+        .expect("repair brief");
+
+    assert!(brief.contains("Required source read paths: RESUME.md, docs/resume.md"));
+    assert!(brief.contains("Missing required source read paths: RESUME.md, docs/resume.md"));
+    assert!(
+        brief.contains("exact required source files before finalizing: RESUME.md, docs/resume.md")
+    );
+    assert!(brief.contains("required_source_paths_not_read"));
+}
+
+#[test]
 fn code_patch_repair_brief_mentions_patch_apply_test_loop() {
     let node = AutomationFlowNode {
         knowledge: tandem_orchestrator::KnowledgeBinding::default(),

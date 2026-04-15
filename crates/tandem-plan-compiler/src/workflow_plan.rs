@@ -1451,20 +1451,27 @@ where
         return Err("execution_target must be automation_v2".to_string());
     }
     normalize_absolute_workspace_root(&plan.workspace_root)?;
-    let allowed_step_ids = allowed_workflow_step_ids();
-    let step_ids = plan
+    let normalized_step_ids = plan
         .steps
         .iter()
         .map(|step| normalize_workflow_step_id(step.step_id.as_str()))
-        .collect::<std::collections::HashSet<_>>();
-    if step_ids.is_empty() {
+        .collect::<Vec<_>>();
+    if normalized_step_ids.is_empty() {
         return Err("workflow plan must include at least one step".to_string());
     }
-    for step in &plan.steps {
-        let normalized_step_id = normalize_workflow_step_id(step.step_id.as_str());
-        if !workflow_step_id_is_allowed(&normalized_step_id, &allowed_step_ids) {
-            return Err(format!("unsupported workflow step id `{}`", step.step_id));
+    let mut step_ids = std::collections::HashSet::new();
+    for (step, normalized_step_id) in plan.steps.iter().zip(normalized_step_ids.iter()) {
+        if !workflow_step_id_has_supported_shape(normalized_step_id) {
+            return Err(format!("invalid workflow step id `{}`", step.step_id));
         }
+        if !step_ids.insert(normalized_step_id.clone()) {
+            return Err(format!(
+                "workflow step id `{}` duplicates another step after normalization",
+                step.step_id
+            ));
+        }
+    }
+    for step in &plan.steps {
         for dep in &step.depends_on {
             if !step_ids.contains(&normalize_workflow_step_id(dep.as_str())) {
                 return Err(format!(
@@ -1486,23 +1493,17 @@ where
     Ok(())
 }
 
-pub const ALLOWED_WORKFLOW_STEP_IDS: &[&str] = &[
+pub const WORKFLOW_STEP_ID_EXAMPLES: &[&str] = &[
     "assess",
     "collect_inputs",
-    "research_sources",
-    "extract_pain_points",
-    "cluster_topics",
-    "analyze_findings",
-    "generate_report",
-    "compare_results",
-    "compare_with_features",
-    "notify_user",
-    "execute_goal",
+    "summarize_inputs",
+    "organize_workstreams",
+    "gather_supporting_sources",
+    "refine_results",
+    "draft_deliverable",
+    "deliver_summary",
+    "finalize_outputs",
 ];
-
-fn allowed_workflow_step_ids() -> std::collections::HashSet<&'static str> {
-    ALLOWED_WORKFLOW_STEP_IDS.iter().copied().collect()
-}
 
 /// Returns `true` when a step ID or kind indicates a triage / awareness check.
 /// The compiler uses this to apply triage-gate metadata automatically.
@@ -1530,18 +1531,21 @@ fn normalize_workflow_step_id(raw: &str) -> String {
     out.trim_matches('_').to_string()
 }
 
-fn workflow_step_id_is_allowed(
-    normalized_step_id: &str,
-    allowed_step_ids: &std::collections::HashSet<&'static str>,
-) -> bool {
-    if allowed_step_ids.contains(normalized_step_id) {
-        return true;
+fn workflow_step_id_has_supported_shape(normalized_step_id: &str) -> bool {
+    if normalized_step_id.is_empty() || normalized_step_id.len() > 80 {
+        return false;
     }
-    allowed_step_ids.iter().any(|allowed| {
-        normalized_step_id
-            .strip_prefix(*allowed)
-            .is_some_and(|suffix| suffix.starts_with('_') && suffix.len() > 1)
-    })
+    if normalized_step_id.ends_with('_') || normalized_step_id.contains("__") {
+        return false;
+    }
+    let mut chars = normalized_step_id.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    if !first.is_ascii_lowercase() {
+        return false;
+    }
+    chars.all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '_')
 }
 
 pub fn normalize_absolute_workspace_root(raw: &str) -> Result<String, String> {
@@ -2326,9 +2330,9 @@ Here is the planner response:
     }
 
     #[test]
-    fn validate_workflow_plan_rejects_unknown_step_ids() {
+    fn validate_workflow_plan_rejects_malformed_step_ids() {
         let plan = test_plan_with_steps(vec![WorkflowPlanStep {
-            step_id: "totally_custom_step".to_string(),
+            step_id: "123 totally custom step".to_string(),
             kind: "custom".to_string(),
             objective: "Do custom work.".to_string(),
             depends_on: vec![],
@@ -2338,8 +2342,8 @@ Here is the planner response:
             metadata: None,
         }]);
 
-        let error = validate_workflow_plan(&plan).expect_err("unknown step id should fail");
-        assert!(error.contains("unsupported workflow step id"));
+        let error = validate_workflow_plan(&plan).expect_err("malformed step id should fail");
+        assert!(error.contains("invalid workflow step id"));
     }
 
     #[test]

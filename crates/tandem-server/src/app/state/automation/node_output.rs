@@ -589,6 +589,7 @@ pub(crate) fn research_required_next_tool_actions(
     executed_tools: &[Value],
     web_research_expected: bool,
     unmet_requirements: &[String],
+    missing_required_source_read_paths: &[String],
     unreviewed_relevant_paths: &[String],
     latest_web_research_failure: Option<&str>,
 ) -> Vec<String> {
@@ -643,10 +644,17 @@ pub(crate) fn research_required_next_tool_actions(
                     "No additional unreviewed files detected. If citations are missing, either: (a) re-read upstream handoff sources with `read` to extract specific proof points, or (b) add explicit `Files not reviewed` section listing sources that could not be verified with reasons.".to_string(),
                 );
             } else if has_unmet("required_source_paths_not_read") {
-                actions.push(
-                    "Use `read` on the exact source file paths named in the workflow prompt before finalizing. Similar backup or copy filenames do not satisfy the requirement."
-                        .to_string(),
-                );
+                if !missing_required_source_read_paths.is_empty() {
+                    actions.push(format!(
+                        "Use `read` on the exact required source files before finalizing: {}. Similar backup or copy filenames do not satisfy the requirement.",
+                        missing_required_source_read_paths.join(", ")
+                    ));
+                } else {
+                    actions.push(
+                        "Use `read` on the exact source file paths named in the workflow prompt before finalizing. Similar backup or copy filenames do not satisfy the requirement."
+                            .to_string(),
+                    );
+                }
             } else {
                 actions.push(
                     "Use `read` on concrete workspace files before finalizing the brief."

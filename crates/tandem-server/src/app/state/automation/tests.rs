@@ -119,6 +119,23 @@ fn email_delivery_node() -> AutomationFlowNode {
     node
 }
 
+fn generic_research_artifact_node() -> AutomationFlowNode {
+    let mut node = bare_node();
+    node.node_id = "summarize_resume_signals".to_string();
+    node.objective = "Summarize the resume signals into a structured working summary.".to_string();
+    node.output_contract = Some(AutomationFlowOutputContract {
+        kind: "structured_json".to_string(),
+        validator: Some(crate::AutomationOutputValidatorKind::StructuredJson),
+        enforcement: None,
+        schema: None,
+        summary_guidance: None,
+    });
+    node.metadata = Some(json!({
+        "builder": { "task_class": "synthesis" }
+    }));
+    node
+}
+
 fn report_markdown_node() -> AutomationFlowNode {
     let mut node = node_with_input_ref();
     node.output_contract = Some(AutomationFlowOutputContract {
@@ -1150,6 +1167,26 @@ fn explicit_gmail_draft_objective_requires_email_delivery() {
             .to_string();
 
     assert!(automation_node_requires_email_delivery(&node));
+}
+
+#[test]
+fn generic_synthesis_nodes_get_default_artifact_paths_without_legacy_ids() {
+    let node = generic_research_artifact_node();
+
+    assert_eq!(
+        super::node_runtime_impl::automation_node_default_output_path(&node).as_deref(),
+        Some(".tandem/artifacts/summarize-resume-signals.json")
+    );
+}
+
+#[test]
+fn delivery_nodes_do_not_get_default_artifact_paths() {
+    let node = email_delivery_node();
+
+    assert_eq!(
+        super::node_runtime_impl::automation_node_default_output_path(&node),
+        None
+    );
 }
 
 #[test]
