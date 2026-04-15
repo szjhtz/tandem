@@ -728,6 +728,60 @@ async fn workflow_plan_preview_rejects_invalid_llm_step_id_and_uses_fallback() {
 }
 
 #[tokio::test]
+async fn workflow_plan_preview_uses_phased_fallback_for_complex_prompt_on_invalid_json() {
+    let state = test_state().await;
+    configure_openai_provider(&state).await;
+    let app = app_router(state);
+    let _guard = PlannerEnvGuard::new(&[
+        "TANDEM_WORKFLOW_PLANNER_TEST_BUILD_RESPONSE",
+        "TANDEM_WORKFLOW_PLANNER_TEST_RESPONSE",
+    ]);
+    _guard.set(
+        "TANDEM_WORKFLOW_PLANNER_TEST_BUILD_RESPONSE",
+        json!({
+            "assistant_text": "missing required planner action payload"
+        })
+        .to_string(),
+    );
+
+    let resp = app
+        .oneshot(preview_request(json!({
+            "prompt": "Analyze the local RESUME.md file and use it as the source of truth for skills, role targets, seniority, technologies, and geography preferences. If resume_overview.md does not exist, create it. Use websearch to find relevant job boards and recruitment sites in Europe. Save all results to daily_results_2026-04-15.md and append new findings on repeated runs.",
+            "workspace_root": "/tmp/custom-workspace",
+            "operator_preferences": planner_preferences()
+        })))
+        .await
+        .expect("response");
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = to_bytes(resp.into_body(), usize::MAX).await.expect("body");
+    let payload: Value = serde_json::from_slice(&body).expect("json");
+    assert_eq!(
+        payload
+            .get("planner_diagnostics")
+            .and_then(|row| row.get("fallback_reason"))
+            .and_then(Value::as_str),
+        Some("invalid_json")
+    );
+    let step_ids = payload
+        .get("plan")
+        .and_then(|row| row.get("steps"))
+        .and_then(Value::as_array)
+        .map(|rows| {
+            rows.iter()
+                .filter_map(|row| row.get("step_id").and_then(Value::as_str))
+                .collect::<Vec<_>>()
+        })
+        .expect("steps");
+    assert!(
+        step_ids.len() > 1,
+        "fallback plan should not collapse to one step"
+    );
+    assert_eq!(step_ids.first().copied(), Some("assess"));
+    assert_eq!(step_ids.get(1).copied(), Some("collect_inputs"));
+    assert_eq!(step_ids.last().copied(), Some("execute_goal"));
+}
+
+#[tokio::test]
 async fn workflow_plan_preview_rejects_invalid_llm_dependency_and_uses_fallback() {
     let state = test_state().await;
     configure_openai_provider(&state).await;

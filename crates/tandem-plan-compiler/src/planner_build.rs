@@ -141,6 +141,48 @@ where
         &explicit_output_targets,
         request.explicit_schedule.is_some(),
     );
+    let build_profile_fallback_plan =
+        |description: Option<String>, fallback_step: WorkflowPlanStep<I, O>| {
+            if decomposition_profile.requires_phased_dag {
+                build_decomposition_fallback_plan(
+                    &request.plan_id,
+                    &request.planner_version,
+                    &request.plan_source,
+                    &request.prompt,
+                    &request.normalized_prompt,
+                    request.title.clone(),
+                    request
+                        .requested_workspace_root
+                        .clone()
+                        .unwrap_or_else(|| "/".to_string()),
+                    request.fallback_schedule.clone(),
+                    request.allowed_mcp_servers.clone(),
+                    request.operator_preferences.clone(),
+                    description,
+                    &explicit_output_targets,
+                    &decomposition_profile,
+                    fallback_step,
+                )
+            } else {
+                build_minimal_fallback_plan(
+                    &request.plan_id,
+                    &request.planner_version,
+                    &request.plan_source,
+                    &request.prompt,
+                    &request.normalized_prompt,
+                    request.title.clone(),
+                    request
+                        .requested_workspace_root
+                        .clone()
+                        .unwrap_or_else(|| "/".to_string()),
+                    request.fallback_schedule.clone(),
+                    request.allowed_mcp_servers.clone(),
+                    request.operator_preferences.clone(),
+                    description,
+                    fallback_step,
+                )
+            }
+        };
     let resolved_workspace_root = match host
         .resolve_workspace_root(request.requested_workspace_root.as_deref())
         .await
@@ -148,19 +190,7 @@ where
         Ok(root) => root,
         Err(error) => {
             return PlannerBuildResult {
-                plan: build_minimal_fallback_plan(
-                    &request.plan_id,
-                    &request.planner_version,
-                    &request.plan_source,
-                    &request.prompt,
-                    &request.normalized_prompt,
-                    request.title,
-                    request
-                        .requested_workspace_root
-                        .unwrap_or_else(|| "/".to_string()),
-                    request.fallback_schedule,
-                    request.allowed_mcp_servers,
-                    request.operator_preferences,
+                plan: build_profile_fallback_plan(
                     Some(format!(
                         "Planner fallback draft. Invalid workspace root: {}",
                         truncate_text(&error, 200)
@@ -200,17 +230,7 @@ where
 
     let Some(model) = planner_model_spec(request.operator_preferences.as_ref()) else {
         return PlannerBuildResult {
-            plan: build_minimal_fallback_plan(
-                &request.plan_id,
-                &request.planner_version,
-                &request.plan_source,
-                &request.prompt,
-                &request.normalized_prompt,
-                request.title,
-                resolved_workspace_root,
-                request.fallback_schedule,
-                request.allowed_mcp_servers,
-                request.operator_preferences,
+            plan: build_profile_fallback_plan(
                 Some(
                     "Planner fallback draft. Configure a planner model for richer workflow planning. Reason: no_planner_model."
                         .to_string(),
@@ -233,17 +253,7 @@ where
     if !host.is_provider_configured(&model.provider_id).await {
         let question = planner_llm_provider_unconfigured_hint(&model.provider_id);
         return PlannerBuildResult {
-            plan: build_minimal_fallback_plan(
-                &request.plan_id,
-                &request.planner_version,
-                &request.plan_source,
-                &request.prompt,
-                &request.normalized_prompt,
-                request.title,
-                resolved_workspace_root,
-                request.fallback_schedule,
-                request.allowed_mcp_servers,
-                request.operator_preferences,
+            plan: build_profile_fallback_plan(
                 Some(
                     "Planner fallback draft. Configure the planner provider for richer workflow generation. Reason: provider_unconfigured."
                         .to_string(),
@@ -292,17 +302,7 @@ where
                     )
                 }) else {
                     return PlannerBuildResult {
-                        plan: build_minimal_fallback_plan(
-                            &request.plan_id,
-                            &request.planner_version,
-                            &request.plan_source,
-                            &request.prompt,
-                            &request.normalized_prompt,
-                            request.title,
-                            resolved_workspace_root,
-                            request.fallback_schedule,
-                            request.allowed_mcp_servers,
-                            request.operator_preferences,
+                        plan: build_profile_fallback_plan(
                             Some(
                                 "Planner fallback draft. The planner returned an invalid JSON plan. Reason: invalid_json."
                                     .to_string(),
@@ -332,19 +332,55 @@ where
                     &mut normalize_step,
                 ) {
                     Ok(plan) => {
-                        let diagnostics = planner_diagnostics(
-                            None,
-                            None,
-                            Some(workflow_plan_decomposition_observation(
-                                &decomposition_profile,
+                        if workflow_plan_is_too_flat_for_profile(
+                            &decomposition_profile,
+                            plan.steps.len(),
+                        ) {
+                            let detail = format!(
+                                "workflow plan produced {} step(s) but the decomposition profile recommends more than {} phase(s)",
                                 plan.steps.len(),
-                            )),
-                        );
+                                decomposition_profile.recommended_phase_count
+                            );
+                            host.warn(&format!(
+                                "workflow planner llm output rejected for being too flat: {detail}"
+                            ));
                         PlannerBuildResult {
-                            plan,
-                            assistant_text: payload.assistant_text,
-                            clarifier: Value::Null,
-                            planner_diagnostics: diagnostics,
+                            plan: build_profile_fallback_plan(
+                                Some(
+                                    "Planner fallback draft. The planner returned a workflow that was too flat for the requested decomposition profile. Reason: decomposition_profile_too_flat."
+                                        .to_string(),
+                                    ),
+                                    fallback_step.clone(),
+                                ),
+                                assistant_text: payload.assistant_text.or(Some(
+                                    "The planner returned a workflow that was too flat for the requested decomposition profile. Tandem used a phased fallback workflow instead."
+                                        .to_string(),
+                                )),
+                                clarifier: Value::Null,
+                                planner_diagnostics: planner_diagnostics(
+                                    Some("decomposition_profile_too_flat"),
+                                    Some(detail),
+                                    Some(workflow_plan_decomposition_observation(
+                                        &decomposition_profile,
+                                        plan.steps.len(),
+                                    )),
+                                ),
+                            }
+                        } else {
+                            let diagnostics = planner_diagnostics(
+                                None,
+                                None,
+                                Some(workflow_plan_decomposition_observation(
+                                    &decomposition_profile,
+                                    plan.steps.len(),
+                                )),
+                            );
+                            PlannerBuildResult {
+                                plan,
+                                assistant_text: payload.assistant_text,
+                                clarifier: Value::Null,
+                                planner_diagnostics: diagnostics,
+                            }
                         }
                     },
                     Err(error) => {
@@ -353,22 +389,12 @@ where
                             "workflow planner llm output rejected by validation: {detail}"
                         ));
                         PlannerBuildResult {
-                            plan: build_minimal_fallback_plan(
-                                &request.plan_id,
-                                &request.planner_version,
-                                &request.plan_source,
-                                &request.prompt,
-                                &request.normalized_prompt,
-                                request.title,
-                                resolved_workspace_root,
-                            request.fallback_schedule,
-                            request.allowed_mcp_servers,
-                            request.operator_preferences,
-                            Some("Planner fallback draft. The planner returned a workflow that Tandem could not validate. Reason: validation_rejected.".to_string()),
+                            plan: build_profile_fallback_plan(
+                                Some("Planner fallback draft. The planner returned a workflow that Tandem could not validate. Reason: validation_rejected.".to_string()),
                                 fallback_step.clone(),
                             ),
                             assistant_text: payload.assistant_text.or(Some(
-                                "The planner returned a workflow Tandem could not validate. Tandem used a minimal fallback plan instead.".to_string(),
+                                "The planner returned a workflow Tandem could not validate. Tandem used a phased fallback workflow instead.".to_string(),
                             )),
                             clarifier: Value::Null,
                             planner_diagnostics: planner_diagnostics(
@@ -397,17 +423,7 @@ where
                     .filter(|value| !value.trim().is_empty())
                     .unwrap_or("general");
                 PlannerBuildResult {
-                    plan: build_minimal_fallback_plan(
-                        &request.plan_id,
-                        &request.planner_version,
-                        &request.plan_source,
-                        &request.prompt,
-                        &request.normalized_prompt,
-                        request.title,
-                        resolved_workspace_root,
-                        request.fallback_schedule,
-                        request.allowed_mcp_servers,
-                        request.operator_preferences,
+                    plan: build_profile_fallback_plan(
                         Some("Planner fallback draft. Clarification is needed before Tandem can generate a richer workflow. Reason: clarification_needed.".to_string()),
                         fallback_step.clone(),
                     ),
@@ -429,17 +445,7 @@ where
             }
         },
         Err(failure) => PlannerBuildResult {
-            plan: build_minimal_fallback_plan(
-                &request.plan_id,
-                &request.planner_version,
-                &request.plan_source,
-                request.prompt.as_str(),
-                &request.normalized_prompt,
-                request.title,
-                resolved_workspace_root,
-                request.fallback_schedule,
-                request.allowed_mcp_servers,
-                request.operator_preferences,
+            plan: build_profile_fallback_plan(
                 Some(format!(
                     "Planner fallback draft. Tandem could not complete a provider-safe planning call for this model. Reason: {}.",
                     failure.reason
@@ -448,7 +454,7 @@ where
             ),
             assistant_text: Some(
                 failure.detail.clone().unwrap_or_else(|| {
-                    "The planner could not complete a valid provider call. Tandem used a minimal fallback workflow instead."
+                    "The planner could not complete a valid provider call. Tandem used a phased fallback workflow instead."
                         .to_string()
                 }),
             ),
@@ -462,6 +468,253 @@ where
                 )),
             ),
         },
+    }
+}
+
+fn workflow_plan_is_too_flat_for_profile(
+    profile: &crate::decomposition::WorkflowDecompositionProfile,
+    step_count: usize,
+) -> bool {
+    profile.requires_phased_dag && step_count <= usize::from(profile.recommended_phase_count)
+}
+
+fn build_decomposition_fallback_plan<S, I, O>(
+    plan_id: &str,
+    planner_version: &str,
+    plan_source: &str,
+    prompt: &str,
+    normalized_prompt: &str,
+    title: String,
+    workspace_root: String,
+    schedule: S,
+    allowed_mcp_servers: Vec<String>,
+    operator_preferences: Option<Value>,
+    description: Option<String>,
+    explicit_output_targets: &[String],
+    decomposition_profile: &crate::decomposition::WorkflowDecompositionProfile,
+    fallback_step: WorkflowPlanStep<I, O>,
+) -> WorkflowPlan<S, WorkflowPlanStep<I, O>>
+where
+    I: Clone,
+    O: Clone,
+{
+    if !decomposition_profile.requires_phased_dag {
+        return build_minimal_fallback_plan(
+            plan_id,
+            planner_version,
+            plan_source,
+            prompt,
+            normalized_prompt,
+            title,
+            workspace_root,
+            schedule,
+            allowed_mcp_servers,
+            operator_preferences,
+            description,
+            fallback_step,
+        );
+    }
+
+    let target_summary = if explicit_output_targets.is_empty() {
+        "the requested deliverable".to_string()
+    } else {
+        explicit_output_targets
+            .iter()
+            .take(3)
+            .map(|path| format!("`{path}`"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let lower_prompt = prompt.to_ascii_lowercase();
+    let wants_delivery = ["send", "email", "deliver", "publish", "post ", "notify"]
+        .iter()
+        .any(|needle| lower_prompt.contains(needle));
+
+    let mut steps = Vec::new();
+    let mut push_step = |step_id: &str,
+                         kind: &str,
+                         objective: String,
+                         agent_role: &str,
+                         depends_on: Vec<String>| {
+        let mut step = fallback_step.clone();
+        step.step_id = step_id.to_string();
+        step.kind = kind.to_string();
+        step.objective = objective;
+        step.agent_role = agent_role.to_string();
+        step.depends_on = depends_on;
+        step.input_refs = Vec::new();
+        step.metadata = None;
+        steps.push(step);
+    };
+
+    push_step(
+        "assess",
+        "assess",
+        "Check workspace state, confirm the concrete source files and output paths, and determine whether this workflow can proceed.".to_string(),
+        "agent_triage_agent",
+        Vec::new(),
+    );
+    push_step(
+        "collect_inputs",
+        "collect",
+        "Read the concrete input files and capture the raw inputs needed for downstream steps."
+            .to_string(),
+        "agent_workspace_reader",
+        vec!["assess".to_string()],
+    );
+
+    match decomposition_profile.tier {
+        crate::decomposition::WorkflowDecompositionTier::Simple => {}
+        crate::decomposition::WorkflowDecompositionTier::Moderate => {
+            push_step(
+                "analyze_findings",
+                "analyze",
+                format!(
+                    "Turn the collected inputs into a concise working summary for {}.",
+                    target_summary
+                ),
+                "agent_profile_analyst",
+                vec!["collect_inputs".to_string()],
+            );
+            push_step(
+                "execute_goal",
+                "execute",
+                format!(
+                    "Complete the workflow by creating or appending {} and keep any source-of-truth files untouched.",
+                    target_summary
+                ),
+                "agent_workflow_executor",
+                vec!["analyze_findings".to_string()],
+            );
+        }
+        crate::decomposition::WorkflowDecompositionTier::Complex => {
+            push_step(
+                "extract_pain_points",
+                "extract",
+                "Turn the raw inputs into a structured working summary and isolate the important details."
+                    .to_string(),
+                "agent_profile_analyst",
+                vec!["collect_inputs".to_string()],
+            );
+            push_step(
+                "research_sources",
+                "research",
+                "Gather the relevant external or connector-backed sources for the workflow, then keep only supported matches."
+                    .to_string(),
+                "agent_researcher",
+                vec!["extract_pain_points".to_string()],
+            );
+            push_step(
+                "compare_results",
+                "compare",
+                "Filter, compare, and deduplicate the gathered results so only supported matches remain."
+                    .to_string(),
+                "agent_relevance_reviewer",
+                vec!["research_sources".to_string()],
+            );
+            push_step(
+                "generate_report",
+                "report",
+                format!(
+                    "Write the final report or daily artifact using the synthesized results for {}.",
+                    target_summary
+                ),
+                "agent_report_writer",
+                vec!["compare_results".to_string()],
+            );
+            push_step(
+                "execute_goal",
+                "execute",
+                format!(
+                    "Complete the workflow by writing {} and preserve prior source-of-truth files.",
+                    target_summary
+                ),
+                "agent_workflow_executor",
+                vec!["generate_report".to_string()],
+            );
+        }
+        crate::decomposition::WorkflowDecompositionTier::VeryComplex => {
+            push_step(
+                "extract_pain_points",
+                "extract",
+                "Turn the raw inputs into a structured working summary and isolate the important details."
+                    .to_string(),
+                "agent_profile_analyst",
+                vec!["collect_inputs".to_string()],
+            );
+            push_step(
+                "cluster_topics",
+                "cluster",
+                "Group the summary into task themes, search buckets, or work phases.".to_string(),
+                "agent_topic_clusterer",
+                vec!["extract_pain_points".to_string()],
+            );
+            push_step(
+                "research_sources",
+                "research",
+                "Gather the relevant external or connector-backed sources for the workflow, then keep only supported matches."
+                    .to_string(),
+                "agent_researcher",
+                vec!["cluster_topics".to_string()],
+            );
+            push_step(
+                "compare_results",
+                "compare",
+                "Filter, compare, and deduplicate the gathered results so only supported matches remain."
+                    .to_string(),
+                "agent_relevance_reviewer",
+                vec!["research_sources".to_string()],
+            );
+            push_step(
+                "generate_report",
+                "report",
+                format!(
+                    "Write the final report or daily artifact using the synthesized results for {}.",
+                    target_summary
+                ),
+                "agent_report_writer",
+                vec!["compare_results".to_string()],
+            );
+            push_step(
+                "execute_goal",
+                "execute",
+                format!(
+                    "Complete the workflow by writing {} and preserve prior source-of-truth files.",
+                    target_summary
+                ),
+                "agent_workflow_executor",
+                vec!["generate_report".to_string()],
+            );
+            if wants_delivery {
+                push_step(
+                    "notify_user",
+                    "notify",
+                    "Provide the concise completion summary after the deliverable exists."
+                        .to_string(),
+                    "agent_notifier",
+                    vec!["execute_goal".to_string()],
+                );
+            }
+        }
+    }
+
+    WorkflowPlan {
+        plan_id: plan_id.to_string(),
+        planner_version: planner_version.to_string(),
+        plan_source: plan_source.to_string(),
+        original_prompt: prompt.trim().to_string(),
+        normalized_prompt: normalized_prompt.to_string(),
+        confidence: "low".to_string(),
+        title,
+        description,
+        schedule,
+        execution_target: "automation_v2".to_string(),
+        workspace_root,
+        steps,
+        requires_integrations: Vec::new(),
+        allowed_mcp_servers,
+        operator_preferences,
+        save_options: plan_save_options(),
     }
 }
 
