@@ -12,6 +12,7 @@ This release trims the control panel down to the core path so new users can get 
 - **Workflow compiler hardening**: Fallback plans now stay concrete, preserve exact filenames, and keep explicit `websearch` / `webfetch` instructions visible in the step that uses them.
 - **Read-only source protection**: Source-of-truth files are snapshotted and restored on failure, preventing workflows from deleting or repurposing files like `RESUME.md`.
 - **Channel registry and diagnostics**: Built-in channel listeners are discovered through a registry, surfaced with runtime diagnostics, and validated so unknown channel names return `404` instead of behaving like hidden fallthrough cases.
+- **Channel registry hardening**: The new registry-backed channel help/config surfaces now serialize config values consistently and correctly invoke per-channel security profile callbacks during listener startup.
 
 ## v0.4.28 (Released 2026-04-14)
 

@@ -25,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Concrete fallback workflow plans**: Fallback plan generation now keeps complex prompts grounded in concrete files and tools, so workflows that mention `RESUME.md`, `resume_overview.md`, `job_search_results_YYYY-MM-DD.md`, or web research no longer collapse into a generic triage scaffold.
 - **Planner decomposition fidelity**: The decomposition scorer now treats explicit web research as a stronger planning signal, helping complex prompts expand into phase-aware microtask DAGs instead of single generic steps.
 - **Channel endpoint validation**: Unknown channel names now return `404` from the channel config/status/verify routes, and listener supervision now reports restart and failure state through diagnostics instead of dropping the signal on the floor.
+- **Channel registry follow-up hardening**: Registry-driven channel help/config paths now use the correct borrowed capability metadata and owned JSON string serialization, and listener startup correctly invokes per-channel security profile callbacks.
 
 ## [0.4.28] - Released 2026-04-14
 

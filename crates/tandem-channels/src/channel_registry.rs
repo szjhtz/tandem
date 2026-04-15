@@ -353,7 +353,6 @@ pub fn command_capability(name: &str) -> Option<&'static ChannelCommandCapabilit
     BUILTIN_CHANNEL_COMMANDS
         .iter()
         .find(|cmd| cmd.name == requested)
-        .map(|cmd| *cmd)
 }
 
 pub fn command_capabilities_for_profile(

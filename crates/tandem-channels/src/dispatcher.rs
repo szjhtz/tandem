@@ -1076,7 +1076,7 @@ pub async fn start_channel_listeners_with_diagnostics(
         };
         security_profiles.insert(
             spec.name.to_string(),
-            spec.security_profile(&config).unwrap_or_default(),
+            (spec.security_profile)(&config).unwrap_or_default(),
         );
         let map = session_map.clone();
         let base_url = config.server_base_url.clone();
@@ -3512,7 +3512,7 @@ fn registry_driven_help_text(security_profile: ChannelSecurityProfile) -> String
         groups
             .entry(capability.audience)
             .or_default()
-            .push(*capability);
+            .push(capability);
     }
 
     let mut lines = vec!["🤖 *Tandem Commands*".to_string()];
@@ -3543,7 +3543,7 @@ fn registry_driven_help_text(security_profile: ChannelSecurityProfile) -> String
             lines.push(String::new());
         }
     }
-    let mut trailing_empty = lines.last().map(|line| line.is_empty()).unwrap_or(false);
+    let trailing_empty = lines.last().map(|line| line.is_empty()).unwrap_or(false);
     if trailing_empty {
         lines.pop();
     }

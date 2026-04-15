@@ -47,7 +47,7 @@ use crate::{
     },
     mcp_catalog,
     pack_manager::{PackExportRequest, PackInstallRequest, PackUninstallRequest},
-    ActiveRun, AppState, ChannelStatus, DiscordConfigFile, SlackConfigFile, TelegramConfigFile,
+    ActiveRun, AppState, DiscordConfigFile, SlackConfigFile, TelegramConfigFile,
 };
 
 mod automation_projection_runtime;

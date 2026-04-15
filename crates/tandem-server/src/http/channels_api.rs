@@ -55,7 +55,7 @@ fn normalize_channel_config_obj<'a>(
     entry.insert("has_token".to_string(), serde_json::Value::Bool(has_token));
     entry.insert(
         "token_masked".to_string(),
-        mask_saved_token(has_token).map_or(Value::Null, Value::String),
+        mask_saved_token(has_token).map_or(Value::Null, |value| Value::String(value.to_string())),
     );
     entry.insert(
         "allowed_users".to_string(),
@@ -81,7 +81,7 @@ fn normalize_channel_config_obj<'a>(
         channel
             .and_then(|cfg| cfg.get("model_provider_id"))
             .and_then(Value::as_str)
-            .map(Value::String)
+            .map(|value| Value::String(value.to_string()))
             .unwrap_or(Value::Null),
     );
     entry.insert(
@@ -89,7 +89,7 @@ fn normalize_channel_config_obj<'a>(
         channel
             .and_then(|cfg| cfg.get("model_id"))
             .and_then(Value::as_str)
-            .map(Value::String)
+            .map(|value| Value::String(value.to_string()))
             .unwrap_or(Value::Null),
     );
     entry.insert(
@@ -122,7 +122,7 @@ fn normalize_channel_config_obj<'a>(
                 channel
                     .and_then(|cfg| cfg.get("guild_id"))
                     .and_then(Value::as_str)
-                    .map(Value::String)
+                    .map(|value| Value::String(value.to_string()))
                     .unwrap_or(Value::Null),
             );
         }
@@ -132,7 +132,7 @@ fn normalize_channel_config_obj<'a>(
                 channel
                     .and_then(|cfg| cfg.get("channel_id"))
                     .and_then(Value::as_str)
-                    .map(Value::String)
+                    .map(|value| Value::String(value.to_string()))
                     .unwrap_or(Value::Null),
             );
         }
