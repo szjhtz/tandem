@@ -2772,8 +2772,18 @@ fn automation_node_explicit_output_files(node: &AutomationFlowNode) -> Vec<Strin
 
 fn automation_node_must_write_files(node: &AutomationFlowNode) -> Vec<String> {
     let explicit_output_files = automation_node_explicit_output_files(node);
+    let read_only_files = enforcement::automation_node_read_only_source_of_truth_files(node)
+        .into_iter()
+        .map(|path| path.to_ascii_lowercase())
+        .collect::<std::collections::HashSet<_>>();
     if !explicit_output_files.is_empty() {
-        return explicit_output_files;
+        let mut files = explicit_output_files
+            .into_iter()
+            .filter(|path| !read_only_files.contains(&path.to_ascii_lowercase()))
+            .collect::<Vec<_>>();
+        files.sort();
+        files.dedup();
+        return files;
     }
     let builder = node
         .metadata
@@ -2806,6 +2816,7 @@ fn automation_node_must_write_files(node: &AutomationFlowNode) -> Vec<String> {
             files.extend(inferred);
         }
     }
+    files.retain(|path| !read_only_files.contains(&path.to_ascii_lowercase()));
     files.sort();
     files.dedup();
     files

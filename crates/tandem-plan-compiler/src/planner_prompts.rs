@@ -26,6 +26,7 @@ pub(crate) fn workflow_plan_common_sections() -> String {
             "- when a plan is complex, prefer metadata.builder.phase_id, task_class, retry_class, and parent_step_id so the runtime can keep retries narrow and phase-aware\n",
             "- when a research brief step needs current web coverage, set metadata.builder.web_research_expected to true; set it to false when local/file research is enough\n",
             "- when the request names connector-backed sources or `allowed_mcp_servers` is non-empty, plan MCP-backed steps instead of inventing hidden capabilities or defaulting to generic web search\n",
+            "- when a prompt names a file as read-only or source of truth, never infer it as a write target; treat it as input-only unless the contract explicitly declares it as output\n",
             "{}",
         ),
         allowed_step_ids,
@@ -75,5 +76,6 @@ mod tests {
         assert!(sections.contains("assess"));
         assert!(sections.contains("triage_gate"));
         assert!(sections.contains("concrete workspace files"));
+        assert!(sections.contains("read-only or source of truth"));
     }
 }
