@@ -32,6 +32,15 @@ import { useCapabilities, useSwarmStatus, useSystemHealth } from "../features/sy
 import type { RouteId } from "./routes";
 
 const TOKEN_STORAGE_KEY = "tandem_control_panel_token";
+const PALETTE_HIDDEN_ROUTE_IDS = new Set<RouteId>([
+  "packs",
+  "teams",
+  "channels",
+  "mcp",
+  "files",
+  "packs-detail",
+  "teams-detail",
+]);
 
 function getSavedToken() {
   try {
@@ -252,7 +261,7 @@ function AppBody() {
   }, [queryClient, toast]);
 
   const lockedRoutes = useMemo(
-    () => new Set(["chat", "studio", "agents", "orchestrator", "teams"]),
+    () => new Set(["chat", "planner", "studio", "agents", "orchestrator", "teams", "experiments"]),
     []
   );
   const needsProviderOnboarding = !!providerQuery.data?.needsOnboarding;
@@ -358,7 +367,10 @@ function AppBody() {
   };
 
   const paletteActions = useMemo<PaletteAction[]>(() => {
-    const routeActions = APP_ROUTES.map(([id, label]) => ({
+    const routeActions = APP_ROUTES.filter(
+      ([id]) =>
+        navVisibility[id as RouteId] !== false && !PALETTE_HIDDEN_ROUTE_IDS.has(id as RouteId)
+    ).map(([id, label]) => ({
       id: `route:${id}`,
       label: `Go to ${label}`,
       group: "Routes",
@@ -397,16 +409,20 @@ function AppBody() {
         group: "Actions",
         onSelect: () => navigate("settings"),
       },
-      {
-        id: "action:open-orchestrator",
-        label: "Open orchestrator",
-        group: "Actions",
-        onSelect: () => navigate("orchestrator"),
-      },
+      ...(navVisibility.orchestrator !== false
+        ? [
+            {
+              id: "action:open-task-board",
+              label: "Open task board",
+              group: "Actions",
+              onSelect: () => navigate("orchestrator"),
+            },
+          ]
+        : []),
     ];
 
     return [...routeActions, ...engineActions];
-  }, [navigate, toast]);
+  }, [navVisibility, navigate, toast]);
 
   usePaletteHotkey(() => setPaletteOpen((v) => !v));
 

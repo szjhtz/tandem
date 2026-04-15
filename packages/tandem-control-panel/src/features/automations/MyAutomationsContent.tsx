@@ -300,14 +300,6 @@ export function MyAutomationsContent({ state, actions, helpers }: any) {
           </button>
           <button
             className="tcp-btn h-8 px-2 text-[11px]"
-            onClick={() => runNowV2Mutation.mutate({ id, dryRun: true })}
-            disabled={!id || runNowV2Mutation.isPending}
-          >
-            <i data-lucide="flask-conical" className="w-3 h-3"></i>
-            Dry
-          </button>
-          <button
-            className="tcp-btn h-8 px-2 text-[11px]"
             onClick={() =>
               automationActionMutation.mutate({
                 action: paused ? "resume" : "pause",
@@ -462,10 +454,11 @@ export function MyAutomationsContent({ state, actions, helpers }: any) {
           <div className="flex items-start justify-between gap-2">
             <div className="space-y-1">
               <p className="text-[11px] font-medium uppercase tracking-[0.24em] text-slate-500">
-                Workflow Automations
+                Library
               </p>
               <p className="tcp-subtle text-xs">
-                Favorites stay pinned first, and the rest follow your saved sort preference.
+                Saved workflow definitions stay pinned first, and the rest follow your saved sort
+                preference.
               </p>
             </div>
             <span className="tcp-badge-ghost text-xs tracking-wide">
@@ -525,10 +518,9 @@ export function MyAutomationsContent({ state, actions, helpers }: any) {
             </div>
           ) : (
             <div className="tcp-list-item">
-              <div className="font-medium">No workflow automations saved yet</div>
+              <div className="font-medium">No library items saved yet</div>
               <div className="tcp-subtle mt-1 text-xs">
-                This section is separate from run history and only shows workflow automation
-                definitions.
+                This section is separate from run history and only shows saved workflow definitions.
               </div>
             </div>
           )}
@@ -551,7 +543,8 @@ export function MyAutomationsContent({ state, actions, helpers }: any) {
                   Scheduled Automations
                 </p>
                 <p className="tcp-subtle text-xs">
-                  Legacy routines remain here with their familiar run, pause, and debug actions.
+                  Legacy routines remain here with run, pause, and debug actions. Pause and resume
+                  only affect future scheduled runs.
                 </p>
               </div>
               <span className="tcp-subtle text-xs">{legacyAutomationCount} items</span>
@@ -610,7 +603,7 @@ export function MyAutomationsContent({ state, actions, helpers }: any) {
                     data-lucide={runningSectionsOpen.active ? "chevron-down" : "chevron-right"}
                   ></i>
                   <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
-                    Active Running Tasks
+                    Active Runs
                   </p>
                 </div>
                 <div className="flex flex-wrap gap-2">
@@ -726,7 +719,7 @@ export function MyAutomationsContent({ state, actions, helpers }: any) {
               })
             ) : (
               <div className="tcp-list-item">
-                <div className="font-medium">Active Running Tasks</div>
+                <div className="font-medium">Active Runs</div>
                 <div className="tcp-subtle mt-1 text-xs">
                   No active runs right now. Start a run to inspect live task execution.
                 </div>
@@ -748,7 +741,7 @@ export function MyAutomationsContent({ state, actions, helpers }: any) {
               <div className="flex items-center gap-2">
                 <i data-lucide={runningSectionsOpen.issues ? "chevron-down" : "chevron-right"}></i>
                 <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
-                  Recently Blocked Or Failed Runs
+                  Blocked or Failed Runs
                 </p>
               </div>
               <div className="flex items-center gap-2">
@@ -827,7 +820,7 @@ export function MyAutomationsContent({ state, actions, helpers }: any) {
               <div className="flex items-center gap-2">
                 <i data-lucide={runningSectionsOpen.history ? "chevron-down" : "chevron-right"}></i>
                 <p className="text-xs text-slate-500 uppercase tracking-wide font-medium">
-                  {viewMode === "running" ? "Run Log Explorer" : "Recent Runs"}
+                  Run History
                 </p>
               </div>
               <span className="tcp-subtle text-xs">

@@ -733,16 +733,6 @@ export function WorkflowAutomationEditDialog({
                       : current
                   );
                 }}
-                onDryRun={
-                  workflowEditDraft.automationId
-                    ? () =>
-                        runNowV2Mutation.mutate({
-                          id: workflowEditDraft.automationId,
-                          dryRun: true,
-                        })
-                    : undefined
-                }
-                dryRunDisabled={!workflowEditDraft.automationId || runNowV2Mutation.isPending}
               />
             </AccordionSection>
           </div>

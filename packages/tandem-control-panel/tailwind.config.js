@@ -4,6 +4,19 @@ import forms from "@tailwindcss/forms";
 export default {
   content: ["./index.html", "./src/**/*.{js,mjs,ts,tsx}"],
   theme: {
+    borderRadius: {
+      none: "var(--radius)",
+      sm: "var(--radius)",
+      DEFAULT: "var(--radius)",
+      md: "var(--radius)",
+      lg: "var(--radius)",
+      xl: "var(--radius)",
+      "2xl": "var(--radius)",
+      "3xl": "var(--radius)",
+      "4xl": "var(--radius)",
+      xl2: "var(--radius)",
+      full: "9999px",
+    },
     extend: {
       colors: {
         canvas: "var(--color-background)",
@@ -23,10 +36,8 @@ export default {
         mono: ["var(--font-mono)"],
       },
       boxShadow: {
-        soft: "0 8px 30px rgba(0, 0, 0, 0.22)",
-      },
-      borderRadius: {
-        xl2: "1rem",
+        soft: "var(--shadow-offset)",
+        hard: "var(--shadow-offset-lg)",
       },
     },
   },

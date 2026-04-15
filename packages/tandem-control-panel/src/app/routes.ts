@@ -11,6 +11,7 @@ export type RouteId =
   | "marketplace"
   | "studio"
   | "automations"
+  | "experiments"
   | "coding"
   | "orchestrator"
   | "agents"

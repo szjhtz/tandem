@@ -190,7 +190,7 @@ export function PlannerHandoffPanel({
           </button>
           <button type="button" className="tcp-btn" onClick={() => navigate("orchestrator")}>
             <i data-lucide="sparkles" className="mr-1 h-3 w-3"></i>
-            Open in orchestrator
+            Open task board
           </button>
           <button type="button" className="tcp-btn-primary" onClick={() => void exportBundle()}>
             <i data-lucide="download" className="mr-1 h-3 w-3"></i>

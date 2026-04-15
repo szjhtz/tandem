@@ -19,11 +19,7 @@ type AutomationCalendarProps = {
   events: any[];
   onRangeChange: (range: CalendarRange) => void;
   onOpenAutomation: (automation: any) => void;
-  onRunAutomation?: (
-    automation: any,
-    family: "legacy" | "v2",
-    opts?: { dryRun?: boolean }
-  ) => void | Promise<void>;
+  onRunAutomation?: (automation: any, family: "legacy" | "v2") => void | Promise<void>;
   onEventDrop: (info: EventDropArg) => void | Promise<void>;
   statusColor: (status: string) => string;
   runActionsDisabled?: boolean;
@@ -173,10 +169,6 @@ export function AutomationCalendar({
       if (!automation) return;
       onRunAutomation?.(automation, family === "v2" ? "v2" : "legacy");
     };
-    const handleDryRun = () => {
-      if (!automation) return;
-      onRunAutomation?.(automation, family === "v2" ? "v2" : "legacy", { dryRun: true });
-    };
     return (
       <div className="flex h-full min-h-0 flex-col gap-0.5 overflow-hidden rounded-lg border border-slate-700/60 bg-slate-950/90 px-2 py-1 text-xs shadow-sm">
         <div className="flex items-center justify-between gap-2">
@@ -219,21 +211,6 @@ export function AutomationCalendar({
               <i data-lucide="play"></i>
               Run now
             </button>
-            {family === "v2" ? (
-              <button
-                type="button"
-                className="tcp-btn h-5 px-1.5 text-[10px]"
-                disabled={!!runActionsDisabled}
-                onClick={(event) => {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  handleDryRun();
-                }}
-              >
-                <i data-lucide="flask-conical"></i>
-                Dry run
-              </button>
-            ) : null}
           </div>
         ) : null}
       </div>

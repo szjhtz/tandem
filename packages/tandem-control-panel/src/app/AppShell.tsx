@@ -15,15 +15,20 @@ const ROUTE_META: Record<string, { title: string; subtitle: string }> = {
   },
   planner: {
     title: "Planner",
-    subtitle: "Clarify long-horizon intent, shape multi-agent plans, and prepare governed handoff.",
+    subtitle: "Advanced long-horizon intent, multi-agent planning, and governed handoff.",
   },
   studio: {
     title: "Studio",
-    subtitle: "Template-first workflow builder with reusable role prompts and visual stages.",
+    subtitle:
+      "Advanced template-first workflow builder with reusable role prompts and visual stages.",
   },
   automations: {
     title: "Automations",
-    subtitle: "Templates, routines, approvals, and execution history.",
+    subtitle: "Create, Calendar, Library, and Run History.",
+  },
+  experiments: {
+    title: "Experiments",
+    subtitle: "Hidden by default. Turn this on in Settings when you need experimental surfaces.",
   },
   coding: {
     title: "Coding Workflows",
@@ -34,7 +39,7 @@ const ROUTE_META: Record<string, { title: string; subtitle: string }> = {
     subtitle: "Search reusable roles, inspect routines, and manage workflow-ready agent drafts.",
   },
   orchestrator: {
-    title: "Orchestrator",
+    title: "Task Board",
     subtitle: "Plan-driven task execution with workspace visibility and approvals.",
   },
   memory: {
@@ -124,8 +129,11 @@ export function AppShell({
   providerGate?: any;
 }) {
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
-  const [avatarErrored, setAvatarErrored] = useState(false);
   const avatarUrl = String(identity.botAvatarUrl || "").trim();
+  const [avatarMode, setAvatarMode] = useState<"custom" | "default" | "fallback">(
+    avatarUrl ? "custom" : "default"
+  );
+  const defaultAvatarUrl = "/icon.png";
   const reducedMotion = prefersReducedMotion();
 
   useEffect(() => {
@@ -148,7 +156,7 @@ export function AppShell({
   ]);
 
   useEffect(() => {
-    setAvatarErrored(false);
+    setAvatarMode(avatarUrl ? "custom" : "default");
   }, [avatarUrl]);
 
   const routeMeta = ROUTE_META[currentRoute] || {
@@ -157,7 +165,7 @@ export function AppShell({
   };
 
   const currentNav = useMemo(
-    () => navRoutes.find(([id]) => id === currentRoute) || navRoutes[0],
+    () => navRoutes.find(([id]) => id === currentRoute) || null,
     [currentRoute, navRoutes]
   );
   const bugMonitorState = useMemo(() => {
@@ -199,12 +207,12 @@ export function AppShell({
   }, [statusBar.bugMonitor]);
 
   const renderAvatar = () =>
-    avatarUrl && !avatarErrored ? (
+    avatarMode !== "fallback" ? (
       <img
-        src={avatarUrl}
-        alt={identity.botName}
-        className="block h-full w-full object-cover"
-        onError={() => setAvatarErrored(true)}
+        src={avatarMode === "custom" ? avatarUrl : defaultAvatarUrl}
+        alt={identity.botName || "Tandem"}
+        className="block h-full w-full object-contain p-0.5"
+        onError={() => setAvatarMode((current) => (current === "custom" ? "default" : "fallback"))}
       />
     ) : (
       <span className="text-sm font-semibold uppercase">

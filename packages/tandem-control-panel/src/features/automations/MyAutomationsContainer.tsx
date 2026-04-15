@@ -410,16 +410,15 @@ export function MyAutomationsContainer({
     onError: (error) => toast("err", error instanceof Error ? error.message : String(error)),
   });
   const runNowV2Mutation = useMutation({
-    mutationFn: async ({ id, dryRun }: { id: string; dryRun?: boolean }) => {
+    mutationFn: async ({ id }: { id: string }) => {
       if (!client?.automationsV2?.runNow) {
         throw new Error("Workflow run now is not available in this client.");
       }
-      return client.automationsV2.runNow(id, { dryRun: !!dryRun });
+      return client.automationsV2.runNow(id);
     },
     onSuccess: async (payload: any) => {
       const runId = String(payload?.run?.run_id || payload?.run?.runId || "").trim();
-      const isDryRun = payload?.dry_run === true || payload?.dryRun === true;
-      toast("ok", isDryRun ? "Workflow dry run recorded." : "Workflow automation triggered.");
+      toast("ok", "Workflow automation triggered.");
       await queryClient.invalidateQueries({ queryKey: ["automations"] });
       if (runId) {
         onSelectRunId(runId);
@@ -2235,19 +2234,11 @@ export function MyAutomationsContainer({
       actions={{
         setCalendarRange,
         openCalendarAutomationEdit,
-        onRunCalendarAutomation: (
-          automation: any,
-          family: "legacy" | "v2",
-          opts?: { dryRun?: boolean }
-        ) => {
+        onRunCalendarAutomation: (automation: any, family: "legacy" | "v2") => {
           const automationId = String(
             automation?.automation_id || automation?.automationId || automation?.id || ""
           ).trim();
           if (!automationId) return;
-          if (opts?.dryRun) {
-            runNowV2Mutation.mutate({ id: automationId, dryRun: true });
-            return;
-          }
           if (family === "v2") {
             runNowV2Mutation.mutate({ id: automationId });
             return;

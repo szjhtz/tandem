@@ -5,6 +5,7 @@ import { WorkflowsPage } from "../pages/WorkflowsPage";
 import { MarketplacePage } from "../pages/MarketplacePage";
 import { WorkflowStudioPage } from "../pages/WorkflowStudioPage";
 import { AutomationsPage } from "../pages/AutomationsPage";
+import { ExperimentsPage } from "../pages/ExperimentsPage";
 import { CodingWorkflowsPage } from "../pages/CodingWorkflowsPage";
 import { ChannelsPage } from "../pages/ChannelsPage";
 import { PacksPage } from "../pages/PacksPage";
@@ -34,6 +35,8 @@ export function HashRouteOutlet({ routeId, pageProps }: { routeId: string; pageP
     case "packs":
     case "teams":
       return <AutomationsPage {...pageProps} />;
+    case "experiments":
+      return <ExperimentsPage {...pageProps} />;
     case "coding":
       return <CodingWorkflowsPage {...pageProps} />;
     case "agents":

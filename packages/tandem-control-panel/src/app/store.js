@@ -7,9 +7,10 @@ export const ROUTES = [
   ["marketplace", "Marketplace", "globe"],
   ["studio", "Studio", "blocks"],
   ["automations", "Automations", "bot"],
+  ["experiments", "Experiments", "flask-conical"],
   ["coding", "Coding", "code"],
   ["agents", "Agents", "users"],
-  ["orchestrator", "Orchestrator", "sparkles"],
+  ["orchestrator", "Task Board", "workflow"],
   ["memory", "Memory", "database"],
   ["feed", "Live Feed", "radio"],
   ["settings", "Settings", "settings"],
@@ -25,7 +26,7 @@ export const ROUTES = [
   ["teams-detail", "Teams", "users"],
 ];
 
-// Primary nav — 7 items your grandma can understand
+// Sidebar routes used by the control panel and command palette
 export const NAV_ROUTES = ROUTES.filter(([id]) =>
   [
     "dashboard",
@@ -35,6 +36,7 @@ export const NAV_ROUTES = ROUTES.filter(([id]) =>
     "marketplace",
     "studio",
     "automations",
+    "experiments",
     "coding",
     "agents",
     "orchestrator",

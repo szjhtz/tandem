@@ -287,7 +287,7 @@ export function DashboardPage(props: AppPageProps) {
                 </Badge>
                 <button className="tcp-btn" onClick={() => navigate("orchestrator")}>
                   <i data-lucide="workflow"></i>
-                  Open orchestrator
+                  Open task board
                 </button>
               </Toolbar>
               <div className="grid gap-2">

@@ -262,7 +262,7 @@ export function FeedPage({ client, toast, navigate }: AppPageProps) {
                         }}
                       >
                         <i data-lucide="workflow"></i>
-                        Open orchestrator
+                        Open task board
                       </button>
                       <button
                         className="tcp-btn h-7 px-2 text-xs"

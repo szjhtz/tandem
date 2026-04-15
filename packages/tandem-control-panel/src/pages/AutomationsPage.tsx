@@ -29,15 +29,14 @@ import {
   workflowStatusSubtleDetail,
 } from "../features/automations/AutomationsRunHelpers";
 import { MyAutomationsContainer } from "../features/automations/MyAutomationsContainer";
-import { SpawnApprovals } from "../features/automations/SpawnApprovals";
 import { useAutomationsPageState } from "../features/automations/useAutomationsPageState";
 import {
   AUTOMATION_WIZARD_CONFIG,
   CreateWizard as CreateWizardExternal,
 } from "../features/automations/create/CreateWizard";
+import { AutomationComposerPanel } from "../features/automations/create/AutomationComposerPanel";
 import { describeScheduleValue } from "../features/automations/scheduleBuilder";
 import { AdvancedMissionBuilderPanel } from "./AdvancedMissionBuilderPanel";
-import { OptimizationCampaignsPanel } from "./OptimizationCampaignsPanel";
 import { PageCard, formatJson } from "./ui";
 import type { AppPageProps } from "./pageTypes";
 
@@ -1023,7 +1022,7 @@ function workflowNodeModelPolicyWithOverride(
 
 // moved Step4Review to features/automations/create
 
-// ─── My Automations (combined routines + packs) ─────────────────────────────
+// ─── Library (combined routines + packs) ───────────────────────────────────
 
 function MyAutomations({
   client,
@@ -1150,6 +1149,7 @@ export function AutomationsPage({ client, api, toast, navigate, providerStatus }
     setSelectedRunId,
     advancedEditAutomation,
     setAdvancedEditAutomation,
+    composerEnabled,
   } = useAutomationsPageState();
 
   return (
@@ -1167,12 +1167,12 @@ export function AutomationsPage({ client, api, toast, navigate, providerStatus }
       toast={toast}
       navigate={navigate}
       providerStatus={providerStatus}
+      composerEnabled={composerEnabled}
       PageCardComponent={PageCard}
       CreateWizardComponent={CreateWizardExternal}
+      AutomationComposerPanelComponent={AutomationComposerPanel}
       MyAutomationsComponent={MyAutomations}
       AdvancedMissionBuilderPanelComponent={AdvancedMissionBuilderPanel}
-      OptimizationCampaignsPanelComponent={OptimizationCampaignsPanel}
-      SpawnApprovalsComponent={SpawnApprovals}
     />
   );
 }

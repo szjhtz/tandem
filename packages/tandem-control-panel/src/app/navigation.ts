@@ -15,10 +15,14 @@ export type NavigationVisibility = Record<RouteId, boolean>;
 export function getDefaultNavigationVisibility(acaMode: boolean): NavigationVisibility {
   const standaloneHiddenRoutes = new Set<RouteId>([
     "planner",
+    "studio",
     "coding",
     "memory",
     "feed",
     "marketplace",
+    "orchestrator",
+    "experiments",
+    "teams",
   ]);
 
   return Object.fromEntries(

@@ -2,6 +2,14 @@
 
 This is the canonical release-notes file used by release tooling.
 
+## v0.4.29 (Released 2026-04-15)
+
+This release trims the control panel down to the core path so new users can get started faster.
+
+- **Control panel simplification**: Planner, Studio, Orchestrator, and other experimental surfaces are now hidden by default so new users land on the core experience first.
+- **Automation cleanup**: The Automations view now focuses on Create, Calendar, Library, and Run History, with Calendar kept visible as the scheduling surface and the non-functional dry-run affordances removed from the automation views and mission builder.
+- **Brand icon polish**: Tandem now uses a clean default icon asset in the shell and settings preview, so the logo no longer gets clipped by the rounded frame.
+
 ## v0.4.28 (Released 2026-04-14)
 
 - **Packaged desktop startup crash after engine-ready**: Installed Tauri builds no longer eagerly load the workflow calendar and diff viewer libraries during desktop startup, preventing the `Cannot read properties of null (reading 'cssRules')` frontend crash that blocked the PIN/login UI from appearing after the backend came up.

@@ -982,7 +982,7 @@ export function OrchestratorPage({ api, toast, navigate }: AppPageProps) {
                   >
                     <i data-lucide="history"></i>
                   </button>
-                  <span>Orchestrator</span>
+                  <span>Task Board</span>
                 </div>
                 <div className="tcp-subtle mt-1 text-sm">
                   Describe the goal. The planner will build a task board.
@@ -1179,7 +1179,7 @@ export function OrchestratorPage({ api, toast, navigate }: AppPageProps) {
                   >
                     <i data-lucide="arrow-left-to-line"></i>
                   </button>
-                  <span>Orchestration Run</span>
+                  <span>Task Board Run</span>
                 </div>
                 <div className="tcp-subtle mt-1 text-sm">Plan review and execution</div>
               </div>

@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.29] - Released 2026-04-15
+
+### Changed
+
+- **Control panel simplification**: Planner, Studio, Orchestrator, and other experimental surfaces are now hidden by default so new users land on the core experience first.
+- **Automation surface cleanup**: The Automations view now centers on Create, Calendar, Library, and Run History, keeping Calendar visible as the scheduling surface while removing clutter from the primary path.
+
+### Fixed
+
+- **Brand icon rendering**: Tandem now uses the default icon asset in the shell and settings preview, and the rounded avatar frame no longer clips the logo.
+- **Automation dry run cleanup**: Removed the non-functional dry-run affordances from the calendar cards, scope inspector, and mission builder so the available actions better reflect what actually works today.
+
 ## [0.4.28] - Released 2026-04-14
 
 ### Fixed

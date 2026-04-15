@@ -18,6 +18,15 @@ export type ThemeDefinition = {
 
 export const DEFAULT_THEME_ID: ThemeId = "charcoal_fire";
 
+export const STRUCTURAL_THEME_VARS: Record<string, string> = {
+  "--radius": "0px",
+  "--border-width": "1px",
+  "--border-width-strong": "2px",
+  "--shadow-offset": "2px 2px 0 rgba(0, 0, 0, 0.32)",
+  "--shadow-offset-lg": "4px 4px 0 rgba(0, 0, 0, 0.32)",
+  "--clip-primary-cta": "polygon(10% 0, 100% 0, 100% 100%, 0 100%, 0 25%)",
+};
+
 export const THEMES: ThemeDefinition[] = [
   {
     id: "charcoal_fire",
@@ -341,6 +350,9 @@ export function applyThemeToDocument(
 ) {
   const theme = getThemeById(themeId);
   if (!root) return theme;
+  for (const [name, value] of Object.entries(STRUCTURAL_THEME_VARS)) {
+    root.style.setProperty(name, value);
+  }
   for (const [name, value] of Object.entries(theme.cssVars)) {
     if (value == null) continue;
     root.style.setProperty(name, value);

@@ -633,7 +633,7 @@ export function CreateWizard({
         "ok",
         exportStatus === "preview_pending"
           ? "🎉 Automation created and reusable pack draft exported. Check Pack Builder to continue."
-          : "🎉 Automation created! Check 'My Automations' to see it running."
+          : "🎉 Automation created! Check 'Library' to see it running."
       );
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["automations"] }),

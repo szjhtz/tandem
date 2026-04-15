@@ -14,8 +14,6 @@ type ScopeInspectorProps = {
   approvedPlanMaterialization?: any | null;
   overlapHistoryEntries?: any[] | null;
   title?: string;
-  onDryRun?: () => void;
-  dryRunDisabled?: boolean;
   onOpenPromptEditor?: () => void;
   onOpenModelRoutingEditor?: () => void;
   onOpenConnectorBindingsEditor?: () => void;
@@ -335,8 +333,6 @@ export function ScopeInspector({
   approvedPlanMaterialization,
   overlapHistoryEntries,
   title = "Scope inspector",
-  onDryRun,
-  dryRunDisabled,
   onOpenPromptEditor,
   onOpenModelRoutingEditor,
   onOpenConnectorBindingsEditor,
@@ -1017,17 +1013,6 @@ export function ScopeInspector({
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-1">
-          {onDryRun ? (
-            <button
-              type="button"
-              className="tcp-btn h-7 px-2 text-[11px]"
-              onClick={onDryRun}
-              disabled={dryRunDisabled}
-            >
-              <i data-lucide="flask-conical"></i>
-              Dry run
-            </button>
-          ) : null}
           {(
             [
               "all",
@@ -1213,10 +1198,6 @@ export function ScopeInspector({
       {(view === "all" || view === "compare") && planPackageReplay ? (
         <PlanReplayComparePanel planPackageReplay={planPackageReplay} />
       ) : null}
-      {onDryRun || dryRunDisabled === false ? (
-        <div className="tcp-subtle text-[11px]">Dry runs are non-executing but auditable.</div>
-      ) : null}
-
       {(view === "all" || view === "scope") && routines.length ? (
         <div className="grid gap-2">
           <div className="font-medium text-slate-200">Routine scope preview</div>

@@ -720,11 +720,13 @@ function providerCatalogSubtitle(provider: any, defaultModel: string) {
 const NAV_ROUTE_DESCRIPTIONS: Record<string, string> = {
   dashboard: "Command status, activity, and fast paths.",
   chat: "Session-driven conversation, uploads, and live responses.",
-  studio: "Template-first workflow builder.",
+  planner: "Advanced long-horizon planning and governed handoff.",
+  studio: "Advanced template-first workflow builder.",
   automations: "Reusable routines, approvals, and execution history.",
+  experiments: "Opt-in automation experiments, optimization campaigns, and team approvals.",
   coding: "ACA intake, task launchers, and coding runs.",
   agents: "Reusable agent roles and workflow drafts.",
-  orchestrator: "Plan-driven task execution and approvals.",
+  orchestrator: "Task board planning, approvals, and execution.",
   memory: "Searchable memory records and operational context.",
   feed: "Global event stream and pack-aware actions.",
   settings: "Provider defaults, themes, and runtime diagnostics.",
@@ -2032,12 +2034,12 @@ export function SettingsPage({
                   subtitle={
                     navigation?.acaMode
                       ? "ACA mode keeps Dashboard, Chat, Coding, and Settings visible by default."
-                      : "Choose which sections appear in the sidebar."
+                      : "Choose which sections appear in the sidebar. Advanced and experimental surfaces stay hidden until you turn them on."
                   }
                   actions={
                     <div className="flex flex-wrap items-center justify-end gap-2">
                       <Badge tone={navigation?.acaMode ? "ok" : "info"}>
-                        {navigation?.acaMode ? "ACA compact default" : "Full nav default"}
+                        {navigation?.acaMode ? "ACA compact default" : "Core-first default"}
                       </Badge>
                       <Badge tone="ghost">
                         {visibleNavigationCount}/{navigationRows.length} visible
@@ -2098,9 +2100,9 @@ export function SettingsPage({
                     <div className="rounded-2xl border border-slate-700/60 bg-slate-950/25 p-4">
                       <div className="flex items-center justify-between gap-3">
                         <div>
-                          <div className="font-medium">Optional sections</div>
+                          <div className="font-medium">Advanced / experimental sections</div>
                           <div className="tcp-subtle mt-1 text-xs">
-                            Show extra workflow and automation surfaces only when needed.
+                            Show extra workflow, planning, and automation surfaces only when needed.
                           </div>
                         </div>
                         <Badge tone={hiddenOptionalNavigationCount > 0 ? "warn" : "ok"}>
@@ -3155,15 +3157,11 @@ export function SettingsPage({
                       <div className="flex items-center justify-between gap-3">
                         <div className="inline-flex items-center gap-3">
                           <span className="tcp-brand-avatar inline-grid h-12 w-12 rounded-xl">
-                            {botAvatarUrl ? (
-                              <img
-                                src={botAvatarUrl}
-                                alt={botName || "Bot"}
-                                className="block h-full w-full object-cover"
-                              />
-                            ) : (
-                              <i data-lucide="cpu"></i>
-                            )}
+                            <img
+                              src={botAvatarUrl || "/icon.png"}
+                              alt={botName || "Tandem"}
+                              className="block h-full w-full object-contain p-1"
+                            />
                           </span>
                           <div>
                             <div className="font-semibold">{botName || "Tandem"}</div>

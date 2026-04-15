@@ -1164,7 +1164,7 @@ export function AdvancedMissionBuilderPanel({
     }
   }
 
-  async function saveMission(dryRunAfterCreate = false) {
+  async function saveMission() {
     if (uiValidationMessages.length) {
       const message = uiValidationMessages.join(" ");
       setError(message);
@@ -1213,13 +1213,7 @@ export function AdvancedMissionBuilderPanel({
         queryClient.invalidateQueries({ queryKey: ["automations", "v2", "list"] }),
       ]);
       const automationId = String(response?.automation?.automation_id || "").trim();
-      if (automationId && dryRunAfterCreate) {
-        await client.automationsV2.runNow(automationId, {
-          dryRun: true,
-        });
-        toast("ok", "Advanced mission created and dry-run recorded.");
-        onShowRuns();
-      } else if (runAfterCreate && automationId) {
+      if (runAfterCreate && automationId) {
         await client.automationsV2.runNow(automationId);
         toast("ok", "Advanced mission created and started.");
         onShowRuns();
@@ -2412,14 +2406,6 @@ export function AdvancedMissionBuilderPanel({
             </button>
             {!editingAutomation ? (
               <>
-                <button
-                  className="tcp-btn h-8 px-3 text-xs"
-                  disabled={busy === "apply"}
-                  onClick={() => void saveMission(true)}
-                >
-                  <i data-lucide="flask-conical"></i>
-                  Create and dry run
-                </button>
                 <label className="ml-2 inline-flex items-center gap-2 text-xs text-slate-300">
                   <input
                     type="checkbox"
