@@ -3765,6 +3765,164 @@ pub(crate) fn automation_workspace_root_file_snapshot(
     snapshot
 }
 
+fn resolve_case_insensitive_workspace_relative_path(
+    workspace_root: &str,
+    request: &str,
+) -> Option<PathBuf> {
+    let workspace_root_path = PathBuf::from(workspace_root);
+    let trimmed = request.trim().trim_matches('`');
+    if trimmed.is_empty() {
+        return None;
+    }
+    let direct = workspace_root_path.join(trimmed);
+    if direct.exists() {
+        return Some(direct);
+    }
+    let requested_parts = trimmed
+        .split(std::path::MAIN_SEPARATOR)
+        .filter(|segment| !segment.is_empty())
+        .map(str::to_ascii_lowercase)
+        .collect::<Vec<_>>();
+    if requested_parts.is_empty() {
+        return None;
+    }
+    let mut stack = vec![workspace_root_path.clone()];
+    while let Some(current) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&current) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            let Ok(stripped) = path.strip_prefix(&workspace_root_path) else {
+                continue;
+            };
+            let candidate_parts = stripped
+                .components()
+                .filter_map(|component| component.as_os_str().to_str())
+                .map(str::to_ascii_lowercase)
+                .collect::<Vec<_>>();
+            if candidate_parts.len() < requested_parts.len() {
+                continue;
+            }
+            let candidate_suffix =
+                &candidate_parts[candidate_parts.len() - requested_parts.len()..];
+            if candidate_suffix == requested_parts.as_slice() {
+                return Some(path);
+            }
+        }
+    }
+    None
+}
+
+pub(crate) fn automation_read_only_file_snapshot_for_node(
+    workspace_root: &str,
+    read_only_paths: &[String],
+) -> std::collections::BTreeMap<String, Vec<u8>> {
+    let workspace_root_path = PathBuf::from(workspace_root);
+    let mut snapshot = std::collections::BTreeMap::<String, Vec<u8>>::new();
+    for path in read_only_paths {
+        let Some(normalized) = resolve_automation_output_path(workspace_root, path)
+            .ok()
+            .and_then(|value| {
+                value
+                    .strip_prefix(&workspace_root_path)
+                    .ok()
+                    .and_then(|value| value.to_str().map(str::to_string))
+                    .filter(|value| !value.is_empty())
+            })
+        else {
+            continue;
+        };
+        let Some(resolved) =
+            resolve_case_insensitive_workspace_relative_path(workspace_root, &normalized)
+        else {
+            continue;
+        };
+        let Some(resolved_relative) = resolved
+            .strip_prefix(&workspace_root_path)
+            .ok()
+            .and_then(|value| value.to_str().map(str::to_string))
+            .filter(|value| !value.is_empty())
+        else {
+            continue;
+        };
+        if let Ok(content) = std::fs::read(&resolved) {
+            snapshot.insert(resolved_relative, content);
+        }
+    }
+    snapshot
+}
+
+fn revert_read_only_source_snapshot_files(
+    workspace_root: &str,
+    snapshot: &std::collections::BTreeMap<String, Vec<u8>>,
+) -> Vec<Value> {
+    let workspace_root_path = PathBuf::from(workspace_root);
+    let mut restored_events = Vec::new();
+    for (path, before) in snapshot {
+        let resolved = workspace_root_path.join(path);
+        let was_missing = !resolved.exists();
+        if let Some(parent) = resolved.parent() {
+            if let Err(error) = std::fs::create_dir_all(parent) {
+                restored_events.push(json!({
+                    "path": path,
+                    "issue": "restore_dir_failed",
+                    "reason": format!("{error}")
+                }));
+                continue;
+            }
+        }
+        match std::fs::write(&resolved, before) {
+            Ok(()) => restored_events.push(json!({
+                "path": path,
+                "issue": if was_missing { "restored_missing" } else { "restored_modified" },
+            })),
+            Err(error) => restored_events.push(json!({
+                "path": path,
+                "issue": "restore_failed",
+                "reason": format!("{error}"),
+            })),
+        }
+    }
+    restored_events
+}
+
+struct ReadOnlySourceSnapshotRollback<'a> {
+    workspace_root: String,
+    snapshot: &'a std::collections::BTreeMap<String, Vec<u8>>,
+    active: bool,
+}
+
+impl<'a> ReadOnlySourceSnapshotRollback<'a> {
+    fn armed(
+        workspace_root: &str,
+        snapshot: &'a std::collections::BTreeMap<String, Vec<u8>>,
+    ) -> Self {
+        Self {
+            workspace_root: workspace_root.to_string(),
+            snapshot,
+            active: true,
+        }
+    }
+
+    fn disarm(&mut self) {
+        self.active = false;
+    }
+}
+
+impl<'a> Drop for ReadOnlySourceSnapshotRollback<'a> {
+    fn drop(&mut self) {
+        if self.active {
+            let _ = revert_read_only_source_snapshot_files(&self.workspace_root, self.snapshot);
+            self.active = false;
+        }
+    }
+}
+
 pub(crate) fn placeholder_like_artifact_text(text: &str) -> bool {
     let trimmed = text.trim();
     if trimmed.is_empty() {
@@ -4564,6 +4722,7 @@ pub(crate) fn validate_automation_artifact_output_with_upstream(
         verified_output,
         workspace_snapshot_before,
         upstream_evidence,
+        None,
     )
 }
 
@@ -4580,6 +4739,7 @@ pub(crate) fn validate_automation_artifact_output_with_context(
     verified_output: Option<(String, String)>,
     workspace_snapshot_before: &std::collections::BTreeSet<String>,
     upstream_evidence: Option<&AutomationUpstreamEvidence>,
+    read_only_source_snapshot: Option<&std::collections::BTreeMap<String, Vec<u8>>>,
 ) -> (Option<(String, String)>, Value, Option<String>) {
     let suspicious_after = list_suspicious_automation_marker_files(workspace_root);
     let undeclared_files_created = suspicious_after
@@ -4624,6 +4784,60 @@ pub(crate) fn validate_automation_artifact_output_with_context(
         ))
     };
     let mut semantic_block_reason = None::<String>;
+    let mut unmet_requirements = Vec::<String>::new();
+    let mut read_only_source_mutations = Vec::<Value>::new();
+    if let Some(snapshot) = read_only_source_snapshot {
+        let workspace_root_path = PathBuf::from(workspace_root);
+        for (path, before) in snapshot {
+            let resolved = workspace_root_path.join(path);
+            let mutation = if !resolved.is_file() {
+                Some(json!({
+                    "path": path,
+                    "issue": "deleted",
+                }))
+            } else {
+                match std::fs::read(&resolved) {
+                    Ok(after) if after == *before => None,
+                    Ok(_after) => Some(json!({
+                        "path": path,
+                        "issue": "modified",
+                    })),
+                    Err(_) => Some(json!({
+                        "path": path,
+                        "issue": "read_failed_after_run",
+                    })),
+                }
+            };
+
+            if let Some(entry) = mutation {
+                read_only_source_mutations.push(entry);
+                if let Some(parent) = resolved.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                let _ = std::fs::write(&resolved, before);
+            }
+        }
+        if !read_only_source_mutations.is_empty() {
+            let mutation_paths = read_only_source_mutations
+                .iter()
+                .filter_map(|value| value.get("path").and_then(Value::as_str))
+                .map(str::to_string)
+                .collect::<Vec<_>>();
+            unmet_requirements.push("read_only_source_mutations".to_string());
+            if semantic_block_reason.is_none() {
+                semantic_block_reason = Some(
+                    "artifact blocked by attempted mutation of read-only source-of-truth input files"
+                        .to_string(),
+                );
+            }
+            if rejected_reason.is_none() {
+                rejected_reason = Some(format!(
+                    "read-only source-of-truth mutation detected: {}",
+                    mutation_paths.join(", ")
+                ));
+            }
+        }
+    }
     let verified_output_materialized = verified_output.as_ref().is_some_and(|value| {
         tool_telemetry
             .get("verified_output_materialized_by_current_attempt")
@@ -4690,7 +4904,6 @@ pub(crate) fn validate_automation_artifact_output_with_context(
     discovered_relevant_paths.dedup();
     let mut reviewed_paths_backed_by_read = Vec::<String>::new();
     let mut unreviewed_relevant_paths = Vec::<String>::new();
-    let mut unmet_requirements = Vec::<String>::new();
     let mut repair_attempted = false;
     let mut repair_succeeded = false;
     let mut citation_count = 0usize;
@@ -5202,7 +5415,13 @@ pub(crate) fn validate_automation_artifact_output_with_context(
                 && unmet_requirements
                     .iter()
                     .any(|value| value == "current_attempt_output_missing");
+            let had_read_only_source_mutation = unmet_requirements
+                .iter()
+                .any(|value| value == "read_only_source_mutations");
             unmet_requirements.clear();
+            if had_read_only_source_mutation {
+                unmet_requirements.push("read_only_source_mutations".to_string());
+            }
             if preserve_current_attempt_output_missing {
                 unmet_requirements.push("current_attempt_output_missing".to_string());
             }
@@ -5451,7 +5670,13 @@ pub(crate) fn validate_automation_artifact_output_with_context(
         {
             semantic_block_reason = None;
             rejected_reason = None;
+            let had_read_only_source_mutation = unmet_requirements
+                .iter()
+                .any(|value| value == "read_only_source_mutations");
             unmet_requirements.clear();
+            if had_read_only_source_mutation {
+                unmet_requirements.push("read_only_source_mutations".to_string());
+            }
             repair_succeeded = true;
             if let Some(object) = validation_basis.as_object_mut() {
                 object.insert(
@@ -5794,6 +6019,8 @@ pub(crate) fn validate_automation_artifact_output_with_context(
         "execution_policy": execution_policy,
         "touched_files": touched_files,
         "mutation_tool_by_file": Value::Object(mutation_tool_by_file),
+        "read_only_source_mutation_events": Value::Array(read_only_source_mutations.clone()),
+        "read_only_source_mutation_count": read_only_source_mutations.len(),
         "verification": verification_summary,
         "git_diff_summary": git_diff_summary_for_paths(workspace_root, &touched_files),
         "read_paths": read_paths,
@@ -7279,6 +7506,7 @@ pub(crate) async fn execute_automation_v2_node(
         .await;
 
     let model = resolve_automation_agent_model(state, agent, template.as_ref()).await;
+    let runtime_values = automation_prompt_runtime_values(run.started_at_ms);
     let preexisting_output = required_output_path
         .as_deref()
         .and_then(|output_path| {
@@ -7291,6 +7519,17 @@ pub(crate) async fn execute_automation_v2_node(
                 })
         })
         .and_then(|resolved| std::fs::read_to_string(resolved).ok());
+    let read_only_source_snapshot = automation_read_only_file_snapshot_for_node(
+        &workspace_root,
+        &enforcement::automation_node_required_source_read_paths_for_automation(
+            automation,
+            node,
+            &workspace_root,
+            Some(&runtime_values),
+        ),
+    );
+    let mut read_only_source_snapshot_rollback =
+        ReadOnlySourceSnapshotRollback::armed(&workspace_root, &read_only_source_snapshot);
     let workspace_snapshot_before = automation_workspace_root_file_snapshot(&workspace_root);
     let standup_report_path =
         if is_agent_standup_automation(automation) && node.node_id == "standup_synthesis" {
@@ -7364,7 +7603,6 @@ pub(crate) async fn execute_automation_v2_node(
         }
     };
     let max_attempts = automation_node_max_attempts(node);
-    let runtime_values = automation_prompt_runtime_values(run.started_at_ms);
     let mut prompt = render_automation_v2_prompt_with_options(
         automation,
         &workspace_root,
@@ -7491,7 +7729,9 @@ pub(crate) async fn execute_automation_v2_node(
         .await;
     state.clear_automation_v2_session(run_id, &session_id).await;
 
-    result?;
+    if let Err(error) = result {
+        return Err(error);
+    }
     let expect_tool_activity = !requested_tools.is_empty();
     let session = load_automation_session_after_run(state, &session_id, expect_tool_activity)
         .await
@@ -7609,6 +7849,7 @@ pub(crate) async fn execute_automation_v2_node(
             verified_output,
             &workspace_snapshot_before,
             upstream_evidence.as_ref(),
+            Some(&read_only_source_snapshot),
         );
     let _ = artifact_rejected_reason;
     if let Some(promoted_from) = verified_output_resolution
@@ -8090,6 +8331,7 @@ pub(crate) async fn execute_automation_v2_node(
             }
         }
     }
+    read_only_source_snapshot_rollback.disarm();
     Ok(output)
 }
 

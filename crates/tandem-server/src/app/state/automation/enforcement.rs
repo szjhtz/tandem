@@ -288,7 +288,13 @@ fn automation_read_only_file_tokens(text: &str) -> Vec<String> {
                         .rfind(['.', '!', '?', '\n', ';'])
                         .map(|index| index + 1)
                         .unwrap_or(0);
+                    let file_end = file_pos + lowered_file.len();
+                    let sentence_end = lowered[file_end..]
+                        .find(['.', '!', '?', '\n', ';'])
+                        .map(|index| file_end + index)
+                        .unwrap_or_else(|| lowered.len());
                     let prefix = &lowered[sentence_start..file_pos];
+                    let suffix = &lowered[file_end..sentence_end];
                     [
                         "never edit",
                         "do not edit",
@@ -306,6 +312,18 @@ fn automation_read_only_file_tokens(text: &str) -> Vec<String> {
                     ]
                     .iter()
                     .any(|marker| prefix.contains(marker))
+                        || [
+                            "read-only",
+                            "read only",
+                            "source of truth",
+                            "as source of truth",
+                            "source-of-truth",
+                            "keep untouched",
+                            "leave untouched",
+                            "must remain untouched",
+                        ]
+                        .iter()
+                        .any(|marker| suffix.contains(marker))
                 });
             if is_read_only_file {
                 files.push(file);

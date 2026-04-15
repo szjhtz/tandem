@@ -96,6 +96,44 @@ fn automation_prompt_file_is_read_only(clause: &str, file: &str) -> bool {
     ]
     .iter()
     .any(|pattern| lowered_clause.contains(pattern))
+        || lowered_clause
+            .match_indices(&lowered_file)
+            .any(|(file_pos, _)| {
+                let sentence_start = lowered_clause[..file_pos]
+                    .rfind(['.', '!', '?', '\n', ';'])
+                    .map(|index| index + 1)
+                    .unwrap_or(0);
+                let file_end = file_pos + lowered_file.len();
+                let sentence_end = lowered_clause[file_end..]
+                    .find(['.', '!', '?', '\n', ';'])
+                    .map(|index| file_end + index)
+                    .unwrap_or_else(|| lowered_clause.len());
+                let prefix = &lowered_clause[sentence_start..file_pos];
+                let suffix = &lowered_clause[file_end..sentence_end];
+                [
+                    "read ",
+                    "inspect ",
+                    "review ",
+                    "open ",
+                    "never edit",
+                    "do not edit ",
+                    "don't edit ",
+                    "do not modify",
+                    "don't modify",
+                    "do not rewrite",
+                    "don't rewrite",
+                    "do not rename",
+                    "don't rename",
+                    "do not move",
+                    "don't move",
+                    "do not delete",
+                    "don't delete",
+                    "source of truth",
+                    "source-of-truth",
+                ]
+                .iter()
+                .any(|marker| prefix.contains(marker) || suffix.contains(marker))
+            })
 }
 
 fn automation_prompt_infer_read_only_workspace_paths(text: &str) -> Vec<String> {

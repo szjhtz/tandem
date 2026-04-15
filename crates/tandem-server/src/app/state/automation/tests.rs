@@ -2,6 +2,7 @@ use super::node_runtime_impl::automation_node_should_surface_mcp_discovery;
 use super::*;
 use crate::automation_v2::types::{AutomationFlowInputRef, AutomationFlowNode};
 use serde_json::json;
+use std::collections::BTreeMap;
 use tandem_types::{ToolCapabilities, ToolDomain, ToolEffect, ToolSchema};
 
 // ---------------------------------------------------------------------------
@@ -255,6 +256,36 @@ fn mcp_list_is_only_added_when_servers_are_selected() {
 }
 
 #[test]
+fn read_only_snapshot_rollback_guard_restores_mutated_file_on_drop() {
+    let workspace_root = std::env::temp_dir().join(format!(
+        "tandem-read-only-rollback-guard-{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&workspace_root).expect("create workspace");
+    let workspace_root = workspace_root.to_str().expect("workspace root").to_string();
+
+    let source_path = format!("{}/RESUME.md", workspace_root);
+    let original = "Original resume content\n";
+    std::fs::write(&source_path, original).expect("write source file");
+
+    let mut snapshot = BTreeMap::new();
+    snapshot.insert(
+        "RESUME.md".to_string(),
+        std::fs::read(&source_path).expect("snapshot read"),
+    );
+
+    {
+        let _rollback = ReadOnlySourceSnapshotRollback::armed(&workspace_root, &snapshot);
+        std::fs::write(&source_path, "workflow mutated source file").expect("mutate source file");
+    }
+
+    let restored = std::fs::read_to_string(&source_path).expect("restore source file");
+    assert_eq!(restored, original);
+
+    let _ = std::fs::remove_dir_all(workspace_root);
+}
+
+#[test]
 fn connector_backed_publish_node_requests_named_server_mcp_tools() {
     let mut node = bare_node();
     node.objective =
@@ -465,6 +496,71 @@ fn required_source_read_paths_focus_on_exact_named_source_files() {
                 current_date: "2026-04-15".to_string(),
                 current_time: "1446".to_string(),
                 current_timestamp: "2026-04-15 14:46".to_string(),
+            }),
+        );
+
+    assert_eq!(required_paths, vec!["RESUME.md".to_string()]);
+}
+
+#[test]
+fn required_source_read_paths_handles_punctuation_backticks_and_mixed_language() {
+    let mut node = bare_node();
+    node.node_id = "assess".to_string();
+    node.objective = "Analyze the local `RESUME.md` file and use it as a source of truth for skills and roles. Never edit, rewrite, rename, move, or delete it. If resume_overview.md already exists, reuse it; otherwise create it from `RESUME.md`."
+        .to_string();
+    node.metadata = Some(json!({
+        "builder": {
+            "input_files": ["/home/evan/job-hunt/RESUME.md"],
+            "output_files": ["resume_overview.md"]
+        }
+    }));
+
+    let automation = AutomationV2Spec {
+        automation_id: "automation-source-reads-quoted".to_string(),
+        name: "Source Reads Quoted".to_string(),
+        description: Some("Read from RESUME.md only.".to_string()),
+        status: crate::AutomationV2Status::Active,
+        schedule: crate::AutomationV2Schedule {
+            schedule_type: crate::AutomationV2ScheduleType::Manual,
+            cron_expression: None,
+            interval_seconds: None,
+            timezone: "UTC".to_string(),
+            misfire_policy: crate::RoutineMisfirePolicy::RunOnce,
+        },
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
+        agents: Vec::new(),
+        flow: crate::AutomationFlowSpec {
+            nodes: vec![node.clone()],
+        },
+        execution: crate::AutomationExecutionPolicy {
+            max_parallel_agents: Some(1),
+            max_total_tool_calls: None,
+            max_total_runtime_ms: None,
+            max_total_tokens: None,
+            max_total_cost_usd: None,
+        },
+        output_targets: Vec::new(),
+        created_at_ms: 0,
+        updated_at_ms: 0,
+        creator_id: "test".to_string(),
+        workspace_root: Some("/home/evan/job-hunt".to_string()),
+        metadata: None,
+        next_fire_at_ms: None,
+        last_fired_at_ms: None,
+        scope_policy: None,
+        watch_conditions: Vec::new(),
+        handoff_config: None,
+    };
+
+    let required_paths =
+        super::enforcement::automation_node_required_source_read_paths_for_automation(
+            &automation,
+            &node,
+            "/home/evan/job-hunt",
+            Some(&AutomationPromptRuntimeValues {
+                current_date: "2026-04-15".to_string(),
+                current_time: "1500".to_string(),
+                current_timestamp: "2026-04-15 15:00".to_string(),
             }),
         );
 

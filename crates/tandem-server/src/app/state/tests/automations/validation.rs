@@ -1688,6 +1688,139 @@ fn structured_json_node_requires_declared_workspace_files_for_current_attempt() 
 }
 
 #[test]
+fn validation_detects_and_reverts_read_only_source_of_truth_mutations() {
+    let workspace_root =
+        std::env::temp_dir().join(format!("tandem-read-only-safety-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&workspace_root).expect("create workspace");
+    let workspace_root = workspace_root.to_str().expect("workspace root").to_string();
+
+    let source_path = format!("{}/RESUME.md", workspace_root);
+    std::fs::write(&source_path, "Original resume content\n").expect("write source file");
+
+    let node = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
+        node_id: "assess".to_string(),
+        agent_id: "agent-a".to_string(),
+        objective:
+            "Read RESUME.md as the source of truth. Never edit, rewrite, rename, move, or delete RESUME.md.".to_string(),
+        depends_on: Vec::new(),
+        input_refs: Vec::new(),
+        output_contract: Some(AutomationFlowOutputContract {
+            kind: "structured_json".to_string(),
+            validator: Some(crate::AutomationOutputValidatorKind::StructuredJson),
+            enforcement: None,
+            schema: None,
+            summary_guidance: None,
+        }),
+        retry_policy: None,
+        timeout_ms: None,
+        max_tool_calls: None,
+        stage_kind: None,
+        gate: None,
+        metadata: Some(json!({"builder": {"output_path": "analyze-findings.json"}})),
+    };
+    let automation = AutomationSpecBuilder::new("auto-read-only")
+        .workspace_root(workspace_root.clone())
+        .build();
+
+    let session_output_path = "analyze-findings.json".to_string();
+    let session_output = "{\"status\":\"completed\",\"summary\":\"ok\"}".to_string();
+    std::fs::write(
+        format!("{}/{}", workspace_root, session_output_path),
+        &session_output,
+    )
+    .expect("write verified output");
+
+    let mut session = Session::new(
+        Some("read-only test".to_string()),
+        Some(workspace_root.clone()),
+    );
+    session.messages.push(tandem_types::Message::new(
+        MessageRole::Assistant,
+        vec![MessagePart::ToolInvocation {
+            tool: "write".to_string(),
+            args: json!({"path": session_output_path, "content": session_output}),
+            result: Some(json!({"ok": true})),
+            error: None,
+        }],
+    ));
+
+    let snapshot_before = automation_workspace_root_file_snapshot(&workspace_root);
+    let required_paths_for_node =
+        enforcement::automation_node_required_source_read_paths_for_automation(
+            &automation,
+            &node,
+            &workspace_root,
+            None,
+        );
+    let snapshot =
+        automation_read_only_file_snapshot_for_node(&workspace_root, &required_paths_for_node);
+    // Simulate a mutation bug: a required read-only source file gets overwritten.
+    // The snapshot must be taken before this overwrite to confirm mutation detection and restoration.
+    std::fs::write(&source_path, "BAD resume content from workflow\n")
+        .expect("overwrite source file");
+    let tool_telemetry =
+        summarize_automation_tool_activity(&node, &session, &["write".to_string()]);
+    let (_accepted_output, metadata, rejected) = validate_automation_artifact_output_with_context(
+        &automation,
+        &node,
+        &session,
+        &workspace_root,
+        Some("run-read-only"),
+        None,
+        "{\"status\":\"completed\"}",
+        &tool_telemetry,
+        None,
+        Some((session_output_path.clone(), session_output.clone())),
+        &snapshot_before,
+        None,
+        Some(&snapshot),
+    );
+
+    assert!(
+        rejected.is_some(),
+        "expected validation rejection after source mutation"
+    );
+    assert!(
+        metadata
+            .get("unmet_requirements")
+            .and_then(Value::as_array)
+            .is_some_and(|rows| rows
+                .iter()
+                .any(|value| value.as_str() == Some("read_only_source_mutations"))),
+        "expected unmet requirement read_only_source_mutations"
+    );
+    assert_eq!(
+        metadata
+            .get("read_only_source_mutation_count")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        metadata
+            .get("read_only_source_mutation_events")
+            .and_then(Value::as_array)
+            .map(|rows| rows.len()),
+        Some(1)
+    );
+    let event = metadata
+        .get("read_only_source_mutation_events")
+        .and_then(Value::as_array)
+        .and_then(|rows| rows.first())
+        .and_then(Value::as_object)
+        .expect("mutation event");
+    assert_eq!(
+        event.get("path").and_then(Value::as_str),
+        Some("RESUME.md"),
+        "expected normalized path"
+    );
+    let restored = std::fs::read_to_string(&source_path).expect("restore source file");
+    assert_eq!(restored, "Original resume content\n");
+
+    let _ = std::fs::remove_dir_all(workspace_root);
+}
+
+#[test]
 fn structured_json_validation_matrix_covers_artifact_only_and_workspace_side_writes() {
     let report_text = "# Reddit pain points\n\n- Brittle automations.\n";
     let no_output_files: [&str; 0] = [];
