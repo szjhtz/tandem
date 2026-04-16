@@ -6211,7 +6211,14 @@ async fn build_channels_config(
         }),
         discord: channels.discord.clone().map(|cfg| DiscordConfig {
             bot_token: cfg.bot_token,
-            guild_id: cfg.guild_id,
+            guild_id: cfg.guild_id.and_then(|value| {
+                let trimmed = value.trim().to_string();
+                if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(trimmed)
+                }
+            }),
             allowed_users: config::channels::normalize_allowed_users_or_wildcard(cfg.allowed_users),
             mention_only: cfg.mention_only,
             security_profile: cfg.security_profile,

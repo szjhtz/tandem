@@ -180,7 +180,10 @@ impl ChannelsConfig {
         if bot_token.trim().is_empty() {
             return None;
         }
-        let guild_id = std::env::var("TANDEM_DISCORD_GUILD_ID").ok();
+        let guild_id = std::env::var("TANDEM_DISCORD_GUILD_ID")
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
         let allowed_users = std::env::var("TANDEM_DISCORD_ALLOWED_USERS")
             .map(|s| parse_allowed_users(&s))
             .unwrap_or_else(|_| vec!["*".to_string()]);

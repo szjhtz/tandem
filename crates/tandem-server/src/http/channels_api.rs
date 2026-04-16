@@ -507,6 +507,7 @@ pub(super) async fn channels_put(
             let mut cfg: DiscordConfigFile =
                 serde_json::from_value(input).map_err(|_| StatusCode::BAD_REQUEST)?;
             cfg.allowed_users = crate::normalize_allowed_users_or_wildcard(cfg.allowed_users);
+            cfg.guild_id = trim_optional_string(cfg.guild_id);
             cfg.model_provider_id = trim_optional_string(cfg.model_provider_id);
             cfg.model_id = trim_optional_string(cfg.model_id);
             if cfg.bot_token.trim().is_empty() {
