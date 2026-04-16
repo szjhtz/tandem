@@ -20,7 +20,7 @@ pub(super) fn planner_build_timeout_ms() -> u64 {
         .ok()
         .and_then(|value| value.trim().parse::<u64>().ok())
         .map(|value| value.clamp(250, 300_000))
-        .unwrap_or(90_000)
+        .unwrap_or(180_000)
 }
 
 pub(super) fn planner_revision_timeout_ms() -> u64 {
@@ -28,7 +28,7 @@ pub(super) fn planner_revision_timeout_ms() -> u64 {
         .ok()
         .and_then(|value| value.trim().parse::<u64>().ok())
         .map(|value| value.clamp(250, 300_000))
-        .unwrap_or(60_000)
+        .unwrap_or(120_000)
 }
 
 pub(super) fn classify_planner_provider_failure_reason(error: &str) -> &'static str {

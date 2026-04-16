@@ -488,8 +488,10 @@ export function CreateWizard({
       setOverlapDecision("");
       setPlanningConversation(null);
       setPlanningChangeSummary([]);
-      setPlannerError(error instanceof Error ? error.message : String(error));
+      const message = error instanceof Error ? error.message : String(error);
+      setPlannerError(message);
       setPlannerDiagnostics(null);
+      toast("err", message);
     },
   });
   const planningMessageMutation = useMutation({
