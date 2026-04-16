@@ -89,6 +89,13 @@ fn protocol_title_header() -> String {
         .unwrap_or_else(|| "Tandem".to_string())
 }
 
+fn default_openai_responses_instructions() -> String {
+    format!(
+        "You are {}. Follow the system and user instructions carefully.",
+        protocol_title_header()
+    )
+}
+
 fn sanitize_openai_function_name(name: &str) -> String {
     let mut out = String::new();
     for ch in name.trim().chars() {
@@ -1563,6 +1570,7 @@ impl Provider for OpenAIResponsesProvider {
         let url = format!("{}/responses", self.base_url);
         let mut body = json!({
             "model": model,
+            "instructions": default_openai_responses_instructions(),
             "input": [{
                 "role": "user",
                 "content": [{
@@ -1673,7 +1681,8 @@ impl Provider for OpenAIResponsesProvider {
             );
         }
 
-        let wire_messages = normalize_openai_messages(messages)
+        let (instructions, input_messages) = split_openai_responses_instructions(messages);
+        let wire_messages = normalize_openai_messages(input_messages)
             .into_iter()
             .map(chat_message_to_openai_responses_wire)
             .collect::<Vec<_>>();
@@ -1700,6 +1709,7 @@ impl Provider for OpenAIResponsesProvider {
         let max_output_tokens = provider_max_tokens_for(&self.id);
         let mut body = json!({
             "model": model,
+            "instructions": instructions,
             "input": wire_messages,
             "stream": true,
             "max_output_tokens": max_output_tokens,
@@ -2404,6 +2414,32 @@ fn chat_message_to_openai_responses_wire(message: ChatMessage) -> serde_json::Va
     })
 }
 
+fn split_openai_responses_instructions(messages: Vec<ChatMessage>) -> (String, Vec<ChatMessage>) {
+    let normalized = normalize_openai_messages(messages);
+    let mut instructions = String::new();
+    let mut input_messages = Vec::with_capacity(normalized.len());
+
+    for message in normalized {
+        if message.role.eq_ignore_ascii_case("system") {
+            let content = message.content.trim();
+            if !content.is_empty() {
+                if !instructions.is_empty() {
+                    instructions.push_str("\n\n");
+                }
+                instructions.push_str(content);
+            }
+            continue;
+        }
+        input_messages.push(message);
+    }
+
+    if instructions.trim().is_empty() {
+        instructions = default_openai_responses_instructions();
+    }
+
+    (instructions, input_messages)
+}
+
 fn normalize_openai_messages(messages: Vec<ChatMessage>) -> Vec<ChatMessage> {
     let mut merged_system: Option<ChatMessage> = None;
     let mut out = Vec::with_capacity(messages.len());
@@ -3011,11 +3047,18 @@ mod tests {
             client: Client::new(),
         };
 
-        let messages = vec![ChatMessage {
-            role: "user".to_string(),
-            content: "hi".to_string(),
-            attachments: Vec::new(),
-        }];
+        let messages = vec![
+            ChatMessage {
+                role: "system".to_string(),
+                content: "Be concise.".to_string(),
+                attachments: Vec::new(),
+            },
+            ChatMessage {
+                role: "user".to_string(),
+                content: "hi".to_string(),
+                attachments: Vec::new(),
+            },
+        ];
         let cancel = CancellationToken::new();
         let stream = provider
             .stream(messages, None, ToolMode::None, None, cancel)
@@ -3041,8 +3084,10 @@ mod tests {
             .to_ascii_lowercase()
             .contains("authorization: bearer codex-test-token"));
         assert!(body.contains("\"input\""));
+        assert!(body.contains("\"instructions\":\"Be concise.\""));
         assert!(body.contains("\"max_output_tokens\""));
         assert!(body.contains("\"gpt-5.4\""));
+        assert!(!body.contains("\"role\":\"developer\""));
 
         let text_deltas = chunks
             .iter()
