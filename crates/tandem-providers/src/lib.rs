@@ -997,6 +997,10 @@ fn add_openai_responses_provider(
     let Some(entry) = provider_config_entry(config, id) else {
         return;
     };
+    let configured_default_model = entry
+        .default_model
+        .clone()
+        .unwrap_or_else(|| default_model.to_string());
     providers.push(Arc::new(OpenAIResponsesProvider {
         id: id.to_string(),
         name: name.to_string(),
@@ -1011,11 +1015,17 @@ fn add_openai_responses_provider(
         } else {
             None
         },
-        default_model: entry
-            .default_model
-            .clone()
-            .unwrap_or_else(|| default_model.to_string()),
-        context_window,
+        default_model: configured_default_model.clone(),
+        models: if id == "openai-codex" {
+            codex_supported_models(context_window)
+        } else {
+            vec![ModelInfo {
+                id: configured_default_model.clone(),
+                provider_id: id.to_string(),
+                display_name: configured_default_model.clone(),
+                context_window,
+            }]
+        },
         client: Client::new(),
     }));
 }
@@ -1558,8 +1568,29 @@ struct OpenAIResponsesProvider {
     base_url: String,
     api_key: Option<String>,
     default_model: String,
-    context_window: usize,
+    models: Vec<ModelInfo>,
     client: Client,
+}
+
+fn codex_supported_models(context_window: usize) -> Vec<ModelInfo> {
+    let rows = [
+        ("gpt-5.4", "GPT-5.4"),
+        ("gpt-5.2-codex", "GPT-5.2-Codex"),
+        ("gpt-5.1-codex-max", "GPT-5.1-Codex-Max"),
+        ("gpt-5.4-mini", "GPT-5.4-Mini"),
+        ("gpt-5.3-codex", "GPT-5.3-Codex"),
+        ("gpt-5.3-codex-spark", "GPT-5.3-Codex-Spark"),
+        ("gpt-5.1-codex-mini", "GPT-5.1-Codex-Mini"),
+        ("gpt-5.4-pro", "GPT-5.4-Pro"),
+    ];
+    rows.into_iter()
+        .map(|(id, display_name)| ModelInfo {
+            id: id.to_string(),
+            provider_id: "openai-codex".to_string(),
+            display_name: display_name.to_string(),
+            context_window,
+        })
+        .collect()
 }
 
 #[async_trait]
@@ -1568,12 +1599,7 @@ impl Provider for OpenAIResponsesProvider {
         ProviderInfo {
             id: self.id.clone(),
             name: self.name.clone(),
-            models: vec![ModelInfo {
-                id: self.default_model.clone(),
-                provider_id: self.id.clone(),
-                display_name: self.default_model.clone(),
-                context_window: self.context_window,
-            }],
+            models: self.models.clone(),
         }
     }
 
@@ -3059,7 +3085,7 @@ mod tests {
             base_url: format!("http://{}/codex", addr),
             api_key: Some("codex-test-token".to_string()),
             default_model: "gpt-5.4".to_string(),
-            context_window: 272_000,
+            models: codex_supported_models(272_000),
             client: Client::new(),
         };
 
@@ -3156,6 +3182,22 @@ mod tests {
             .expect("done chunk");
         assert_eq!(done.0, "stop");
         assert_eq!(done.1, Some(12));
+    }
+
+    #[test]
+    fn codex_supported_models_include_extended_catalog() {
+        let models = codex_supported_models(272_000);
+        let ids = models
+            .iter()
+            .map(|model| model.id.as_str())
+            .collect::<Vec<_>>();
+        assert!(ids.contains(&"gpt-5.4"));
+        assert!(ids.contains(&"gpt-5.2-codex"));
+        assert!(ids.contains(&"gpt-5.1-codex-max"));
+        assert!(ids.contains(&"gpt-5.4-mini"));
+        assert!(ids.contains(&"gpt-5.3-codex"));
+        assert!(ids.contains(&"gpt-5.3-codex-spark"));
+        assert!(ids.contains(&"gpt-5.1-codex-mini"));
     }
 
     #[test]

@@ -1385,35 +1385,29 @@ fn provider_default_url(provider_id: &str) -> Option<&'static str> {
 }
 
 fn codex_starter_models() -> HashMap<String, WireProviderModel> {
-    HashMap::from([
-        (
-            "gpt-5.4".to_string(),
-            WireProviderModel {
-                name: Some("GPT-5.4".to_string()),
-                limit: Some(WireProviderModelLimit {
-                    context: Some(272_000),
-                }),
-            },
-        ),
-        (
-            "gpt-5.4-mini".to_string(),
-            WireProviderModel {
-                name: Some("GPT-5.4 Mini".to_string()),
-                limit: Some(WireProviderModelLimit {
-                    context: Some(272_000),
-                }),
-            },
-        ),
-        (
-            "gpt-5.4-pro".to_string(),
-            WireProviderModel {
-                name: Some("GPT-5.4 Pro".to_string()),
-                limit: Some(WireProviderModelLimit {
-                    context: Some(272_000),
-                }),
-            },
-        ),
-    ])
+    let rows = [
+        ("gpt-5.4", "GPT-5.4"),
+        ("gpt-5.2-codex", "GPT-5.2-Codex"),
+        ("gpt-5.1-codex-max", "GPT-5.1-Codex-Max"),
+        ("gpt-5.4-mini", "GPT-5.4-Mini"),
+        ("gpt-5.3-codex", "GPT-5.3-Codex"),
+        ("gpt-5.3-codex-spark", "GPT-5.3-Codex-Spark"),
+        ("gpt-5.1-codex-mini", "GPT-5.1-Codex-Mini"),
+        ("gpt-5.4-pro", "GPT-5.4-Pro"),
+    ];
+    rows.into_iter()
+        .map(|(id, name)| {
+            (
+                id.to_string(),
+                WireProviderModel {
+                    name: Some(name.to_string()),
+                    limit: Some(WireProviderModelLimit {
+                        context: Some(272_000),
+                    }),
+                },
+            )
+        })
+        .collect()
 }
 
 fn remote_catalog_support_message(provider_id: &str) -> String {

@@ -41,6 +41,32 @@ async fn provider_route_returns_known_providers_without_synthetic_default_models
         openai.get("catalog_status").and_then(Value::as_str),
         Some("unavailable")
     );
+
+    let openai_codex = all
+        .iter()
+        .find(|entry| entry.get("id").and_then(Value::as_str) == Some("openai-codex"))
+        .cloned()
+        .expect("openai-codex entry");
+    let codex_models = openai_codex
+        .get("models")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    assert!(codex_models.contains_key("gpt-5.4"));
+    assert!(codex_models.contains_key("gpt-5.2-codex"));
+    assert!(codex_models.contains_key("gpt-5.1-codex-max"));
+    assert!(codex_models.contains_key("gpt-5.4-mini"));
+    assert!(codex_models.contains_key("gpt-5.3-codex"));
+    assert!(codex_models.contains_key("gpt-5.3-codex-spark"));
+    assert!(codex_models.contains_key("gpt-5.1-codex-mini"));
+    assert_eq!(
+        openai_codex.get("catalog_source").and_then(Value::as_str),
+        Some("static")
+    );
+    assert_eq!(
+        openai_codex.get("catalog_status").and_then(Value::as_str),
+        Some("ok")
+    );
 }
 
 #[tokio::test]
