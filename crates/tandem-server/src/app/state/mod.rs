@@ -3362,6 +3362,7 @@ impl AppState {
         &self,
         run: &AutomationV2RunRecord,
     ) -> anyhow::Result<()> {
+        const WORKFLOW_LEARNING_POST_APPLY_MIN_SAMPLE_SIZE: usize = 3;
         let automation = if let Some(snapshot) = run.automation_snapshot.clone() {
             snapshot
         } else if let Some(current) = self.get_automation_v2(&run.automation_id).await {
@@ -3408,6 +3409,13 @@ impl AppState {
                     candidate.latest_observed_metrics = Some(metrics.clone());
                     if candidate.status == WorkflowLearningCandidateStatus::Applied {
                         if let Some(baseline) = candidate.baseline_before.as_ref() {
+                            let post_change_sample_size =
+                                metrics.sample_size.saturating_sub(baseline.sample_size);
+                            if post_change_sample_size
+                                < WORKFLOW_LEARNING_POST_APPLY_MIN_SAMPLE_SIZE
+                            {
+                                return;
+                            }
                             if metrics.completion_rate + f64::EPSILON < baseline.completion_rate
                                 || metrics.validation_pass_rate + f64::EPSILON
                                     < baseline.validation_pass_rate

@@ -149,6 +149,197 @@ async fn workflow_learning_candidate_status_updates_roundtrip() {
 }
 
 #[tokio::test]
+async fn applied_learning_waits_for_minimum_post_change_sample_before_regressing() {
+    let state = ready_test_state().await;
+    let workspace_root = std::env::temp_dir().join(format!(
+        "tandem-workflow-learning-eval-window-{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&workspace_root).expect("create workspace root");
+
+    let automation = AutomationSpecBuilder::new("workflow-learning-eval-window")
+        .workspace_root(workspace_root.to_string_lossy().to_string())
+        .nodes(vec![AutomationNodeBuilder::new("node-1").build()])
+        .build();
+    state
+        .put_automation_v2(automation.clone())
+        .await
+        .expect("put automation");
+
+    let mut candidate = sample_candidate(
+        "wflearn-eval-window",
+        &automation.automation_id,
+        WorkflowLearningCandidateKind::PromptPatch,
+        WorkflowLearningCandidateStatus::Applied,
+        "eval-window-fingerprint",
+    );
+    candidate.baseline_before = Some(WorkflowLearningMetricsSnapshot {
+        sample_size: 0,
+        completion_rate: 1.0,
+        validation_pass_rate: 1.0,
+        mean_attempts_per_node: 1.0,
+        repairable_failure_rate: 0.0,
+        median_wall_clock_ms: 1000,
+        human_intervention_count: 0,
+        computed_at_ms: current_test_ms(),
+    });
+    state
+        .put_workflow_learning_candidate(candidate)
+        .await
+        .expect("put evaluation candidate");
+
+    for index in 1..=2 {
+        let run = state
+            .create_automation_v2_run(&automation, "manual")
+            .await
+            .expect("create failed run");
+        state
+            .update_automation_v2_run(&run.run_id, |row| {
+                row.status = AutomationRunStatus::Failed;
+                row.detail = Some(format!("failure {index}"));
+                row.checkpoint.last_failure = Some(AutomationFailureRecord {
+                    node_id: "node-1".to_string(),
+                    reason: "validator rejected unsupported citations".to_string(),
+                    failed_at_ms: current_test_ms() + index as u64,
+                });
+            })
+            .await
+            .expect("mark failed run");
+
+        let stored = state
+            .get_workflow_learning_candidate("wflearn-eval-window")
+            .await
+            .expect("stored candidate");
+        assert_eq!(stored.status, WorkflowLearningCandidateStatus::Applied);
+        assert_eq!(
+            stored
+                .latest_observed_metrics
+                .as_ref()
+                .map(|metrics| metrics.sample_size),
+            Some(index)
+        );
+    }
+
+    let third_run = state
+        .create_automation_v2_run(&automation, "manual")
+        .await
+        .expect("create third failed run");
+    state
+        .update_automation_v2_run(&third_run.run_id, |row| {
+            row.status = AutomationRunStatus::Failed;
+            row.detail = Some("failure 3".to_string());
+            row.checkpoint.last_failure = Some(AutomationFailureRecord {
+                node_id: "node-1".to_string(),
+                reason: "validator rejected unsupported citations".to_string(),
+                failed_at_ms: current_test_ms() + 3,
+            });
+        })
+        .await
+        .expect("mark third failed run");
+
+    let regressed = state
+        .get_workflow_learning_candidate("wflearn-eval-window")
+        .await
+        .expect("regressed candidate");
+    assert_eq!(regressed.status, WorkflowLearningCandidateStatus::Regressed);
+    assert_eq!(
+        regressed
+            .latest_observed_metrics
+            .as_ref()
+            .map(|metrics| metrics.sample_size),
+        Some(3)
+    );
+}
+
+#[tokio::test]
+async fn applied_learning_stays_applied_after_minimum_post_change_sample_without_regression() {
+    let state = ready_test_state().await;
+    let workspace_root = std::env::temp_dir().join(format!(
+        "tandem-workflow-learning-stable-applied-{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&workspace_root).expect("create workspace root");
+
+    let automation = AutomationSpecBuilder::new("workflow-learning-stable-applied")
+        .workspace_root(workspace_root.to_string_lossy().to_string())
+        .nodes(vec![AutomationNodeBuilder::new("node-1").build()])
+        .build();
+    state
+        .put_automation_v2(automation.clone())
+        .await
+        .expect("put automation");
+
+    let mut candidate = sample_candidate(
+        "wflearn-stable-applied",
+        &automation.automation_id,
+        WorkflowLearningCandidateKind::PromptPatch,
+        WorkflowLearningCandidateStatus::Applied,
+        "stable-applied-fingerprint",
+    );
+    candidate.baseline_before = Some(WorkflowLearningMetricsSnapshot {
+        sample_size: 0,
+        completion_rate: 1.0,
+        validation_pass_rate: 1.0,
+        mean_attempts_per_node: 1.0,
+        repairable_failure_rate: 0.0,
+        median_wall_clock_ms: 1000,
+        human_intervention_count: 0,
+        computed_at_ms: current_test_ms(),
+    });
+    state
+        .put_workflow_learning_candidate(candidate)
+        .await
+        .expect("put stable candidate");
+
+    for index in 1..=3 {
+        let run = state
+            .create_automation_v2_run(&automation, "manual")
+            .await
+            .expect("create completed run");
+        state
+            .update_automation_v2_run(&run.run_id, |row| {
+                row.status = AutomationRunStatus::Completed;
+                row.started_at_ms = Some(current_test_ms());
+                row.finished_at_ms = Some(current_test_ms() + 1_000 + index as u64);
+                row.checkpoint.completed_nodes = vec!["node-1".to_string()];
+                row.checkpoint.node_attempts.insert("node-1".to_string(), 1);
+                row.checkpoint.node_outputs.insert(
+                    "node-1".to_string(),
+                    json!({
+                        "status": "completed",
+                        "summary": format!("Completed pass {index}"),
+                        "validator_summary": {
+                            "outcome": "passed"
+                        }
+                    }),
+                );
+            })
+            .await
+            .expect("mark completed run");
+    }
+
+    let stored = state
+        .get_workflow_learning_candidate("wflearn-stable-applied")
+        .await
+        .expect("stored stable candidate");
+    assert_eq!(stored.status, WorkflowLearningCandidateStatus::Applied);
+    assert_eq!(
+        stored
+            .latest_observed_metrics
+            .as_ref()
+            .map(|metrics| metrics.sample_size),
+        Some(3)
+    );
+    assert_eq!(
+        stored
+            .latest_observed_metrics
+            .as_ref()
+            .map(|metrics| metrics.completion_rate),
+        Some(1.0)
+    );
+}
+
+#[tokio::test]
 async fn automation_run_learning_summary_persists_to_state_and_status_json() {
     let state = ready_test_state().await;
     let workspace_root = std::env::temp_dir().join(format!(
