@@ -5327,6 +5327,23 @@ fn normalize_tool_args_with_mode(
             missing_terminal = true;
             missing_terminal_reason = Some("WEBFETCH_URL_MISSING".to_string());
         }
+    } else if tool_name_requires_task_arg(&normalized_tool) {
+        if let Some(task) = extract_task_arg(&args) {
+            args = set_task_arg(args, task);
+        } else if let Some(inferred) = infer_task_from_text(latest_user_text) {
+            args_source = "inferred_from_user".to_string();
+            args_integrity = "recovered".to_string();
+            args = set_task_arg(args, inferred);
+        } else if let Some(recovered) = infer_task_from_text(latest_assistant_context) {
+            args_source = "recovered_from_context".to_string();
+            args_integrity = "recovered".to_string();
+            args = set_task_arg(args, recovered);
+        } else {
+            args_source = "missing".to_string();
+            args_integrity = "empty".to_string();
+            missing_terminal = true;
+            missing_terminal_reason = Some("TASK_MISSING".to_string());
+        }
     } else if normalized_tool == "pack_builder" {
         let mode = extract_pack_builder_mode_arg(&args);
         let plan_id = extract_pack_builder_plan_id_arg(&args);
@@ -5858,6 +5875,12 @@ fn set_pack_builder_goal_arg(args: Value, goal: String) -> Value {
     Value::Object(obj)
 }
 
+fn set_task_arg(args: Value, task: String) -> Value {
+    let mut obj = args.as_object().cloned().unwrap_or_default();
+    obj.insert("task".to_string(), Value::String(task));
+    Value::Object(obj)
+}
+
 fn set_pack_builder_apply_args(args: Value, plan_id: String) -> Value {
     let mut obj = args.as_object().cloned().unwrap_or_default();
     obj.insert("mode".to_string(), Value::String("apply".to_string()));
@@ -6049,6 +6072,34 @@ fn extract_pack_builder_goal_arg(args: &Value) -> Option<String> {
     args.as_str()
         .map(str::trim)
         .filter(|v| !v.is_empty())
+        .map(ToString::to_string)
+}
+
+fn extract_task_arg(args: &Value) -> Option<String> {
+    const TASK_KEYS: [&str; 4] = ["task", "query", "question", "prompt"];
+    for key in TASK_KEYS {
+        if let Some(value) = args.get(key).and_then(|v| v.as_str()) {
+            let trimmed = value.trim();
+            if !trimmed.is_empty() {
+                return Some(trimmed.to_string());
+            }
+        }
+    }
+    for container in ["arguments", "args", "input", "params"] {
+        if let Some(obj) = args.get(container) {
+            for key in TASK_KEYS {
+                if let Some(value) = obj.get(key).and_then(|v| v.as_str()) {
+                    let trimmed = value.trim();
+                    if !trimmed.is_empty() {
+                        return Some(trimmed.to_string());
+                    }
+                }
+            }
+        }
+    }
+    args.as_str()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
         .map(ToString::to_string)
 }
 
@@ -6324,6 +6375,20 @@ fn infer_pack_builder_goal_from_text(text: &str) -> Option<String> {
     } else {
         Some(trimmed.to_string())
     }
+}
+
+fn infer_task_from_text(text: &str) -> Option<String> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
+fn tool_name_requires_task_arg(tool_name: &str) -> bool {
+    let normalized = normalize_tool_name(tool_name);
+    normalized == "answer_how_to" || normalized.ends_with(".answer_how_to")
 }
 
 fn sanitize_url_candidate(raw: &str) -> Option<String> {
@@ -8548,6 +8613,37 @@ Call: todowrite(task_id=3, status="in_progress")
             normalized.missing_terminal_reason.as_deref(),
             Some("WEBFETCH_URL_MISSING")
         );
+    }
+
+    #[test]
+    fn normalize_tool_args_answer_how_to_infers_task_from_user_prompt() {
+        let user_text = "what is tandem and how do i use it?";
+        let normalized =
+            normalize_tool_args("mcp.tandem_mcp.answer_how_to", json!({}), user_text, "");
+        assert!(!normalized.missing_terminal);
+        assert_eq!(
+            normalized.args.get("task").and_then(|v| v.as_str()),
+            Some(user_text)
+        );
+        assert_eq!(normalized.args_source, "inferred_from_user");
+        assert_eq!(normalized.args_integrity, "recovered");
+    }
+
+    #[test]
+    fn normalize_tool_args_answer_how_to_keeps_existing_task() {
+        let normalized = normalize_tool_args(
+            "mcp.tandem_mcp.answer_how_to",
+            json!({"task":"install tandem locally"}),
+            "different user prompt",
+            "",
+        );
+        assert!(!normalized.missing_terminal);
+        assert_eq!(
+            normalized.args.get("task").and_then(|v| v.as_str()),
+            Some("install tandem locally")
+        );
+        assert_eq!(normalized.args_source, "provider_json");
+        assert_eq!(normalized.args_integrity, "ok");
     }
 
     #[test]
