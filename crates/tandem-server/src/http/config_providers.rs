@@ -85,7 +85,7 @@ const OPENAI_CODEX_OAUTH_CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
 const OPENAI_CODEX_OAUTH_ISSUER: &str = "https://auth.openai.com";
 const OPENAI_CODEX_PROVIDER_ID: &str = "openai-codex";
 const OPENAI_CODEX_DEFAULT_MODEL: &str = "gpt-5.4";
-const OPENAI_CODEX_API_BASE_URL: &str = "https://api.openai.com/v1";
+const OPENAI_CODEX_API_BASE_URL: &str = "https://chatgpt.com/backend-api";
 const OPENAI_CODEX_OAUTH_REFRESH_SKEW_MS: u64 = 5 * 60 * 1000;
 const OPENAI_CODEX_LOCAL_CALLBACK_ADDR: &str = "127.0.0.1:1455";
 // Match the Codex CLI browser flow. auth.openai.com expects this localhost callback shape.
@@ -639,11 +639,6 @@ fn render_provider_oauth_result_page(title: &str, detail: &str, ok: bool) -> Str
         "Connection needs attention"
     };
     let status_tone = if ok { "#4ade80" } else { "#fb7185" };
-    let status_bg = if ok {
-        "rgba(74, 222, 128, 0.12)"
-    } else {
-        "rgba(251, 113, 133, 0.12)"
-    };
     let status_border = if ok {
         "rgba(74, 222, 128, 0.35)"
     } else {
@@ -670,14 +665,14 @@ fn render_provider_oauth_result_page(title: &str, detail: &str, ok: bool) -> Str
   <style>
     :root {{
       color-scheme: dark;
-      --bg: #090f1f;
-      --bg-2: #10182d;
-      --card: rgba(10, 16, 32, 0.92);
-      --border: rgba(148, 163, 184, 0.18);
+      --bg: #030712;
+      --bg-2: #0a1020;
+      --card: rgba(8, 12, 24, 0.98);
+      --border: rgba(148, 163, 184, 0.15);
       --text: #ecf2ff;
       --muted: #a9b8d4;
       --accent: {status_tone};
-      --accent-bg: {status_bg};
+      --accent-bg: rgba(15, 23, 42, 0.82);
       --accent-border: {status_border};
       --accent-glow: {accent_glow};
     }}
@@ -692,8 +687,8 @@ fn render_provider_oauth_result_page(title: &str, detail: &str, ok: bool) -> Str
       font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       color: var(--text);
       background:
-        radial-gradient(circle at top left, rgba(56, 189, 248, 0.18), transparent 28%),
-        radial-gradient(circle at top right, rgba(99, 102, 241, 0.18), transparent 30%),
+        radial-gradient(circle at top left, rgba(37, 99, 235, 0.12), transparent 24%),
+        radial-gradient(circle at top right, rgba(79, 70, 229, 0.12), transparent 28%),
         linear-gradient(180deg, var(--bg) 0%, var(--bg-2) 100%);
     }}
     body::before {{
@@ -702,11 +697,11 @@ fn render_provider_oauth_result_page(title: &str, detail: &str, ok: bool) -> Str
       inset: 0;
       pointer-events: none;
       background-image:
-        linear-gradient(rgba(148, 163, 184, 0.05) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(148, 163, 184, 0.05) 1px, transparent 1px);
-      background-size: 32px 32px;
-      mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.7), transparent);
-      opacity: 0.45;
+        linear-gradient(rgba(148, 163, 184, 0.035) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(148, 163, 184, 0.035) 1px, transparent 1px);
+      background-size: 40px 40px;
+      mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.65), transparent);
+      opacity: 0.5;
     }}
     .shell {{
       position: relative;
@@ -715,20 +710,21 @@ fn render_provider_oauth_result_page(title: &str, detail: &str, ok: bool) -> Str
     .card {{
       position: relative;
       overflow: hidden;
-      border-radius: 28px;
+      border-radius: 0;
       border: 1px solid var(--border);
-      background: linear-gradient(180deg, rgba(12, 18, 35, 0.96), rgba(8, 12, 24, 0.94));
-      box-shadow:
-        0 34px 90px rgba(2, 6, 23, 0.6),
-        0 0 0 1px rgba(255, 255, 255, 0.02) inset;
-      backdrop-filter: blur(18px);
+      background: linear-gradient(180deg, rgba(8, 12, 24, 0.98), rgba(5, 8, 16, 0.98));
+      box-shadow: 0 28px 70px rgba(0, 0, 0, 0.5);
       padding: 32px;
+      border-top: 3px solid var(--accent);
     }}
     .card::before {{
       content: "";
       position: absolute;
-      inset: 0;
-      background: radial-gradient(circle at top right, var(--accent-glow), transparent 42%);
+      left: 0;
+      top: 0;
+      right: 0;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, var(--accent-glow), transparent);
       pointer-events: none;
     }}
     .brand {{
@@ -742,12 +738,12 @@ fn render_provider_oauth_result_page(title: &str, detail: &str, ok: bool) -> Str
     .mark {{
       width: 46px;
       height: 46px;
-      border-radius: 16px;
+      border-radius: 0;
       display: grid;
       place-items: center;
       flex: none;
-      background: linear-gradient(135deg, rgba(59, 130, 246, 0.95), rgba(99, 102, 241, 0.92));
-      box-shadow: 0 14px 32px rgba(59, 130, 246, 0.32);
+      background: rgba(37, 99, 235, 0.14);
+      border: 1px solid rgba(59, 130, 246, 0.4);
     }}
     .mark svg {{
       width: 28px;
@@ -773,8 +769,8 @@ fn render_provider_oauth_result_page(title: &str, detail: &str, ok: bool) -> Str
     }}
     .badge {{
       margin-left: auto;
-      padding: 9px 13px;
-      border-radius: 999px;
+      padding: 8px 12px;
+      border-radius: 0;
       border: 1px solid var(--accent-border);
       background: var(--accent-bg);
       color: var(--accent);
@@ -808,15 +804,17 @@ fn render_provider_oauth_result_page(title: &str, detail: &str, ok: bool) -> Str
       gap: 12px;
       color: #93a5c7;
       font-size: 13px;
+      border-top: 1px solid rgba(148, 163, 184, 0.12);
+      padding-top: 16px;
     }}
     .pill {{
       display: inline-flex;
       align-items: center;
       gap: 8px;
       padding: 10px 14px;
-      border-radius: 999px;
+      border-radius: 0;
       border: 1px solid var(--border);
-      background: rgba(15, 23, 42, 0.66);
+      background: rgba(15, 23, 42, 0.56);
     }}
     .actions {{
       position: relative;
@@ -832,7 +830,7 @@ fn render_provider_oauth_result_page(title: &str, detail: &str, ok: bool) -> Str
       justify-content: center;
       min-height: 44px;
       padding: 0 16px;
-      border-radius: 12px;
+      border-radius: 0;
       text-decoration: none;
       font-weight: 700;
       font-size: 14px;
@@ -849,7 +847,7 @@ fn render_provider_oauth_result_page(title: &str, detail: &str, ok: bool) -> Str
     }}
     @media (max-width: 640px) {{
       body {{ padding: 16px; }}
-      .card {{ padding: 24px; border-radius: 24px; }}
+      .card {{ padding: 24px; border-radius: 0; }}
       .brand {{ align-items: flex-start; flex-direction: column; }}
       .badge {{ margin-left: 0; }}
     }}
@@ -887,7 +885,6 @@ fn render_provider_oauth_result_page(title: &str, detail: &str, ok: bool) -> Str
         detail = detail,
         status_text = status_text,
         status_tone = status_tone,
-        status_bg = status_bg,
         accent_glow = accent_glow,
         icon_path = icon_path
     )

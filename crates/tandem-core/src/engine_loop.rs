@@ -7755,6 +7755,7 @@ fn supports_image_attachments(provider_id: &str) -> bool {
     matches!(
         provider_id,
         "openai"
+            | "openai-codex"
             | "openrouter"
             | "ollama"
             | "groq"

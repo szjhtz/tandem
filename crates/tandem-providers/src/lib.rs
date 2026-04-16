@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::{pin::Pin, str};
 
@@ -15,6 +15,13 @@ use tokio_util::sync::CancellationToken;
 use tandem_types::{ModelInfo, ProviderInfo, ToolMode, ToolSchema};
 
 fn provider_max_tokens_for(provider_id: &str) -> u32 {
+    if provider_id.eq_ignore_ascii_case("openai-codex") {
+        return std::env::var("TANDEM_PROVIDER_MAX_TOKENS_OPENAI_CODEX")
+            .ok()
+            .and_then(|raw| raw.trim().parse::<u32>().ok())
+            .filter(|value| *value >= 64)
+            .unwrap_or(128_000);
+    }
     let normalized = provider_id
         .chars()
         .map(|ch| {
@@ -752,14 +759,15 @@ fn build_providers(config: &AppConfig) -> Vec<Arc<dyn Provider>> {
         "gpt-5.2",
         true,
     );
-    add_openai_provider(
+    add_openai_responses_provider(
         config,
         &mut providers,
         "openai-codex",
         "OpenAI Codex",
-        "https://api.openai.com/v1",
+        "https://chatgpt.com/backend-api",
         "gpt-5.4",
         true,
+        272_000,
     );
     add_openai_provider(
         config,
@@ -950,6 +958,42 @@ fn add_openai_provider(
             .default_model
             .clone()
             .unwrap_or_else(|| default_model.to_string()),
+        client: Client::new(),
+    }));
+}
+
+fn add_openai_responses_provider(
+    config: &AppConfig,
+    providers: &mut Vec<Arc<dyn Provider>>,
+    id: &str,
+    name: &str,
+    default_url: &str,
+    default_model: &str,
+    use_api_key: bool,
+    context_window: usize,
+) {
+    let Some(entry) = provider_config_entry(config, id) else {
+        return;
+    };
+    providers.push(Arc::new(OpenAIResponsesProvider {
+        id: id.to_string(),
+        name: name.to_string(),
+        base_url: default_url.to_string(),
+        api_key: if use_api_key {
+            entry
+                .api_key
+                .as_deref()
+                .filter(|key| !is_placeholder_api_key(key))
+                .map(|key| key.to_string())
+                .or_else(|| env_api_key_for_provider(id))
+        } else {
+            None
+        },
+        default_model: entry
+            .default_model
+            .clone()
+            .unwrap_or_else(|| default_model.to_string()),
+        context_window,
         client: Client::new(),
     }));
 }
@@ -1486,6 +1530,617 @@ impl Provider for OpenAICompatibleProvider {
     }
 }
 
+struct OpenAIResponsesProvider {
+    id: String,
+    name: String,
+    base_url: String,
+    api_key: Option<String>,
+    default_model: String,
+    context_window: usize,
+    client: Client,
+}
+
+#[async_trait]
+impl Provider for OpenAIResponsesProvider {
+    fn info(&self) -> ProviderInfo {
+        ProviderInfo {
+            id: self.id.clone(),
+            name: self.name.clone(),
+            models: vec![ModelInfo {
+                id: self.default_model.clone(),
+                provider_id: self.id.clone(),
+                display_name: self.default_model.clone(),
+                context_window: self.context_window,
+            }],
+        }
+    }
+
+    async fn complete(&self, prompt: &str, model_override: Option<&str>) -> anyhow::Result<String> {
+        let model = model_override
+            .map(str::trim)
+            .filter(|m| !m.is_empty())
+            .unwrap_or(self.default_model.as_str());
+        let url = format!("{}/responses", self.base_url);
+        let mut body = json!({
+            "model": model,
+            "input": [{
+                "role": "user",
+                "content": [{
+                    "type": "input_text",
+                    "text": prompt
+                }]
+            }],
+            "stream": false,
+            "max_output_tokens": provider_max_tokens_for(&self.id),
+        });
+        if should_default_openai_reasoning(model) {
+            body["reasoning"] = json!({
+                "effort": "high",
+                "summary": "auto"
+            });
+            body["include"] = json!(["reasoning.encrypted_content"]);
+        }
+
+        let mut response_opt = None;
+        let mut last_send_err: Option<reqwest::Error> = None;
+        let mut last_error_detail: Option<String> = None;
+        for attempt in 0..3 {
+            let mut req = self.client.post(url.clone()).json(&body);
+            if let Some(api_key) = &self.api_key {
+                req = req.bearer_auth(api_key);
+            }
+
+            match req.send().await {
+                Ok(resp) => {
+                    let status = resp.status();
+                    if !status.is_success() {
+                        let text = resp.text().await.unwrap_or_default();
+                        last_error_detail = Some(format_openai_error_response(status, &text));
+                        break;
+                    }
+                    response_opt = Some(resp);
+                    break;
+                }
+                Err(err) => {
+                    let retryable = err.is_connect() || err.is_timeout();
+                    if retryable && attempt < 2 {
+                        sleep(Duration::from_millis(300 * (attempt + 1) as u64)).await;
+                        last_send_err = Some(err);
+                        continue;
+                    }
+                    last_send_err = Some(err);
+                    break;
+                }
+            }
+        }
+
+        let response = if let Some(resp) = response_opt {
+            resp
+        } else if let Some(detail) = last_error_detail {
+            anyhow::bail!(detail);
+        } else {
+            let err = last_send_err.expect("send error should be captured");
+            let category = if err.is_connect() {
+                "connection error"
+            } else if err.is_timeout() {
+                "timeout"
+            } else {
+                "request error"
+            };
+            anyhow::bail!(
+                "failed to reach provider `{}` at {} ({}): {}. Verify endpoint is reachable and OpenAI-compatible.",
+                self.id,
+                self.base_url,
+                category,
+                err
+            );
+        };
+
+        let value: serde_json::Value = response.json().await?;
+        if let Some(detail) = extract_openai_error(&value) {
+            anyhow::bail!(detail);
+        }
+        if let Some(text) = extract_openai_text(&value) {
+            return Ok(text);
+        }
+
+        let body_preview = truncate_for_error(&value.to_string(), 500);
+        anyhow::bail!(
+            "provider returned no completion content for model `{}` (response: {})",
+            model,
+            body_preview
+        );
+    }
+
+    async fn stream(
+        &self,
+        messages: Vec<ChatMessage>,
+        model_override: Option<&str>,
+        tool_mode: ToolMode,
+        tools: Option<Vec<ToolSchema>>,
+        cancel: CancellationToken,
+    ) -> anyhow::Result<Pin<Box<dyn Stream<Item = anyhow::Result<StreamChunk>> + Send>>> {
+        let model = model_override
+            .map(str::trim)
+            .filter(|m| !m.is_empty())
+            .unwrap_or(self.default_model.as_str());
+        let url = format!("{}/responses", self.base_url);
+        let has_image_inputs = messages.iter().any(|m| !m.attachments.is_empty());
+        if has_image_inputs && !model_supports_vision_input(model) {
+            anyhow::bail!(
+                "selected model `{}` does not appear to support image input. choose a vision-capable model.",
+                model
+            );
+        }
+
+        let wire_messages = normalize_openai_messages(messages)
+            .into_iter()
+            .map(chat_message_to_openai_responses_wire)
+            .collect::<Vec<_>>();
+
+        let tools = tools.unwrap_or_default();
+        let (original_to_alias, alias_to_original) = build_openai_tool_aliases(&tools);
+        let wire_tools = tools
+            .into_iter()
+            .map(|tool| {
+                let safe_name = original_to_alias
+                    .get(tool.name.as_str())
+                    .cloned()
+                    .unwrap_or_else(|| sanitize_openai_function_name(&tool.name));
+                json!({
+                    "type": "function",
+                    "name": safe_name,
+                    "description": tool.description,
+                    "parameters": normalize_openai_function_parameters(tool.input_schema),
+                })
+            })
+            .collect::<Vec<_>>();
+        let has_tools = !wire_tools.is_empty();
+
+        let max_output_tokens = provider_max_tokens_for(&self.id);
+        let mut body = json!({
+            "model": model,
+            "input": wire_messages,
+            "stream": true,
+            "max_output_tokens": max_output_tokens,
+        });
+        if has_tools {
+            body["tools"] = serde_json::Value::Array(wire_tools);
+            body["tool_choice"] = json!(openai_tool_choice(&tool_mode));
+        }
+        if should_default_openai_reasoning(model) {
+            body["reasoning"] = json!({
+                "effort": "high",
+                "summary": "auto"
+            });
+            body["include"] = json!(["reasoning.encrypted_content"]);
+        }
+
+        let mut resp_opt = None;
+        let mut last_send_err: Option<reqwest::Error> = None;
+        let mut last_error_detail: Option<String> = None;
+        for attempt in 0..3 {
+            let mut req = self.client.post(url.clone()).json(&body);
+            if let Some(api_key) = &self.api_key {
+                req = req.bearer_auth(api_key);
+            }
+
+            match req.send().await {
+                Ok(resp) => {
+                    let status = resp.status();
+                    if !status.is_success() {
+                        let text = resp.text().await.unwrap_or_default();
+                        last_error_detail = Some(format_openai_error_response(status, &text));
+                        break;
+                    }
+                    resp_opt = Some(resp);
+                    break;
+                }
+                Err(err) => {
+                    let retryable = err.is_connect() || err.is_timeout();
+                    if retryable && attempt < 2 {
+                        sleep(Duration::from_millis(300 * (attempt + 1) as u64)).await;
+                        last_send_err = Some(err);
+                        continue;
+                    }
+                    last_send_err = Some(err);
+                    break;
+                }
+            }
+        }
+
+        let resp = if let Some(resp) = resp_opt {
+            resp
+        } else if let Some(detail) = last_error_detail {
+            anyhow::bail!(detail);
+        } else {
+            let err = last_send_err.expect("send error should be captured");
+            let category = if err.is_connect() {
+                "connection error"
+            } else if err.is_timeout() {
+                "timeout"
+            } else {
+                "request error"
+            };
+            anyhow::bail!(
+                "failed to reach provider `{}` at {} ({}): {}. Verify endpoint is reachable and OpenAI-compatible.",
+                self.id,
+                self.base_url,
+                category,
+                err
+            );
+        };
+
+        let mut bytes = resp.bytes_stream();
+        let alias_to_original = alias_to_original.clone();
+        let stream = try_stream! {
+            let mut buffer = String::new();
+            let mut tool_call_names: HashMap<String, String> = HashMap::new();
+            let mut started_tool_calls: HashSet<String> = HashSet::new();
+            let mut ended_tool_calls: HashSet<String> = HashSet::new();
+            let mut emitted_message_text: HashSet<String> = HashSet::new();
+            let mut emitted_reasoning_text: HashSet<String> = HashSet::new();
+            let mut saw_completion = false;
+            let mut saw_tool_calls = false;
+
+            while let Some(chunk) = bytes.next().await {
+                if cancel.is_cancelled() {
+                    if !saw_completion {
+                        for call_id in started_tool_calls.iter().cloned().collect::<Vec<_>>() {
+                            if ended_tool_calls.insert(call_id.clone()) {
+                                yield StreamChunk::ToolCallEnd { id: call_id };
+                            }
+                        }
+                        saw_completion = true;
+                        yield StreamChunk::Done {
+                            finish_reason: "cancelled".to_string(),
+                            usage: None,
+                        };
+                    }
+                    break;
+                }
+
+                let chunk = chunk?;
+                buffer.push_str(str::from_utf8(&chunk).unwrap_or_default());
+
+                while let Some(pos) = buffer.find("\n\n") {
+                    let frame = buffer[..pos].to_string();
+                    buffer = buffer[pos + 2..].to_string();
+                    for line in frame.lines() {
+                        if !line.starts_with("data: ") {
+                            continue;
+                        }
+                        let payload = line.trim_start_matches("data: ").trim();
+                        if payload == "[DONE]" {
+                            if !saw_completion {
+                                for call_id in started_tool_calls.iter().cloned().collect::<Vec<_>>() {
+                                    if ended_tool_calls.insert(call_id.clone()) {
+                                        yield StreamChunk::ToolCallEnd { id: call_id };
+                                    }
+                                }
+                                yield StreamChunk::Done {
+                                    finish_reason: if saw_tool_calls {
+                                        "toolUse".to_string()
+                                    } else {
+                                        "stop".to_string()
+                                    },
+                                    usage: None,
+                                };
+                                saw_completion = true;
+                            }
+                            continue;
+                        }
+
+                        let Ok(value) = serde_json::from_str::<serde_json::Value>(payload) else {
+                            continue;
+                        };
+
+                        if let Some(detail) = extract_openai_error(&value) {
+                            Err(anyhow::anyhow!(detail))?;
+                        }
+
+                        let event_type = value
+                            .get("type")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or_default();
+                        match event_type {
+                            "response.output_item.added" => {
+                                if let Some(item) = value.get("item").and_then(|v| v.as_object()) {
+                                    let item_type = item
+                                        .get("type")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or_default();
+                                    if item_type == "function_call" {
+                                        saw_tool_calls = true;
+                                        let call_id = item
+                                            .get("call_id")
+                                            .and_then(|v| v.as_str())
+                                            .unwrap_or_default()
+                                            .trim();
+                                        let item_id = item
+                                            .get("id")
+                                            .and_then(|v| v.as_str())
+                                            .unwrap_or_default()
+                                            .trim();
+                                        let call_key = responses_tool_call_key(
+                                            call_id,
+                                            item_id,
+                                            value.get("output_index").and_then(|v| v.as_u64()),
+                                        );
+                                        if !call_key.is_empty() {
+                                            let name = responses_tool_call_name(item, &alias_to_original);
+                                            if !name.is_empty() {
+                                                tool_call_names.insert(call_key.clone(), name.clone());
+                                            }
+                                            if started_tool_calls.insert(call_key.clone()) {
+                                                yield StreamChunk::ToolCallStart {
+                                                    id: call_key.clone(),
+                                                    name: if name.is_empty() {
+                                                        "tool".to_string()
+                                                    } else {
+                                                        name
+                                                    },
+                                                };
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            "response.reasoning_summary_text.delta" => {
+                                let item_id = value
+                                    .get("item_id")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or_default()
+                                    .trim()
+                                    .to_string();
+                                if !item_id.is_empty() {
+                                    emitted_reasoning_text.insert(item_id.clone());
+                                }
+                                let delta = value
+                                    .get("delta")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or_default()
+                                    .to_string();
+                                if !delta.is_empty() {
+                                    yield StreamChunk::ReasoningDelta(delta);
+                                }
+                            }
+                            "response.output_text.delta" | "response.refusal.delta" => {
+                                let item_id = value
+                                    .get("item_id")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or_default()
+                                    .trim()
+                                    .to_string();
+                                if !item_id.is_empty() {
+                                    emitted_message_text.insert(item_id.clone());
+                                }
+                                let delta = value
+                                    .get("delta")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or_default()
+                                    .to_string();
+                                if !delta.is_empty() {
+                                    yield StreamChunk::TextDelta(delta);
+                                }
+                            }
+                            "response.function_call_arguments.delta" => {
+                                saw_tool_calls = true;
+                                let call_id = value
+                                    .get("call_id")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or_default()
+                                    .trim();
+                                let item_id = value
+                                    .get("item_id")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or_default()
+                                    .trim();
+                                let call_key = responses_tool_call_key(
+                                    call_id,
+                                    item_id,
+                                    value.get("output_index").and_then(|v| v.as_u64()),
+                                );
+                                if call_key.is_empty() {
+                                    continue;
+                                }
+                                if started_tool_calls.insert(call_key.clone()) {
+                                    let name = tool_call_names
+                                        .get(&call_key)
+                                        .cloned()
+                                        .unwrap_or_else(|| "tool".to_string());
+                                    yield StreamChunk::ToolCallStart {
+                                        id: call_key.clone(),
+                                        name,
+                                    };
+                                }
+                                let delta = value
+                                    .get("delta")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or_default()
+                                    .to_string();
+                                if !delta.is_empty() {
+                                    yield StreamChunk::ToolCallDelta {
+                                        id: call_key,
+                                        args_delta: delta,
+                                    };
+                                }
+                            }
+                            "response.function_call_arguments.done" => {
+                                saw_tool_calls = true;
+                                let call_id = value
+                                    .get("call_id")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or_default()
+                                    .trim();
+                                let item_id = value
+                                    .get("item_id")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or_default()
+                                    .trim();
+                                let call_key = responses_tool_call_key(
+                                    call_id,
+                                    item_id,
+                                    value.get("output_index").and_then(|v| v.as_u64()),
+                                );
+                                if !call_key.is_empty() && ended_tool_calls.insert(call_key.clone()) {
+                                    yield StreamChunk::ToolCallEnd { id: call_key };
+                                }
+                            }
+                            "response.output_item.done" => {
+                                if let Some(item) = value.get("item").and_then(|v| v.as_object()) {
+                                    let item_type = item
+                                        .get("type")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or_default();
+                                    if item_type == "message" {
+                                        let item_id = item
+                                            .get("id")
+                                            .and_then(|v| v.as_str())
+                                            .unwrap_or_default()
+                                            .trim()
+                                            .to_string();
+                                        if !item_id.is_empty() && !emitted_message_text.contains(&item_id) {
+                                            if let Some(text) = extract_openai_text(&serde_json::Value::Object(item.clone())) {
+                                                emitted_message_text.insert(item_id);
+                                                yield StreamChunk::TextDelta(text);
+                                            }
+                                        }
+                                    } else if item_type == "reasoning" {
+                                        let item_id = item
+                                            .get("id")
+                                            .and_then(|v| v.as_str())
+                                            .unwrap_or_default()
+                                            .trim()
+                                            .to_string();
+                                        if !item_id.is_empty() && !emitted_reasoning_text.contains(&item_id) {
+                                            if let Some(summary) = extract_responses_reasoning_summary(item) {
+                                                emitted_reasoning_text.insert(item_id);
+                                                yield StreamChunk::ReasoningDelta(summary);
+                                            }
+                                        }
+                                    } else if item_type == "function_call" {
+                                        let call_id = item
+                                            .get("call_id")
+                                            .and_then(|v| v.as_str())
+                                            .unwrap_or_default()
+                                            .trim();
+                                        let item_id = item
+                                            .get("id")
+                                            .and_then(|v| v.as_str())
+                                            .unwrap_or_default()
+                                            .trim();
+                                        let call_key = responses_tool_call_key(
+                                            call_id,
+                                            item_id,
+                                            value.get("output_index").and_then(|v| v.as_u64()),
+                                        );
+                                        if !call_key.is_empty() && ended_tool_calls.insert(call_key.clone()) {
+                                            yield StreamChunk::ToolCallEnd { id: call_key };
+                                        }
+                                    }
+                                }
+                            }
+                            "response.completed" => {
+                                let response = value
+                                    .get("response")
+                                    .and_then(|v| v.as_object())
+                                    .cloned()
+                                    .unwrap_or_default();
+                                let usage = extract_responses_usage(&response);
+                                let mut finish_reason = map_responses_stop_reason(
+                                    response.get("status").and_then(|v| v.as_str()),
+                                    response
+                                        .get("incomplete_details")
+                                        .and_then(|v| v.as_object())
+                                        .and_then(|obj| obj.get("reason"))
+                                        .and_then(|v| v.as_str()),
+                                );
+                                if finish_reason == "stop" && saw_tool_calls {
+                                    finish_reason = "toolUse".to_string();
+                                }
+                                if !saw_completion {
+                                    for call_id in started_tool_calls.iter().cloned().collect::<Vec<_>>() {
+                                        if ended_tool_calls.insert(call_id.clone()) {
+                                            yield StreamChunk::ToolCallEnd { id: call_id };
+                                        }
+                                    }
+                                    yield StreamChunk::Done {
+                                        finish_reason,
+                                        usage,
+                                    };
+                                    saw_completion = true;
+                                }
+                            }
+                            "error" => {
+                                let code = value
+                                    .get("code")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("unknown");
+                                let message = value
+                                    .get("message")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("Unknown error");
+                                Err(anyhow::anyhow!("Error Code {}: {}", code, message))?;
+                            }
+                            "response.failed" => {
+                                let response = value
+                                    .get("response")
+                                    .and_then(|v| v.as_object())
+                                    .cloned()
+                                    .unwrap_or_default();
+                                let detail = response
+                                    .get("error")
+                                    .and_then(|v| v.as_object())
+                                    .map(|err| {
+                                        let code = err
+                                            .get("code")
+                                            .and_then(|v| v.as_str())
+                                            .unwrap_or("unknown");
+                                        let message = err
+                                            .get("message")
+                                            .and_then(|v| v.as_str())
+                                            .unwrap_or("no message");
+                                        format!("{code}: {message}")
+                                    })
+                                    .or_else(|| {
+                                        response
+                                            .get("incomplete_details")
+                                            .and_then(|v| v.as_object())
+                                            .and_then(|obj| obj.get("reason"))
+                                            .and_then(|v| v.as_str())
+                                            .map(|reason| format!("incomplete: {reason}"))
+                                    })
+                                    .unwrap_or_else(|| "Unknown error (no error details in response)".to_string());
+                                Err(anyhow::anyhow!(detail))?;
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+
+            if !saw_completion {
+                for call_id in started_tool_calls.iter().cloned().collect::<Vec<_>>() {
+                    if ended_tool_calls.insert(call_id.clone()) {
+                        yield StreamChunk::ToolCallEnd { id: call_id };
+                    }
+                }
+                yield StreamChunk::Done {
+                    finish_reason: if saw_tool_calls {
+                        "toolUse".to_string()
+                    } else {
+                        "stop".to_string()
+                    },
+                    usage: None,
+                };
+            }
+        };
+
+        Ok(Box::pin(stream))
+    }
+}
+
 struct AnthropicProvider {
     api_key: Option<String>,
     default_model: String,
@@ -1701,6 +2356,54 @@ fn chat_message_to_openai_wire(message: ChatMessage) -> serde_json::Value {
     })
 }
 
+fn chat_message_to_openai_responses_wire(message: ChatMessage) -> serde_json::Value {
+    let role = message.role.trim().to_ascii_lowercase();
+    if role == "system" {
+        return json!({
+            "role": "developer",
+            "content": message.content
+        });
+    }
+    if role == "assistant" {
+        return json!({
+            "role": "assistant",
+            "content": [{
+                "type": "output_text",
+                "text": message.content,
+                "annotations": []
+            }]
+        });
+    }
+
+    let mut content = Vec::new();
+    if !message.content.trim().is_empty() {
+        content.push(json!({
+            "type": "input_text",
+            "text": message.content
+        }));
+    }
+    for attachment in message.attachments {
+        match attachment {
+            ChatAttachment::ImageUrl { url } => content.push(json!({
+                "type": "input_image",
+                "detail": "auto",
+                "image_url": url
+            })),
+        }
+    }
+    if content.is_empty() {
+        content.push(json!({
+            "type": "input_text",
+            "text": ""
+        }));
+    }
+
+    json!({
+        "role": "user",
+        "content": content
+    })
+}
+
 fn normalize_openai_messages(messages: Vec<ChatMessage>) -> Vec<ChatMessage> {
     let mut merged_system: Option<ChatMessage> = None;
     let mut out = Vec::with_capacity(messages.len());
@@ -1732,6 +2435,115 @@ fn normalize_openai_messages(messages: Vec<ChatMessage>) -> Vec<ChatMessage> {
     out
 }
 
+fn responses_tool_call_key(call_id: &str, item_id: &str, output_index: Option<u64>) -> String {
+    let call_id = call_id.trim();
+    let item_id = item_id.trim();
+    if !call_id.is_empty() && !item_id.is_empty() {
+        return format!("{call_id}|{item_id}");
+    }
+    if !call_id.is_empty() {
+        return call_id.to_string();
+    }
+    if !item_id.is_empty() {
+        return item_id.to_string();
+    }
+    format!("fc_{}", output_index.unwrap_or_default())
+}
+
+fn responses_tool_call_name(
+    item: &serde_json::Map<String, serde_json::Value>,
+    alias_to_original: &HashMap<String, String>,
+) -> String {
+    let raw_name = item
+        .get("name")
+        .and_then(|v| v.as_str())
+        .or_else(|| item.get("tool_name").and_then(|v| v.as_str()))
+        .or_else(|| {
+            item.get("function")
+                .and_then(|v| v.as_object())
+                .and_then(|function| function.get("name"))
+                .and_then(|v| v.as_str())
+        })
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    if raw_name.is_empty() {
+        return String::new();
+    }
+    canonical_openai_tool_name(&raw_name, alias_to_original)
+}
+
+fn extract_responses_reasoning_summary(
+    item: &serde_json::Map<String, serde_json::Value>,
+) -> Option<String> {
+    let summary = item.get("summary")?;
+    let mut out = String::new();
+    match summary {
+        serde_json::Value::String(text) => out.push_str(text),
+        serde_json::Value::Array(parts) => {
+            for part in parts {
+                if let Some(text) = part.get("text").and_then(|v| v.as_str()) {
+                    if !out.is_empty() {
+                        out.push_str("\n\n");
+                    }
+                    out.push_str(text);
+                }
+            }
+        }
+        _ => {}
+    }
+    (!out.trim().is_empty()).then_some(out)
+}
+
+fn extract_responses_usage(
+    response: &serde_json::Map<String, serde_json::Value>,
+) -> Option<TokenUsage> {
+    let usage = response.get("usage")?.as_object()?;
+    let cached_tokens = usage
+        .get("input_tokens_details")
+        .and_then(|v| v.as_object())
+        .and_then(|obj| obj.get("cached_tokens"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let prompt_tokens = usage
+        .get("input_tokens")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0)
+        .saturating_sub(cached_tokens);
+    let completion_tokens = usage
+        .get("output_tokens")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let total_tokens = usage
+        .get("total_tokens")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(prompt_tokens.saturating_add(completion_tokens));
+    Some(TokenUsage {
+        prompt_tokens,
+        completion_tokens,
+        total_tokens,
+    })
+}
+
+fn map_responses_stop_reason(status: Option<&str>, incomplete_reason: Option<&str>) -> String {
+    match status.map(|value| value.trim().to_ascii_lowercase()) {
+        Some(ref value) if value == "completed" => "stop".to_string(),
+        Some(ref value) if value == "incomplete" => "length".to_string(),
+        Some(ref value) if value == "failed" || value == "cancelled" => "error".to_string(),
+        Some(ref value) if value == "in_progress" || value == "queued" => "stop".to_string(),
+        Some(_) | None => {
+            if incomplete_reason
+                .map(|value| !value.trim().is_empty())
+                .unwrap_or(false)
+            {
+                "length".to_string()
+            } else {
+                "stop".to_string()
+            }
+        }
+    }
+}
+
 fn model_supports_vision_input(model: &str) -> bool {
     let lower = model.to_ascii_lowercase();
     [
@@ -1740,6 +2552,14 @@ fn model_supports_vision_input(model: &str) -> bool {
     ]
     .iter()
     .any(|hint| lower.contains(hint))
+}
+
+fn should_default_openai_reasoning(model: &str) -> bool {
+    let lower = model.trim().to_ascii_lowercase();
+    lower.starts_with("gpt-5")
+        || lower.starts_with("o1")
+        || lower.starts_with("o3")
+        || lower.starts_with("o4")
 }
 
 fn normalize_base(input: &str) -> String {
@@ -1888,6 +2708,10 @@ fn extract_openai_error(value: &serde_json::Value) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use futures::StreamExt;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+    use tokio::sync::oneshot;
 
     fn cfg(
         provider_ids: &[&str],
@@ -2095,6 +2919,161 @@ mod tests {
             reverse.get(alias_b).map(String::as_str),
             Some("mcp_arcade_gmail_send")
         );
+    }
+
+    fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+        if needle.is_empty() {
+            return Some(0);
+        }
+        haystack
+            .windows(needle.len())
+            .position(|window| window == needle)
+    }
+
+    async fn read_single_http_request(
+        socket: &mut tokio::net::TcpStream,
+    ) -> (String, String, String) {
+        let mut buffer = Vec::new();
+        let header_end = loop {
+            let mut chunk = [0u8; 1024];
+            let read = socket.read(&mut chunk).await.expect("read request");
+            assert!(
+                read > 0,
+                "connection closed before request headers were read"
+            );
+            buffer.extend_from_slice(&chunk[..read]);
+            if let Some(pos) = find_subsequence(&buffer, b"\r\n\r\n") {
+                break pos + 4;
+            }
+        };
+
+        let headers = String::from_utf8(buffer[..header_end].to_vec()).expect("utf8 headers");
+        let content_length = headers
+            .lines()
+            .find_map(|line| {
+                line.strip_prefix("Content-Length: ")
+                    .or_else(|| line.strip_prefix("content-length: "))
+            })
+            .and_then(|value| value.trim().parse::<usize>().ok())
+            .unwrap_or(0);
+
+        let mut body = buffer[header_end..].to_vec();
+        while body.len() < content_length {
+            let mut chunk = [0u8; 1024];
+            let read = socket.read(&mut chunk).await.expect("read request body");
+            if read == 0 {
+                break;
+            }
+            body.extend_from_slice(&chunk[..read]);
+        }
+
+        let request_line = headers.lines().next().unwrap_or("").to_string();
+        let body = String::from_utf8(body).expect("utf8 body");
+        (request_line, headers, body)
+    }
+
+    #[tokio::test]
+    async fn openai_codex_stream_uses_responses_transport() {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind test server");
+        let addr = listener.local_addr().expect("listener address");
+        let (tx, rx) = oneshot::channel();
+
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("accept connection");
+            let request = read_single_http_request(&mut socket).await;
+            let response_body = concat!(
+                "data: {\"type\":\"response.output_text.delta\",\"item_id\":\"msg_1\",\"delta\":\"Hello\"}\n\n",
+                "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"usage\":{\"input_tokens\":5,\"output_tokens\":7,\"total_tokens\":12}}}\n\n",
+                "data: [DONE]\n\n"
+            );
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                response_body.as_bytes().len(),
+                response_body
+            );
+            socket
+                .write_all(response.as_bytes())
+                .await
+                .expect("write response");
+            socket.shutdown().await.expect("shutdown socket");
+            tx.send(request).expect("send request");
+        });
+
+        let provider = OpenAIResponsesProvider {
+            id: "openai-codex".to_string(),
+            name: "OpenAI Codex".to_string(),
+            base_url: format!("http://{}", addr),
+            api_key: Some("codex-test-token".to_string()),
+            default_model: "gpt-5.4".to_string(),
+            context_window: 272_000,
+            client: Client::new(),
+        };
+
+        let messages = vec![ChatMessage {
+            role: "user".to_string(),
+            content: "hi".to_string(),
+            attachments: Vec::new(),
+        }];
+        let cancel = CancellationToken::new();
+        let stream = provider
+            .stream(messages, None, ToolMode::None, None, cancel)
+            .await
+            .expect("stream");
+
+        let mut chunks = Vec::new();
+        futures::pin_mut!(stream);
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.expect("stream chunk");
+            let is_done = matches!(chunk, StreamChunk::Done { .. });
+            chunks.push(chunk);
+            if is_done {
+                break;
+            }
+        }
+
+        let (request_line, headers, body) = rx.await.expect("request");
+        server.await.expect("server task");
+
+        assert_eq!(request_line, "POST /responses HTTP/1.1");
+        assert!(headers
+            .to_ascii_lowercase()
+            .contains("authorization: bearer codex-test-token"));
+        assert!(body.contains("\"input\""));
+        assert!(body.contains("\"max_output_tokens\""));
+        assert!(body.contains("\"gpt-5.4\""));
+
+        let text_deltas = chunks
+            .iter()
+            .filter_map(|chunk| match chunk {
+                StreamChunk::TextDelta(text) => Some(text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(text_deltas, vec!["Hello"]);
+
+        let done_chunks = chunks
+            .iter()
+            .filter(|chunk| matches!(chunk, StreamChunk::Done { .. }))
+            .count();
+        assert_eq!(done_chunks, 1);
+
+        let done = chunks
+            .iter()
+            .find_map(|chunk| match chunk {
+                StreamChunk::Done {
+                    finish_reason,
+                    usage,
+                } => Some((
+                    finish_reason.as_str(),
+                    usage.as_ref().map(|usage| usage.total_tokens),
+                )),
+                _ => None,
+            })
+            .expect("done chunk");
+        assert_eq!(done.0, "stop");
+        assert_eq!(done.1, Some(12));
     }
 
     #[test]

@@ -297,6 +297,13 @@ const BUILTIN_PROVIDER_IDS = new Set([
 
 const OPENAI_CODEX_PROVIDER_ID = "openai-codex";
 
+function isInternalConfigProviderId(providerId: string) {
+  const normalized = String(providerId || "")
+    .trim()
+    .toLowerCase();
+  return normalized.startsWith("mcp_header::") || normalized.startsWith("channel::");
+}
+
 const CHANNEL_TOOL_GROUPS = [
   { label: "File", tools: ["read", "glob", "ls", "list", "grep", "codesearch", "search"] },
   { label: "Web", tools: ["websearch", "webfetch", "webfetch_html"] },
@@ -962,7 +969,11 @@ export function SettingsPage({
       Object.entries(configuredProviders)
         .filter(([providerId]) => {
           const normalized = providerId.trim().toLowerCase();
-          return normalized && !BUILTIN_PROVIDER_IDS.has(normalized);
+          return (
+            normalized &&
+            !BUILTIN_PROVIDER_IDS.has(normalized) &&
+            !isInternalConfigProviderId(normalized)
+          );
         })
         .map(([providerId, value]) => ({
           id: providerId,
