@@ -445,7 +445,10 @@ export function resolveDefaultModel(
   providersConfig: any
 ): { provider: string; model: string } {
   const configuredProvider = safeString(providersConfig?.default);
-  const provider = configuredProvider || providerOptions[0]?.id || "";
+  const provider =
+    providerOptions.find((entry) => entry.id === configuredProvider)?.id ||
+    providerOptions[0]?.id ||
+    "";
   if (!provider) return { provider: "", model: "" };
   const models = providerOptions.find((entry) => entry.id === provider)?.models || [];
   const model = safeString(providersConfig?.providers?.[provider]?.default_model || models[0]);

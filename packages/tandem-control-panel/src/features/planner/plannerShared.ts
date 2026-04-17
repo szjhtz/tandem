@@ -6,6 +6,35 @@ export type PlannerProviderOption = {
   configured?: boolean;
 };
 
+function mergeStrings(...groups: string[][]) {
+  const seen = new Set<string>();
+  const merged: string[] = [];
+  for (const group of groups) {
+    for (const raw of group) {
+      const value = safeString(raw);
+      if (!value || seen.has(value)) continue;
+      seen.add(value);
+      merged.push(value);
+    }
+  }
+  return merged;
+}
+
+function collectModels(raw: any) {
+  if (Array.isArray(raw)) return raw.map((value) => safeString(value)).filter(Boolean);
+  if (raw && typeof raw === "object")
+    return Object.keys(raw)
+      .map((value) => safeString(value))
+      .filter(Boolean);
+  const single = safeString(raw);
+  return single ? [single] : [];
+}
+
+function isInternalProviderId(providerId: string) {
+  const normalized = safeString(providerId).toLowerCase();
+  return normalized.startsWith("mcp_header::") || normalized.startsWith("channel::");
+}
+
 export type PlannerSessionStatus =
   | "draft"
   | "waiting_for_clarification"
@@ -209,31 +238,104 @@ export function buildPlannerProviderOptions(options: {
   providerConfig: any;
   defaultProvider: string;
   defaultModel: string;
+  includeUnconfiguredProviders?: boolean;
+  providerAuthStatus?: any;
 }): PlannerProviderOption[] {
-  const rows = Array.isArray(options.providerCatalog?.all) ? options.providerCatalog.all : [];
+  const rows = Array.isArray(options.providerCatalog?.all)
+    ? options.providerCatalog.all
+    : Array.isArray(options.providerCatalog?.providers)
+      ? options.providerCatalog.providers
+      : [];
   const configuredProviders = ((
     options.providerConfig as { providers?: Record<string, any> } | undefined
   )?.providers || {}) as Record<string, any>;
-  const mapped = rows
-    .map((provider: any) => ({
-      id: safeString(provider?.id),
-      models: Object.keys(provider?.models || {}),
-      configured: !!configuredProviders[safeString(provider?.id)],
-    }))
-    .filter((provider: PlannerProviderOption) => !!provider.id)
-    .sort((left: PlannerProviderOption, right: PlannerProviderOption) =>
-      left.id.localeCompare(right.id)
+  const configuredLookup = new Map<string, { id: string; value: any }>();
+  for (const [providerId, value] of Object.entries(configuredProviders)) {
+    const id = safeString(providerId);
+    if (!id || isInternalProviderId(id)) continue;
+    configuredLookup.set(id.toLowerCase(), { id, value });
+  }
+  const connectedIds = new Set<string>();
+  if (Array.isArray(options.providerCatalog?.connected)) {
+    for (const raw of options.providerCatalog.connected) {
+      const value = safeString(raw).toLowerCase();
+      if (value) connectedIds.add(value);
+    }
+  }
+  const authStatus = options.providerAuthStatus;
+  if (authStatus && typeof authStatus === "object") {
+    const nested = (authStatus as { providers?: Record<string, any> }).providers;
+    const authRows = nested && typeof nested === "object" ? nested : authStatus;
+    if (authRows && typeof authRows === "object") {
+      for (const [providerId, value] of Object.entries(authRows)) {
+        const normalizedId = safeString(providerId).toLowerCase();
+        if (!normalizedId || !value || typeof value !== "object") continue;
+        const status = safeString((value as any).status).toLowerCase();
+        if (
+          (value as any).connected === true ||
+          status === "connected" ||
+          status === "configured" ||
+          (value as any).has_key === true ||
+          (value as any).hasKey === true
+        ) {
+          connectedIds.add(normalizedId);
+        }
+      }
+    }
+  }
+
+  const includeAllProviders = options.includeUnconfiguredProviders === true;
+  const mapped = new Map<string, PlannerProviderOption>();
+  for (const provider of rows) {
+    const id = safeString(provider?.id);
+    if (!id || isInternalProviderId(id)) continue;
+    const normalizedId = id.toLowerCase();
+    const configuredEntry = configuredLookup.get(normalizedId);
+    const configured = !!configuredEntry;
+    const configEntry = configuredEntry?.value || {};
+    const models = mergeStrings(
+      collectModels(provider?.models),
+      collectModels(configEntry?.models),
+      collectModels(configEntry?.default_model || configEntry?.defaultModel)
     );
-  const defaultProvider = safeString(options.defaultProvider);
-  const defaultModel = safeString(options.defaultModel);
-  if (defaultProvider && !mapped.some((row) => row.id === defaultProvider)) {
-    mapped.unshift({
-      id: defaultProvider,
-      models: defaultModel ? [defaultModel] : [],
+    const shouldInclude = includeAllProviders || !!configured || connectedIds.has(normalizedId);
+    if (!shouldInclude) continue;
+    mapped.set(normalizedId, {
+      id,
+      models,
+      configured: !!configured || connectedIds.has(normalizedId),
+    });
+  }
+
+  for (const { id, value } of configuredLookup.values()) {
+    const normalizedId = id.toLowerCase();
+    if (mapped.has(normalizedId)) continue;
+    mapped.set(normalizedId, {
+      id,
+      models: mergeStrings(
+        collectModels((value as any)?.models),
+        collectModels((value as any)?.default_model || (value as any)?.defaultModel)
+      ),
       configured: true,
     });
   }
-  return mapped;
+
+  for (const normalizedId of connectedIds) {
+    if (
+      mapped.has(normalizedId) ||
+      configuredLookup.has(normalizedId) ||
+      isInternalProviderId(normalizedId)
+    ) {
+      continue;
+    }
+    mapped.set(normalizedId, {
+      id: normalizedId,
+      models: [],
+      configured: true,
+    });
+  }
+
+  return [...mapped.values()].sort((left, right) => left.id.localeCompare(right.id));
 }
 
 export function buildDefaultKnowledgeOperatorPreferences(subject: string) {

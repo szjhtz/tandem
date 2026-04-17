@@ -45,6 +45,7 @@ import {
 import { useEngineStream } from "../stream/useEngineStream";
 import { MyAutomationsContent } from "./MyAutomationsContent";
 import { useSelectedRunLifecycle } from "./useSelectedRunLifecycle";
+import { buildPlannerProviderOptions } from "../planner/plannerShared";
 
 export function MyAutomationsContainer({
   client,
@@ -1152,20 +1153,12 @@ export function MyAutomationsContainer({
   ]);
   const legacyRuns = toArray(runsQuery.data, "runs");
   const providerOptions = useMemo<any[]>(() => {
-    const rows = Array.isArray((providerCatalogQuery.data as any)?.all)
-      ? (providerCatalogQuery.data as any).all
-      : Array.isArray((providerCatalogQuery.data as any)?.providers)
-        ? (providerCatalogQuery.data as any).providers
-        : [];
-    const configuredProviders = (providersConfigQuery.data as any)?.providers || {};
-    return rows
-      .map((provider: any) => ({
-        id: String(provider?.id || "").trim(),
-        models: Object.keys(provider?.models || {}).sort(),
-        configured: !!configuredProviders[String(provider?.id || "").trim()],
-      }))
-      .filter((provider: any) => provider.id)
-      .sort((a: any, b: any) => a.id.localeCompare(b.id));
+    return buildPlannerProviderOptions({
+      providerCatalog: providerCatalogQuery.data,
+      providerConfig: providersConfigQuery.data,
+      defaultProvider: "",
+      defaultModel: "",
+    });
   }, [providerCatalogQuery.data, providersConfigQuery.data]);
   const mcpServers = useMemo(
     () => normalizeMcpServers(mcpServersQuery.data),

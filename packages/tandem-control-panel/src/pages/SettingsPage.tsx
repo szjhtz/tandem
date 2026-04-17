@@ -935,6 +935,7 @@ export function SettingsPage({
               ?.defaultModel ||
             ""
         ).trim(),
+        includeUnconfiguredProviders: true,
       }),
     [providersCatalog.data, providersConfig.data]
   );

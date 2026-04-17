@@ -7,7 +7,10 @@ import { Step2Schedule } from "./Step2Schedule";
 import { Step3Mode } from "./Step3Mode";
 import { Step4Review } from "./Step4Review";
 import { detectBrowserTimezone, isValidTimezone } from "../timezone";
-import { buildDefaultKnowledgeOperatorPreferences } from "../../planner/plannerShared";
+import {
+  buildDefaultKnowledgeOperatorPreferences,
+  buildPlannerProviderOptions,
+} from "../../planner/plannerShared";
 import type { NavigationLockState } from "../../../pages/pageTypes";
 
 type ExecutionMode = "single" | "team" | "swarm";
@@ -47,11 +50,6 @@ interface WizardState {
   customSkillName: string;
   customSkillDescription: string;
   customWorkflowKind: "pack_builder_recipe" | "automation_v2_dag";
-}
-
-interface ProviderOption {
-  id: string;
-  models: string[];
 }
 
 interface McpServerOption {
@@ -381,17 +379,22 @@ export function CreateWizard({
   });
 
   const providerOptions = useMemo(() => {
-    const rows = Array.isArray(providersCatalogQuery.data?.all)
-      ? providersCatalogQuery.data.all
-      : [];
-    return rows
-      .map((provider: any) => ({
-        id: String(provider?.id || "").trim(),
-        models: Object.keys(provider?.models || {}),
-      }))
-      .filter((provider: ProviderOption) => !!provider.id)
-      .sort((a: ProviderOption, b: ProviderOption) => a.id.localeCompare(b.id));
-  }, [providersCatalogQuery.data]);
+    return buildPlannerProviderOptions({
+      providerCatalog: providersCatalogQuery.data,
+      providerConfig: providersConfigQuery.data,
+      defaultProvider: String(providersConfigQuery.data?.default || defaultProvider || "").trim(),
+      defaultModel: String(
+        providersConfigQuery.data?.providers?.[
+          String(providersConfigQuery.data?.default || defaultProvider || "").trim()
+        ]?.default_model ||
+          providersConfigQuery.data?.providers?.[
+            String(providersConfigQuery.data?.default || defaultProvider || "").trim()
+          ]?.defaultModel ||
+          defaultModel ||
+          ""
+      ).trim(),
+    });
+  }, [defaultModel, defaultProvider, providersCatalogQuery.data, providersConfigQuery.data]);
   const mcpServers = useMemo(
     () => normalizeMcpServers(mcpServersQuery.data),
     [mcpServersQuery.data]
@@ -421,10 +424,15 @@ export function CreateWizard({
       providersConfigQuery.data?.default || defaultProvider || ""
     ).trim();
     if (!configDefaultProvider) return;
+    const selectedProvider =
+      providerOptions.find((provider) => provider.id === configDefaultProvider)?.id ||
+      providerOptions[0]?.id ||
+      "";
+    if (!selectedProvider) return;
     const models =
-      providerOptions.find((provider) => provider.id === configDefaultProvider)?.models || [];
+      providerOptions.find((provider) => provider.id === selectedProvider)?.models || [];
     const configDefaultModel = String(
-      providersConfigQuery.data?.providers?.[configDefaultProvider]?.default_model ||
+      providersConfigQuery.data?.providers?.[selectedProvider]?.default_model ||
         defaultModel ||
         models[0] ||
         ""
@@ -433,7 +441,7 @@ export function CreateWizard({
       if (current.modelProvider && current.modelId) return current;
       return {
         ...current,
-        modelProvider: current.modelProvider || configDefaultProvider,
+        modelProvider: current.modelProvider || selectedProvider,
         modelId: current.modelId || configDefaultModel,
       };
     });

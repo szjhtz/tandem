@@ -22,6 +22,7 @@ import {
 } from "../features/studio/schema";
 import { EmptyState, PageCard } from "./ui";
 import type { AppPageProps } from "./pageTypes";
+import { buildPlannerProviderOptions } from "../features/planner/plannerShared";
 import {
   AGENT_CATALOG_HANDOFF_KEY,
   AUTOMATIONS_STUDIO_HANDOFF_KEY,
@@ -114,18 +115,19 @@ export function WorkflowStudioPage({ client, api, toast, navigate }: AppPageProp
     () => new Map(templateRows.map((row) => [row.templateId, row])),
     [templateRows]
   );
+  const providerConfig = providersConfigQuery.data as any;
   const providerOptions = useMemo<ProviderOption[]>(() => {
-    const rows = Array.isArray((providersCatalogQuery.data as any)?.all)
-      ? (providersCatalogQuery.data as any).all
-      : [];
-    return rows
-      .map((provider: any) => ({
-        id: safeString(provider?.id),
-        models: Object.keys(provider?.models || {}),
-      }))
-      .filter((provider: ProviderOption) => !!provider.id)
-      .sort((a, b) => a.id.localeCompare(b.id));
-  }, [providersCatalogQuery.data]);
+    return buildPlannerProviderOptions({
+      providerCatalog: providersCatalogQuery.data,
+      providerConfig,
+      defaultProvider: String(providerConfig?.default || "").trim(),
+      defaultModel: String(
+        providerConfig?.providers?.[String(providerConfig?.default || "").trim()]?.default_model ||
+          providerConfig?.providers?.[String(providerConfig?.default || "").trim()]?.defaultModel ||
+          ""
+      ).trim(),
+    });
+  }, [providersCatalogQuery.data, providerConfig]);
   const studioDefaultModel = useMemo(
     () => resolveDefaultModel(providerOptions, providersConfigQuery.data),
     [providerOptions, providersConfigQuery.data]

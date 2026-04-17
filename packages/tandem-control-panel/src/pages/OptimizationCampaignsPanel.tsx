@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import YAML from "yaml";
+import { buildPlannerProviderOptions } from "../features/planner/plannerShared";
 import { EmptyState } from "./ui";
 
 function toArray(input: any, key: string) {
@@ -127,19 +128,20 @@ export function OptimizationCampaignsPanel({
   );
 
   const providerOptions = useMemo(() => {
-    const rows = Array.isArray((providersCatalogQuery.data as any)?.all)
-      ? (providersCatalogQuery.data as any).all
-      : [];
-    const configProviders =
-      ((providersConfigQuery.data as any)?.providers as Record<string, any> | undefined) || {};
-    return rows
-      .map((provider: any) => ({
-        id: String(provider?.id || "").trim(),
-        models: Object.keys(provider?.models || {}).sort(),
-        configured: !!configProviders[String(provider?.id || "").trim()],
-      }))
-      .filter((provider: any) => provider.id)
-      .sort((a: any, b: any) => a.id.localeCompare(b.id));
+    return buildPlannerProviderOptions({
+      providerCatalog: providersCatalogQuery.data,
+      providerConfig: providersConfigQuery.data,
+      defaultProvider: String(providersConfigQuery.data?.default || "").trim(),
+      defaultModel: String(
+        providersConfigQuery.data?.providers?.[
+          String(providersConfigQuery.data?.default || "").trim()
+        ]?.default_model ||
+          providersConfigQuery.data?.providers?.[
+            String(providersConfigQuery.data?.default || "").trim()
+          ]?.defaultModel ||
+          ""
+      ).trim(),
+    });
   }, [providersCatalogQuery.data, providersConfigQuery.data]);
 
   const selectedProviderModels = useMemo(() => {
@@ -396,7 +398,6 @@ export function OptimizationCampaignsPanel({
                 {providerOptions.map((provider: any) => (
                   <option key={provider.id} value={provider.id}>
                     {provider.id}
-                    {provider.configured ? "" : " (catalog only)"}
                   </option>
                 ))}
               </select>

@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import YAML from "yaml";
 import type { TandemClient } from "@frumu/tandem-client";
 import { renderIcons } from "../app/icons.js";
+import { buildPlannerProviderOptions } from "../features/planner/plannerShared";
 import { ProviderModelSelector } from "../components/ProviderModelSelector";
 import {
   applyScheduleDefaultsToEditor,
@@ -829,27 +830,12 @@ export function AdvancedMissionBuilderPanel({
   ]);
 
   const providers = useMemo<ProviderOption[]>(() => {
-    const rows = Array.isArray((providersCatalogQuery.data as any)?.all)
-      ? (providersCatalogQuery.data as any).all
-      : [];
-    const configProviders =
-      ((providersConfigQuery.data as any)?.providers as Record<string, any> | undefined) || {};
-    const mapped = rows
-      .map((provider: any) => ({
-        id: String(provider?.id || "").trim(),
-        models: Object.keys(provider?.models || {}),
-        configured: !!configProviders[String(provider?.id || "").trim()],
-      }))
-      .filter((provider: ProviderOption) => provider.id)
-      .sort((a, b) => a.id.localeCompare(b.id));
-    if (defaultProvider && !mapped.some((row) => row.id === defaultProvider)) {
-      mapped.unshift({
-        id: defaultProvider,
-        models: defaultModel ? [defaultModel] : [],
-        configured: true,
-      });
-    }
-    return mapped;
+    return buildPlannerProviderOptions({
+      providerCatalog: providersCatalogQuery.data,
+      providerConfig: providersConfigQuery.data,
+      defaultProvider,
+      defaultModel,
+    });
   }, [defaultModel, defaultProvider, providersCatalogQuery.data, providersConfigQuery.data]);
 
   const mcpServers = useMemo(

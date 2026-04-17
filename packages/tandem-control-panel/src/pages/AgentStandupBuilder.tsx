@@ -6,6 +6,7 @@ import { EmptyState } from "./ui";
 import { ProviderModelSelector } from "../components/ProviderModelSelector";
 import { ScheduleBuilder } from "../features/automations/ScheduleBuilder";
 import type { ScheduleValue } from "../features/automations/scheduleBuilder";
+import { buildPlannerProviderOptions } from "../features/planner/plannerShared";
 import { TimezoneField } from "../features/automations/TimezoneField";
 import { isValidTimezone } from "../features/automations/timezone";
 
@@ -94,7 +95,10 @@ function resolveDefaultStandupModel(
   providersConfig: any
 ): ModelDraft {
   const configuredProvider = String(providersConfig?.default || "").trim();
-  const provider = configuredProvider || providerOptions[0]?.id || "";
+  const provider =
+    providerOptions.find((entry) => entry.id === configuredProvider)?.id ||
+    providerOptions[0]?.id ||
+    "";
   if (!provider) return { provider: "", model: "" };
   const models = providerOptions.find((entry) => entry.id === provider)?.models || [];
   const model = String(
@@ -183,24 +187,20 @@ export function AgentStandupBuilder({
       ? "Timezone must be a valid IANA timezone like Europe/Berlin."
       : "";
   const providerOptions = useMemo<ProviderOption[]>(() => {
-    const rows = Array.isArray((providersCatalogQuery.data as any)?.all)
-      ? (providersCatalogQuery.data as any).all
-      : [];
-    const configuredProviders = ((providersConfigQuery.data as any)?.providers || {}) as Record<
-      string,
-      any
-    >;
-    return rows
-      .map((provider: any) => ({
-        id: String(provider?.id || "").trim(),
-        models: Object.keys(provider?.models || {}),
-        configured: Object.prototype.hasOwnProperty.call(
-          configuredProviders,
-          String(provider?.id || "").trim()
-        ),
-      }))
-      .filter((provider: ProviderOption) => !!provider.id)
-      .sort((a, b) => a.id.localeCompare(b.id));
+    return buildPlannerProviderOptions({
+      providerCatalog: providersCatalogQuery.data,
+      providerConfig: providersConfigQuery.data,
+      defaultProvider: String(providersConfigQuery.data?.default || "").trim(),
+      defaultModel: String(
+        providersConfigQuery.data?.providers?.[
+          String(providersConfigQuery.data?.default || "").trim()
+        ]?.default_model ||
+          providersConfigQuery.data?.providers?.[
+            String(providersConfigQuery.data?.default || "").trim()
+          ]?.defaultModel ||
+          ""
+      ).trim(),
+    });
   }, [providersCatalogQuery.data, providersConfigQuery.data]);
   const defaultStandupModel = useMemo(
     () => resolveDefaultStandupModel(providerOptions, providersConfigQuery.data),
