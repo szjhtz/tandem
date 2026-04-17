@@ -160,6 +160,7 @@ export function MyAutomationsContainer({
     };
   });
   const isWorkflowRun = selectedRunId.startsWith("automation-v2-run-");
+  const runInspectorActive = viewMode === "running" && !!selectedRunId;
 
   const automationsQuery = useQuery({
     queryKey: ["automations", "list"],
@@ -274,25 +275,25 @@ export function MyAutomationsContainer({
   });
   const runDetailQuery = useQuery({
     queryKey: ["automations", "run", selectedRunId],
-    enabled: !!selectedRunId,
+    enabled: runInspectorActive,
     queryFn: () =>
       (isWorkflowRun
         ? client?.automationsV2?.getRun?.(selectedRunId)
         : client?.automations?.getRun?.(selectedRunId)
       )?.catch(() => ({ run: null })) ?? Promise.resolve({ run: null }),
-    refetchInterval: selectedRunId ? 5000 : false,
+    refetchInterval: runInspectorActive ? 5000 : false,
   });
   const runArtifactsQuery = useQuery({
     queryKey: ["automations", "run", "artifacts", selectedRunId],
-    enabled: !!selectedRunId && !isWorkflowRun,
+    enabled: runInspectorActive && !isWorkflowRun,
     queryFn: () =>
       client?.automations?.listArtifacts?.(selectedRunId).catch(() => ({ artifacts: [] })),
-    refetchInterval: selectedRunId ? 8000 : false,
+    refetchInterval: runInspectorActive ? 8000 : false,
   });
   const taskResetPreviewQuery = useQuery({
     queryKey: ["automations", "run", "task-reset-preview", selectedRunId, selectedBoardTaskId],
     enabled:
-      !!selectedRunId &&
+      runInspectorActive &&
       isWorkflowRun &&
       String(selectedBoardTaskId || "").startsWith("node-") &&
       !!String(selectedBoardTaskId || "").trim() &&
@@ -315,10 +316,12 @@ export function MyAutomationsContainer({
   const sessionMessageQueries = useQueries({
     queries: availableSessionIds.map((sessionId) => ({
       queryKey: ["automations", "run", "session", selectedRunId, sessionId, "messages"],
-      enabled: !!selectedRunId && !!sessionId,
+      enabled: runInspectorActive && !!sessionId,
       queryFn: () => client?.sessions?.messages?.(sessionId).catch(() => []) ?? Promise.resolve([]),
       refetchInterval:
-        selectedRunId && sessionId && isActiveRunStatus((runDetailQuery.data as any)?.run?.status)
+        runInspectorActive &&
+        sessionId &&
+        isActiveRunStatus((runDetailQuery.data as any)?.run?.status)
           ? 4000
           : false,
     })),
@@ -329,26 +332,28 @@ export function MyAutomationsContainer({
       ""
   ).trim();
   const selectedContextRunId = String(
-    (runDetailQuery.data as any)?.contextRunID ||
-      (isWorkflowRun && selectedRunId ? `automation-v2-${selectedRunId}` : "")
+    (runInspectorActive ? (runDetailQuery.data as any)?.contextRunID : "") ||
+      (runInspectorActive && isWorkflowRun && selectedRunId ? `automation-v2-${selectedRunId}` : "")
   ).trim();
   const runHistoryQuery = useQuery({
     queryKey: ["automations", "history", selectedAutomationId],
-    enabled: !!selectedAutomationId && !isWorkflowRun,
+    enabled: runInspectorActive && !!selectedAutomationId && !isWorkflowRun,
     queryFn: () =>
       client?.automations?.history?.(selectedAutomationId, 80).catch(() => ({ events: [] })),
-    refetchInterval: selectedRunId ? 10000 : false,
+    refetchInterval: runInspectorActive ? 10000 : false,
   });
   const persistedRunEventsQuery = useQuery({
     queryKey: ["automations", "run", "events", selectedRunId],
-    enabled: !!selectedRunId && !!client?.runEvents,
+    enabled: runInspectorActive && !!client?.runEvents,
     queryFn: () => client.runEvents(selectedRunId, { tail: 400 }).catch(() => []),
     refetchInterval:
-      selectedRunId && isActiveRunStatus((runDetailQuery.data as any)?.run?.status) ? 5000 : false,
+      runInspectorActive && isActiveRunStatus((runDetailQuery.data as any)?.run?.status)
+        ? 5000
+        : false,
   });
   const workflowContextRunQuery = useQuery({
     queryKey: ["automations", "run", "context", selectedContextRunId],
-    enabled: !!selectedContextRunId,
+    enabled: runInspectorActive && !!selectedContextRunId,
     queryFn: () =>
       api(`/api/engine/context/runs/${encodeURIComponent(selectedContextRunId)}`).catch(() => ({
         run: null,
@@ -360,7 +365,7 @@ export function MyAutomationsContainer({
   });
   const workflowContextBlackboardQuery = useQuery({
     queryKey: ["automations", "run", "context", selectedContextRunId, "blackboard"],
-    enabled: !!selectedContextRunId,
+    enabled: runInspectorActive && !!selectedContextRunId,
     queryFn: () =>
       api(`/api/engine/context/runs/${encodeURIComponent(selectedContextRunId)}/blackboard`).catch(
         () => ({
@@ -374,7 +379,7 @@ export function MyAutomationsContainer({
   });
   const workflowContextEventsQuery = useQuery({
     queryKey: ["automations", "run", "context", selectedContextRunId, "events"],
-    enabled: !!selectedContextRunId,
+    enabled: runInspectorActive && !!selectedContextRunId,
     queryFn: () =>
       api(`/api/engine/context/runs/${encodeURIComponent(selectedContextRunId)}/events`).catch(
         () => ({ events: [] })
@@ -386,7 +391,7 @@ export function MyAutomationsContainer({
   });
   const workflowContextPatchesQuery = useQuery({
     queryKey: ["automations", "run", "context", selectedContextRunId, "patches"],
-    enabled: !!selectedContextRunId,
+    enabled: runInspectorActive && !!selectedContextRunId,
     queryFn: () =>
       api(
         `/api/engine/context/runs/${encodeURIComponent(selectedContextRunId)}/blackboard/patches`
@@ -1823,6 +1828,7 @@ export function MyAutomationsContainer({
   );
 
   useSelectedRunLifecycle({
+    enabled: runInspectorActive,
     availableSessionIds,
     queryClient,
     selectedRunId,
@@ -1877,7 +1883,7 @@ export function MyAutomationsContainer({
         return;
       }
     },
-    { enabled: !!selectedRunId }
+    { enabled: runInspectorActive }
   );
   useEngineStream(
     selectedContextRunId
@@ -1900,7 +1906,7 @@ export function MyAutomationsContainer({
         return;
       }
     },
-    { enabled: !!selectedContextRunId }
+    { enabled: runInspectorActive && !!selectedContextRunId }
   );
   useEngineStream(
     selectedRunId && selectedSessionId
@@ -1929,7 +1935,7 @@ export function MyAutomationsContainer({
         return;
       }
     },
-    { enabled: !!selectedRunId && !!selectedSessionId }
+    { enabled: runInspectorActive && !!selectedSessionId }
   );
   useEngineStream(
     selectedRunId ? "/api/global/event" : "",
@@ -1947,7 +1953,7 @@ export function MyAutomationsContainer({
         return;
       }
     },
-    { enabled: !!selectedRunId }
+    { enabled: runInspectorActive }
   );
   useEffect(() => {
     const root = rootRef.current;

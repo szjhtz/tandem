@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 
 type UseSelectedRunLifecycleArgs = {
+  enabled: boolean;
   availableSessionIds: string[];
   queryClient: any;
   selectedRunId: string;
@@ -16,6 +17,7 @@ type UseSelectedRunLifecycleArgs = {
 };
 
 export function useSelectedRunLifecycle({
+  enabled,
   availableSessionIds,
   queryClient,
   selectedRunId,
@@ -30,21 +32,24 @@ export function useSelectedRunLifecycle({
   setSessionLogPinnedToBottom,
 }: UseSelectedRunLifecycleArgs) {
   useEffect(() => {
+    if (!enabled) return;
     setSelectedSessionId((current) => {
       if (current && availableSessionIds.includes(current)) return current;
       return availableSessionIds[0] || "";
     });
-  }, [availableSessionIds, setSelectedSessionId]);
+  }, [availableSessionIds, enabled, setSelectedSessionId]);
 
   useEffect(() => {
+    if (!enabled) return;
     setSelectedSessionFilterId((current) => {
       if (current === "all") return current;
       if (current && availableSessionIds.includes(current)) return current;
       return "all";
     });
-  }, [availableSessionIds, setSelectedSessionFilterId]);
+  }, [availableSessionIds, enabled, setSelectedSessionFilterId]);
 
   useEffect(() => {
+    if (!enabled) return;
     setRunEvents([]);
     setSelectedLogSource("all");
     setSelectedBoardTaskId("");
@@ -58,10 +63,11 @@ export function useSelectedRunLifecycle({
     setSelectedBoardTaskId,
     setSessionEvents,
     setSessionLogPinnedToBottom,
+    enabled,
   ]);
 
   useEffect(() => {
-    if (!selectedRunId) return;
+    if (!enabled || !selectedRunId) return;
     const refreshSelectedRun = () => {
       void Promise.all([
         queryClient.invalidateQueries({
@@ -108,15 +114,15 @@ export function useSelectedRunLifecycle({
       window.removeEventListener("focus", refreshSelectedRun);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
-  }, [queryClient, selectedContextRunId, selectedRunId]);
+  }, [enabled, queryClient, selectedContextRunId, selectedRunId]);
 
   useEffect(() => {
-    if (!selectedRunId) return;
+    if (!enabled || !selectedRunId) return;
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
       onSelectRunId("");
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [onSelectRunId, selectedRunId]);
+  }, [enabled, onSelectRunId, selectedRunId]);
 }

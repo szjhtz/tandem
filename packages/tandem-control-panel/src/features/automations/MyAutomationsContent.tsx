@@ -893,7 +893,7 @@ export function MyAutomationsContent({ state, actions, helpers }: any) {
       ) : null}
       <RunDebuggerDialog
         state={{
-          selectedRunId,
+          selectedRunId: viewMode === "running" ? selectedRunId : "",
           selectedRun,
           isWorkflowRun,
           runStatus,
