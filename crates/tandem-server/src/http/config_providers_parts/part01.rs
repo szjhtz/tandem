@@ -486,13 +486,30 @@ pub(super) async fn provider_oauth_authorize(
     let expires_at_ms = created_at_ms.saturating_add(10 * 60 * 1000);
     let (code_verifier, code_challenge) = generate_pkce_pair();
     let state_token = generate_oauth_state();
-    if let Err(error) = ensure_openai_codex_local_callback_server(state.clone()).await {
-        return Json(json!({
-            "ok": false,
-            "error": format!("failed to start local Codex callback server: {error}"),
-        }));
+    let effective_cfg = state.config.get_effective_value().await;
+    let hosted_managed = hosted_managed_from_config(&effective_cfg);
+    let hosted_public_url = hosted_public_url_from_config(&effective_cfg)
+        .or_else(|| {
+            let server_base_url = state.server_base_url();
+            let trimmed = server_base_url.trim().trim_end_matches('/').to_string();
+            (!trimmed.is_empty()).then_some(trimmed)
+        })
+        .unwrap_or_else(|| "http://127.0.0.1:39731".to_string());
+    if provider_id == OPENAI_CODEX_PROVIDER_ID && !hosted_managed {
+        if let Err(error) = ensure_openai_codex_local_callback_server(state.clone()).await {
+            return Json(json!({
+                "ok": false,
+                "error": format!("failed to start local Codex callback server: {error}"),
+            }));
+        }
     }
-    let redirect_uri = provider_oauth_redirect_uri(&state, &provider_id);
+    let redirect_uri = if provider_id == OPENAI_CODEX_PROVIDER_ID && hosted_managed {
+        provider_oauth_redirect_uri_for_base(&hosted_public_url, &provider_id)
+    } else if provider_id == OPENAI_CODEX_PROVIDER_ID {
+        OPENAI_CODEX_LOCAL_CALLBACK_URI.to_string()
+    } else {
+        provider_oauth_redirect_uri_for_base(&hosted_public_url, &provider_id)
+    };
     let authorization_url =
         build_openai_codex_authorization_url(&redirect_uri, &code_challenge, &state_token);
 
@@ -904,6 +921,18 @@ mod tests {
         assert!(!url.contains("originator="));
         assert!(!url.contains("api.connectors.read"));
         assert!(!url.contains("api.connectors.invoke"));
+    }
+
+    #[test]
+    fn hosted_codex_redirect_uses_public_callback_route() {
+        let url = provider_oauth_redirect_uri_for_base(
+            "https://test.hosted.tandem.ac",
+            OPENAI_CODEX_PROVIDER_ID,
+        );
+        assert_eq!(
+            url,
+            "https://test.hosted.tandem.ac/provider/openai-codex/oauth/callback"
+        );
     }
 
     #[test]
@@ -1872,6 +1901,24 @@ fn provider_has_env_secret(provider_id: &str) -> bool {
     })
 }
 
+fn hosted_managed_from_config(cfg: &Value) -> bool {
+    cfg.get("hosted")
+        .and_then(Value::as_object)
+        .and_then(|hosted| hosted.get("managed"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
+
+fn hosted_public_url_from_config(cfg: &Value) -> Option<String> {
+    cfg.get("hosted")
+        .and_then(Value::as_object)
+        .and_then(|hosted| hosted.get("public_url"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
 fn provider_requires_api_key(provider_id: &str) -> bool {
     !matches!(
         canonical_provider_id(provider_id).as_str(),
@@ -1879,17 +1926,11 @@ fn provider_requires_api_key(provider_id: &str) -> bool {
     )
 }
 
-fn provider_oauth_redirect_uri(state: &AppState, provider_id: &str) -> String {
+fn provider_oauth_redirect_uri_for_base(base_url: &str, provider_id: &str) -> String {
+    let base = base_url.trim().trim_end_matches('/').to_string();
     if canonical_provider_id(provider_id) == OPENAI_CODEX_PROVIDER_ID {
-        return OPENAI_CODEX_LOCAL_CALLBACK_URI.to_string();
+        return format!("{base}/provider/{provider_id}/oauth/callback");
     }
-    let base = state
-        .server_base_url
-        .read()
-        .ok()
-        .map(|value| value.trim().trim_end_matches('/').to_string())
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| "http://127.0.0.1:39731".to_string());
     format!("{base}/provider/{provider_id}/oauth/callback")
 }
 

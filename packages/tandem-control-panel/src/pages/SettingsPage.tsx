@@ -972,6 +972,7 @@ export function SettingsPage({
     return {} as Record<string, any>;
   }, [providersAuth.data]);
   const localEngine = systemHealthQuery.data?.localEngine === true;
+  const hostedManaged = installProfileQuery.data?.hosted_managed === true;
   const channelDefaultModel = useMemo(() => {
     const defaultProvider = String(providersConfig.data?.default || "").trim();
     const defaultModel = String(
@@ -2525,7 +2526,8 @@ export function SettingsPage({
                       <div className="rounded-2xl border border-slate-700/60 bg-slate-950/25 p-4">
                         <div className="font-medium">Hosted management</div>
                         <div className="tcp-subtle mt-1 text-xs">
-                          Detect whether this panel is running on a Tandem-managed hosted deployment so hosted-only update and notification UX can stay gated.
+                          Detect whether this panel is running on a Tandem-managed hosted deployment
+                          so hosted-only update and notification UX can stay gated.
                         </div>
                         <div className="mt-3 grid gap-2 text-xs">
                           <div className="flex items-center justify-between gap-3">
@@ -2556,7 +2558,8 @@ export function SettingsPage({
                         </div>
                         {installProfileQuery.data?.hosted_managed ? (
                           <div className="mt-3 rounded-xl border border-lime-500/20 bg-lime-500/10 px-3 py-2 text-xs text-lime-200">
-                            Hosted-managed features can safely key off this signal instead of guessing from hostname or environment.
+                            Hosted-managed features can safely key off this signal instead of
+                            guessing from hostname or environment.
                           </div>
                         ) : null}
                       </div>
@@ -2937,7 +2940,8 @@ export function SettingsPage({
                                 providerAuth?.connected === true &&
                                 oauthStatus !== "reauth_required";
                               const supportsOAuth = providerId === OPENAI_CODEX_PROVIDER_ID;
-                              const canUseOAuthHere = !supportsOAuth || localEngine;
+                              const canUseOAuthHere =
+                                !supportsOAuth || localEngine || hostedManaged;
                               const oauthBadge = oauthPending
                                 ? { tone: "info" as const, text: "sign-in pending" }
                                 : oauthConnected
@@ -3075,15 +3079,19 @@ export function SettingsPage({
                                           ) : null}
                                           {canUseOAuthHere ? (
                                             <div>
-                                              {localCodexSessionAvailable
-                                                ? "Local Codex CLI session detected on this machine."
-                                                : "If the Codex CLI is already signed in on this machine, you can mirror that session here instead of starting a fresh browser login."}
+                                              {hostedManaged &&
+                                              providerId === OPENAI_CODEX_PROVIDER_ID
+                                                ? "This Tandem-hosted server can connect Codex directly through the hosted OAuth flow."
+                                                : localCodexSessionAvailable
+                                                  ? "Local Codex CLI session detected on this machine."
+                                                  : "If the Codex CLI is already signed in on this machine, you can mirror that session here instead of starting a fresh browser login."}
                                             </div>
                                           ) : null}
                                           {!canUseOAuthHere ? (
                                             <div>
                                               Codex account sign-in is only enabled when this
-                                              control panel is connected to a local engine.
+                                              control panel is connected to a local engine or a
+                                              Tandem-hosted managed server.
                                             </div>
                                           ) : null}
                                         </div>
@@ -3106,27 +3114,31 @@ export function SettingsPage({
                                               ? "Reconnect Codex Account"
                                               : "Connect Codex Account"}
                                           </button>
-                                          <button
-                                            type="button"
-                                            className="tcp-btn h-10 px-4 text-sm"
-                                            disabled={
-                                              !canUseOAuthHere ||
-                                              authorizeProviderOAuthMutation.isPending ||
-                                              useLocalCodexSessionMutation.isPending
-                                            }
-                                            onClick={() => {
-                                              setOauthSessionByProvider((current) => {
-                                                if (!current[providerId]) return current;
-                                                const next = { ...current };
-                                                delete next[providerId];
-                                                return next;
-                                              });
-                                              useLocalCodexSessionMutation.mutate({ providerId });
-                                            }}
-                                          >
-                                            <i data-lucide="link-2"></i>
-                                            Use Local Codex Session
-                                          </button>
+                                          {localEngine &&
+                                          providerId === OPENAI_CODEX_PROVIDER_ID &&
+                                          localCodexSessionAvailable ? (
+                                            <button
+                                              type="button"
+                                              className="tcp-btn h-10 px-4 text-sm"
+                                              disabled={
+                                                !canUseOAuthHere ||
+                                                authorizeProviderOAuthMutation.isPending ||
+                                                useLocalCodexSessionMutation.isPending
+                                              }
+                                              onClick={() => {
+                                                setOauthSessionByProvider((current) => {
+                                                  if (!current[providerId]) return current;
+                                                  const next = { ...current };
+                                                  delete next[providerId];
+                                                  return next;
+                                                });
+                                                useLocalCodexSessionMutation.mutate({ providerId });
+                                              }}
+                                            >
+                                              <i data-lucide="link-2"></i>
+                                              Use Local Codex Session
+                                            </button>
+                                          ) : null}
                                           {providerId === OPENAI_CODEX_PROVIDER_ID &&
                                           oauthConnected &&
                                           !codexIsDefaultProvider ? (

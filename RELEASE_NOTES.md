@@ -2,6 +2,17 @@
 
 This is the canonical release-notes file used by release tooling.
 
+## v0.4.32 (Released 2026-04-19)
+
+This release makes Codex account sign-in work on Tandem-hosted provisioned servers, so hosted workflows can connect to a real LLM instead of falling back to the generic default provider.
+
+### Hosted Codex auth
+
+- **Hosted-safe Codex OAuth**: Tandem-hosted control panels can now connect Codex through the hosted OAuth flow on provisioned servers instead of being blocked behind the local-engine-only browser path.
+- **Public callback for hosted servers**: Codex OAuth redirect handling now uses the hosted public callback route when Tandem is running in hosted-managed mode, so the authorization flow can complete on a remote VM.
+- **Hosted settings gate**: The control panel settings page now enables Codex account connect/reconnect actions for hosted-managed servers and explains that hosted servers use the hosted OAuth path.
+- **Hosted provider fallback fix**: Provisioned servers no longer get stuck on the generic fallback provider simply because the Codex connect button was disabled in hosted mode.
+
 ## v0.4.31 (Released 2026-04-17)
 
 This release focuses on workflow reliability and authoring clarity after the `v0.4.30` Codex launch, plus a major round of automation-v2 executor and state-persistence fixes that surfaced under real production load.

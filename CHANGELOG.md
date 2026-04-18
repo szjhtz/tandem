@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.32] - Released 2026-04-19
+
+### Added
+
+- **Hosted-safe Codex OAuth**: Tandem-hosted control panels can now connect Codex on provisioned servers through the hosted OAuth flow instead of being blocked behind the local-engine-only browser path.
+
+### Changed
+
+- **Hosted provider UX**: The Codex account connect/reconnect controls in Settings now stay enabled on Tandem-hosted managed servers, with copy updated to explain that hosted mode uses the hosted OAuth path.
+
+### Fixed
+
+- **Codex callback routing for hosted servers**: Codex OAuth now uses the hosted public callback route when Tandem is running in hosted-managed mode, so provisioned servers can complete the authorization flow without relying on a localhost callback.
+- **Hosted fallback behavior**: Hosted control panels no longer get stuck on generic provider fallback just because Codex account sign-in was gated to local-engine-only mode.
+
 ## [0.4.31] - Released 2026-04-17
 
 ### Added
