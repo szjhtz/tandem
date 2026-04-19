@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.33] - Released 2026-04-19
+
+### Fixed
+
+- **Hosted install profile propagation**: The live control panel startup path now returns hosted-managed metadata from `/api/install/profile` and `/api/capabilities`, so provisioned hosted servers are recognized as managed installs and the Codex Account button is enabled without manual config edits.
+- **Hosted Codex OAuth routing**: Hosted-managed servers continue to use the hosted public control-plane URL for OAuth callbacks instead of falling back to the localhost-only flow.
+
 ## [0.4.32] - Released 2026-04-19
 
 ### Added

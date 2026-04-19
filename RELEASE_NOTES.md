@@ -2,6 +2,15 @@
 
 This is the canonical release-notes file used by release tooling.
 
+## v0.4.33 (Released 2026-04-19)
+
+This release fixes hosted control panels so provisioned servers correctly identify themselves as Tandem-managed installs and can connect Codex without manual config edits.
+
+### Hosted Codex auth
+
+- **Hosted install profile propagation fix**: The live control panel now returns hosted-managed metadata from `/api/install/profile` and `/api/capabilities`, so the Codex Account button is enabled automatically on provisioned hosted servers.
+- **Hosted OAuth readiness**: Hosted servers now surface the hosted control-plane URL and managed-hosted flag consistently through the runtime config path, so Codex sign-in uses the hosted flow instead of falling back to the local-engine-only path.
+
 ## v0.4.32 (Released 2026-04-19)
 
 This release makes Codex account sign-in work on Tandem-hosted provisioned servers, so hosted workflows can connect to a real LLM instead of falling back to the generic default provider. It also adds a managed file explorer for hosted uploads, artifacts, and exports.

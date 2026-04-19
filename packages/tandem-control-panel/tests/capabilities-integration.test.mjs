@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { createServer } from "node:http";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import test from "node:test";
 
 function getFreePort() {
@@ -223,4 +226,115 @@ test("ACA absent + engine up — /api/capabilities/metrics has error counts", as
   const om = orchMetrics.json();
   assert.equal(typeof om.streams_active, "number");
   assert.equal(typeof om.stream_errors, "number");
+});
+
+test("Hosted install profile exposes hosted-managed config to the control panel", async (t) => {
+  const fakeEnginePort = await getFreePort();
+  const engineToken = "test-token";
+  const engine = await new Promise((resolve) => {
+    const s = createServer(async (req, res) => {
+      if (new URL(req.url || "/", "http://127.0.0.1").pathname === "/global/health") {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ ready: true, healthy: true, version: "test-engine" }));
+        return;
+      }
+      res.writeHead(404);
+      res.end();
+    });
+    s.listen(fakeEnginePort, "127.0.0.1", () => resolve(s));
+  });
+  t.after(() => engine.close());
+
+  const tempDir = await mkdtemp(join(tmpdir(), "tcp-hosted-config-"));
+  t.after(() => rm(tempDir, { recursive: true, force: true }));
+
+  const configPath = join(tempDir, "control-panel-config.json");
+  await writeFile(
+    configPath,
+    JSON.stringify(
+      {
+        version: 1,
+        control_panel: {
+          mode: "auto",
+          aca_compact_nav: true,
+          public_url: "https://t-12345.hosted.tandem.ac",
+        },
+        hosted: {
+          managed: true,
+          provider: "tandem-hosted",
+          deployment_id: "deployment-123",
+          deployment_slug: "t-12345",
+          hostname: "t-12345.hosted.tandem.ac",
+          public_url: "https://t-12345.hosted.tandem.ac",
+          control_plane_url: "https://tandem.ac",
+          release_version: "v0.4.32",
+          release_channel: "stable",
+          update_policy: "manual",
+        },
+        repository: {
+          path: "/workspace/repo",
+          slug: "repo",
+          clone_url: "https://example.com/repo.git",
+          default_branch: "main",
+          worktree_root: "/workspace/repo",
+          remote_name: "origin",
+        },
+        task_source: {
+          type: "manual",
+          source_name: "hosted",
+          prompt: "",
+          payload: {},
+        },
+        provider: {
+          id: "openai",
+          model: "gpt-4.1-mini",
+        },
+      },
+      null,
+      2
+    )
+  );
+
+  const panelPort = await getFreePort();
+  const baseUrl = `http://127.0.0.1:${panelPort}`;
+  const panel = spawn(process.execPath, ["bin/setup.js"], {
+    cwd: new URL("..", import.meta.url),
+    env: {
+      ...process.env,
+      TANDEM_CONTROL_PANEL_PORT: String(panelPort),
+      TANDEM_ENGINE_URL: `http://127.0.0.1:${fakeEnginePort}`,
+      TANDEM_CONTROL_PANEL_AUTO_START_ENGINE: "0",
+      TANDEM_API_TOKEN: engineToken,
+      TANDEM_CONTROL_PANEL_CONFIG_FILE: configPath,
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let output = "";
+  panel.stdout.on("data", (c) => {
+    output += c.toString();
+  });
+  panel.stderr.on("data", (c) => {
+    output += c.toString();
+  });
+  t.after(() => {
+    if (!panel.killed) panel.kill("SIGTERM");
+  });
+
+  await waitForReady(baseUrl);
+
+  const profile = await request(baseUrl, "/api/install/profile");
+  assert.equal(profile.status, 200, `install profile failed: ${output}`);
+  const body = profile.json();
+  assert.equal(body.hosted_managed, true);
+  assert.equal(body.hosted_control_plane_url, "https://tandem.ac");
+  assert.equal(body.hosted_public_url, "https://t-12345.hosted.tandem.ac");
+  assert.equal(body.hosted_deployment_slug, "t-12345");
+  assert.equal(body.control_panel_config_ready, true);
+
+  const caps = await request(baseUrl, "/api/capabilities");
+  assert.equal(caps.status, 200, `capabilities failed: ${output}`);
+  const capsBody = caps.json();
+  assert.equal(capsBody.hosted_managed, true);
+  assert.equal(capsBody.hosted_control_plane_url, "https://tandem.ac");
+  assert.equal(capsBody.hosted_public_url, "https://t-12345.hosted.tandem.ac");
 });
