@@ -445,6 +445,21 @@ fn mcp_public_base_url(state: &AppState, cfg: &Value) -> String {
         .unwrap_or_else(|| state.server_base_url())
 }
 
+fn mcp_public_base_url_from_headers(headers: &HeaderMap) -> Option<String> {
+    let host = headers
+        .get("x-forwarded-host")
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
+    let proto = headers
+        .get("x-forwarded-proto")
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("http");
+    Some(format!("{proto}://{host}"))
+}
+
 fn mcp_oauth_redirect_uri_for_base(base_url: &str, server_name: &str) -> String {
     let base = base_url.trim().trim_end_matches('/');
     format!(
@@ -677,7 +692,11 @@ async fn discover_mcp_oauth_bootstrap(
     })
 }
 
-async fn start_mcp_oauth_session(state: &AppState, name: &str) -> Result<McpAuthChallenge, String> {
+async fn start_mcp_oauth_session(
+    state: &AppState,
+    name: &str,
+    public_base_url_hint: Option<&str>,
+) -> Result<McpAuthChallenge, String> {
     let server = state
         .mcp
         .list()
@@ -699,7 +718,11 @@ async fn start_mcp_oauth_session(state: &AppState, name: &str) -> Result<McpAuth
     let bootstrap =
         discover_mcp_oauth_bootstrap(&endpoint, &effective_mcp_headers(&server)).await?;
     let effective_cfg = state.config.get_effective_value().await;
-    let public_base_url = mcp_public_base_url(state, &effective_cfg);
+    let public_base_url = public_base_url_hint
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| mcp_public_base_url(state, &effective_cfg));
     let redirect_uri = mcp_oauth_redirect_uri_for_base(&public_base_url, name);
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(15))
@@ -1214,8 +1237,10 @@ pub(crate) async fn sync_mcp_tools_for_server(state: &AppState, name: &str) -> u
 pub(super) async fn connect_mcp(
     State(state): State<AppState>,
     Path(name): Path<String>,
+    headers: HeaderMap,
 ) -> Json<Value> {
     let ok = state.mcp.connect(&name).await;
+    let public_base_url = mcp_public_base_url_from_headers(&headers);
     let auth_challenge = if ok {
         None
     } else {
@@ -1225,7 +1250,9 @@ pub(super) async fn connect_mcp(
         } else {
             let server = state.mcp.list().await.get(&name).cloned();
             if server.as_ref().is_some_and(mcp_uses_oauth) {
-                start_mcp_oauth_session(&state, &name).await.ok()
+                start_mcp_oauth_session(&state, &name, public_base_url.as_deref())
+                    .await
+                    .ok()
             } else {
                 None
             }
@@ -1365,8 +1392,10 @@ pub(super) async fn patch_mcp(
 pub(super) async fn refresh_mcp(
     State(state): State<AppState>,
     Path(name): Path<String>,
+    headers: HeaderMap,
 ) -> Json<Value> {
     let result = state.mcp.refresh(&name).await;
+    let public_base_url = mcp_public_base_url_from_headers(&headers);
     match result {
         Ok(tools) => {
             let count = sync_mcp_tools_for_server(&state, &name).await;
@@ -1387,7 +1416,10 @@ pub(super) async fn refresh_mcp(
             if auth_challenge.is_none() {
                 let server = state.mcp.list().await.get(&name).cloned();
                 if server.as_ref().is_some_and(mcp_uses_oauth) {
-                    auth_challenge = start_mcp_oauth_session(&state, &name).await.ok();
+                    auth_challenge =
+                        start_mcp_oauth_session(&state, &name, public_base_url.as_deref())
+                            .await
+                            .ok();
                 }
             }
             let prefix = format!("mcp.{}.", mcp_namespace_segment(&name));
@@ -1435,8 +1467,9 @@ pub(super) async fn auth_mcp(
 pub(super) async fn callback_mcp(
     State(state): State<AppState>,
     Path(name): Path<String>,
+    headers: HeaderMap,
 ) -> Json<Value> {
-    authenticate_mcp(State(state), Path(name)).await
+    authenticate_mcp(State(state), Path(name), headers).await
 }
 
 pub(super) async fn callback_mcp_get(
@@ -1460,7 +1493,9 @@ pub(super) async fn callback_mcp_get(
 pub(super) async fn authenticate_mcp(
     State(state): State<AppState>,
     Path(name): Path<String>,
+    headers: HeaderMap,
 ) -> Json<Value> {
+    let public_base_url = mcp_public_base_url_from_headers(&headers);
     if let Some(session) = find_pending_mcp_oauth_session(&state, &name).await {
         let last_auth_challenge = current_mcp_auth_challenge(&state, &name).await;
         return Json(json!({
@@ -1497,7 +1532,10 @@ pub(super) async fn authenticate_mcp(
             if auth_challenge.is_none() {
                 let server = state.mcp.list().await.get(&name).cloned();
                 if server.as_ref().is_some_and(mcp_uses_oauth) {
-                    auth_challenge = start_mcp_oauth_session(&state, &name).await.ok();
+                    auth_challenge =
+                        start_mcp_oauth_session(&state, &name, public_base_url.as_deref())
+                            .await
+                            .ok();
                 }
             }
             Json(json!({

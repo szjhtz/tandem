@@ -2043,6 +2043,9 @@ async function proxyEngineRequest(req, res, session) {
   const incoming = new URL(req.url, `http://127.0.0.1:${PORTAL_PORT}`);
   const targetPath = incoming.pathname.replace(/^\/api\/engine/, "") || "/";
   const targetUrl = `${ENGINE_URL}${targetPath}${incoming.search}`;
+  const forwardedHost = String(req.headers.host || "").trim();
+  const forwardedProto = String(req.headers["x-forwarded-proto"] || "").trim()
+    || (req.socket && req.socket.encrypted ? "https" : "http");
 
   const headers = new Headers();
   for (const [key, value] of Object.entries(req.headers)) {
@@ -2056,6 +2059,8 @@ async function proxyEngineRequest(req, res, session) {
   }
   headers.set("authorization", `Bearer ${session.token}`);
   headers.set("x-tandem-token", session.token);
+  if (forwardedHost) headers.set("x-forwarded-host", forwardedHost);
+  if (forwardedProto) headers.set("x-forwarded-proto", forwardedProto);
 
   const hasBody = !["GET", "HEAD"].includes(req.method || "GET");
 
