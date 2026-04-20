@@ -405,7 +405,7 @@ function AppBody() {
     navigate("settings");
     if (!providerGateNoticeShown) {
       setProviderGateNoticeShown(true);
-      toast("info", "Set provider + default model first to unlock the control panel.");
+      toast("info", "Set provider + default model in Providers first to unlock the control panel.");
     }
   }, [lockedRoutes, navigate, providerGateNoticeShown, providerLocked, route, toast]);
 
@@ -667,11 +667,11 @@ function AppBody() {
               >
                 <h3 className="tcp-confirm-title">Provider Setup Required</h3>
                 <p className="tcp-confirm-message">
-                  Configure provider and default model in Settings to unlock all sections.
+                  Configure provider and default model in Providers to unlock all sections.
                 </p>
                 <div className="tcp-confirm-actions">
                   <button className="tcp-btn-primary" onClick={() => navigate("settings")}>
-                    Open Settings
+                    Open Providers
                   </button>
                 </div>
               </motion.div>

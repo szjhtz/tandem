@@ -51,7 +51,7 @@ async function request(url, path, opts = {}) {
   } catch {
     parsed = { raw: text };
   }
-  return { status: res.status, ok: res.ok, json: () => parsed, text: () => text };
+  return { status: res.status, ok: res.ok, headers: res.headers, json: () => parsed, text: () => text };
 }
 
 function extractCookie(res) {
@@ -337,4 +337,125 @@ test("Hosted install profile exposes hosted-managed config to the control panel"
   assert.equal(capsBody.hosted_managed, true);
   assert.equal(capsBody.hosted_control_plane_url, "https://tandem.ac");
   assert.equal(capsBody.hosted_public_url, "https://t-12345.hosted.tandem.ac");
+});
+
+test("Hosted install profile enables search and scheduler settings without a local engine URL", async (t) => {
+  const fakeEnginePort = await getFreePort();
+  const engineToken = "test-token";
+  const engine = await new Promise((resolve) => {
+    const s = createServer(async (req, res) => {
+      if (new URL(req.url || "/", "http://127.0.0.1").pathname === "/global/health") {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ ready: true, healthy: true, version: "test-engine" }));
+        return;
+      }
+      res.writeHead(404);
+      res.end();
+    });
+    s.listen(fakeEnginePort, "127.0.0.1", () => resolve(s));
+  });
+  t.after(() => engine.close());
+
+  const tempDir = await mkdtemp(join(tmpdir(), "tcp-hosted-search-settings-"));
+  t.after(() => rm(tempDir, { recursive: true, force: true }));
+
+  const configPath = join(tempDir, "control-panel-config.json");
+  await writeFile(
+    configPath,
+    JSON.stringify(
+      {
+        version: 1,
+        control_panel: {
+          mode: "auto",
+          aca_compact_nav: true,
+          public_url: "https://t-12345.hosted.tandem.ac",
+        },
+        hosted: {
+          managed: true,
+          provider: "tandem-hosted",
+          deployment_id: "deployment-123",
+          deployment_slug: "t-12345",
+          hostname: "t-12345.hosted.tandem.ac",
+          public_url: "https://t-12345.hosted.tandem.ac",
+          control_plane_url: "https://tandem.ac",
+          release_version: "v0.4.32",
+          release_channel: "stable",
+          update_policy: "manual",
+        },
+        repository: {
+          path: "/workspace/repo",
+          slug: "repo",
+          clone_url: "https://example.com/repo.git",
+          default_branch: "main",
+          worktree_root: "/workspace/repo",
+          remote_name: "origin",
+        },
+        task_source: {
+          type: "manual",
+          source_name: "hosted",
+          prompt: "",
+          payload: {},
+        },
+        provider: {
+          id: "openai",
+          model: "gpt-4.1-mini",
+        },
+      },
+      null,
+      2
+    )
+  );
+
+  const panelPort = await getFreePort();
+  const baseUrl = `http://127.0.0.1:${panelPort}`;
+  const panel = spawn(process.execPath, ["bin/setup.js"], {
+    cwd: new URL("..", import.meta.url),
+    env: {
+      ...process.env,
+      TANDEM_CONTROL_PANEL_PORT: String(panelPort),
+      TANDEM_ENGINE_URL: `http://engine.localtest.me:${fakeEnginePort}`,
+      TANDEM_CONTROL_PANEL_AUTO_START_ENGINE: "0",
+      TANDEM_API_TOKEN: engineToken,
+      TANDEM_CONTROL_PANEL_CONFIG_FILE: configPath,
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let output = "";
+  panel.stdout.on("data", (c) => {
+    output += c.toString();
+  });
+  panel.stderr.on("data", (c) => {
+    output += c.toString();
+  });
+  t.after(() => {
+    if (!panel.killed) panel.kill("SIGTERM");
+  });
+
+  await waitForReady(baseUrl);
+
+  const login = await request(baseUrl, "/api/auth/login", {
+    method: "POST",
+    body: { token: engineToken },
+  });
+  assert.equal(login.status, 200, `login failed: ${output}`);
+  const cookie = extractCookie(login);
+
+  const searchSettings = await request(baseUrl, "/api/system/search-settings", { cookie });
+  assert.equal(searchSettings.status, 200, `search settings failed: ${output}`);
+  const searchBody = searchSettings.json();
+  assert.equal(searchBody.available, true);
+  assert.equal(searchBody.local_engine, false);
+  assert.equal(searchBody.writable, true);
+  assert.ok(
+    ["auto", "brave", "exa", "searxng", "tandem", "none"].includes(searchBody.settings.backend),
+    `unexpected backend: ${searchBody.settings.backend}`
+  );
+
+  const schedulerSettings = await request(baseUrl, "/api/system/scheduler-settings", { cookie });
+  assert.equal(schedulerSettings.status, 200, `scheduler settings failed: ${output}`);
+  const schedulerBody = schedulerSettings.json();
+  assert.equal(schedulerBody.available, true);
+  assert.equal(schedulerBody.local_engine, false);
+  assert.equal(schedulerBody.writable, true);
+  assert.equal(schedulerBody.settings.mode, "multi");
 });

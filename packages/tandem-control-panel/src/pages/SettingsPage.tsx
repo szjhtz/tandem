@@ -784,7 +784,7 @@ export function SettingsPage({
   const [botAvatarUrl, setBotAvatarUrl] = useState(String(identity?.botAvatarUrl || ""));
   const [botControlPanelAlias, setBotControlPanelAlias] = useState("Control Center");
   const [activeSection, setActiveSection] = useState<SettingsSection>(
-    navigation?.acaMode ? "navigation" : "install"
+    providerStatus?.needsOnboarding ? "providers" : navigation?.acaMode ? "navigation" : "install"
   );
   const [installConfigText, setInstallConfigText] = useState("");
   const [installConfigError, setInstallConfigError] = useState("");
@@ -912,6 +912,11 @@ export function SettingsPage({
 
   useEffect(() => {
     if (currentRoute !== "settings") return;
+    if (providerStatus?.needsOnboarding) {
+      setActiveSection("providers");
+      setProviderDefaultsOpen(true);
+      return;
+    }
     if (!navigation?.acaMode) {
       setActiveSection("install");
       return;
@@ -923,6 +928,7 @@ export function SettingsPage({
   }, [
     currentRoute,
     navigation?.acaMode,
+    providerStatus?.needsOnboarding,
     installProfileQuery.data?.aca_integration,
     installProfileQuery.data?.control_panel_config_ready,
   ]);
@@ -3294,7 +3300,7 @@ export function SettingsPage({
                     <EmptyState
                       text={
                         searchSettingsQuery.data?.reason ||
-                        "Search settings are only editable here when the panel points at a local engine host."
+                        "Search settings are only editable here when the panel points at a local engine host or a Tandem-hosted managed server."
                       }
                     />
                   ) : (
@@ -3611,7 +3617,7 @@ export function SettingsPage({
                     <EmptyState
                       text={
                         schedulerSettingsQuery.data?.reason ||
-                        "Scheduler settings are only editable here when the panel points at a local engine host."
+                        "Scheduler settings are only editable here when the panel points at a local engine host or a Tandem-hosted managed server."
                       }
                     />
                   ) : (

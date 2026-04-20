@@ -1118,15 +1118,18 @@ function getManagedEngineEnvPath() {
 function readManagedSearchSettings() {
   const envPath = getManagedEngineEnvPath();
   const localEngine = isLocalEngineUrl(ENGINE_URL);
+  const hostedManaged = isHostedManagedControlPanel();
+  const available = localEngine || hostedManaged;
   const env = existsSync(envPath) ? parseDotEnv(readFileSync(envPath, "utf8")) : {};
   const timeoutRaw = Number.parseInt(String(env.TANDEM_SEARCH_TIMEOUT_MS || "10000"), 10);
   const timeoutMs = Number.isFinite(timeoutRaw)
     ? Math.min(Math.max(timeoutRaw, 1000), 120000)
     : 10000;
   return {
-    available: localEngine,
+    available,
     local_engine: localEngine,
-    writable: localEngine,
+    hosted_managed: hostedManaged,
+    writable: available,
     managed_env_path: envPath,
     restart_required: false,
     restart_hint: "Changes apply immediately.",
@@ -1142,15 +1145,15 @@ function readManagedSearchSettings() {
         env.TANDEM_EXA_API_KEY || env.TANDEM_EXA_SEARCH_API_KEY || env.EXA_API_KEY || ""
       ).trim(),
     },
-    reason: localEngine
+    reason: available
       ? ""
-      : "Search settings can only be edited here when the control panel points at a local engine host.",
+      : "Search settings can only be edited here when the control panel points at a local engine host or a Tandem-hosted managed server.",
   };
 }
 
 async function writeManagedSearchSettings(payload = {}) {
   const current = readManagedSearchSettings();
-  if (!current.local_engine) {
+  if (!current.writable) {
     const error = new Error(current.reason || "Search settings are not editable for this engine.");
     error.statusCode = 400;
     throw error;
@@ -1218,15 +1221,18 @@ async function writeManagedSearchSettings(payload = {}) {
 function getManagedSchedulerSettings() {
   const envPath = getManagedEngineEnvPath();
   const localEngine = isLocalEngineUrl(ENGINE_URL);
+  const hostedManaged = isHostedManagedControlPanel();
+  const available = localEngine || hostedManaged;
   const env = existsSync(envPath) ? parseDotEnv(readFileSync(envPath, "utf8")) : {};
   const modeRaw = String(env.TANDEM_SCHEDULER_MODE || "multi").trim().toLowerCase();
   const mode = modeRaw === "single" ? "single" : "multi";
   const maxRaw = Number.parseInt(String(env.TANDEM_SCHEDULER_MAX_CONCURRENT_RUNS || ""), 10);
   const maxConcurrentRuns = Number.isFinite(maxRaw) && maxRaw > 0 ? maxRaw : null;
   return {
-    available: localEngine,
+    available,
     local_engine: localEngine,
-    writable: localEngine,
+    hosted_managed: hostedManaged,
+    writable: available,
     managed_env_path: envPath,
     restart_required: false,
     restart_hint: "Restart tandem-engine after changing scheduler mode.",
@@ -1234,15 +1240,15 @@ function getManagedSchedulerSettings() {
       mode,
       max_concurrent_runs: maxConcurrentRuns,
     },
-    reason: localEngine
+    reason: available
       ? ""
-      : "Scheduler settings can only be edited here when the control panel points at a local engine host.",
+      : "Scheduler settings can only be edited here when the control panel points at a local engine host or a Tandem-hosted managed server.",
   };
 }
 
 async function writeManagedSchedulerSettings(payload = {}) {
   const current = getManagedSchedulerSettings();
-  if (!current.local_engine) {
+  if (!current.writable) {
     const error = new Error(
       current.reason || "Scheduler settings are not editable for this engine."
     );
@@ -1313,6 +1319,11 @@ function getControlPanelConfigPath() {
     stateDir: process.env.TANDEM_CONTROL_PANEL_STATE_DIR,
     env: process.env,
   });
+}
+
+function isHostedManagedControlPanel() {
+  const config = readControlPanelConfig(getControlPanelConfigPath());
+  return summarizeControlPanelConfig(config).hosted?.managed === true;
 }
 
 async function getInstallProfile({ acaAvailable = false, acaReason = "" } = {}) {

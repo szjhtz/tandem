@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.34] - Unreleased
+
+### Fixed
+
+- **Providers-first onboarding**: The provider setup gate now routes to Providers and expands the provider catalog on first view instead of landing on the Install section.
+- **Hosted settings visibility**: Web Search and Scheduler settings are now available on Tandem-hosted managed servers, so provisioned installs can configure Brave/Exa keys and scheduler defaults without a local engine URL.
+
 ## [0.4.33] - Released 2026-04-19
 
 ### Fixed

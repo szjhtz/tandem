@@ -172,8 +172,8 @@ function setupCardFromResponse(response: SetupUnderstandResponse): SetupCard | n
   if (response.intent_kind === "provider_setup") {
     return {
       title: "Provider setup",
-      body: `Configure ${response.slots.provider_ids[0] || "a provider"} in Settings.`,
-      cta: "Open Settings",
+      body: `Configure ${response.slots.provider_ids[0] || "a provider"} in Providers.`,
+      cta: "Open Providers",
       actionType: "open_provider_setup",
       payload: response.proposed_action.payload || {},
     };
@@ -199,7 +199,7 @@ function setupCardFromResponse(response: SetupUnderstandResponse): SetupCard | n
   return {
     title: "Setup help",
     body: response.clarifier?.question || "Choose a setup path.",
-    cta: "Open Settings",
+    cta: "Open Providers",
     actionType: "open_provider_setup",
     payload: response.proposed_action.payload || {},
     clarifier: response.clarifier || undefined,
@@ -1344,13 +1344,13 @@ export function ChatPage({ client, api, toast, providerStatus, identity, navigat
                                 : "Automation setup",
                           body:
                             option.id === "provider_setup"
-                              ? "Open Settings to configure a provider."
+                              ? "Open Providers to configure a provider."
                               : option.id === "integration_setup"
                                 ? "Open MCP to connect the tool you need."
                                 : "Open Automations to build the workflow.",
                           cta:
                             option.id === "provider_setup"
-                              ? "Open Settings"
+                              ? "Open Providers"
                               : option.id === "integration_setup"
                                 ? "Open MCP"
                                 : "Open Automations",
