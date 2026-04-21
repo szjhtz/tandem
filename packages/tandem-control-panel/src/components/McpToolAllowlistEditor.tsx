@@ -1,5 +1,5 @@
-import { ChevronDown } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { renderIcons } from "../app/icons.js";
 import { collapseMcpAllowedToolsSelection, normalizeMcpToolNames } from "../features/mcp/mcpTools";
 
 type McpToolAllowlistEditorProps = {
@@ -25,6 +25,7 @@ export function McpToolAllowlistEditor({
   collapsible = false,
   defaultCollapsed = false,
 }: McpToolAllowlistEditorProps) {
+  const rootRef = useRef<HTMLDivElement | null>(null);
   const [collapsed, setCollapsed] = useState(defaultCollapsed);
   const discovered = useMemo(() => normalizeMcpToolNames(discoveredTools), [discoveredTools]);
   const selected = useMemo(() => {
@@ -39,6 +40,10 @@ export function McpToolAllowlistEditor({
     discovered.length > 0 &&
     visibleSelectedCount === discovered.length &&
     extraSelected.length === 0;
+
+  useEffect(() => {
+    if (rootRef.current) renderIcons(rootRef.current);
+  }, [collapsed, discovered.length, extraSelected.length, visibleSelectedCount]);
 
   const setSelection = (next: string[] | null) => {
     if (disabled) return;
@@ -59,7 +64,10 @@ export function McpToolAllowlistEditor({
   };
 
   return (
-    <div className="grid gap-3 rounded-xl border border-slate-700/70 bg-slate-950/30 p-3">
+    <div
+      ref={rootRef}
+      className="grid gap-3 rounded-xl border border-slate-700/70 bg-slate-950/30 p-3"
+    >
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="flex min-w-0 flex-1 items-start gap-2">
           {collapsible ? (
@@ -70,8 +78,9 @@ export function McpToolAllowlistEditor({
               aria-expanded={!collapsed}
               onClick={() => setCollapsed((value) => !value)}
             >
-              <ChevronDown
-                className={`h-4 w-4 transition-transform ${collapsed ? "" : "rotate-180"}`}
+              <i
+                data-lucide="chevron-down"
+                className={`block h-4 w-4 transition-transform ${collapsed ? "" : "rotate-180"}`}
               />
             </button>
           ) : null}
