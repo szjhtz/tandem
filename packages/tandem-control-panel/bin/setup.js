@@ -1942,6 +1942,31 @@ async function handleFilesApi(req, res, _session) {
     return true;
   }
 
+  if (pathname === "/api/files/mkdir" && req.method === "POST") {
+    try {
+      const body = await readJsonBody(req);
+      const rel = toSafeRelPath(body?.path || "", true);
+      if (!rel) {
+        sendJson(res, 400, { ok: false, error: "Missing or invalid directory path." });
+        return true;
+      }
+      const full = resolve(FILES_ROOT, visibleFilesPathToPhysicalPath(rel));
+      await mkdir(full, { recursive: true });
+      const info = await stat(full);
+      sendJson(res, 200, {
+        ok: true,
+        root: FILES_ROOT,
+        path: rel,
+        absPath: full,
+        updatedAt: info.mtimeMs,
+        previewKind: "directory",
+      });
+    } catch (e) {
+      sendJson(res, 500, { ok: false, error: e instanceof Error ? e.message : String(e) });
+    }
+    return true;
+  }
+
   if (pathname === "/api/files/download" && req.method === "GET") {
     const rel = toSafeRelPath(url.searchParams.get("path") || "", false);
     if (!rel) {

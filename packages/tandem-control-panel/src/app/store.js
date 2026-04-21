@@ -20,7 +20,7 @@ export const ROUTES = [
   ["channels", "Channels", "message-circle"],
   ["mcp", "MCP", "link"],
   ["bug-monitor", "Bug Monitor", "bug-play"],
-  ["files", "Files", "folder-open"],
+  ["files", "Files", "folder"],
   // Internal detail routes (not in primary nav)
   ["packs-detail", "Packs", "package"],
   ["teams-detail", "Teams", "users"],
@@ -41,6 +41,7 @@ export const NAV_ROUTES = ROUTES.filter(([id]) =>
     "agents",
     "orchestrator",
     "memory",
+    "files",
     "runs",
     "settings",
   ].includes(id)

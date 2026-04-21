@@ -9,6 +9,17 @@ type KnowledgebaseCollection = {
   updated_at?: number;
 };
 
+type KnowledgebaseDocument = {
+  doc_id?: string;
+  id?: string;
+  collection_id?: string;
+  title?: string;
+  filename?: string;
+  file_name?: string;
+  updated_at?: number;
+  created_at?: number;
+};
+
 type UploadRow = {
   id: string;
   name: string;
@@ -30,6 +41,22 @@ function basenameWithoutExtension(name: string) {
   const parts = raw.split("/");
   const file = parts[parts.length - 1] || raw;
   return file.replace(/\.[^.]+$/, "");
+}
+
+function toDocumentList(payload: any): KnowledgebaseDocument[] {
+  if (Array.isArray(payload)) return payload as KnowledgebaseDocument[];
+  if (Array.isArray(payload?.documents)) return payload.documents as KnowledgebaseDocument[];
+  if (Array.isArray(payload?.items)) return payload.items as KnowledgebaseDocument[];
+  if (payload?.document && typeof payload.document === "object") {
+    return [payload.document as KnowledgebaseDocument];
+  }
+  return [];
+}
+
+function formatKbDate(value?: number) {
+  const numeric = Number(value || 0);
+  if (!numeric) return "n/a";
+  return new Date(numeric).toLocaleString();
 }
 
 export function KnowledgebaseUploadPanel({
@@ -77,10 +104,28 @@ export function KnowledgebaseUploadPanel({
   }, [collectionId, collectionTouched, collections]);
 
   const currentCollection = collectionId.trim();
+  const documentsQuery = useQuery({
+    queryKey: ["knowledgebase", "documents", currentCollection],
+    enabled: hostedManaged && !!currentCollection,
+    queryFn: async () =>
+      api(
+        `/api/knowledgebase/documents?collection_id=${encodeURIComponent(currentCollection)}`
+      ).catch(() => ({ documents: [] })),
+    staleTime: 15_000,
+    refetchInterval: currentCollection ? 30_000 : false,
+  });
+  const documents = toDocumentList(documentsQuery.data);
 
   useEffect(() => {
     if (panelRef.current) renderIcons(panelRef.current);
-  }, [collections.length, rows.length, currentCollection, isUploading, hostedManaged]);
+  }, [
+    collections.length,
+    rows.length,
+    currentCollection,
+    isUploading,
+    hostedManaged,
+    documents.length,
+  ]);
 
   const uploadOne = useMutation({
     mutationFn: ({ file, targetCollection }: { file: File; targetCollection: string }) =>
@@ -197,6 +242,7 @@ export function KnowledgebaseUploadPanel({
       });
       await Promise.all(workers);
       await queryClient.invalidateQueries({ queryKey: ["knowledgebase", "collections"] });
+      await queryClient.invalidateQueries({ queryKey: ["knowledgebase", "documents"] });
       if (okCount && failCount) {
         toast("warn", `Uploaded ${okCount} file(s) to ${targetCollection}; ${failCount} failed.`);
       } else if (okCount) {
@@ -224,7 +270,7 @@ export function KnowledgebaseUploadPanel({
     <PanelCard
       className="overflow-hidden"
       title="Knowledgebase"
-      subtitle="Provisioned-server docs are stored separately and searched by bots through MCP."
+      subtitle="Provisioned-server docs live in KB collections searched through MCP, not in the file buckets below."
       actions={
         <Toolbar className="justify-start">
           <button
@@ -254,7 +300,7 @@ export function KnowledgebaseUploadPanel({
               className="tcp-subtle text-xs uppercase tracking-wide"
               htmlFor="kb-collection-id"
             >
-              Collection
+              Collection ID
             </label>
             <input
               id="kb-collection-id"
@@ -323,6 +369,15 @@ export function KnowledgebaseUploadPanel({
           )}
         </div>
 
+        <div className="rounded-xl border border-white/10 bg-black/20 p-3 text-sm">
+          <div className="font-medium text-slate-100">How this works</div>
+          <div className="tcp-subtle mt-1">
+            The KB MCP reads from collections in the hosted knowledgebase service. It does not
+            browse a raw server folder directly, so uploads here will not appear in the managed
+            `Files` buckets below unless you upload them there separately.
+          </div>
+        </div>
+
         {rows.length ? (
           <div className="grid gap-2">
             <div className="tcp-subtle text-xs uppercase tracking-wide">Upload progress</div>
@@ -363,6 +418,81 @@ export function KnowledgebaseUploadPanel({
             </div>
           </div>
         ) : null}
+
+        <div className="grid gap-2">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <div className="tcp-subtle text-xs uppercase tracking-wide">Collection documents</div>
+              <div className="tcp-subtle mt-1 text-xs">
+                Showing what the selected KB collection currently contains.
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <Badge tone="ghost">{documents.length}</Badge>
+              <button
+                type="button"
+                className="tcp-btn h-8 px-3 text-xs"
+                onClick={() => void documentsQuery.refetch()}
+                disabled={!currentCollection}
+              >
+                <i data-lucide="refresh-cw"></i>
+                Refresh docs
+              </button>
+            </div>
+          </div>
+
+          {!currentCollection ? (
+            <div className="rounded-xl border border-white/10 bg-black/20 p-3 text-sm tcp-subtle">
+              Pick or type a collection ID to inspect its documents.
+            </div>
+          ) : documentsQuery.isFetching && !documents.length ? (
+            <div className="rounded-xl border border-white/10 bg-black/20 p-3 text-sm tcp-subtle">
+              Loading documents from{" "}
+              <span className="font-medium text-slate-200">{currentCollection}</span>.
+            </div>
+          ) : documents.length ? (
+            <div className="grid gap-2">
+              {documents.map((document, index) => {
+                const docId = String(document.doc_id || document.id || "").trim();
+                const title = String(
+                  document.title ||
+                    document.filename ||
+                    document.file_name ||
+                    docId ||
+                    `Document ${index + 1}`
+                ).trim();
+                const collection = String(document.collection_id || currentCollection).trim();
+                const updatedAt = Number(document.updated_at || document.created_at || 0);
+                return (
+                  <div
+                    key={docId || `${collection}-${title}-${index}`}
+                    className="rounded-xl border border-white/10 bg-black/20 p-3 text-sm"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="truncate font-medium text-slate-100">{title}</div>
+                        <div className="tcp-subtle mt-1 truncate text-xs">
+                          {docId || `${collection}/${title}`}
+                        </div>
+                      </div>
+                      <Badge tone="info">{collection}</Badge>
+                    </div>
+                    <div className="tcp-subtle mt-2 text-xs">
+                      Updated: {formatKbDate(updatedAt)}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="rounded-xl border border-white/10 bg-black/20 p-3 text-sm tcp-subtle">
+              No visible documents returned for{" "}
+              <span className="font-medium text-slate-200">{currentCollection}</span>. If you just
+              uploaded a file, refresh docs or reindex and confirm the KB admin service exposes
+              document listing for that collection.
+            </div>
+          )}
+        </div>
       </div>
     </PanelCard>
   );

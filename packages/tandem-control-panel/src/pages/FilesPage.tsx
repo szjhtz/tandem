@@ -204,6 +204,24 @@ export function FilesPage({ api, toast }: AppPageProps) {
     onError: (error) => toast("err", error instanceof Error ? error.message : String(error)),
   });
 
+  const createDirectory = useMutation({
+    mutationFn: async (path: string) =>
+      api("/api/files/mkdir", {
+        method: "POST",
+        body: JSON.stringify({ path }),
+      }),
+    onSuccess: async (payload: any) => {
+      const nextPath = String(payload?.path || "").trim();
+      if (nextPath) {
+        setDir(nextPath);
+        setSelectedPath(nextPath);
+      }
+      await queryClient.invalidateQueries({ queryKey: ["files"] });
+      toast("ok", `Created folder ${nextPath || "folder"}.`);
+    },
+    onError: (error) => toast("err", error instanceof Error ? error.message : String(error)),
+  });
+
   const uploadFiles = async (fileList: FileList | null) => {
     const filesToUpload = [...(fileList || [])];
     if (!filesToUpload.length) return;
@@ -212,6 +230,24 @@ export function FilesPage({ api, toast }: AppPageProps) {
       await uploadOne.mutateAsync({ file, targetDir }).catch(() => undefined);
     }
     if (!dir) setDir("uploads");
+  };
+
+  const handleCreateDirectory = () => {
+    const baseDir = String(dir || "").trim();
+    if (!baseDir) {
+      toast("warn", "Choose a bucket before creating folders.");
+      return;
+    }
+    const rawName = window.prompt(
+      `Create a new folder inside ${baseDir}`,
+      "knowledgebooks/new-collection"
+    );
+    const cleaned = String(rawName || "")
+      .trim()
+      .replace(/^\/+|\/+$/g, "")
+      .replace(/\/{2,}/g, "/");
+    if (!cleaned) return;
+    void createDirectory.mutateAsync(`${baseDir}/${cleaned}`);
   };
 
   const openDirectory = (path: string) => {
@@ -267,6 +303,16 @@ export function FilesPage({ api, toast }: AppPageProps) {
             >
               <i data-lucide="upload"></i>
               Upload
+            </button>
+            <button
+              type="button"
+              className="tcp-btn"
+              onClick={handleCreateDirectory}
+              disabled={createDirectory.isPending || !dir}
+              title={!dir ? "Choose a bucket first" : "Create a folder inside the current path"}
+            >
+              <i data-lucide="folder-plus"></i>
+              New folder
             </button>
             <button type="button" className="tcp-btn" onClick={() => void filesQuery.refetch()}>
               <i data-lucide="refresh-cw"></i>

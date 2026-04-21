@@ -847,12 +847,15 @@ function nextChannelMcpPreferences(
 function channelExactMcpToolsForServer(
   prefs: ChannelToolPreferencesRow,
   serverName: string,
-  _discoveredTools: string[]
+  discoveredTools: string[]
 ) {
   const namespace = normalizeMcpNamespaceSegment(serverName);
   const prefix = `mcp.${namespace}.`;
   const exactTools = prefs.enabled_mcp_tools.filter((tool) => tool.startsWith(prefix));
-  return exactTools.length ? exactTools : null;
+  if (!exactTools.length) return null;
+  const discoveredUseNamespaced = discoveredTools.some((tool) => tool.startsWith(prefix));
+  if (discoveredUseNamespaced) return exactTools;
+  return exactTools.map((tool) => tool.slice(prefix.length)).filter(Boolean);
 }
 
 function nextChannelExactMcpPreferences(
@@ -863,9 +866,17 @@ function nextChannelExactMcpPreferences(
 ): ChannelToolPreferencesRow {
   const namespace = normalizeMcpNamespaceSegment(serverName);
   const prefix = `mcp.${namespace}.`;
-  const discovered = uniqueChannelValues(discoveredTools);
+  const toNamespaced = (tool: string) => {
+    const trimmed = String(tool || "").trim();
+    if (!trimmed) return "";
+    return trimmed.startsWith("mcp.") ? trimmed : `${prefix}${trimmed}`;
+  };
+  const discovered = uniqueChannelValues(discoveredTools.map(toNamespaced).filter(Boolean));
   const retained = prefs.enabled_mcp_tools.filter((tool) => !tool.startsWith(prefix));
-  const nextSelection = selectedTools === null ? discovered : uniqueChannelValues(selectedTools);
+  const nextSelection =
+    selectedTools === null
+      ? discovered
+      : uniqueChannelValues(selectedTools.map(toNamespaced).filter(Boolean));
   return {
     ...prefs,
     enabled_mcp_tools: uniqueChannelValues([...retained, ...nextSelection]),
@@ -980,6 +991,7 @@ const NAV_ROUTE_DESCRIPTIONS: Record<string, string> = {
   agents: "Reusable agent roles and workflow drafts.",
   orchestrator: "Task board planning, approvals, and execution.",
   memory: "Searchable memory records and operational context.",
+  files: "Managed files plus the hosted knowledgebase upload surface.",
   runs: "Live operations overview with queue state and per-run inspection.",
   settings: "Provider defaults, themes, and runtime diagnostics.",
 };
