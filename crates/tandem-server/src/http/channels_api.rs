@@ -1,5 +1,7 @@
 use super::*;
 
+use std::collections::{HashMap, HashSet};
+
 use tandem_channels::channel_registry::{find_channel, registered_channels, ChannelSpec};
 
 fn parse_allowed_users(value: Option<&Value>) -> Vec<String> {
@@ -36,6 +38,19 @@ fn trim_optional_string(value: Option<String>) -> Option<String> {
 fn find_channel_spec(name: &str) -> Option<&'static ChannelSpec> {
     let normalized = name.trim().to_ascii_lowercase();
     find_channel(&normalized)
+}
+
+fn state_data_dir() -> PathBuf {
+    std::env::var("TANDEM_STATE_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| {
+            if let Some(data_dir) = dirs::data_dir() {
+                return data_dir.join("tandem").join("data");
+            }
+            dirs::home_dir()
+                .map(|home| home.join(".tandem").join("data"))
+                .unwrap_or_else(|| PathBuf::from(".tandem"))
+        })
 }
 
 fn normalize_channel_config_obj<'a>(
@@ -141,6 +156,43 @@ fn normalize_channel_config_obj<'a>(
     entry
 }
 
+#[derive(Debug, Clone, serde::Deserialize)]
+struct ChannelSessionRecord {
+    session_id: String,
+    created_at_ms: u64,
+    last_seen_at_ms: u64,
+    channel: String,
+    sender: String,
+    #[serde(default)]
+    scope_id: Option<String>,
+    #[serde(default)]
+    scope_kind: Option<String>,
+    #[serde(default)]
+    tool_preferences: Option<ChannelToolPreferences>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ChannelScopeSummary {
+    pub scope_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scope_kind: Option<String>,
+    pub session_count: usize,
+    pub sender_count: usize,
+    pub last_seen_at_ms: u64,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ChannelScopesResponse {
+    pub channel: String,
+    pub scopes: Vec<ChannelScopeSummary>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct ChannelToolPreferencesQuery {
+    #[serde(default)]
+    pub scope_id: Option<String>,
+}
+
 fn existing_channel_value(
     channels: Option<&serde_json::Map<String, Value>>,
     spec: &ChannelSpec,
@@ -183,6 +235,117 @@ fn existing_channel_id(
     })
 }
 
+fn channel_sessions_path() -> PathBuf {
+    state_data_dir().join("channel_sessions.json")
+}
+
+async fn load_channel_session_map() -> HashMap<String, ChannelSessionRecord> {
+    let path = channel_sessions_path();
+    let Ok(bytes) = tokio::fs::read(&path).await else {
+        return HashMap::new();
+    };
+
+    if let Ok(map) = serde_json::from_slice::<HashMap<String, ChannelSessionRecord>>(&bytes) {
+        return map;
+    }
+
+    if let Ok(old_map) = serde_json::from_slice::<HashMap<String, String>>(&bytes) {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_millis() as u64)
+            .unwrap_or_default();
+        return old_map
+            .into_iter()
+            .map(|(key, session_id)| {
+                let mut parts = key.splitn(2, ':');
+                let channel = parts.next().unwrap_or("unknown").to_string();
+                let sender = parts.next().unwrap_or("unknown").to_string();
+                (
+                    key,
+                    ChannelSessionRecord {
+                        session_id,
+                        created_at_ms: now,
+                        last_seen_at_ms: now,
+                        channel,
+                        sender,
+                        scope_id: None,
+                        scope_kind: None,
+                        tool_preferences: None,
+                    },
+                )
+            })
+            .collect();
+    }
+
+    HashMap::new()
+}
+
+fn group_channel_scope_summaries(
+    channel: &str,
+    session_map: &HashMap<String, ChannelSessionRecord>,
+) -> Vec<ChannelScopeSummary> {
+    let mut grouped: HashMap<String, ChannelScopeSummary> = HashMap::new();
+    let mut senders: HashMap<String, HashSet<String>> = HashMap::new();
+
+    for record in session_map.values() {
+        if record.channel != channel {
+            continue;
+        }
+        let Some(scope_id) = record
+            .scope_id
+            .as_ref()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+        else {
+            continue;
+        };
+
+        let entry = grouped
+            .entry(scope_id.clone())
+            .or_insert_with(|| ChannelScopeSummary {
+                scope_id: scope_id.clone(),
+                scope_kind: record
+                    .scope_kind
+                    .clone()
+                    .filter(|value| !value.trim().is_empty()),
+                session_count: 0,
+                sender_count: 0,
+                last_seen_at_ms: record.last_seen_at_ms,
+            });
+        entry.session_count += 1;
+        entry.last_seen_at_ms = entry.last_seen_at_ms.max(record.last_seen_at_ms);
+        if entry.scope_kind.is_none() {
+            entry.scope_kind = record
+                .scope_kind
+                .clone()
+                .filter(|value| !value.trim().is_empty());
+        }
+
+        senders
+            .entry(scope_id)
+            .or_default()
+            .insert(record.sender.clone());
+    }
+
+    for (scope_id, entry) in grouped.iter_mut() {
+        entry.sender_count = senders.get(scope_id).map(|set| set.len()).unwrap_or(0);
+    }
+
+    let mut scopes = grouped.into_values().collect::<Vec<_>>();
+    scopes.sort_by(|left, right| {
+        right
+            .last_seen_at_ms
+            .cmp(&left.last_seen_at_ms)
+            .then_with(|| left.scope_id.cmp(&right.scope_id))
+    });
+    scopes
+}
+
+async fn load_channel_scope_summaries(channel: &str) -> Vec<ChannelScopeSummary> {
+    let session_map = load_channel_session_map().await;
+    group_channel_scope_summaries(channel, &session_map)
+}
+
 pub(super) async fn channels_config(State(state): State<AppState>) -> Json<Value> {
     let effective = state.config.get_effective_value().await;
     let channels = effective.get("channels").and_then(Value::as_object);
@@ -198,6 +361,17 @@ pub(super) async fn channels_config(State(state): State<AppState>) -> Json<Value
 
 pub(super) async fn channels_status(State(state): State<AppState>) -> Json<Value> {
     Json(json!(state.channel_statuses().await))
+}
+
+pub(super) async fn channel_scopes_get(
+    Path(name): Path<String>,
+) -> Result<Json<ChannelScopesResponse>, StatusCode> {
+    let channel = name.trim().to_ascii_lowercase();
+    if find_channel_spec(&channel).is_none() {
+        return Err(StatusCode::NOT_FOUND);
+    }
+    let scopes = load_channel_scope_summaries(&channel).await;
+    Ok(Json(ChannelScopesResponse { channel, scopes }))
 }
 
 pub(super) async fn channels_verify(
@@ -705,6 +879,35 @@ fn sanitize_tool_preferences_for_security_profile(
     }
 }
 
+fn merge_channel_tool_preferences(
+    base: ChannelToolPreferences,
+    scoped: ChannelToolPreferences,
+) -> ChannelToolPreferences {
+    ChannelToolPreferences {
+        enabled_tools: merge_unique_strings(base.enabled_tools, scoped.enabled_tools),
+        disabled_tools: merge_unique_strings(base.disabled_tools, scoped.disabled_tools),
+        enabled_mcp_servers: merge_unique_strings(
+            base.enabled_mcp_servers,
+            scoped.enabled_mcp_servers,
+        ),
+    }
+}
+
+fn merge_unique_strings(mut base: Vec<String>, overlay: Vec<String>) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    let mut merged = Vec::new();
+
+    for value in base.drain(..).chain(overlay.into_iter()) {
+        let value = value.trim().to_string();
+        if value.is_empty() || !seen.insert(value.clone()) {
+            continue;
+        }
+        merged.push(value);
+    }
+
+    merged
+}
+
 fn tool_preferences_path() -> PathBuf {
     let base = std::env::var("TANDEM_STATE_DIR")
         .map(PathBuf::from)
@@ -742,16 +945,38 @@ async fn save_tool_preferences_map(map: &ToolPreferencesMap) {
 pub(super) async fn channel_tool_preferences_get(
     State(state): State<AppState>,
     Path(channel): Path<String>,
+    Query(query): Query<ChannelToolPreferencesQuery>,
 ) -> Result<Json<ChannelToolPreferences>, StatusCode> {
     let key = channel.to_string();
     let mut map = load_tool_preferences_map().await;
-    let prefs = map.get(&key).cloned().unwrap_or_default();
+    let scope_id = query
+        .scope_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let scoped_key = scope_id.map(|scope_id| format!("{}:{}", key, scope_id));
+    let prefs = if let Some(scoped_key) = scoped_key.as_ref() {
+        let base = map.get(&key).cloned().unwrap_or_default();
+        map.get(scoped_key)
+            .cloned()
+            .map(|overlay| merge_channel_tool_preferences(base.clone(), overlay))
+            .unwrap_or(base)
+    } else {
+        map.get(&key).cloned().unwrap_or_default()
+    };
     let effective = state.config.get_effective_value().await;
     let security_profile = channel_security_profile_from_config(&effective, &key);
     let sanitized = sanitize_tool_preferences_for_security_profile(prefs.clone(), security_profile);
     if sanitized != prefs {
-        map.insert(key, sanitized.clone());
-        save_tool_preferences_map(&map).await;
+        if let Some(scoped_key) = scoped_key {
+            if map.contains_key(&scoped_key) {
+                map.insert(scoped_key, sanitized.clone());
+                save_tool_preferences_map(&map).await;
+            }
+        } else {
+            map.insert(key, sanitized.clone());
+            save_tool_preferences_map(&map).await;
+        }
     }
     Ok(Json(sanitized))
 }
@@ -767,17 +992,32 @@ pub struct ChannelToolPreferencesInput {
 pub(super) async fn channel_tool_preferences_put(
     State(state): State<AppState>,
     Path(channel): Path<String>,
+    Query(query): Query<ChannelToolPreferencesQuery>,
     Json(input): Json<ChannelToolPreferencesInput>,
 ) -> Result<Json<ChannelToolPreferences>, StatusCode> {
     let mut map = load_tool_preferences_map().await;
     let key = channel.to_string();
+    let scope_id = query
+        .scope_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let scoped_key = scope_id.map(|scope_id| format!("{}:{}", key, scope_id));
     let effective = state.config.get_effective_value().await;
     let security_profile = channel_security_profile_from_config(&effective, &key);
 
     let new_prefs = if input.reset.unwrap_or(false) {
         ChannelToolPreferences::default()
     } else {
-        let existing = map.get(&key).cloned().unwrap_or_default();
+        let existing = if let Some(scoped_key) = scoped_key.as_ref() {
+            let base = map.get(&key).cloned().unwrap_or_default();
+            map.get(scoped_key)
+                .cloned()
+                .map(|overlay| merge_channel_tool_preferences(base.clone(), overlay))
+                .unwrap_or(base)
+        } else {
+            map.get(&key).cloned().unwrap_or_default()
+        };
         ChannelToolPreferences {
             enabled_tools: input.enabled_tools.unwrap_or(existing.enabled_tools),
             disabled_tools: input.disabled_tools.unwrap_or(existing.disabled_tools),
@@ -788,7 +1028,11 @@ pub(super) async fn channel_tool_preferences_put(
     };
     let new_prefs = sanitize_tool_preferences_for_security_profile(new_prefs, security_profile);
 
-    map.insert(key, new_prefs.clone());
+    if let Some(scoped_key) = scoped_key {
+        map.insert(scoped_key, new_prefs.clone());
+    } else {
+        map.insert(key, new_prefs.clone());
+    }
     save_tool_preferences_map(&map).await;
     Ok(Json(new_prefs))
 }
@@ -839,5 +1083,101 @@ mod tests {
         assert_eq!(sanitized.enabled_tools, vec!["bash".to_string()]);
         assert_eq!(sanitized.disabled_tools, vec!["read".to_string()]);
         assert_eq!(sanitized.enabled_mcp_servers, vec!["github".to_string()]);
+    }
+
+    #[test]
+    fn group_channel_scope_summaries_groups_by_scope_and_orders_by_recency() {
+        let mut map = HashMap::new();
+        map.insert(
+            "telegram:chat:123:alice".to_string(),
+            ChannelSessionRecord {
+                session_id: "s1".to_string(),
+                created_at_ms: 1,
+                last_seen_at_ms: 10,
+                channel: "telegram".to_string(),
+                sender: "alice".to_string(),
+                scope_id: Some("chat:123".to_string()),
+                scope_kind: Some("room".to_string()),
+                tool_preferences: None,
+            },
+        );
+        map.insert(
+            "telegram:chat:123:bob".to_string(),
+            ChannelSessionRecord {
+                session_id: "s2".to_string(),
+                created_at_ms: 2,
+                last_seen_at_ms: 30,
+                channel: "telegram".to_string(),
+                sender: "bob".to_string(),
+                scope_id: Some("chat:123".to_string()),
+                scope_kind: Some("room".to_string()),
+                tool_preferences: None,
+            },
+        );
+        map.insert(
+            "telegram:topic:1:2:carol".to_string(),
+            ChannelSessionRecord {
+                session_id: "s3".to_string(),
+                created_at_ms: 3,
+                last_seen_at_ms: 20,
+                channel: "telegram".to_string(),
+                sender: "carol".to_string(),
+                scope_id: Some("topic:1:2".to_string()),
+                scope_kind: Some("topic".to_string()),
+                tool_preferences: None,
+            },
+        );
+        map.insert(
+            "discord:channel:9:dave".to_string(),
+            ChannelSessionRecord {
+                session_id: "s4".to_string(),
+                created_at_ms: 4,
+                last_seen_at_ms: 40,
+                channel: "discord".to_string(),
+                sender: "dave".to_string(),
+                scope_id: Some("channel:9".to_string()),
+                scope_kind: Some("room".to_string()),
+                tool_preferences: None,
+            },
+        );
+
+        let scopes = group_channel_scope_summaries("telegram", &map);
+        assert_eq!(scopes.len(), 2);
+        assert_eq!(scopes[0].scope_id, "chat:123");
+        assert_eq!(scopes[0].session_count, 2);
+        assert_eq!(scopes[0].sender_count, 2);
+        assert_eq!(scopes[0].last_seen_at_ms, 30);
+        assert_eq!(scopes[1].scope_id, "topic:1:2");
+        assert_eq!(scopes[1].session_count, 1);
+        assert_eq!(scopes[1].sender_count, 1);
+    }
+
+    #[test]
+    fn merge_channel_tool_preferences_layers_scope_over_base() {
+        let base = ChannelToolPreferences {
+            enabled_tools: vec!["read".to_string(), "grep".to_string()],
+            disabled_tools: vec!["write".to_string()],
+            enabled_mcp_servers: vec!["github".to_string()],
+        };
+        let scoped = ChannelToolPreferences {
+            enabled_tools: vec!["search".to_string(), "read".to_string()],
+            disabled_tools: vec!["write".to_string(), "edit".to_string()],
+            enabled_mcp_servers: vec!["notion".to_string(), "github".to_string()],
+        };
+
+        let merged = merge_channel_tool_preferences(base, scoped);
+
+        assert_eq!(
+            merged.enabled_tools,
+            vec!["read".to_string(), "grep".to_string(), "search".to_string()]
+        );
+        assert_eq!(
+            merged.disabled_tools,
+            vec!["write".to_string(), "edit".to_string()]
+        );
+        assert_eq!(
+            merged.enabled_mcp_servers,
+            vec!["github".to_string(), "notion".to_string()]
+        );
     }
 }

@@ -348,6 +348,19 @@ type ChannelToolPreferencesRow = {
   enabled_mcp_servers: string[];
 };
 
+type ChannelScopeRow = {
+  scope_id: string;
+  scope_kind: string;
+  session_count: number;
+  sender_count: number;
+  last_seen_at_ms: number;
+};
+
+type ChannelScopesResponse = {
+  channel?: string;
+  scopes?: ChannelScopeRow[];
+};
+
 const BUILTIN_PROVIDER_IDS = new Set([
   "openai",
   "openai-codex",
@@ -365,6 +378,7 @@ const BUILTIN_PROVIDER_IDS = new Set([
 ]);
 
 const OPENAI_CODEX_PROVIDER_ID = "openai-codex";
+const CHANNEL_NAMES = ["telegram", "discord", "slack"] as const;
 
 function isInternalConfigProviderId(providerId: string) {
   const normalized = String(providerId || "")
@@ -733,6 +747,55 @@ function normalizeChannelToolPreferences(raw: any): ChannelToolPreferencesRow {
   };
 }
 
+function normalizeChannelScopes(raw: any): ChannelScopeRow[] {
+  const payload = raw && typeof raw === "object" ? raw : {};
+  const rows = Array.isArray(payload.scopes) ? payload.scopes : [];
+  return rows
+    .map((value: any) => {
+      if (!value || typeof value !== "object") return null;
+      const scopeId = String(value.scope_id || value.scopeId || "").trim();
+      if (!scopeId) return null;
+      return {
+        scope_id: scopeId,
+        scope_kind: String(value.scope_kind || value.scopeKind || "").trim(),
+        session_count: Number.isFinite(Number(value.session_count))
+          ? Number(value.session_count)
+          : Number.isFinite(Number(value.sessionCount))
+            ? Number(value.sessionCount)
+            : 0,
+        sender_count: Number.isFinite(Number(value.sender_count))
+          ? Number(value.sender_count)
+          : Number.isFinite(Number(value.senderCount))
+            ? Number(value.senderCount)
+            : 0,
+        last_seen_at_ms: Number.isFinite(Number(value.last_seen_at_ms))
+          ? Number(value.last_seen_at_ms)
+          : Number.isFinite(Number(value.lastSeenAtMs))
+            ? Number(value.lastSeenAtMs)
+            : 0,
+      } satisfies ChannelScopeRow;
+    })
+    .filter((row): row is ChannelScopeRow => !!row)
+    .sort((left, right) => {
+      if (left.last_seen_at_ms !== right.last_seen_at_ms) {
+        return right.last_seen_at_ms - left.last_seen_at_ms;
+      }
+      return left.scope_id.localeCompare(right.scope_id);
+    });
+}
+
+function formatChannelScopeLabel(scope: ChannelScopeRow) {
+  const parts: string[] = [];
+  if (scope.scope_kind) parts.push(scope.scope_kind);
+  parts.push(scope.scope_id);
+  if (scope.session_count > 1) {
+    parts.push(`${scope.session_count} sessions`);
+  } else if (scope.session_count === 1) {
+    parts.push("1 session");
+  }
+  return parts.join(" · ");
+}
+
 function channelToolEnabled(prefs: ChannelToolPreferencesRow, tool: string) {
   if (prefs.disabled_tools.includes(tool)) return false;
   return prefs.enabled_tools.length === 0 || prefs.enabled_tools.includes(tool);
@@ -941,6 +1004,13 @@ export function SettingsPage({
     telegram: false,
     discord: false,
     slack: false,
+  });
+  const [channelToolScopeSelection, setChannelToolScopeSelection] = useState<
+    Record<string, string>
+  >({
+    telegram: "",
+    discord: "",
+    slack: "",
   });
   const [channelToolScopeOpen, setChannelToolScopeOpen] = useState<Record<string, boolean>>({
     telegram: false,
@@ -1285,18 +1355,35 @@ export function SettingsPage({
     queryFn: () => client.channels.status().catch(() => ({})),
     refetchInterval: 6_000,
   });
-  const channelToolPreferencesQuery = useQuery({
-    queryKey: ["settings", "channels", "tool-preferences"],
+  const channelScopesQuery = useQuery({
+    queryKey: ["settings", "channels", "scopes"],
     queryFn: async () => {
       const entries = await Promise.all(
-        (["telegram", "discord", "slack"] as const).map(async (channel) => [
-          channel,
-          normalizeChannelToolPreferences(
-            await api(`/api/engine/channels/${channel}/tool-preferences`, {
+        CHANNEL_NAMES.map(async (channel) => {
+          const result = (await api(`/api/engine/channels/${channel}/scopes`, {
+            method: "GET",
+          }).catch(() => ({ scopes: [] }))) as ChannelScopesResponse;
+          return [channel, normalizeChannelScopes(result)] as const;
+        })
+      );
+      return Object.fromEntries(entries) as Record<string, ChannelScopeRow[]>;
+    },
+    refetchInterval: 15_000,
+  });
+  const channelToolPreferencesQuery = useQuery({
+    queryKey: ["settings", "channels", "tool-preferences", channelToolScopeSelection],
+    queryFn: async () => {
+      const entries = await Promise.all(
+        CHANNEL_NAMES.map(async (channel) => {
+          const scopeId = String(channelToolScopeSelection[channel] || "").trim();
+          const query = scopeId ? `?scope_id=${encodeURIComponent(scopeId)}` : "";
+          const prefs = normalizeChannelToolPreferences(
+            await api(`/api/engine/channels/${channel}/tool-preferences${query}`, {
               method: "GET",
             }).catch(() => defaultChannelToolPreferences())
-          ),
-        ])
+          );
+          return [channel, prefs] as const;
+        })
       );
       return Object.fromEntries(entries) as Record<string, ChannelToolPreferencesRow>;
     },
@@ -1960,6 +2047,7 @@ export function SettingsPage({
     async () =>
       Promise.all([
         queryClient.invalidateQueries({ queryKey: ["settings", "channels"] }),
+        queryClient.invalidateQueries({ queryKey: ["settings", "channels", "scopes"] }),
         queryClient.invalidateQueries({ queryKey: ["settings", "channels", "tool-preferences"] }),
       ]),
     [queryClient]
@@ -1967,18 +2055,23 @@ export function SettingsPage({
   const saveChannelToolPreferencesMutation = useMutation({
     mutationFn: async ({
       channel,
+      scopeId,
       payload,
     }: {
       channel: "telegram" | "discord" | "slack";
+      scopeId?: string | null;
       payload: ChannelToolPreferencesRow | { reset: true };
     }) => {
+      const scopeQuery = String(scopeId || "").trim()
+        ? `?scope_id=${encodeURIComponent(String(scopeId || "").trim())}`
+        : "";
       if ("reset" in payload) {
-        return api(`/api/engine/channels/${channel}/tool-preferences`, {
+        return api(`/api/engine/channels/${channel}/tool-preferences${scopeQuery}`, {
           method: "PUT",
           body: JSON.stringify({ reset: true }),
         });
       }
-      return api(`/api/engine/channels/${channel}/tool-preferences`, {
+      return api(`/api/engine/channels/${channel}/tool-preferences${scopeQuery}`, {
         method: "PUT",
         body: JSON.stringify(payload),
       });
@@ -1987,7 +2080,14 @@ export function SettingsPage({
       await queryClient.invalidateQueries({
         queryKey: ["settings", "channels", "tool-preferences"],
       });
-      toast("ok", `Saved ${vars.channel} channel tool scope.`);
+      await queryClient.invalidateQueries({ queryKey: ["settings", "channels", "scopes"] });
+      const scopeId = String(vars.scopeId || "").trim();
+      toast(
+        "ok",
+        scopeId
+          ? `Saved ${vars.channel} scope ${scopeId}.`
+          : `Saved ${vars.channel} channel tool scope.`
+      );
     },
     onError: (error) => toast("err", error instanceof Error ? error.message : String(error)),
   });
@@ -2041,6 +2141,7 @@ export function SettingsPage({
     onSuccess: async (_, channel) => {
       toast("ok", `Removed ${channel} channel settings.`);
       setChannelVerifyResult((prev) => ({ ...prev, [channel]: null }));
+      setChannelToolScopeSelection((prev) => ({ ...prev, [channel]: "" }));
       channelDraftsHydratedRef.current[channel] = false;
       setChannelDrafts((prev) => ({
         ...prev,
@@ -2494,8 +2595,7 @@ export function SettingsPage({
   const browserInstallHints = Array.isArray(browserStatus.data?.install_hints)
     ? browserStatus.data?.install_hints || []
     : [];
-  const channelNames = ["telegram", "discord", "slack"] as const;
-  const connectedChannelCount = channelNames.filter(
+  const connectedChannelCount = CHANNEL_NAMES.filter(
     (name) => !!(channelsStatusQuery.data as any)?.[name]?.connected
   ).length;
   const bugMonitorWorkspaceDirectories = Array.isArray(
@@ -2549,7 +2649,7 @@ export function SettingsPage({
     if (!channelsConfigQuery.data || typeof channelsConfigQuery.data !== "object") return;
     setChannelDrafts((prev) => {
       const next = { ...prev };
-      for (const channel of channelNames) {
+      for (const channel of CHANNEL_NAMES) {
         if (!next[channel]) {
           next[channel] = normalizeChannelDraft(channel, config[channel]);
           channelDraftsHydratedRef.current[channel] = true;
@@ -4402,7 +4502,7 @@ export function SettingsPage({
                   actions={
                     <Toolbar>
                       <Badge tone={connectedChannelCount ? "ok" : "warn"}>
-                        {connectedChannelCount}/{channelNames.length} connected
+                        {connectedChannelCount}/{CHANNEL_NAMES.length} connected
                       </Badge>
                       <button className="tcp-btn" onClick={() => void invalidateChannels()}>
                         <i data-lucide="refresh-cw"></i>
@@ -4412,7 +4512,7 @@ export function SettingsPage({
                   }
                 >
                   <div className="grid gap-3">
-                    {channelNames.map((channel) => {
+                    {CHANNEL_NAMES.map((channel) => {
                       const config = ((channelsConfigQuery.data as any)?.[channel] ||
                         {}) as ChannelConfigRow;
                       const status = ((channelsStatusQuery.data as any)?.[channel] ||
@@ -4420,6 +4520,19 @@ export function SettingsPage({
                       const draft =
                         channelDrafts[channel] || normalizeChannelDraft(channel, config);
                       const verifyResult = channelVerifyResult[channel];
+                      const scopeOptions =
+                        ((channelScopesQuery.data as
+                          | Record<string, ChannelScopeRow[]>
+                          | undefined) || {})[channel]?.slice() || [];
+                      const selectedScopeId = String(
+                        channelToolScopeSelection[channel] || ""
+                      ).trim();
+                      const selectedScope =
+                        scopeOptions.find((scope) => scope.scope_id === selectedScopeId) || null;
+                      const selectedScopeLabel = selectedScope
+                        ? formatChannelScopeLabel(selectedScope)
+                        : selectedScopeId || "Channel default";
+                      const scopeTargetLabel = selectedScopeId ? "scope" : "channel";
                       const toolPrefs = normalizeChannelToolPreferences(
                         (
                           channelToolPreferencesQuery.data as
@@ -4709,7 +4822,8 @@ export function SettingsPage({
                                 </div>
                                 {toolPrefs.enabled_tools.length > 0 ? (
                                   <div className="mt-1 text-xs text-amber-300">
-                                    Explicit built-in allowlist is active for this channel.
+                                    Explicit built-in allowlist is active for this{" "}
+                                    {scopeTargetLabel}.
                                   </div>
                                 ) : null}
                                 {publicDemo ? (
@@ -4727,6 +4841,7 @@ export function SettingsPage({
                                   onClick={() =>
                                     saveChannelToolPreferencesMutation.mutate({
                                       channel,
+                                      scopeId: selectedScopeId || null,
                                       payload: { reset: true },
                                     })
                                   }
@@ -4754,14 +4869,59 @@ export function SettingsPage({
                               </div>
                             </div>
 
+                            <div className="mb-3 grid gap-3 md:grid-cols-[minmax(0,1fr)_320px] md:items-end">
+                              <div className="grid gap-1">
+                                <div className="tcp-subtle text-xs">
+                                  {selectedScopeId
+                                    ? `Editing ${selectedScopeLabel}. Saving here stores a scope-specific override on top of the ${channel} default.`
+                                    : `Editing the ${channel} default. Pick a conversation scope to override one specific ${channel} thread, room, or chat.`}
+                                </div>
+                                <div className="tcp-subtle text-[11px]">
+                                  {scopeOptions.length
+                                    ? `${scopeOptions.length} known scope${
+                                        scopeOptions.length === 1 ? "" : "s"
+                                      } discovered from channel sessions.`
+                                    : "No scoped conversations discovered yet."}
+                                </div>
+                              </div>
+                              <label className="grid gap-1">
+                                <span className="tcp-subtle text-[11px] uppercase tracking-[0.24em]">
+                                  Conversation scope
+                                </span>
+                                <select
+                                  className="tcp-input"
+                                  value={selectedScopeId}
+                                  onChange={(e) =>
+                                    setChannelToolScopeSelection((prev) => ({
+                                      ...prev,
+                                      [channel]: (e.target as HTMLSelectElement).value,
+                                    }))
+                                  }
+                                >
+                                  <option value="">Channel default</option>
+                                  {selectedScopeId &&
+                                  !scopeOptions.some(
+                                    (scope) => scope.scope_id === selectedScopeId
+                                  ) ? (
+                                    <option value={selectedScopeId}>{selectedScopeLabel}</option>
+                                  ) : null}
+                                  {scopeOptions.map((scope) => (
+                                    <option key={scope.scope_id} value={scope.scope_id}>
+                                      {formatChannelScopeLabel(scope)}
+                                    </option>
+                                  ))}
+                                </select>
+                              </label>
+                            </div>
+
                             <div className="tcp-subtle text-xs">
                               {toolPrefs.enabled_mcp_servers.length
                                 ? `${toolPrefs.enabled_mcp_servers.length} MCP server${
                                     toolPrefs.enabled_mcp_servers.length === 1 ? "" : "s"
-                                  } enabled.`
+                                  } enabled for this ${scopeTargetLabel}.`
                                 : publicDemo
                                   ? "MCP servers stay disabled in public demo mode."
-                                  : "No MCP servers enabled for this channel."}
+                                  : `No MCP servers enabled for this ${scopeTargetLabel}.`}
                             </div>
 
                             <AnimatePresence initial={false}>
@@ -4814,6 +4974,7 @@ export function SettingsPage({
                                                   onChange={(e) =>
                                                     saveChannelToolPreferencesMutation.mutate({
                                                       channel,
+                                                      scopeId: selectedScopeId || null,
                                                       payload: nextChannelToolPreferences(
                                                         toolPrefs,
                                                         tool,
@@ -4864,6 +5025,7 @@ export function SettingsPage({
                                                   onChange={(e) =>
                                                     saveChannelToolPreferencesMutation.mutate({
                                                       channel,
+                                                      scopeId: selectedScopeId || null,
                                                       payload: nextChannelMcpPreferences(
                                                         toolPrefs,
                                                         server.name,

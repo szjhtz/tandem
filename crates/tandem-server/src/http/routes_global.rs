@@ -4,8 +4,9 @@ use axum::Router;
 use crate::AppState;
 
 use super::channels_api::{
-    admin_reload_config, channel_tool_preferences_get, channel_tool_preferences_put,
-    channels_config, channels_delete, channels_put, channels_status, channels_verify,
+    admin_reload_config, channel_scopes_get, channel_tool_preferences_get,
+    channel_tool_preferences_put, channels_config, channels_delete, channels_put, channels_status,
+    channels_verify,
 };
 use super::config_providers::{global_config, global_config_patch};
 use super::enterprise::enterprise_status;
@@ -39,6 +40,7 @@ pub(super) fn apply(router: Router<AppState>) -> Router<AppState> {
         .route("/project", get(list_projects))
         .route("/channels/config", get(channels_config))
         .route("/channels/status", get(channels_status))
+        .route("/channels/{name}/scopes", get(channel_scopes_get))
         .route("/channels/{name}/verify", post(channels_verify))
         .route(
             "/channels/{name}",
