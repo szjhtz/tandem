@@ -183,6 +183,8 @@ import {
 const asString = (v: unknown): string | null =>
   typeof v === "string" && v.trim().length > 0 ? v : null;
 
+const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
 const parseRunId = (payload: JsonObject): string => {
   try {
     const id = idNormalizer.parse(payload);
@@ -2391,7 +2393,57 @@ class Routines {
 class WorkflowPlans {
   constructor(private req: TandemClient["_request"]) {}
 
-  private readonly chatTimeoutMs = 320_000;
+  private readonly planSessionIds = new Map<string, string>();
+  private readonly chatProjectSlug = "workflow-plans-chat";
+
+  private plannerSessions() {
+    return new WorkflowPlannerSessions(this.req);
+  }
+
+  private rememberSession(
+    planId: string | null | undefined,
+    session: WorkflowPlannerSessionRecord | null | undefined
+  ) {
+    const nextPlanId = asString(planId);
+    const sessionId = asString(session?.session_id);
+    if (!nextPlanId || !sessionId) return;
+    this.planSessionIds.set(nextPlanId, sessionId);
+  }
+
+  private chatSessionTitle(prompt: string): string {
+    const trimmed = prompt.trim().replace(/\s+/g, " ");
+    if (!trimmed) return "Workflow planner chat";
+    return trimmed.length > 80 ? `${trimmed.slice(0, 77)}...` : trimmed;
+  }
+
+  private async ensureChatSession(planId: string): Promise<string> {
+    const normalizedPlanId = asString(planId);
+    if (!normalizedPlanId) {
+      throw new Error("Workflow planner plan ID is required");
+    }
+    const cachedSessionId = this.planSessionIds.get(normalizedPlanId);
+    if (cachedSessionId) return cachedSessionId;
+
+    const existing = await this.get(normalizedPlanId);
+    const created = await this.plannerSessions().create({
+      projectSlug: this.chatProjectSlug,
+      project_slug: this.chatProjectSlug,
+      title: asString(existing.plan?.title) ?? "Workflow planner chat",
+      goal: asString(existing.plan?.title) ?? "",
+      plan_source: "workflow_plans_chat",
+      plan: existing.plan,
+      conversation: existing.conversation,
+      planner_diagnostics: existing.planner_diagnostics ?? undefined,
+      plan_revision: Number(existing.plan?.plan_revision ?? 1) || 1,
+      last_success_materialization: null,
+    });
+    const sessionId = asString(created.session?.session_id);
+    if (!sessionId) {
+      throw new Error("Workflow planner session creation failed");
+    }
+    this.rememberSession(normalizedPlanId, created.session);
+    return sessionId;
+  }
 
   async preview(options: {
     prompt: string;
@@ -2453,18 +2505,23 @@ class WorkflowPlans {
     operatorPreferences?: JsonObject;
     operator_preferences?: JsonObject;
   }): Promise<WorkflowPlanChatResponse> {
-    return this.req<WorkflowPlanChatResponse>("/workflow-plans/chat/start", {
-      method: "POST",
-      timeoutMs: this.chatTimeoutMs,
-      body: JSON.stringify({
-        prompt: options.prompt,
-        schedule: options.schedule,
-        plan_source: options.plan_source ?? options.planSource,
-        allowed_mcp_servers: options.allowed_mcp_servers ?? options.allowedMcpServers,
-        workspace_root: options.workspace_root ?? options.workspaceRoot,
-        operator_preferences: options.operator_preferences ?? options.operatorPreferences,
-      }),
+    const session = await this.plannerSessions().create({
+      projectSlug: this.chatProjectSlug,
+      project_slug: this.chatProjectSlug,
+      title: this.chatSessionTitle(options.prompt),
+      workspace_root: options.workspace_root ?? options.workspaceRoot,
+      goal: options.prompt,
+      plan_source: options.plan_source ?? options.planSource ?? "workflow_plans_chat",
+      allowed_mcp_servers: options.allowed_mcp_servers ?? options.allowedMcpServers,
+      operator_preferences: options.operator_preferences ?? options.operatorPreferences,
     });
+    const sessionId = asString(session.session?.session_id);
+    if (!sessionId) {
+      throw new Error("Workflow planner session creation failed");
+    }
+    const response = await this.plannerSessions().start(sessionId, options);
+    this.rememberSession(response.plan?.plan_id, response.session);
+    return response;
   }
 
   async get(planId: string): Promise<WorkflowPlanGetResponse> {
@@ -2476,26 +2533,24 @@ class WorkflowPlans {
     plan_id?: string;
     message: string;
   }): Promise<WorkflowPlanChatResponse> {
-    return this.req<WorkflowPlanChatResponse>("/workflow-plans/chat/message", {
-      method: "POST",
-      timeoutMs: this.chatTimeoutMs,
-      body: JSON.stringify({
-        plan_id: options.plan_id ?? options.planId,
-        message: options.message,
-      }),
+    const planId = options.plan_id ?? options.planId;
+    const sessionId = await this.ensureChatSession(planId ?? "");
+    const response = await this.plannerSessions().message(sessionId, {
+      message: options.message,
     });
+    this.rememberSession(response.plan?.plan_id ?? planId, response.session);
+    return response;
   }
 
   async chatReset(options: {
     planId?: string;
     plan_id?: string;
   }): Promise<WorkflowPlanChatResponse> {
-    return this.req<WorkflowPlanChatResponse>("/workflow-plans/chat/reset", {
-      method: "POST",
-      body: JSON.stringify({
-        plan_id: options.plan_id ?? options.planId,
-      }),
-    });
+    const planId = options.plan_id ?? options.planId;
+    const sessionId = await this.ensureChatSession(planId ?? "");
+    const response = await this.plannerSessions().reset(sessionId);
+    this.rememberSession(response.plan?.plan_id ?? planId, response.session);
+    return response;
   }
 
   async importPreview(options: {
@@ -2540,7 +2595,47 @@ class WorkflowPlans {
 class WorkflowPlannerSessions {
   constructor(private req: TandemClient["_request"]) {}
 
-  private readonly chatTimeoutMs = 200_000;
+  private readonly kickoffTimeoutMs = 20_000;
+  private readonly operationTimeoutMs = 620_000;
+  private readonly operationPollIntervalMs = 1_500;
+
+  private async awaitOperation<
+    T extends WorkflowPlanChatResponse & { session?: WorkflowPlannerSessionRecord },
+  >(sessionId: string, requestId?: string | null): Promise<T> {
+    const normalizedSessionId = asString(sessionId);
+    if (!normalizedSessionId) {
+      throw new Error("Workflow planner session ID is required");
+    }
+    const deadline = Date.now() + this.operationTimeoutMs;
+    while (Date.now() < deadline) {
+      const response = await this.get(normalizedSessionId);
+      const session = response.session;
+      const operation = session?.operation;
+      if (!operation) {
+        await delay(this.operationPollIntervalMs);
+        continue;
+      }
+      const activeRequestId = asString(operation.request_id);
+      if (requestId && activeRequestId && activeRequestId !== requestId) {
+        throw new Error("Workflow planner session was replaced by a newer operation");
+      }
+      const status = (asString(operation.status) ?? "").toLowerCase();
+      if (status === "completed") {
+        const payload = operation.response;
+        if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+          throw new Error("Workflow planner completed without a usable response payload");
+        }
+        return Object.assign({}, payload as JsonObject, { session }) as unknown as T;
+      }
+      if (status === "failed") {
+        throw new Error(
+          asString(operation.error) ?? "Workflow planner failed during background execution"
+        );
+      }
+      await delay(this.operationPollIntervalMs);
+    }
+    throw new Error("Workflow planner timed out before completion");
+  }
 
   async list(options?: {
     projectSlug?: string;
@@ -2554,7 +2649,7 @@ class WorkflowPlannerSessions {
   }
 
   async create(options: {
-    projectSlug: string;
+    projectSlug?: string;
     project_slug?: string;
     title?: string;
     workspaceRoot?: string;
@@ -2567,6 +2662,14 @@ class WorkflowPlannerSessions {
     planner_model?: string;
     planSource?: string;
     plan_source?: string;
+    plan?: WorkflowPlan;
+    conversation?: WorkflowPlanConversation;
+    plannerDiagnostics?: JsonObject | null;
+    planner_diagnostics?: JsonObject | null;
+    planRevision?: number;
+    plan_revision?: number;
+    lastSuccessMaterialization?: JsonValue;
+    last_success_materialization?: JsonValue;
     allowedMcpServers?: string[];
     allowed_mcp_servers?: string[];
     operatorPreferences?: JsonObject;
@@ -2583,6 +2686,12 @@ class WorkflowPlannerSessions {
         planner_provider: options.planner_provider ?? options.plannerProvider,
         planner_model: options.planner_model ?? options.plannerModel,
         plan_source: options.plan_source ?? options.planSource,
+        plan: options.plan,
+        conversation: options.conversation,
+        planner_diagnostics: options.planner_diagnostics ?? options.plannerDiagnostics,
+        plan_revision: options.plan_revision ?? options.planRevision,
+        last_success_materialization:
+          options.last_success_materialization ?? options.lastSuccessMaterialization,
         allowed_mcp_servers: options.allowed_mcp_servers ?? options.allowedMcpServers,
         operator_preferences: options.operator_preferences ?? options.operatorPreferences,
       }),
@@ -2682,11 +2791,11 @@ class WorkflowPlannerSessions {
       operator_preferences?: JsonObject;
     }
   ): Promise<WorkflowPlannerSessionStartResponse> {
-    return this.req<WorkflowPlannerSessionStartResponse>(
-      `/workflow-plans/sessions/${encodeURIComponent(sessionId)}/start`,
+    const kickoff = await this.req<WorkflowPlannerSessionResponse>(
+      `/workflow-plans/sessions/${encodeURIComponent(sessionId)}/start-async`,
       {
         method: "POST",
-        timeoutMs: this.chatTimeoutMs,
+        timeoutMs: this.kickoffTimeoutMs,
         body: JSON.stringify({
           prompt: options.prompt,
           schedule: options.schedule,
@@ -2697,19 +2806,27 @@ class WorkflowPlannerSessions {
         }),
       }
     );
+    return this.awaitOperation<WorkflowPlannerSessionStartResponse>(
+      sessionId,
+      kickoff.session?.operation?.request_id ?? null
+    );
   }
 
   async message(
     sessionId: string,
     options: { message: string }
   ): Promise<WorkflowPlannerSessionMessageResponse> {
-    return this.req<WorkflowPlannerSessionMessageResponse>(
-      `/workflow-plans/sessions/${encodeURIComponent(sessionId)}/message`,
+    const kickoff = await this.req<WorkflowPlannerSessionResponse>(
+      `/workflow-plans/sessions/${encodeURIComponent(sessionId)}/message-async`,
       {
         method: "POST",
-        timeoutMs: this.chatTimeoutMs,
+        timeoutMs: this.kickoffTimeoutMs,
         body: JSON.stringify({ message: options.message }),
       }
+    );
+    return this.awaitOperation<WorkflowPlannerSessionMessageResponse>(
+      sessionId,
+      kickoff.session?.operation?.request_id ?? null
     );
   }
 

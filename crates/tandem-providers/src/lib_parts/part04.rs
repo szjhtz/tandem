@@ -515,6 +515,78 @@ mod tests {
         assert_eq!(done, "toolUse");
     }
 
+    #[tokio::test]
+    async fn openai_codex_complete_recovers_when_responses_requires_streaming() {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind test server");
+        let addr = listener.local_addr().expect("listener address");
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+
+        let server = tokio::spawn(async move {
+            let mut request_count = 0usize;
+            while request_count < 2 {
+                let (mut socket, _) = listener.accept().await.expect("accept connection");
+                let request = read_single_http_request(&mut socket).await;
+                request_count += 1;
+                if request_count == 1 {
+                    let response_body = "{\"detail\":\"Stream must be set to true\"}";
+                    let response = format!(
+                        "HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                        response_body.as_bytes().len(),
+                        response_body
+                    );
+                    socket
+                        .write_all(response.as_bytes())
+                        .await
+                        .expect("write first response");
+                } else {
+                    let response_body = concat!(
+                        "data: {\"type\":\"response.output_text.delta\",\"delta\":\"Recovered\"}\n\n",
+                        "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"output_text\":\"Recovered\"}}\n\n",
+                        "data: [DONE]\n\n"
+                    );
+                    let response = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                        response_body.as_bytes().len(),
+                        response_body
+                    );
+                    socket
+                        .write_all(response.as_bytes())
+                        .await
+                        .expect("write second response");
+                }
+                socket.shutdown().await.expect("shutdown socket");
+                tx.send(request).expect("send request");
+            }
+        });
+
+        let provider = OpenAIResponsesProvider {
+            id: "openai-codex".to_string(),
+            name: "OpenAI Codex".to_string(),
+            base_url: format!("http://{}/codex", addr),
+            api_key: Some("codex-test-token".to_string()),
+            default_model: "gpt-5.4".to_string(),
+            models: codex_supported_models(272_000),
+            client: Client::new(),
+        };
+
+        let text = provider
+            .complete("recover completion", None)
+            .await
+            .expect("completion");
+        assert_eq!(text, "Recovered");
+
+        let first = rx.recv().await.expect("first request");
+        let second = rx.recv().await.expect("second request");
+        server.await.expect("server task");
+
+        assert_eq!(first.0, "POST /codex/responses HTTP/1.1");
+        assert!(first.2.contains("\"stream\":false"));
+        assert_eq!(second.0, "POST /codex/responses HTTP/1.1");
+        assert!(second.2.contains("\"stream\":true"));
+    }
+
     #[test]
     fn codex_supported_models_include_extended_catalog() {
         let models = codex_supported_models(272_000);

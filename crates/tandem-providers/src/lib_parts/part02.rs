@@ -481,6 +481,9 @@ impl Provider for OpenAIResponsesProvider {
                     let status = resp.status();
                     if !status.is_success() {
                         let text = resp.text().await.unwrap_or_default();
+                        if text.contains("Stream must be set to true") {
+                            return self.complete_via_streamed_responses(prompt, model).await;
+                        }
                         last_error_detail = Some(format_openai_error_response(status, &text));
                         break;
                     }
@@ -1117,6 +1120,102 @@ impl Provider for OpenAIResponsesProvider {
 
         Ok(Box::pin(stream))
     }
+}
+
+impl OpenAIResponsesProvider {
+    async fn complete_via_streamed_responses(
+        &self,
+        prompt: &str,
+        model: &str,
+    ) -> anyhow::Result<String> {
+        let url = format!("{}/responses", self.base_url);
+        let mut body = json!({
+            "model": model,
+            "store": false,
+            "instructions": default_openai_responses_instructions(),
+            "tools": [],
+            "tool_choice": "auto",
+            "parallel_tool_calls": false,
+            "input": [{
+                "role": "user",
+                "content": [{
+                    "type": "input_text",
+                    "text": prompt
+                }]
+            }],
+            "stream": true,
+            "include": [],
+        });
+        if should_default_openai_reasoning(model) {
+            body["reasoning"] = json!({
+                "effort": "high",
+                "summary": "auto"
+            });
+            body["include"] = json!(["reasoning.encrypted_content"]);
+        }
+
+        let mut req = self.client.post(url).json(&body);
+        if let Some(api_key) = &self.api_key {
+            req = req.bearer_auth(api_key);
+        }
+        let resp = req.send().await?;
+        let status = resp.status();
+        if !status.is_success() {
+            let text = resp.text().await.unwrap_or_default();
+            anyhow::bail!(format_openai_error_response(status, &text));
+        }
+        let sse_text = resp.text().await?;
+        parse_openai_responses_sse_text(&sse_text)
+    }
+}
+
+fn parse_openai_responses_sse_text(payload: &str) -> anyhow::Result<String> {
+    let mut output = String::new();
+    for frame in payload.split("\n\n") {
+        for line in frame.lines() {
+            if !line.starts_with("data: ") {
+                continue;
+            }
+            let data = line.trim_start_matches("data: ").trim();
+            if data.is_empty() || data == "[DONE]" {
+                continue;
+            }
+            let value: serde_json::Value = serde_json::from_str(data)?;
+            if let Some(detail) = extract_openai_error(&value) {
+                anyhow::bail!(detail);
+            }
+            if let Some(delta) = value.get("delta").and_then(|v| v.as_str()) {
+                output.push_str(delta);
+                continue;
+            }
+            if let Some(text) = value
+                .get("text")
+                .and_then(|v| v.as_str())
+                .filter(|text| !text.is_empty())
+            {
+                output.push_str(text);
+                continue;
+            }
+            if let Some(response) = value.get("response") {
+                if output.trim().is_empty() {
+                    if let Some(text) = extract_openai_text(response) {
+                        output.push_str(&text);
+                    }
+                }
+                continue;
+            }
+            if output.trim().is_empty() {
+                if let Some(text) = extract_openai_text(&value) {
+                    output.push_str(&text);
+                }
+            }
+        }
+    }
+
+    if output.trim().is_empty() {
+        anyhow::bail!("provider returned no completion content in streamed response");
+    }
+    Ok(output)
 }
 
 struct AnthropicProvider {

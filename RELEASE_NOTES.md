@@ -17,17 +17,25 @@ This release moves recursive-authoring and governance policy behind a dedicated 
 
 - **Long-plan latency warning in the wizard**: The automation create flow now warns when a connector-heavy or unusually detailed prompt is likely to take a few minutes to plan, which is especially helpful for Reddit/Notion-style workflows that load multiple MCP-backed expectations into the planner.
 - **Longer planner time budgets**: Workflow-plan preview requests now get more time on both the control-panel client and the server, reducing avoidable timeout failures on large or connector-heavy planning prompts.
+- **Clarification budget now matches build budget**: Planner clarification and revision turns now inherit the same longer timeout budget as the initial build, so the follow-up answer path no longer falls off a shorter 120-second cliff.
 - **Less duplicated planner payload**: The control panel now compacts the default knowledge subject sent with workflow-planner requests instead of embedding the full workflow prompt twice, which trims redundant prompt weight for large automations.
 - **Clarification shown as a blocked state**: If the planner needs more information before it can produce a real workflow, the review step now shows that clarification directly instead of presenting the generic fallback scaffold as though it were the actual plan.
 - **Fallback drafts hidden from creation**: When the planner falls back after a failed run, the review step now hides the scaffolded placeholder workflow and disables the create action so operators do not accidentally save a generic automation.
 - **Clearer timeout errors**: `524` workflow-planner responses now surface as explicit engine-timeout errors, making it much easier to distinguish a slow planning run from an auth error or a bad request.
 - **Planner stream decode fallback**: If the planner's streamed provider response dies with `error decoding response body` or a similar early stream corruption, Tandem now retries once with a non-streamed provider completion instead of abandoning workflow generation immediately.
+- **Codex-specific streamed fallback**: When OpenAI Codex rejects a non-streamed `/responses` retry and requires `stream=true`, Tandem now performs a streamed completion recovery instead of surfacing that `400` as a planner failure.
+- **Async planner session polling**: Workflow planner chat now runs through background planner-session operations and short polling requests, so the browser no longer depends on one long-lived planner HTTP call that a hosted proxy can kill before the engine finishes.
 
 ### MCP setup continuity in the automation wizard
 
 - **Draft-safe MCP round-trips**: Leaving the automation wizard for MCP setup now preserves the current workflow draft in session storage and restores it when the operator returns.
 - **Inline connect and sign-in actions**: Disconnected MCP servers can now be connected directly from the wizard, including follow-up OAuth completion flows for connectors such as Notion.
 - **Return path from MCP settings**: The dedicated MCP page now shows when an automation draft is waiting and provides a direct route back to Automations after connector setup.
+
+### Control panel polish
+
+- **Refresh-safe remembered auth**: A hard refresh after rebuilding the control panel no longer emits a noisy `/api/auth/me 401` before the remembered token restores the session.
+- **Wizard step scroll reset**: Moving between automation wizard steps now scrolls the active panel back to the top, so each new step opens at its actual starting position instead of leaving the operator halfway down the previous screen.
 
 ## v0.4.37 (Released 2026-04-22)
 

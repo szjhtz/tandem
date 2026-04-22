@@ -1,4 +1,3 @@
-
 #[tokio::test]
 async fn workflow_plan_import_rejects_runnable_lifecycle_state() {
     let state = test_state().await;
@@ -1031,6 +1030,163 @@ async fn workflow_planner_sessions_support_crud_and_duplication() {
             .and_then(Value::as_str),
         Some("forked_planner")
     );
+}
+
+#[tokio::test]
+async fn workflow_planner_session_start_async_persists_completed_operation() {
+    let state = test_state().await;
+    configure_openai_provider(&state).await;
+    let app = app_router(state.clone());
+    let _guard = PlannerEnvGuard::new(&["TANDEM_WORKFLOW_PLANNER_TEST_BUILD_RESPONSE"]);
+    _guard.set(
+        "TANDEM_WORKFLOW_PLANNER_TEST_BUILD_RESPONSE",
+        json!({
+            "action": "build",
+            "plan": llm_plan_json(
+                "Async Session Plan",
+                "Build a workflow plan asynchronously.",
+                manual_schedule_json(),
+                "/tmp/async-workspace",
+                vec![
+                    step_json(
+                        "collect_sources",
+                        "research",
+                        "Collect the source material.",
+                        &[],
+                        "analyst",
+                        json!([]),
+                        "research_notes"
+                    )
+                ],
+                None
+            )
+        })
+        .to_string(),
+    );
+
+    let create_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/workflow-plans/sessions")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "project_slug": "planner-async",
+                        "title": "Planner Async",
+                        "workspace_root": "/tmp/async-workspace",
+                        "goal": "Build a workflow plan asynchronously",
+                        "plan_source": "coding_task_planning"
+                    })
+                    .to_string(),
+                ))
+                .expect("create request"),
+        )
+        .await
+        .expect("create response");
+    assert_eq!(create_resp.status(), StatusCode::OK);
+    let create_body = to_bytes(create_resp.into_body(), usize::MAX)
+        .await
+        .expect("create body");
+    let create_payload: Value = serde_json::from_slice(&create_body).expect("create json");
+    let session_id = create_payload
+        .get("session")
+        .and_then(|row| row.get("session_id"))
+        .and_then(Value::as_str)
+        .expect("session id")
+        .to_string();
+
+    let start_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/workflow-plans/sessions/{session_id}/start-async"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "prompt": "Build a workflow plan asynchronously",
+                        "workspace_root": "/tmp/async-workspace"
+                    })
+                    .to_string(),
+                ))
+                .expect("start request"),
+        )
+        .await
+        .expect("start response");
+    assert_eq!(start_resp.status(), StatusCode::OK);
+
+    let mut session_payload: Option<Value> = None;
+    for _ in 0..40 {
+        let get_resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri(format!("/workflow-plans/sessions/{session_id}"))
+                    .body(Body::empty())
+                    .expect("get request"),
+            )
+            .await
+            .expect("get response");
+        assert_eq!(get_resp.status(), StatusCode::OK);
+        let get_body = to_bytes(get_resp.into_body(), usize::MAX)
+            .await
+            .expect("get body");
+        let payload: Value = serde_json::from_slice(&get_body).expect("get json");
+        let status = payload
+            .get("session")
+            .and_then(|row| row.get("operation"))
+            .and_then(|row| row.get("status"))
+            .and_then(Value::as_str);
+        session_payload = Some(payload.clone());
+        if status == Some("completed") {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+
+    let payload = session_payload.expect("session payload");
+    assert_eq!(
+        payload
+            .get("session")
+            .and_then(|row| row.get("operation"))
+            .and_then(|row| row.get("status"))
+            .and_then(Value::as_str),
+        Some("completed")
+    );
+    assert_eq!(
+        payload
+            .get("session")
+            .and_then(|row| row.get("operation"))
+            .and_then(|row| row.get("kind"))
+            .and_then(Value::as_str),
+        Some("start")
+    );
+    assert_eq!(
+        payload
+            .get("session")
+            .and_then(|row| row.get("operation"))
+            .and_then(|row| row.get("response"))
+            .and_then(|row| row.get("plan"))
+            .and_then(|row| row.get("title"))
+            .and_then(Value::as_str),
+        Some("Build a workflow plan asynchronously")
+    );
+    assert!(payload
+        .get("session")
+        .and_then(|row| row.get("current_plan_id"))
+        .and_then(Value::as_str)
+        .is_some());
+    assert!(payload
+        .get("session")
+        .and_then(|row| row.get("operation"))
+        .and_then(|row| row.get("response"))
+        .and_then(|row| row.get("conversation"))
+        .and_then(|row| row.get("messages"))
+        .and_then(Value::as_array)
+        .is_some());
 }
 
 #[tokio::test]

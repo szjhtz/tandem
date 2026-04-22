@@ -1285,6 +1285,17 @@ export interface WorkflowPlanDraftRecord {
   [key: string]: unknown;
 }
 
+export interface WorkflowPlannerSessionOperationRecord {
+  request_id: string;
+  kind: string;
+  status: string;
+  started_at_ms: number;
+  finished_at_ms?: number | null;
+  response?: JsonValue;
+  error?: string | null;
+  [key: string]: unknown;
+}
+
 export interface WorkflowPlannerSessionRecord {
   session_id: string;
   project_slug: string;
@@ -1299,6 +1310,7 @@ export interface WorkflowPlannerSessionRecord {
   plan_source?: string;
   allowed_mcp_servers?: string[];
   operator_preferences?: JsonObject;
+  operation?: WorkflowPlannerSessionOperationRecord | null;
   published_at_ms?: number | null;
   published_tasks?: JsonValue[];
   created_at_ms: number;

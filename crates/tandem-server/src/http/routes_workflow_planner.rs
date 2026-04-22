@@ -35,8 +35,16 @@ pub(super) fn apply(router: Router<AppState>) -> Router<AppState> {
             post(workflow_planner_session_start),
         )
         .route(
+            "/workflow-plans/sessions/{session_id}/start-async",
+            post(workflow_planner_session_start_async),
+        )
+        .route(
             "/workflow-plans/sessions/{session_id}/message",
             post(workflow_planner_session_message),
+        )
+        .route(
+            "/workflow-plans/sessions/{session_id}/message-async",
+            post(workflow_planner_session_message_async),
         )
         .route(
             "/workflow-plans/sessions/{session_id}/reset",

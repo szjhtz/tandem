@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **BUSL governance-engine split**: Recursive governance policy now lives in the new `tandem-governance-engine` BUSL crate, while `tandem-server` keeps the same public routes and tool names and falls back to explicit premium-feature errors when premium governance is disabled.
 - **Workflow planner latency advisory**: The automation create wizard now warns when a connector-heavy or unusually detailed workflow prompt may take a few minutes to plan, which gives operators clearer expectations before the planner call starts.
 - **Automation wizard MCP continuity**: The create wizard now preserves its draft across MCP setup round-trips, shows a return path from the MCP page, and exposes inline connect/authenticate actions for disconnected servers so operators can recover connector-backed plans without re-entering the workflow request.
+- **Async workflow planner session operations**: Workflow planner sessions now persist background start/message operations plus their final response or failure payload, and the client can poll that state instead of relying on one long-lived planner HTTP request surviving the whole run.
 
 ### Changed
 
@@ -19,12 +20,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Premium lifecycle governance extraction**: Health-drift, expiration, retirement, and dependency-revocation policy evaluation now flows through the BUSL governance engine, while the open server only gathers run evidence, persists the resulting state transitions, and no-ops the internal health checker in OSS builds.
 - **Long-running workflow planner budgets**: Workflow-plan preview calls now wait longer before timing out, with a higher server-side clamp and a larger control-panel client timeout for connector-heavy planning sessions.
 - **Planner prompt compaction**: The control panel now compresses the default knowledge subject it sends with workflow-planner requests instead of echoing the full workflow prompt back into operator preferences, reducing redundant planner payload size on long prompts.
+- **Planner chat transport path**: Control-panel workflow planning now creates or reuses planner sessions and polls short-lived async operations under the hood, so wizard and planner chat flows no longer depend on a single proxy-sensitive `/workflow-plans/chat/*` request.
 
 ### Fixed
 
 - **Workflow planner fallback visibility**: The automation review step now treats planner clarification and fallback drafts as blocked states, hides the generic scaffold that used to appear after failed planning runs, and prevents creating an automation from that placeholder output.
 - **Planner timeout messaging**: Gateway `524` responses from workflow-plan requests now surface as explicit engine timeout errors instead of raw HTTP failure text, making slow planner runs easier to diagnose.
 - **Planner stream decode recovery**: Workflow planning now retries once with a non-streamed provider completion when the streamed planner response dies with decode/body corruption errors, which prevents `error decoding response body` from dropping the whole workflow build when the provider can still return a valid final answer.
+- **Codex streamed completion recovery**: OpenAI Codex planner fallbacks now recover with a streamed `/responses` retry when the provider insists that `stream` must stay enabled, instead of failing the whole planner fallback with a `400`.
+- **Planner clarification timeout parity**: Follow-up clarification/revision requests now inherit the same longer timeout budget as initial planner builds, avoiding the old 120-second cliff after the first planner question.
+- **Refresh auth bootstrap noise**: Hard-refreshing the control panel after a rebuild no longer fires a spurious `/api/auth/me 401` before the remembered token restores the session.
+- **Wizard step navigation scroll**: Advancing between automation wizard steps now scrolls the active container back to the top so each new screen opens at the correct starting position.
 
 ## [0.4.37] - Released 2026-04-22
 

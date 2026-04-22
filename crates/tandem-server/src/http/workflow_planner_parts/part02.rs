@@ -6,6 +6,125 @@ fn planner_session_title_from_record(session: &WorkflowPlannerSessionRecord) -> 
     planner_session_default_title(&session.goal, session.created_at_ms)
 }
 
+fn planner_session_operation_error(
+    status: StatusCode,
+    payload: &Json<Value>,
+    fallback: &str,
+) -> String {
+    payload
+        .0
+        .get("error")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| format!("{fallback} ({status})"))
+}
+
+fn planner_session_operation_running(session: &WorkflowPlannerSessionRecord) -> bool {
+    session
+        .operation
+        .as_ref()
+        .map(|operation| operation.status.eq_ignore_ascii_case("running"))
+        .unwrap_or(false)
+}
+
+async fn workflow_planner_session_store_operation_result(
+    state: &AppState,
+    session_id: &str,
+    request_id: &str,
+    kind: &str,
+    result: Result<Json<Value>, (StatusCode, Json<Value>)>,
+) {
+    let Some(mut session) = state.get_workflow_planner_session(session_id).await else {
+        return;
+    };
+    let started_at_ms = session
+        .operation
+        .as_ref()
+        .filter(|operation| operation.request_id == request_id)
+        .map(|operation| operation.started_at_ms);
+    let Some(started_at_ms) = started_at_ms else {
+        return;
+    };
+    let finished_at_ms = crate::now_ms();
+    match result {
+        Ok(response) => {
+            if let Some(next_session) = response.0.get("session").cloned().and_then(|value| {
+                serde_json::from_value::<WorkflowPlannerSessionRecord>(value).ok()
+            }) {
+                session = next_session;
+            }
+            session.operation = Some(WorkflowPlannerSessionOperationRecord {
+                request_id: request_id.to_string(),
+                kind: kind.to_string(),
+                status: "completed".to_string(),
+                started_at_ms,
+                finished_at_ms: Some(finished_at_ms),
+                response: Some(response.0),
+                error: None,
+            });
+        }
+        Err((status, payload)) => {
+            session.operation = Some(WorkflowPlannerSessionOperationRecord {
+                request_id: request_id.to_string(),
+                kind: kind.to_string(),
+                status: "failed".to_string(),
+                started_at_ms,
+                finished_at_ms: Some(finished_at_ms),
+                response: Some(payload.0.clone()),
+                error: Some(planner_session_operation_error(
+                    status,
+                    &payload,
+                    "Workflow planner failed",
+                )),
+            });
+        }
+    }
+    let _ = state.put_workflow_planner_session(session).await;
+}
+
+async fn workflow_planner_session_start_background(
+    state: AppState,
+    session_id: String,
+    input: WorkflowPlannerSessionStartRequest,
+    request_id: String,
+) {
+    let result =
+        workflow_planner_session_start(State(state.clone()), Path(session_id.clone()), Json(input))
+            .await;
+    workflow_planner_session_store_operation_result(
+        &state,
+        &session_id,
+        &request_id,
+        "start",
+        result,
+    )
+    .await;
+}
+
+async fn workflow_planner_session_message_background(
+    state: AppState,
+    session_id: String,
+    input: WorkflowPlannerSessionMessageRequest,
+    request_id: String,
+) {
+    let result = workflow_planner_session_message(
+        State(state.clone()),
+        Path(session_id.clone()),
+        Json(input),
+    )
+    .await;
+    workflow_planner_session_store_operation_result(
+        &state,
+        &session_id,
+        &request_id,
+        "message",
+        result,
+    )
+    .await;
+}
+
 async fn workflow_planner_session_response(
     state: &AppState,
     session: &WorkflowPlannerSessionRecord,
@@ -141,6 +260,7 @@ pub(super) async fn workflow_planner_session_create(
         import_validation: None,
         import_transform_log: Vec::new(),
         import_scope_snapshot: None,
+        operation: None,
         published_at_ms: None,
         published_tasks: Vec::new(),
         created_at_ms: now,
@@ -451,6 +571,65 @@ pub(super) async fn workflow_planner_session_start(
     workflow_planner_session_response(&state, &session, response).await
 }
 
+pub(super) async fn workflow_planner_session_start_async(
+    State(state): State<AppState>,
+    Path(session_id): Path<String>,
+    Json(input): Json<WorkflowPlannerSessionStartRequest>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let Some(mut session) = state.get_workflow_planner_session(&session_id).await else {
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(json!({
+                "error": "planner session not found",
+                "code": "WORKFLOW_PLAN_SESSION_NOT_FOUND",
+                "session_id": session_id,
+            })),
+        ));
+    };
+    if planner_session_operation_running(&session) {
+        return Err((
+            StatusCode::CONFLICT,
+            Json(json!({
+                "error": "planner session already has an operation in progress",
+                "code": "WORKFLOW_PLAN_SESSION_BUSY",
+                "session_id": session_id,
+            })),
+        ));
+    }
+    let request_id = format!("wfplan-op-{}", Uuid::new_v4());
+    session.operation = Some(WorkflowPlannerSessionOperationRecord {
+        request_id: request_id.clone(),
+        kind: "start".to_string(),
+        status: "running".to_string(),
+        started_at_ms: crate::now_ms(),
+        finished_at_ms: None,
+        response: None,
+        error: None,
+    });
+    let session = state
+        .put_workflow_planner_session(session)
+        .await
+        .map_err(|error| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(json!({
+                    "error": error.to_string(),
+                    "code": "WORKFLOW_PLAN_INVALID",
+                })),
+            )
+        })?;
+    tokio::spawn(workflow_planner_session_start_background(
+        state.clone(),
+        session_id.clone(),
+        input,
+        request_id,
+    ));
+    Ok(Json(json!({
+        "ok": true,
+        "session": session,
+    })))
+}
+
 pub(super) async fn workflow_planner_session_message(
     State(state): State<AppState>,
     Path(session_id): Path<String>,
@@ -507,6 +686,65 @@ pub(super) async fn workflow_planner_session_message(
         let _ = state.put_workflow_planner_session(session.clone()).await;
     }
     workflow_planner_session_response(&state, &session, response).await
+}
+
+pub(super) async fn workflow_planner_session_message_async(
+    State(state): State<AppState>,
+    Path(session_id): Path<String>,
+    Json(input): Json<WorkflowPlannerSessionMessageRequest>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let Some(mut session) = state.get_workflow_planner_session(&session_id).await else {
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(json!({
+                "error": "planner session not found",
+                "code": "WORKFLOW_PLAN_SESSION_NOT_FOUND",
+                "session_id": session_id,
+            })),
+        ));
+    };
+    if planner_session_operation_running(&session) {
+        return Err((
+            StatusCode::CONFLICT,
+            Json(json!({
+                "error": "planner session already has an operation in progress",
+                "code": "WORKFLOW_PLAN_SESSION_BUSY",
+                "session_id": session_id,
+            })),
+        ));
+    }
+    let request_id = format!("wfplan-op-{}", Uuid::new_v4());
+    session.operation = Some(WorkflowPlannerSessionOperationRecord {
+        request_id: request_id.clone(),
+        kind: "message".to_string(),
+        status: "running".to_string(),
+        started_at_ms: crate::now_ms(),
+        finished_at_ms: None,
+        response: None,
+        error: None,
+    });
+    let session = state
+        .put_workflow_planner_session(session)
+        .await
+        .map_err(|error| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(json!({
+                    "error": error.to_string(),
+                    "code": "WORKFLOW_PLAN_INVALID",
+                })),
+            )
+        })?;
+    tokio::spawn(workflow_planner_session_message_background(
+        state.clone(),
+        session_id.clone(),
+        input,
+        request_id,
+    ));
+    Ok(Json(json!({
+        "ok": true,
+        "session": session,
+    })))
 }
 
 pub(super) async fn workflow_planner_session_reset(
@@ -856,6 +1094,7 @@ async fn workflow_plan_import_inner(
         import_validation: Some(report.clone()),
         import_transform_log: import_transform_log.clone(),
         import_scope_snapshot: Some(derived_scope_snapshot.clone()),
+        operation: None,
         published_at_ms: None,
         published_tasks: Vec::new(),
         created_at_ms: crate::now_ms(),

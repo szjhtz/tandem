@@ -1643,6 +1643,17 @@ export interface WorkflowPlanDraftRecord {
   [key: string]: unknown;
 }
 
+export interface WorkflowPlannerSessionOperationRecord {
+  request_id: string;
+  kind: string;
+  status: string;
+  started_at_ms: number;
+  finished_at_ms?: number | null;
+  response?: JsonValue;
+  error?: string | null;
+  [key: string]: unknown;
+}
+
 export interface WorkflowPlanPreviewResponse {
   plan: WorkflowPlan;
   clarifier?: JsonObject | null;
@@ -1728,6 +1739,7 @@ export interface WorkflowPlannerSessionRecord {
   import_validation?: JsonObject | null;
   import_transform_log?: string[];
   import_scope_snapshot?: JsonObject | null;
+  operation?: WorkflowPlannerSessionOperationRecord | null;
   published_at_ms?: number | null;
   published_tasks?: JsonValue[];
   created_at_ms: number;

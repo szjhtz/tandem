@@ -270,6 +270,13 @@ function AppBody() {
   const [navigationLock, setNavigationLock] = useState<NavigationLockState | null>(null);
   const [providerGateNoticeShown, setProviderGateNoticeShown] = useState(false);
   const autoLoginAttempted = useRef(false);
+  const savedBootstrapTokenRef = useRef<string | null>(null);
+  if (savedBootstrapTokenRef.current === null) {
+    savedBootstrapTokenRef.current = getSavedToken().trim();
+  }
+  const [authBootstrapPending, setAuthBootstrapPending] = useState(
+    () => !!savedBootstrapTokenRef.current
+  );
   const { route, navigate } = useHashRoute({
     canNavigate: useCallback(
       (next, current) => !navigationLock || next === current,
@@ -283,6 +290,7 @@ function AppBody() {
 
   const authQuery = useQuery({
     queryKey: ["auth", "me"],
+    enabled: !authBootstrapPending,
     retry: (failureCount, error) => isTransientEngineError(error) && failureCount < 4,
     retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 5000),
     refetchInterval: (query) =>
@@ -375,6 +383,7 @@ function AppBody() {
   });
 
   useEffect(() => {
+    if (authBootstrapPending) return;
     if (authed || authTransient || loginMutation.isPending || autoLoginAttempted.current) return;
     const savedToken = getSavedToken().trim();
     if (!savedToken) {
@@ -383,7 +392,29 @@ function AppBody() {
     }
     autoLoginAttempted.current = true;
     loginMutation.mutate({ token: savedToken, remember: true });
-  }, [authTransient, authed, loginMutation]);
+  }, [authBootstrapPending, authTransient, authed, loginMutation]);
+
+  useEffect(() => {
+    if (!authBootstrapPending || loginMutation.isPending) return;
+    const savedToken = savedBootstrapTokenRef.current || "";
+    autoLoginAttempted.current = true;
+    if (!savedToken) {
+      setAuthBootstrapPending(false);
+      return;
+    }
+    loginMutation.mutate(
+      { token: savedToken, remember: true },
+      {
+        onError: () => {
+          clearSavedToken();
+          savedBootstrapTokenRef.current = "";
+        },
+        onSettled: () => {
+          setAuthBootstrapPending(false);
+        },
+      }
+    );
+  }, [authBootstrapPending, loginMutation]);
 
   const logout = useCallback(async () => {
     await api("/api/auth/logout", { method: "POST" }).catch(() => {});

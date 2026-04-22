@@ -28,7 +28,7 @@ pub(super) fn planner_revision_timeout_ms() -> u64 {
         .ok()
         .and_then(|value| value.trim().parse::<u64>().ok())
         .map(|value| value.clamp(250, 600_000))
-        .unwrap_or(120_000)
+        .unwrap_or_else(planner_build_timeout_ms)
 }
 
 pub(super) fn classify_planner_provider_failure_reason(error: &str) -> &'static str {
@@ -50,5 +50,78 @@ pub(super) fn classify_planner_provider_failure_reason(error: &str) -> &'static 
         "provider_tool_schema_invalid"
     } else {
         "provider_request_failed"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{planner_build_timeout_ms, planner_revision_timeout_ms};
+    use std::sync::{Mutex, MutexGuard, OnceLock};
+
+    fn planner_env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    struct PlannerEnvGuard {
+        _guard: MutexGuard<'static, ()>,
+        saved: Vec<(&'static str, Option<String>)>,
+    }
+
+    impl PlannerEnvGuard {
+        fn new(vars: &[&'static str]) -> Self {
+            let guard = planner_env_lock().lock().expect("planner env lock");
+            let saved = vars
+                .iter()
+                .copied()
+                .map(|key| (key, std::env::var(key).ok()))
+                .collect::<Vec<_>>();
+            Self {
+                _guard: guard,
+                saved,
+            }
+        }
+
+        fn remove(&self, key: &'static str) {
+            std::env::remove_var(key);
+        }
+
+        fn set(&self, key: &'static str, value: &str) {
+            std::env::set_var(key, value);
+        }
+    }
+
+    impl Drop for PlannerEnvGuard {
+        fn drop(&mut self) {
+            for (key, value) in self.saved.drain(..) {
+                if let Some(value) = value {
+                    std::env::set_var(key, value);
+                } else {
+                    std::env::remove_var(key);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn planner_revision_timeout_defaults_to_build_timeout() {
+        let guard = PlannerEnvGuard::new(&[
+            "TANDEM_WORKFLOW_PLANNER_BUILD_TIMEOUT_MS",
+            "TANDEM_WORKFLOW_PLANNER_REVISION_TIMEOUT_MS",
+        ]);
+        guard.remove("TANDEM_WORKFLOW_PLANNER_BUILD_TIMEOUT_MS");
+        guard.remove("TANDEM_WORKFLOW_PLANNER_REVISION_TIMEOUT_MS");
+        assert_eq!(planner_revision_timeout_ms(), planner_build_timeout_ms());
+    }
+
+    #[test]
+    fn planner_revision_timeout_honors_explicit_override() {
+        let guard = PlannerEnvGuard::new(&[
+            "TANDEM_WORKFLOW_PLANNER_BUILD_TIMEOUT_MS",
+            "TANDEM_WORKFLOW_PLANNER_REVISION_TIMEOUT_MS",
+        ]);
+        guard.set("TANDEM_WORKFLOW_PLANNER_BUILD_TIMEOUT_MS", "300000");
+        guard.set("TANDEM_WORKFLOW_PLANNER_REVISION_TIMEOUT_MS", "180000");
+        assert_eq!(planner_revision_timeout_ms(), 180_000);
     }
 }

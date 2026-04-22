@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AnimatePresence, motion } from "motion/react";
-import { useEffect, useLayoutEffect, useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import YAML from "yaml";
 import { Step1Goal } from "./Step1Goal";
 import { Step2Schedule } from "./Step2Schedule";
@@ -151,6 +151,20 @@ const AUTOMATION_WIZARD_SOURCE = Object.values(AUTOMATION_WIZARD_SOURCES).find(
 
 function safeString(value: unknown) {
   return String(value || "").trim();
+}
+
+function findScrollableParent(node: HTMLElement | null): HTMLElement | null {
+  let current = node?.parentElement || null;
+  while (current) {
+    const style = window.getComputedStyle(current);
+    const overflowY = style.overflowY.toLowerCase();
+    const canScroll =
+      (overflowY === "auto" || overflowY === "scroll" || overflowY === "overlay") &&
+      current.scrollHeight > current.clientHeight;
+    if (canScroll) return current;
+    current = current.parentElement;
+  }
+  return null;
 }
 
 function summarizePlannerClarification(response: any): PlannerClarificationState {
@@ -421,6 +435,7 @@ export function CreateWizard({
   onCreated?: () => void;
 }) {
   const queryClient = useQueryClient();
+  const wizardRootRef = useRef<HTMLDivElement | null>(null);
   const [step, setStep] = useState<WizardStep>(1);
   const [planSource, setPlanSource] = useState<string>("automations_page");
   const [routerMatches, setRouterMatches] = useState<
@@ -951,6 +966,17 @@ export function CreateWizard({
       onNavigationLockChange?.(null);
     };
   }, [navigationLock, onNavigationLockChange]);
+  useLayoutEffect(() => {
+    const root = wizardRootRef.current;
+    if (!root) return;
+    root.scrollIntoView({ block: "start", behavior: "auto" });
+    const scrollParent = findScrollableParent(root);
+    if (scrollParent) {
+      scrollParent.scrollTo({ top: 0, behavior: "auto" });
+      return;
+    }
+    window.scrollTo({ top: 0, behavior: "auto" });
+  }, [step]);
   const timezoneError =
     String(wizard.timezone || "").trim().length > 0 && !isValidTimezone(wizard.timezone)
       ? "Timezone must be a valid IANA timezone like Europe/Berlin."
@@ -1047,7 +1073,7 @@ export function CreateWizard({
   }, [toast]);
 
   return (
-    <div className="flex flex-col h-full gap-4 min-h-0 relative">
+    <div ref={wizardRootRef} className="flex flex-col h-full gap-4 min-h-0 relative">
       <div className="flex items-center gap-2">
         {AUTOMATION_WIZARD_CONFIG.steps.map((label, i) => {
           const num = (i + 1) as WizardStep;

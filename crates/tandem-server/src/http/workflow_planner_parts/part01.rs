@@ -90,6 +90,20 @@ pub(super) struct WorkflowPlanChatResetRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkflowPlannerSessionOperationRecord {
+    pub request_id: String,
+    pub kind: String,
+    pub status: String,
+    pub started_at_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub finished_at_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub response: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkflowPlannerSessionRecord {
     pub session_id: String,
     pub project_slug: String,
@@ -123,6 +137,8 @@ pub struct WorkflowPlannerSessionRecord {
     pub import_transform_log: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub import_scope_snapshot: Option<compiler_api::PlanScopeSnapshot>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub operation: Option<WorkflowPlannerSessionOperationRecord>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub published_at_ms: Option<u64>,
     #[serde(default)]
@@ -1183,4 +1199,3 @@ pub(super) async fn workflow_plan_chat_reset(
         "planner_diagnostics": draft.planner_diagnostics,
     })))
 }
-
