@@ -36,6 +36,7 @@ This release moves recursive-authoring and governance policy behind a dedicated 
 
 - **Refresh-safe remembered auth**: A hard refresh after rebuilding the control panel no longer emits a noisy `/api/auth/me 401` before the remembered token restores the session.
 - **Wizard step scroll reset**: Moving between automation wizard steps now scrolls the active panel back to the top, so each new step opens at its actual starting position instead of leaving the operator halfway down the previous screen.
+- **Automation browser requests stay human-owned**: The control-panel engine proxy now stamps forwarded automation requests with `x-tandem-request-source: control_panel` and strips browser agent lineage headers, while engine governance honors that source so normal create and run-now actions no longer trip `AUTOMATION_V2_AGENT_ID_REQUIRED`.
 
 ## v0.4.37 (Released 2026-04-22)
 

@@ -336,6 +336,59 @@ async fn automations_v2_create_requires_approved_capability_request() {
 }
 
 #[tokio::test]
+async fn automations_v2_create_and_run_now_treat_control_panel_source_as_human() {
+    let state = test_state().await;
+    let app = app_router(state);
+    let agent_id = "agent-control-panel-override";
+    let automation_id = "auto-v2-control-panel-source";
+    let mut payload = automation_v2_payload(automation_id, agent_id, None);
+    payload["creator_id"] = json!("control-panel");
+
+    let create_req = Request::builder()
+        .method("POST")
+        .uri("/automations/v2")
+        .header("content-type", "application/json")
+        .header("x-tandem-agent-id", agent_id)
+        .header("x-tandem-request-source", "control_panel")
+        .body(Body::from(payload.to_string()))
+        .expect("create request");
+    let create_resp = app
+        .clone()
+        .oneshot(create_req)
+        .await
+        .expect("create response");
+    assert_eq!(create_resp.status(), StatusCode::OK);
+    let create_payload = response_json(create_resp).await;
+    assert_eq!(
+        create_payload
+            .get("automation")
+            .and_then(|value| value.get("creator_id"))
+            .and_then(Value::as_str),
+        Some("control-panel")
+    );
+
+    let run_now_req = Request::builder()
+        .method("POST")
+        .uri(format!("/automations/v2/{automation_id}/run_now"))
+        .header("content-type", "application/json")
+        .header("x-tandem-agent-id", agent_id)
+        .header("x-tandem-request-source", "control_panel")
+        .body(Body::from(json!({}).to_string()))
+        .expect("run now request");
+    let run_now_resp = app
+        .clone()
+        .oneshot(run_now_req)
+        .await
+        .expect("run now response");
+    assert_eq!(run_now_resp.status(), StatusCode::OK);
+    let run_now_payload = response_json(run_now_resp).await;
+    assert_eq!(
+        run_now_payload.get("ok").and_then(Value::as_bool),
+        Some(true)
+    );
+}
+
+#[tokio::test]
 async fn automations_v2_patch_requires_approved_capability_request() {
     let state = test_state().await;
     let app = app_router(state);

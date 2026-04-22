@@ -24,11 +24,22 @@ fn first_header(headers: &HeaderMap, names: &[&str]) -> Option<String> {
     None
 }
 
+fn is_control_panel_request_source(request_source: &str) -> bool {
+    matches!(request_source.trim(), "control_panel")
+}
+
 pub(crate) fn resolve_governance_actor(
     headers: &HeaderMap,
     tenant_context: &TenantContext,
     request_principal: &RequestPrincipal,
 ) -> GovernanceActorRef {
+    if is_control_panel_request_source(&request_principal.source) {
+        let actor_id = tenant_context
+            .actor_id
+            .clone()
+            .or_else(|| request_principal.actor_id.clone());
+        return GovernanceActorRef::human(actor_id, request_principal.source.clone());
+    }
     if let Some(agent_id) = first_header(headers, &["x-tandem-agent-id"]) {
         return GovernanceActorRef::agent(Some(agent_id), request_principal.source.clone());
     }
@@ -49,14 +60,27 @@ pub(crate) fn resolve_governance_provenance(
 ) -> AutomationProvenanceRecord {
     let request_source = first_header(headers, &["x-tandem-request-source"])
         .or_else(|| Some(request_principal.source.clone()));
-    let Some(agent_id) = first_header(headers, &["x-tandem-agent-id"]) else {
-        return AutomationProvenanceRecord::human(
+    if is_control_panel_request_source(&request_principal.source) {
+        let mut provenance = AutomationProvenanceRecord::human(
             tenant_context
                 .actor_id
                 .clone()
                 .or_else(|| request_principal.actor_id.clone()),
             request_principal.source.clone(),
         );
+        provenance.request_source = request_source;
+        return provenance;
+    }
+    let Some(agent_id) = first_header(headers, &["x-tandem-agent-id"]) else {
+        let mut provenance = AutomationProvenanceRecord::human(
+            tenant_context
+                .actor_id
+                .clone()
+                .or_else(|| request_principal.actor_id.clone()),
+            request_principal.source.clone(),
+        );
+        provenance.request_source = request_source;
+        return provenance;
     };
 
     let ancestor_chain = first_header(headers, &["x-tandem-agent-ancestor-ids"])
@@ -92,6 +116,40 @@ pub(crate) fn resolve_governance_provenance(
         ancestor_chain,
         depth,
         request_source,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::http::{HeaderMap, HeaderValue};
+    use tandem_types::TenantContext;
+
+    #[test]
+    fn control_panel_request_source_is_human_even_with_agent_header() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-tandem-agent-id",
+            HeaderValue::from_static("agent-should-not-win"),
+        );
+        headers.insert(
+            "x-tandem-request-source",
+            HeaderValue::from_static("control_panel"),
+        );
+        let tenant_context = TenantContext::local_implicit();
+        let request_principal = RequestPrincipal {
+            actor_id: None,
+            source: "control_panel".to_string(),
+        };
+        let actor = resolve_governance_actor(&headers, &tenant_context, &request_principal);
+        assert_eq!(actor.kind, GovernanceActorKind::Human);
+        assert_eq!(actor.actor_id, None);
+
+        let provenance =
+            resolve_governance_provenance(&headers, &tenant_context, &request_principal);
+        assert_eq!(provenance.creator.kind, GovernanceActorKind::Human);
+        assert_eq!(provenance.creator.actor_id, None);
+        assert_eq!(provenance.request_source.as_deref(), Some("control_panel"));
     }
 }
 

@@ -31,6 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Planner clarification timeout parity**: Follow-up clarification/revision requests now inherit the same longer timeout budget as initial planner builds, avoiding the old 120-second cliff after the first planner question.
 - **Refresh auth bootstrap noise**: Hard-refreshing the control panel after a rebuild no longer fires a spurious `/api/auth/me 401` before the remembered token restores the session.
 - **Wizard step navigation scroll**: Advancing between automation wizard steps now scrolls the active container back to the top so each new screen opens at the correct starting position.
+- **Control-panel automation provenance**: Control-panel engine proxy requests now mark themselves as `control_panel`, strip leaked browser agent lineage headers, and the engine governance path now treats that request source as human-owned so create and run-now automation requests no longer fail with `AUTOMATION_V2_AGENT_ID_REQUIRED`.
 
 ## [0.4.37] - Released 2026-04-22
 

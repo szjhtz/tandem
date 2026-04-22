@@ -22,7 +22,10 @@ import { resolveControlPanelPrincipalIdentity } from "../lib/setup/control-panel
 import { resolveControlPanelPreferencesPath } from "../lib/setup/control-panel-preferences.js";
 import { createSwarmApiHandler, getOrchestratorMetrics } from "../server/routes/swarm.js";
 import { createAcaApiHandler } from "../server/routes/aca.js";
-import { createCapabilitiesHandler, getCapabilitiesMetrics } from "../server/routes/capabilities.js";
+import {
+  createCapabilitiesHandler,
+  getCapabilitiesMetrics,
+} from "../server/routes/capabilities.js";
 import { createControlPanelConfigHandler } from "../server/routes/control-panel-config.js";
 import { createKnowledgebaseApiHandler } from "../server/routes/knowledgebase.js";
 import { createControlPanelPreferencesHandler } from "../server/routes/control-panel-preferences.js";
@@ -175,9 +178,7 @@ if (initRequested) {
   console.log("[Tandem Control Panel] Environment initialized.");
   console.log(`[Tandem Control Panel] .env:      ${result.envPath}`);
   console.log(`[Tandem Control Panel] Engine URL: ${result.engineUrl}`);
-  console.log(
-    `[Tandem Control Panel] Panel URL:  http://${result.panelHost}:${result.panelPort}`
-  );
+  console.log(`[Tandem Control Panel] Panel URL:  http://${result.panelHost}:${result.panelPort}`);
   console.log(`[Tandem Control Panel] Token:      ${result.token}`);
   if (
     process.argv.slice(2).length === 1 ||
@@ -804,7 +805,9 @@ async function installServices() {
   const installEngine = serviceMode === "both" || serviceMode === "engine";
   const installPanel = serviceMode === "both" || serviceMode === "panel";
   const defaultStateDir = resolve(posixHomeForUser(serviceUser), ".local", "share", "tandem");
-  const stateDir = String(process.env.TANDEM_HOME || process.env.TANDEM_STATE_DIR || defaultStateDir).trim();
+  const stateDir = String(
+    process.env.TANDEM_HOME || process.env.TANDEM_STATE_DIR || defaultStateDir
+  ).trim();
   const engineEnvPath = "/etc/tandem/engine.env";
   const panelEnvPath = "/etc/tandem/control-panel.env";
   const engineServiceName = "tandem-engine";
@@ -857,9 +860,7 @@ async function installServices() {
           ...(existingEngineEnv.TANDEM_EXA_API_KEY
             ? { TANDEM_EXA_API_KEY: existingEngineEnv.TANDEM_EXA_API_KEY }
             : {}),
-          ...(existingEngineEnv.EXA_API_KEY
-            ? { EXA_API_KEY: existingEngineEnv.EXA_API_KEY }
-            : {}),
+          ...(existingEngineEnv.EXA_API_KEY ? { EXA_API_KEY: existingEngineEnv.EXA_API_KEY } : {}),
           ...(existingEngineEnv.TANDEM_SEARXNG_URL
             ? { TANDEM_SEARXNG_URL: existingEngineEnv.TANDEM_SEARXNG_URL }
             : {}),
@@ -1089,7 +1090,11 @@ async function readJsonBody(req) {
 }
 
 function normalizeSearchBackend(raw) {
-  switch (String(raw || "").trim().toLowerCase()) {
+  switch (
+    String(raw || "")
+      .trim()
+      .toLowerCase()
+  ) {
     case "":
     case "auto":
       return "auto";
@@ -1107,7 +1112,9 @@ function normalizeSearchBackend(raw) {
 }
 
 function normalizeSearchUrl(raw) {
-  const value = String(raw || "").trim().replace(/\/+$/, "");
+  const value = String(raw || "")
+    .trim()
+    .replace(/\/+$/, "");
   return value || "";
 }
 
@@ -1163,7 +1170,10 @@ async function writeManagedSearchSettings(payload = {}) {
   const nextEnv = { ...existingEnv };
 
   nextEnv.TANDEM_SEARCH_BACKEND = normalizeSearchBackend(payload.backend || "auto");
-  const timeoutRaw = Number.parseInt(String(payload.timeout_ms || payload.timeoutMs || "10000"), 10);
+  const timeoutRaw = Number.parseInt(
+    String(payload.timeout_ms || payload.timeoutMs || "10000"),
+    10
+  );
   nextEnv.TANDEM_SEARCH_TIMEOUT_MS = String(
     Number.isFinite(timeoutRaw) ? Math.min(Math.max(timeoutRaw, 1000), 120000) : 10000
   );
@@ -1187,8 +1197,7 @@ async function writeManagedSearchSettings(payload = {}) {
   if (exaKey) {
     nextEnv.TANDEM_EXA_API_KEY = exaKey;
     delete nextEnv.TANDEM_EXA_SEARCH_API_KEY;
-  }
-  else if (payload.clear_exa_key || payload.clearExaKey) {
+  } else if (payload.clear_exa_key || payload.clearExaKey) {
     delete nextEnv.TANDEM_EXA_API_KEY;
     delete nextEnv.TANDEM_EXA_SEARCH_API_KEY;
     delete nextEnv.EXA_API_KEY;
@@ -1224,7 +1233,9 @@ function getManagedSchedulerSettings() {
   const hostedManaged = isHostedManagedControlPanel();
   const available = localEngine || hostedManaged;
   const env = existsSync(envPath) ? parseDotEnv(readFileSync(envPath, "utf8")) : {};
-  const modeRaw = String(env.TANDEM_SCHEDULER_MODE || "multi").trim().toLowerCase();
+  const modeRaw = String(env.TANDEM_SCHEDULER_MODE || "multi")
+    .trim()
+    .toLowerCase();
   const mode = modeRaw === "single" ? "single" : "multi";
   const maxRaw = Number.parseInt(String(env.TANDEM_SCHEDULER_MAX_CONCURRENT_RUNS || ""), 10);
   const maxConcurrentRuns = Number.isFinite(maxRaw) && maxRaw > 0 ? maxRaw : null;
@@ -1258,7 +1269,9 @@ async function writeManagedSchedulerSettings(payload = {}) {
   const envPath = current.managed_env_path;
   const existingEnv = existsSync(envPath) ? parseDotEnv(readFileSync(envPath, "utf8")) : {};
   const nextEnv = { ...existingEnv };
-  const modeRaw = String(payload.mode || "multi").trim().toLowerCase();
+  const modeRaw = String(payload.mode || "multi")
+    .trim()
+    .toLowerCase();
   nextEnv.TANDEM_SCHEDULER_MODE = modeRaw === "single" ? "single" : "multi";
   if (payload.max_concurrent_runs != null && payload.max_concurrent_runs > 0) {
     nextEnv.TANDEM_SCHEDULER_MAX_CONCURRENT_RUNS = String(payload.max_concurrent_runs);
@@ -1307,9 +1320,7 @@ function readOptionalTokenFile(pathname) {
 
 function getAcaToken() {
   return (
-    String(process.env.ACA_API_TOKEN || "").trim() ||
-    readOptionalTokenFile(ACA_TOKEN_FILE) ||
-    ""
+    String(process.env.ACA_API_TOKEN || "").trim() || readOptionalTokenFile(ACA_TOKEN_FILE) || ""
   );
 }
 
@@ -1780,7 +1791,9 @@ async function handleFilesApi(req, res, _session) {
         }
       }
       directories.sort((a, b) => String(a.name).localeCompare(String(b.name)));
-      files.sort((a, b) => b.updatedAt - a.updatedAt || String(a.name).localeCompare(String(b.name)));
+      files.sort(
+        (a, b) => b.updatedAt - a.updatedAt || String(a.name).localeCompare(String(b.name))
+      );
       sendJson(res, 200, {
         ok: true,
         root: FILES_ROOT,
@@ -2069,14 +2082,25 @@ async function proxyEngineRequest(req, res, session) {
   const targetPath = incoming.pathname.replace(/^\/api\/engine/, "") || "/";
   const targetUrl = `${ENGINE_URL}${targetPath}${incoming.search}`;
   const forwardedHost = String(req.headers.host || "").trim();
-  const forwardedProto = String(req.headers["x-forwarded-proto"] || "").trim()
-    || (req.socket && req.socket.encrypted ? "https" : "http");
+  const forwardedProto =
+    String(req.headers["x-forwarded-proto"] || "").trim() ||
+    (req.socket && req.socket.encrypted ? "https" : "http");
 
   const headers = new Headers();
   for (const [key, value] of Object.entries(req.headers)) {
     if (!value) continue;
     const lower = key.toLowerCase();
-    if (["host", "content-length", "cookie", "authorization", "x-tandem-token"].includes(lower)) {
+    if (
+      [
+        "host",
+        "content-length",
+        "cookie",
+        "authorization",
+        "x-tandem-token",
+        "x-tandem-agent-id",
+        "x-tandem-agent-ancestor-ids",
+      ].includes(lower)
+    ) {
       continue;
     }
     if (Array.isArray(value)) headers.set(key, value.join(", "));
@@ -2084,6 +2108,7 @@ async function proxyEngineRequest(req, res, session) {
   }
   headers.set("authorization", `Bearer ${session.token}`);
   headers.set("x-tandem-token", session.token);
+  headers.set("x-tandem-request-source", "control_panel");
   if (forwardedHost) headers.set("x-forwarded-host", forwardedHost);
   if (forwardedProto) headers.set("x-forwarded-proto", forwardedProto);
 
@@ -2241,10 +2266,7 @@ async function engineRequestJson(session, path, options = {}) {
     }
     if (!response.ok) {
       const rawText = await response.text().catch(() => "");
-      if (
-        (response.status === 503 || isEngineStarting(rawText)) &&
-        attempt < maxNetworkRetries
-      ) {
+      if ((response.status === 503 || isEngineStarting(rawText)) && attempt < maxNetworkRetries) {
         lastError = new Error(rawText || `${method} ${path} failed: ${response.status}`);
         response = null;
         continue;
@@ -2455,16 +2477,26 @@ function normalizePlannerTasks(rawTasks, maxTasks = 8, options = {}) {
   const linearFallback = options?.linearFallback === true;
   const candidates = Array.isArray(rawTasks) ? rawTasks : [];
   const normalizeTaskKind = (value, outputTarget) => {
-    const raw = String(value || "").trim().toLowerCase();
+    const raw = String(value || "")
+      .trim()
+      .toLowerCase();
     if (["implementation", "inspection", "research", "validation"].includes(raw)) return raw;
     return outputTarget?.path ? "implementation" : "inspection";
   };
   const normalizeOutputTarget = (value) => {
     if (!value || typeof value !== "object") return null;
-    const path = String(value?.path || value?.file || value?.file_path || value?.target || "").trim();
+    const path = String(
+      value?.path || value?.file || value?.file_path || value?.target || ""
+    ).trim();
     if (!path) return null;
-    const kind = String(value?.kind || value?.type || "artifact").trim().toLowerCase() || "artifact";
-    const operation = String(value?.operation || value?.mode || "").trim().toLowerCase() || "create_or_update";
+    const kind =
+      String(value?.kind || value?.type || "artifact")
+        .trim()
+        .toLowerCase() || "artifact";
+    const operation =
+      String(value?.operation || value?.mode || "")
+        .trim()
+        .toLowerCase() || "create_or_update";
     return { path, kind, operation };
   };
   const provisional = candidates
@@ -2567,8 +2599,12 @@ function inferOutputTargetFromText(text) {
 function ensurePlannerTaskOutputTargets(tasks, objective) {
   const list = Array.isArray(tasks) ? tasks : [];
   return list.map((task) => {
-    const taskKind = String(task?.taskKind || "").trim().toLowerCase() || "inspection";
-    const existing = task?.outputTarget && typeof task.outputTarget === "object" ? task.outputTarget : null;
+    const taskKind =
+      String(task?.taskKind || "")
+        .trim()
+        .toLowerCase() || "inspection";
+    const existing =
+      task?.outputTarget && typeof task.outputTarget === "object" ? task.outputTarget : null;
     return {
       ...task,
       taskKind,
@@ -2580,12 +2616,21 @@ function ensurePlannerTaskOutputTargets(tasks, objective) {
 function validateStrictPlannerTasks(tasks) {
   const list = Array.isArray(tasks) ? tasks : [];
   const invalidTaskKinds = list
-    .filter((task) => !["implementation", "inspection", "research", "validation"].includes(String(task?.taskKind || "").trim().toLowerCase()))
+    .filter(
+      (task) =>
+        !["implementation", "inspection", "research", "validation"].includes(
+          String(task?.taskKind || "")
+            .trim()
+            .toLowerCase()
+        )
+    )
     .map((task) => String(task?.id || task?.title || "task").trim())
     .filter(Boolean);
   const missing = list
     .filter((task) => {
-      const taskKind = String(task?.taskKind || "").trim().toLowerCase();
+      const taskKind = String(task?.taskKind || "")
+        .trim()
+        .toLowerCase();
       return taskKind === "implementation" && !String(task?.outputTarget?.path || "").trim();
     })
     .map((task) => String(task?.id || task?.title || "task").trim())
@@ -2888,7 +2933,9 @@ function workerWriteRetryToolAllowlist() {
 }
 
 function strictWriteRetryEnabled() {
-  const raw = String(process.env.TANDEM_STRICT_WRITE_RETRY_ENABLED || "").trim().toLowerCase();
+  const raw = String(process.env.TANDEM_STRICT_WRITE_RETRY_ENABLED || "")
+    .trim()
+    .toLowerCase();
   if (!raw) return true;
   return !["0", "false", "no", "off"].includes(raw);
 }
@@ -2910,7 +2957,9 @@ function nonWritingRetryMaxAttempts() {
 }
 
 function classifyStrictWriteFailureReason(verification) {
-  const reason = String(verification?.reason || "").trim().toUpperCase();
+  const reason = String(verification?.reason || "")
+    .trim()
+    .toUpperCase();
   if (!reason || reason === "VERIFIED") return "";
   if (
     reason === "WRITE_ARGS_EMPTY_FROM_PROVIDER" ||
@@ -2958,7 +3007,9 @@ function buildStrictWriteRetryRequest(prompt, verification, attemptIndex, maxAtt
     recoveryLines.push("- Then create or modify the required file in the same turn.");
   } else {
     recoveryLines.push("- Do not inspect further with read/search/glob/ls/list.");
-    recoveryLines.push("- Create or modify the required target directly with write/edit/apply_patch.");
+    recoveryLines.push(
+      "- Create or modify the required target directly with write/edit/apply_patch."
+    );
   }
   return {
     parts: [{ type: "text", text: recoveryLines.join("\n") }],
@@ -2971,7 +3022,9 @@ function buildStrictWriteRetryRequest(prompt, verification, attemptIndex, maxAtt
 }
 
 function classifyNonWritingFailureReason(verification) {
-  const reason = String(verification?.reason || "").trim().toUpperCase();
+  const reason = String(verification?.reason || "")
+    .trim()
+    .toUpperCase();
   if (!reason || reason === "VERIFIED") return "";
   if (reason === "NO_TOOL_ACTIVITY_NO_DECISION" || reason === "NO_TOOL_ACTIVITY") {
     return "no_tool_activity";
@@ -3011,9 +3064,7 @@ function buildNonWritingRetryRequest(prompt, verification, attemptIndex, maxAtte
 
 const WRITE_TOOL_NAMES = new Set(["write", "edit", "apply_patch"]);
 const REQUIRED_TOOL_MODE_REASON = "TOOL_MODE_REQUIRED_NOT_SATISFIED";
-const REQUIRED_TOOL_REASON_PATTERN = new RegExp(
-  `${REQUIRED_TOOL_MODE_REASON}:\\s*([A-Z_]+)\\b`
-);
+const REQUIRED_TOOL_REASON_PATTERN = new RegExp(`${REQUIRED_TOOL_MODE_REASON}:\\s*([A-Z_]+)\\b`);
 
 function normalizeVerificationMode(mode) {
   return String(mode || "")
@@ -3057,7 +3108,9 @@ function extractRequiredToolFailureReason(text) {
   const raw = String(text || "").trim();
   if (!raw) return "";
   const match = raw.match(REQUIRED_TOOL_REASON_PATTERN);
-  return String(match?.[1] || "").trim().toUpperCase();
+  return String(match?.[1] || "")
+    .trim()
+    .toUpperCase();
 }
 
 function shouldTrackWorkspacePath(pathname) {
@@ -3484,7 +3537,9 @@ function summarizeExecutionRows(rows, limit = 12) {
   for (const row of list) {
     if (out.length >= limit) break;
     const role = roleOfMessage(row);
-    const type = String(row?.type || "").trim().toLowerCase();
+    const type = String(row?.type || "")
+      .trim()
+      .toLowerCase();
     const text = textOfMessage(row).trim();
     const parts = Array.isArray(row?.parts) ? row.parts : [];
     const tools = [];
@@ -3505,7 +3560,15 @@ function summarizeExecutionRows(rows, limit = 12) {
   return out;
 }
 
-function buildAttemptTelemetry(name, request, rows, messages, startedAtMs, error = null, meta = {}) {
+function buildAttemptTelemetry(
+  name,
+  request,
+  rows,
+  messages,
+  startedAtMs,
+  error = null,
+  meta = {}
+) {
   const syncAudit = collectToolActivity(rows, `${name}_prompt_sync`);
   const sessionAudit = collectToolActivity(messages, `${name}_session_snapshot`);
   const merged = mergeToolActivityAudits(syncAudit, sessionAudit);
@@ -3561,8 +3624,7 @@ function buildVerificationSummary(syncRows, messages, workspaceChanges, sessionI
     else if (requiredToolModeUnsatisfied) reason = REQUIRED_TOOL_MODE_REASON;
     else if (toolAudit.rejectedWriteToolCalls > 0)
       reason = "WRITE_TOOL_ATTEMPT_REJECTED_NO_WORKSPACE_CHANGE";
-    else if (toolAudit.rejectedToolCalls > 0)
-      reason = "TOOL_ATTEMPT_REJECTED_NO_WORKSPACE_CHANGE";
+    else if (toolAudit.rejectedToolCalls > 0) reason = "TOOL_ATTEMPT_REJECTED_NO_WORKSPACE_CHANGE";
     else if (strictMode && toolAudit.totalToolCalls > 0)
       reason = "NO_WRITE_ACTIVITY_NO_WORKSPACE_CHANGE";
     else reason = "NO_TOOL_ACTIVITY_NO_WORKSPACE_CHANGE";
@@ -3668,10 +3730,9 @@ async function resolveExecutionModel(session, run) {
 function normalizeSessionModelRef(value) {
   if (typeof value === "string") return value.trim();
   if (value && typeof value === "object") {
-    const model =
-      String(
-        value?.model_id || value?.id || value?.name || value?.slug || value?.model || ""
-      ).trim();
+    const model = String(
+      value?.model_id || value?.id || value?.name || value?.slug || value?.model || ""
+    ).trim();
     if (model) return model;
   }
   return "";
@@ -3684,7 +3745,9 @@ function summarizeRunStepsForPrompt(run, currentStepId, limit = 12) {
     .map((row, index) => {
       const stepId = String(row?.step_id || `step-${index + 1}`).trim();
       const title = String(row?.title || stepId).trim();
-      const status = String(row?.status || "unknown").trim().toLowerCase();
+      const status = String(row?.status || "unknown")
+        .trim()
+        .toLowerCase();
       const marker = stepId === currentStepId ? "*" : "-";
       return `${marker} ${stepId} [${status}]: ${title}`;
     })
@@ -3695,8 +3758,7 @@ function summarizeRunStepsForPrompt(run, currentStepId, limit = 12) {
 function stepPromptText(run, step, stepIndex, totalSteps) {
   const stepId = String(step?.step_id || "").trim() || `step-${stepIndex + 1}`;
   const stepTitle = String(step?.title || stepId).trim();
-  const stepDetails =
-    step && typeof step === "object" ? JSON.stringify(step, null, 2).trim() : "";
+  const stepDetails = step && typeof step === "object" ? JSON.stringify(step, null, 2).trim() : "";
   const stepList = summarizeRunStepsForPrompt(run, stepId);
   return [
     "Execute this swarm step.",
@@ -3796,7 +3858,13 @@ function buildNonWritingVerificationSummary(syncRows, messages, sessionId, optio
   };
 }
 
-async function runExecutionPromptWithVerification(session, run, prompt, sessionId = "", options = {}) {
+async function runExecutionPromptWithVerification(
+  session,
+  run,
+  prompt,
+  sessionId = "",
+  options = {}
+) {
   const activeSessionId =
     String(sessionId || "").trim() || (await createExecutionSession(session, run));
   if (!activeSessionId) throw new Error("Failed to create execution session.");
@@ -3886,7 +3954,9 @@ async function runExecutionPromptWithVerification(session, run, prompt, sessionI
       `/session/${encodeURIComponent(activeSessionId)}`
     ).catch(() => null);
     lastSessionSnapshot = sessionSnapshot;
-    const sessionMessages = Array.isArray(sessionSnapshot?.messages) ? sessionSnapshot.messages : [];
+    const sessionMessages = Array.isArray(sessionSnapshot?.messages)
+      ? sessionSnapshot.messages
+      : [];
     messages = rowsSinceAttemptStart(sessionMessages, previousMessageCount);
     previousMessageCount = sessionMessages.length;
     hasAssistant = syncRows.some((row) => roleOfMessage(row) === "assistant");
@@ -3951,8 +4021,7 @@ async function runExecutionPromptWithVerification(session, run, prompt, sessionI
         normalizeSessionModelRef(lastSessionSnapshot?.model) ||
         normalizeSessionModelRef(resolvedModel?.model),
       source: String(
-        lastSessionSnapshot?.provider &&
-          normalizeSessionModelRef(lastSessionSnapshot?.model)
+        lastSessionSnapshot?.provider && normalizeSessionModelRef(lastSessionSnapshot?.model)
           ? "session_snapshot"
           : resolvedModel?.source || ""
       ).trim(),
@@ -4048,7 +4117,9 @@ function taskTitleFromRecord(task) {
 
 function taskKindFromRecord(task) {
   const payload = task?.payload && typeof task.payload === "object" ? task.payload : {};
-  const raw = String(payload?.task_kind || task?.task_type || "inspection").trim().toLowerCase();
+  const raw = String(payload?.task_kind || task?.task_type || "inspection")
+    .trim()
+    .toLowerCase();
   return ["implementation", "inspection", "research", "validation"].includes(raw)
     ? raw
     : "inspection";
@@ -4065,7 +4136,9 @@ function summarizeBlackboardTasksForPrompt(tasks, currentTaskId, limit = 16) {
     .map((task, index) => {
       const taskId = String(task?.id || `task-${index + 1}`).trim();
       const title = taskTitleFromRecord(task);
-      const status = String(task?.status || "unknown").trim().toLowerCase();
+      const status = String(task?.status || "unknown")
+        .trim()
+        .toLowerCase();
       const marker = taskId === currentTaskId ? "*" : "-";
       return `${marker} ${taskId} [${status}]: ${title}`;
     })
@@ -4077,8 +4150,7 @@ function taskPromptText(run, task, workerId, workflowId) {
   const taskId = String(task?.id || "").trim();
   const taskTitle = taskTitleFromRecord(task);
   const taskKind = taskKindFromRecord(task);
-  const taskDetails =
-    task && typeof task === "object" ? JSON.stringify(task, null, 2).trim() : "";
+  const taskDetails = task && typeof task === "object" ? JSON.stringify(task, null, 2).trim() : "";
   const taskList = summarizeBlackboardTasksForPrompt(run?.tasks, taskId);
   const outputTarget =
     task?.payload?.output_target && typeof task.payload.output_target === "object"
@@ -4220,10 +4292,14 @@ async function seedBlackboardTasks(session, runId, objective, taskRows, workflow
   if (!prepared.length) {
     throw new Error("No valid tasks to seed.");
   }
-  const created = await engineRequestJson(session, `/context/runs/${encodeURIComponent(runId)}/tasks`, {
-    method: "POST",
-    body: { tasks: prepared },
-  });
+  const created = await engineRequestJson(
+    session,
+    `/context/runs/${encodeURIComponent(runId)}/tasks`,
+    {
+      method: "POST",
+      body: { tasks: prepared },
+    }
+  );
   if (created && created.ok === false) {
     throw new Error(String(created.error || created.code || "Task seeding failed."));
   }
@@ -4525,13 +4601,19 @@ async function driveBlackboardRunExecution(session, runId, options = {}) {
   if (swarmExecutors.has(runId)) return false;
   const controller = getSwarmRunController(runId);
   const workflowId = String(
-    options.workflowId || controller?.workflowId || swarmState.workflowId || "swarm.blackboard.default"
+    options.workflowId ||
+      controller?.workflowId ||
+      swarmState.workflowId ||
+      "swarm.blackboard.default"
   ).trim();
   const maxAgents = Math.max(
     1,
     Math.min(
       16,
-      Number.parseInt(String(options.maxAgents || controller?.maxAgents || swarmState.maxAgents || 3), 10) || 3
+      Number.parseInt(
+        String(options.maxAgents || controller?.maxAgents || swarmState.maxAgents || 3),
+        10
+      ) || 3
     )
   );
   upsertSwarmRunController(runId, {
@@ -4856,7 +4938,10 @@ async function startSwarm(session, config = {}) {
   await synced;
   let plannerTasks = [];
   let planSeedMode = "fallback_local";
-  const enforceStrictTaskOutputs = String(verificationMode || "strict").trim().toLowerCase() === "strict";
+  const enforceStrictTaskOutputs =
+    String(verificationMode || "strict")
+      .trim()
+      .toLowerCase() === "strict";
   try {
     const llmPlan = await generatePlanTodosWithLLM(session, run, maxTasks);
     let plannerSource = "llm_objective_planner";
@@ -4912,12 +4997,18 @@ async function startSwarm(session, config = {}) {
     if (enforceStrictTaskOutputs) {
       const strictCheck = validateStrictPlannerTasks(plannerTasks);
       if (!strictCheck.ok) {
-        await appendContextRunEvent(session, runId, "plan_failed_output_target_missing", "planning", {
-          reason: plannerFailureReason,
-          missing_tasks: strictCheck.missing,
-          invalid_task_kind_tasks: strictCheck.invalidTaskKinds,
-          recovery_source: recovered.source,
-        }).catch(() => null);
+        await appendContextRunEvent(
+          session,
+          runId,
+          "plan_failed_output_target_missing",
+          "planning",
+          {
+            reason: plannerFailureReason,
+            missing_tasks: strictCheck.missing,
+            invalid_task_kind_tasks: strictCheck.invalidTaskKinds,
+            recovery_source: recovered.source,
+          }
+        ).catch(() => null);
         throw new Error(
           `Strict orchestration requires valid task kinds and output targets where needed: missing_output_target=${strictCheck.missing.join(", ")} invalid_task_kind=${strictCheck.invalidTaskKinds.join(", ")}`
         );
@@ -5251,7 +5342,10 @@ async function handleApi(req, res) {
     return handleControlPanelPreferences(req, res, session);
   }
 
-  if (pathname === "/api/control-panel/config" && (req.method === "GET" || req.method === "PATCH")) {
+  if (
+    pathname === "/api/control-panel/config" &&
+    (req.method === "GET" || req.method === "PATCH")
+  ) {
     const session = requireSession(req, res);
     if (!session) return true;
     return handleControlPanelConfig(req, res);

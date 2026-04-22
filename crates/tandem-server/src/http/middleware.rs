@@ -77,9 +77,11 @@ fn resolve_enterprise_request_context(headers: &HeaderMap) -> (TenantContext, Re
         first_header(headers, &["x-tandem-workspace-id", "x-tenant-workspace-id"]).as_deref(),
         first_header(headers, &["x-tandem-actor-id", "x-user-id"]).as_deref(),
     );
+    let request_source = first_header(headers, &["x-tandem-request-source"])
+        .unwrap_or_else(|| "api_token".to_string());
     let request_principal = RequestPrincipal {
         actor_id: tenant_context.actor_id.clone(),
-        source: "api_token".to_string(),
+        source: request_source,
     };
     (tenant_context, request_principal)
 }
@@ -159,6 +161,17 @@ mod tests {
         assert_eq!(tenant_context.actor_id.as_deref(), Some("user-1"));
         assert_eq!(principal.actor_id.as_deref(), Some("user-1"));
         assert_eq!(tenant_context.source, tandem_types::TenantSource::Explicit);
+    }
+
+    #[test]
+    fn resolve_enterprise_request_context_uses_request_source_header() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-tandem-request-source",
+            HeaderValue::from_static("control_panel"),
+        );
+        let (_, principal) = resolve_enterprise_request_context(&headers);
+        assert_eq!(principal.source, "control_panel");
     }
 }
 

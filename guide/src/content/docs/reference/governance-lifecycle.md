@@ -86,6 +86,8 @@ The key creation failure codes are:
 - `AUTOMATION_V2_AGENT_CAP_EXCEEDED`
 - `AUTOMATION_V2_CAPABILITY_ESCALATION_FORBIDDEN`
 
+If you see `AUTOMATION_V2_AGENT_ID_REQUIRED` while creating or starting an automation from the control panel, the request was classified as agent-authored. In the browser path, Tandem should treat the request as human/system-owned, mark forwarded requests with `x-tandem-request-source: control_panel`, and strip any `x-tandem-agent-id` or agent lineage headers before proxying to the engine. If a custom proxy forwards those headers without a control-panel request source, the engine will enforce the agent rules even when the user intended a normal automation create/run.
+
 If the agent wants `creates_agents` or `modifies_grants`, the escalation must already be approved. Otherwise the route rejects the request.
 
 ### 2. Capability Escalation
