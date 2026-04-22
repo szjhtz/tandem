@@ -35,12 +35,14 @@ const jsonFiles = [
 const cargoFiles = [
   "src-tauri/Cargo.toml",
   "engine/Cargo.toml",
+  "Cargo.lock",
   "crates/tandem-agent-teams/Cargo.toml",
   "crates/tandem-browser/Cargo.toml",
   "crates/tandem-channels/Cargo.toml",
   "crates/tandem-core/Cargo.toml",
   "crates/tandem-document/Cargo.toml",
   "crates/tandem-enterprise-contract/Cargo.toml",
+  "crates/tandem-governance-engine/Cargo.toml",
   "crates/tandem-memory/Cargo.toml",
   "crates/tandem-observability/Cargo.toml",
   "crates/tandem-orchestrator/Cargo.toml",
@@ -95,15 +97,40 @@ const updateCargo = (relativePath) => {
   const filePath = path.join(rootDir, relativePath);
   const content = fs.readFileSync(filePath, "utf8");
   const lines = content.split(/\r?\n/);
+  const isLockfile = path.basename(relativePath) === "Cargo.lock";
   let inPackage = false;
+  let currentPackageName = "";
   const next = lines.map((line) => {
-    if (/^\s*\[/.test(line)) {
-      inPackage = /^\s*\[package\]\s*$/.test(line);
-    }
-    if (inPackage) {
-      const match = line.match(/^(\s*)version\s*=\s*"[^"]*"\s*$/);
-      if (match) {
-        return `${match[1]}version = "${version}"`;
+    if (isLockfile) {
+      if (/^\[\[package\]\]\s*$/.test(line)) {
+        inPackage = true;
+        currentPackageName = "";
+      } else if (/^\s*\[/.test(line)) {
+        inPackage = false;
+        currentPackageName = "";
+      }
+      if (inPackage) {
+        const nameMatch = line.match(/^name\s*=\s*"([^"]+)"\s*$/);
+        if (nameMatch) {
+          currentPackageName = nameMatch[1];
+        }
+        if (
+          line.match(/^version\s*=\s*"[^"]*"\s*$/) &&
+          currentPackageName &&
+          (currentPackageName === "tandem" || currentPackageName.startsWith("tandem-"))
+        ) {
+          return `version = "${version}"`;
+        }
+      }
+    } else {
+      if (/^\s*\[/.test(line)) {
+        inPackage = /^\s*\[package\]\s*$/.test(line);
+      }
+      if (inPackage) {
+        const match = line.match(/^(\s*)version\s*=\s*"[^"]*"\s*$/);
+        if (match) {
+          return `${match[1]}version = "${version}"`;
+        }
       }
     }
     const depMatch = line.match(

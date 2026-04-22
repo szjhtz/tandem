@@ -20,7 +20,7 @@ pub(super) fn planner_build_timeout_ms() -> u64 {
         .ok()
         .and_then(|value| value.trim().parse::<u64>().ok())
         .map(|value| value.clamp(250, 600_000))
-        .unwrap_or(300_000)
+        .unwrap_or(600_000)
 }
 
 pub(super) fn planner_revision_timeout_ms() -> u64 {
@@ -120,8 +120,15 @@ mod tests {
             "TANDEM_WORKFLOW_PLANNER_BUILD_TIMEOUT_MS",
             "TANDEM_WORKFLOW_PLANNER_REVISION_TIMEOUT_MS",
         ]);
-        guard.set("TANDEM_WORKFLOW_PLANNER_BUILD_TIMEOUT_MS", "300000");
+        guard.set("TANDEM_WORKFLOW_PLANNER_BUILD_TIMEOUT_MS", "600000");
         guard.set("TANDEM_WORKFLOW_PLANNER_REVISION_TIMEOUT_MS", "180000");
         assert_eq!(planner_revision_timeout_ms(), 180_000);
+    }
+
+    #[test]
+    fn planner_build_timeout_defaults_to_longer_budget() {
+        let guard = PlannerEnvGuard::new(&["TANDEM_WORKFLOW_PLANNER_BUILD_TIMEOUT_MS"]);
+        guard.remove("TANDEM_WORKFLOW_PLANNER_BUILD_TIMEOUT_MS");
+        assert_eq!(planner_build_timeout_ms(), 600_000);
     }
 }
