@@ -19,15 +19,15 @@ pub(super) fn planner_build_timeout_ms() -> u64 {
     std::env::var("TANDEM_WORKFLOW_PLANNER_BUILD_TIMEOUT_MS")
         .ok()
         .and_then(|value| value.trim().parse::<u64>().ok())
-        .map(|value| value.clamp(250, 300_000))
-        .unwrap_or(180_000)
+        .map(|value| value.clamp(250, 600_000))
+        .unwrap_or(300_000)
 }
 
 pub(super) fn planner_revision_timeout_ms() -> u64 {
     std::env::var("TANDEM_WORKFLOW_PLANNER_REVISION_TIMEOUT_MS")
         .ok()
         .and_then(|value| value.trim().parse::<u64>().ok())
-        .map(|value| value.clamp(250, 300_000))
+        .map(|value| value.clamp(250, 600_000))
         .unwrap_or(120_000)
 }
 

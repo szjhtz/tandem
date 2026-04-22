@@ -58,6 +58,11 @@ interface McpServerOption {
   enabled: boolean;
 }
 
+type PlannerClarificationState = {
+  status: "none" | "waiting";
+  question: string;
+};
+
 interface AutomationWizardConfig {
   defaults: {
     schedulePreset: string;
@@ -138,6 +143,40 @@ function parseAutomationWizardConfig(source: string): AutomationWizardConfig {
 const AUTOMATION_WIZARD_SOURCE = Object.values(AUTOMATION_WIZARD_SOURCES).find(
   (value): value is string => typeof value === "string" && value.trim().length > 0
 );
+
+function safeString(value: unknown) {
+  return String(value || "").trim();
+}
+
+function summarizePlannerClarification(response: any): PlannerClarificationState {
+  const question = safeString(response?.clarifier?.question);
+  if (!question) return { status: "none", question: "" };
+  return { status: "waiting", question };
+}
+
+function buildPlannerLatencyAdvisory(wizard: WizardState) {
+  const goal = safeString(wizard.goal);
+  if (!goal) return "";
+  const lowered = goal.toLowerCase();
+  const connectorMentions = [
+    "reddit",
+    "notion",
+    "github",
+    "slack",
+    "jira",
+    "airtable",
+    "gmail",
+    "mcp",
+  ].filter((needle) => lowered.includes(needle)).length;
+  const looksLongRunning =
+    goal.length >= 2500 ||
+    wizard.selectedMcpServers.length >= 2 ||
+    connectorMentions >= 2 ||
+    (wizard.scheduleKind !== "manual" &&
+      (goal.length >= 1500 || wizard.selectedMcpServers.length >= 1));
+  if (!looksLongRunning) return "";
+  return "This workflow is connector-heavy or unusually detailed, so plan generation can take a few minutes.";
+}
 
 export const AUTOMATION_WIZARD_CONFIG = parseAutomationWizardConfig(AUTOMATION_WIZARD_SOURCE || "");
 const AUTOMATION_PLANNER_SEED_KEY = "tandem.automations.plannerSeed";
@@ -335,6 +374,10 @@ export function CreateWizard({
   const [overlapDecision, setOverlapDecision] = useState<string>("");
   const [planningConversation, setPlanningConversation] = useState<any>(null);
   const [planningChangeSummary, setPlanningChangeSummary] = useState<string[]>([]);
+  const [planningClarification, setPlanningClarification] = useState<PlannerClarificationState>({
+    status: "none",
+    question: "",
+  });
   const [plannerError, setPlannerError] = useState<string>("");
   const [plannerDiagnostics, setPlannerDiagnostics] = useState<any>(null);
   const [workspaceBrowserOpen, setWorkspaceBrowserOpen] = useState(false);
@@ -418,6 +461,7 @@ export function CreateWizard({
       return name.includes(workspaceSearchQuery);
     });
   }, [workspaceDirectories, workspaceSearchQuery]);
+  const plannerLatencyAdvisory = useMemo(() => buildPlannerLatencyAdvisory(wizard), [wizard]);
 
   useEffect(() => {
     const configDefaultProvider = String(
@@ -482,11 +526,13 @@ export function CreateWizard({
       );
     },
     onSuccess: (res) => {
+      const clarification = summarizePlannerClarification(res);
       setPlanPreview(res?.plan || null);
       setOverlapAnalysis(res?.overlap_analysis || res?.overlapAnalysis || null);
       setOverlapDecision("");
       setPlanningConversation(res?.conversation || null);
       setPlanningChangeSummary([]);
+      setPlanningClarification(clarification);
       setPlannerError("");
       setPlannerDiagnostics(res?.planner_diagnostics || res?.plannerDiagnostics || null);
     },
@@ -496,6 +542,7 @@ export function CreateWizard({
       setOverlapDecision("");
       setPlanningConversation(null);
       setPlanningChangeSummary([]);
+      setPlanningClarification({ status: "none", question: "" });
       const message = error instanceof Error ? error.message : String(error);
       setPlannerError(message);
       setPlannerDiagnostics(null);
@@ -508,6 +555,7 @@ export function CreateWizard({
       return client.workflowPlans.chatMessage({ plan_id: planPreview.plan_id, message });
     },
     onSuccess: (res) => {
+      const clarification = summarizePlannerClarification(res);
       setPlanPreview(res?.plan || null);
       setOverlapAnalysis(res?.overlap_analysis || res?.overlapAnalysis || null);
       setOverlapDecision("");
@@ -517,13 +565,13 @@ export function CreateWizard({
           ? res.change_summary.map((row: any) => String(row || "").trim()).filter(Boolean)
           : []
       );
-      setPlannerError(
-        typeof res?.clarifier?.question === "string" ? String(res.clarifier.question) : ""
-      );
+      setPlanningClarification(clarification);
+      setPlannerError("");
       setPlannerDiagnostics(res?.planner_diagnostics || res?.plannerDiagnostics || null);
     },
     onError: (error) => {
       const message = error instanceof Error ? error.message : String(error);
+      setPlanningClarification({ status: "none", question: "" });
       setPlannerError(message);
       toast("err", message);
     },
@@ -534,16 +582,19 @@ export function CreateWizard({
       return client.workflowPlans.chatReset({ plan_id: planPreview.plan_id });
     },
     onSuccess: (res) => {
+      const clarification = summarizePlannerClarification(res);
       setPlanPreview(res?.plan || null);
       setOverlapAnalysis(res?.overlap_analysis || res?.overlapAnalysis || null);
       setOverlapDecision("");
       setPlanningConversation(res?.conversation || null);
       setPlanningChangeSummary([]);
+      setPlanningClarification(clarification);
       setPlannerError("");
       setPlannerDiagnostics(res?.planner_diagnostics || res?.plannerDiagnostics || null);
     },
     onError: (error) => {
       const message = error instanceof Error ? error.message : String(error);
+      setPlanningClarification({ status: "none", question: "" });
       setPlannerError(message);
       toast("err", message);
     },
@@ -619,6 +670,20 @@ export function CreateWizard({
   const deployMutation = useMutation({
     mutationFn: async () => {
       if (!wizard.goal.trim()) throw new Error("Please describe your goal first.");
+      if (planningClarification.status === "waiting") {
+        throw new Error(
+          planningClarification.question ||
+            "Planner needs clarification before this automation can be created."
+        );
+      }
+      const fallbackReason = safeString(
+        plannerDiagnostics?.fallback_reason || plannerDiagnostics?.fallbackReason
+      );
+      if (fallbackReason) {
+        throw new Error(
+          "Planner returned a fallback draft instead of a real workflow plan. Regenerate the plan before creating the automation."
+        );
+      }
       const preview =
         planPreview ||
         (await compileMutation.mutateAsync().catch((error: unknown) => {
@@ -672,6 +737,7 @@ export function CreateWizard({
       setOverlapDecision("");
       setPlanningConversation(null);
       setPlanningChangeSummary([]);
+      setPlanningClarification({ status: "none", question: "" });
       setPlannerError("");
       setValidationBadge("");
       setGeneratedSkill(null);
@@ -776,6 +842,11 @@ export function CreateWizard({
       setPlanPreview(null);
       setPlanningConversation(null);
       setPlanningChangeSummary([]);
+      setPlanningClarification({ status: "none", question: "" });
+      setPlannerDiagnostics(null);
+      if (plannerLatencyAdvisory) {
+        toast("info", plannerLatencyAdvisory);
+      }
       try {
         await compileMutation.mutateAsync();
       } catch {
@@ -1028,6 +1099,8 @@ export function CreateWizard({
                 void planningResetMutation.mutateAsync();
               }}
               isResettingPlanningChat={planningResetMutation.isPending}
+              planningClarification={planningClarification}
+              plannerLatencyAdvisory={plannerLatencyAdvisory}
               plannerError={plannerError}
               plannerDiagnostics={plannerDiagnostics}
               generatedSkill={generatedSkill}

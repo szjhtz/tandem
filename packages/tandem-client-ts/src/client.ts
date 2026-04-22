@@ -451,6 +451,9 @@ export class TandemClient {
     if (res.status === 204) return undefined as T;
     if (!res.ok) {
       const body = await res.text().catch(() => "");
+      if (res.status === 524) {
+        throw new Error(`Engine timed out while waiting for ${path} to finish.`);
+      }
       throw new Error(`Request failed (${res.status} ${res.statusText}): ${body}`);
     }
     return res.json() as Promise<T>;
@@ -482,6 +485,9 @@ export class TandemClient {
 
     if (!res.ok) {
       const body = await res.text().catch(() => "");
+      if (res.status === 524) {
+        throw new Error(`Engine timed out while waiting for ${path} to finish.`);
+      }
       throw new Error(`Request failed (${res.status} ${res.statusText}): ${body}`);
     }
     return res.text();
@@ -2385,7 +2391,7 @@ class Routines {
 class WorkflowPlans {
   constructor(private req: TandemClient["_request"]) {}
 
-  private readonly chatTimeoutMs = 200_000;
+  private readonly chatTimeoutMs = 320_000;
 
   async preview(options: {
     prompt: string;

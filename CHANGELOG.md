@@ -10,11 +10,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **BUSL governance-engine split**: Recursive governance policy now lives in the new `tandem-governance-engine` BUSL crate, while `tandem-server` keeps the same public routes and tool names and falls back to explicit premium-feature errors when premium governance is disabled.
+- **Workflow planner latency advisory**: The automation create wizard now warns when a connector-heavy or unusually detailed workflow prompt may take a few minutes to plan, which gives operators clearer expectations before the planner call starts.
 
 ### Changed
 
 - **LLM guide availability notes**: Self-Operator, MCP capability-request, and governance docs now explain the premium governance boundary while keeping the same operational flow and canonical tool names.
 - **Premium lifecycle governance extraction**: Health-drift, expiration, retirement, and dependency-revocation policy evaluation now flows through the BUSL governance engine, while the open server only gathers run evidence, persists the resulting state transitions, and no-ops the internal health checker in OSS builds.
+- **Long-running workflow planner budgets**: Workflow-plan preview calls now wait longer before timing out, with a higher server-side clamp and a larger control-panel client timeout for connector-heavy planning sessions.
+
+### Fixed
+
+- **Workflow planner fallback visibility**: The automation review step now treats planner clarification and fallback drafts as blocked states, hides the generic scaffold that used to appear after failed planning runs, and prevents creating an automation from that placeholder output.
+- **Planner timeout messaging**: Gateway `524` responses from workflow-plan requests now surface as explicit engine timeout errors instead of raw HTTP failure text, making slow planner runs easier to diagnose.
 
 ## [0.4.37] - Released 2026-04-22
 

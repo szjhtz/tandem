@@ -63,6 +63,11 @@ type Step4ReviewProps = {
   isSendingPlanningMessage: boolean;
   onResetPlanningChat: () => void;
   isResettingPlanningChat: boolean;
+  planningClarification: {
+    status: "none" | "waiting";
+    question: string;
+  };
+  plannerLatencyAdvisory: string;
   plannerError: string;
   plannerDiagnostics: any;
   generatedSkill: any;
@@ -86,6 +91,8 @@ export function Step4Review({
   isSendingPlanningMessage,
   onResetPlanningChat,
   isResettingPlanningChat,
+  planningClarification,
+  plannerLatencyAdvisory,
   plannerError,
   plannerDiagnostics,
   generatedSkill,
@@ -191,6 +198,8 @@ export function Step4Review({
     plannerDiagnostics?.fallback_reason || plannerDiagnostics?.fallbackReason || ""
   ).trim();
   const plannerFallbackDetail = String(plannerDiagnostics?.detail || "").trim();
+  const clarificationWaiting = planningClarification.status === "waiting";
+  const planIsFallbackDraft = !!plannerFallbackReason;
   const overlapMatchLayer = String(
     overlapAnalysis?.match_layer || overlapAnalysis?.matchLayer || ""
   )
@@ -341,7 +350,37 @@ export function Step4Review({
         <div className="grid gap-1">
           <span className="text-xs uppercase tracking-wide text-slate-500">Workflow Plan</span>
           {isPreviewing ? (
-            <span className="text-sm text-slate-300">Planning workflow…</span>
+            <div className="grid gap-2">
+              <span className="text-sm text-slate-300">Planning workflow…</span>
+              {plannerLatencyAdvisory ? (
+                <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
+                  {plannerLatencyAdvisory}
+                </div>
+              ) : null}
+            </div>
+          ) : clarificationWaiting ? (
+            <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-3 text-sm text-amber-100">
+              <div className="font-medium text-amber-200">Planner is waiting for clarification</div>
+              <div className="mt-1">{planningClarification.question}</div>
+              <div className="mt-2 text-xs text-amber-100/80">
+                The generic scaffold is being hidden because it is only a fallback draft, not a real
+                workflow plan yet.
+              </div>
+            </div>
+          ) : planIsFallbackDraft ? (
+            <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-3 text-sm text-amber-100">
+              <div className="font-medium text-amber-200">Planner returned a fallback draft</div>
+              <div className="mt-1">
+                {plannerFallbackReason.replace(/_/g, " ") || "fallback draft"}
+              </div>
+              {plannerFallbackDetail ? (
+                <div className="mt-2 text-xs text-amber-100/80">{plannerFallbackDetail}</div>
+              ) : null}
+              <div className="mt-2 text-xs text-amber-100/80">
+                Tandem is hiding the scaffolded workflow here so we do not accidentally create a
+                generic automation from a failed planning run.
+              </div>
+            </div>
           ) : planPreview ? (
             <div className="grid gap-1 text-sm text-slate-300">
               <span>
@@ -413,7 +452,7 @@ export function Step4Review({
           )}
         </div>
       </div>
-      {plannerError ? (
+      {plannerError && !clarificationWaiting ? (
         <div className="rounded-xl border border-red-500/40 bg-red-950/30 p-3 text-sm text-red-200">
           {plannerError}
         </div>
@@ -609,6 +648,8 @@ export function Step4Review({
           isPreviewing ||
           !wizard.goal.trim() ||
           !planPreview ||
+          clarificationWaiting ||
+          planIsFallbackDraft ||
           (overlapRequiresConfirmation && !overlapDecision)
         }
         onClick={onSubmit}

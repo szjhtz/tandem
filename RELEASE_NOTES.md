@@ -4,7 +4,7 @@ This is the canonical release-notes file used by release tooling.
 
 ## v0.4.38 (Unreleased)
 
-This release moves recursive-authoring and governance policy behind a dedicated BUSL crate while keeping Tandem's public governance and agent surfaces stable across premium and OSS builds.
+This release moves recursive-authoring and governance policy behind a dedicated BUSL crate while keeping Tandem's public governance and agent surfaces stable across premium and OSS builds, and it also makes the automation planner much clearer when a long connector-backed plan is still working, needs clarification, or has fallen back after a failed planning run.
 
 ### Premium governance split
 
@@ -12,6 +12,14 @@ This release moves recursive-authoring and governance policy behind a dedicated 
 - **Stable public surfaces across editions**: The open runtime preserves the same route names, SDK methods, and agent tool names, and OSS builds now return explicit premium-feature errors when managed governance is unavailable.
 - **Stable LLM docs across editions**: The Self-Operator and governance docs keep the same operational ordering and canonical names, but now call out edition availability and OSS fallback behavior explicitly.
 - **Lifecycle review logic moved behind premium governance**: Health-check drift detection, expiration review state, retirement shaping, and dependency-revocation policy now evaluate inside the premium governance engine, while the open server remains the transport/persistence layer and treats the internal governance health checker as a no-op in OSS builds.
+
+### Workflow planner reliability
+
+- **Long-plan latency warning in the wizard**: The automation create flow now warns when a connector-heavy or unusually detailed prompt is likely to take a few minutes to plan, which is especially helpful for Reddit/Notion-style workflows that load multiple MCP-backed expectations into the planner.
+- **Longer planner time budgets**: Workflow-plan preview requests now get more time on both the control-panel client and the server, reducing avoidable timeout failures on large or connector-heavy planning prompts.
+- **Clarification shown as a blocked state**: If the planner needs more information before it can produce a real workflow, the review step now shows that clarification directly instead of presenting the generic fallback scaffold as though it were the actual plan.
+- **Fallback drafts hidden from creation**: When the planner falls back after a failed run, the review step now hides the scaffolded placeholder workflow and disables the create action so operators do not accidentally save a generic automation.
+- **Clearer timeout errors**: `524` workflow-planner responses now surface as explicit engine-timeout errors, making it much easier to distinguish a slow planning run from an auth error or a bad request.
 
 ## v0.4.37 (Released 2026-04-22)
 
