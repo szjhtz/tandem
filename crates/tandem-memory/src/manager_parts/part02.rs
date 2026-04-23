@@ -65,6 +65,70 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_search_global_guide_docs_reranks_newer_doc_by_mtime() {
+        let (manager, _temp) = setup_test_manager().await;
+
+        let now_ms = chrono::Utc::now().timestamp_millis();
+        let old_age_ms = 30 * 24 * 60 * 60 * 1000;
+        let old_request = StoreMessageRequest {
+            content:
+                "Workflow authoring and creation should define triggers before automations run."
+                    .to_string(),
+            tier: MemoryTier::Global,
+            session_id: None,
+            project_id: None,
+            source: "guide_docs:old_self_operator_playbook.md".to_string(),
+            source_path: None,
+            source_mtime: Some(now_ms - old_age_ms),
+            source_size: None,
+            source_hash: None,
+            metadata: None,
+        };
+        let new_request = StoreMessageRequest {
+            content: old_request.content.clone(),
+            tier: MemoryTier::Global,
+            session_id: None,
+            project_id: None,
+            source: "guide_docs:new_self_operator_playbook.md".to_string(),
+            source_path: None,
+            source_mtime: Some(now_ms),
+            source_size: None,
+            source_hash: None,
+            metadata: None,
+        };
+
+        for request in [old_request, new_request] {
+            if let Err(err) = manager.store_message(request).await {
+                if is_embeddings_disabled(&err) {
+                    return;
+                }
+                panic!("store_message failed: {err}");
+            }
+        }
+
+        let results = manager
+            .search(
+                "workflow authoring and creation triggers",
+                Some(MemoryTier::Global),
+                None,
+                None,
+                Some(2),
+            )
+            .await;
+        let results = match results {
+            Ok(results) => results,
+            Err(err) if is_embeddings_disabled(&err) => return,
+            Err(err) => panic!("search failed: {err}"),
+        };
+
+        assert!(results.len() >= 2);
+        assert_eq!(
+            results[0].chunk.source,
+            "guide_docs:new_self_operator_playbook.md"
+        );
+    }
+
+    #[tokio::test]
     async fn test_retrieve_context() {
         let (manager, _temp) = setup_test_manager().await;
 

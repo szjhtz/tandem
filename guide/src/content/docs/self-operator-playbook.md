@@ -144,6 +144,34 @@ For MCP gaps, `mcp_request_capability` is the agent-facing entrypoint.
 
 When the gap is actionable and approved, prefer `automationsV2.create`.
 
+### Authoring, Creation, and Trigger Design
+
+The canonical path for **authoring** a new automation is deterministic:
+
+- Write intent first.
+- Define **creation** boundaries and permissions.
+- Pick the correct **trigger** for invocation timing.
+- Add approval gates before the first run.
+- Create a safe rollback plan for each new automation creation.
+
+During **creation**, do not mix discovery and action. Do a separate pass for trigger behavior, then a separate pass for runtime behavior.
+
+Good trigger patterns include:
+
+- schedule trigger
+- event trigger
+- webhook trigger
+- manual trigger
+
+For each new automation **creation**, call out:
+
+- what the trigger is,
+- what evidence the trigger should include,
+- what action happens on each trigger,
+- what safety checks block creation when stale permissions are detected.
+
+When you create an automation, write the authoring contract in the objective, then map trigger values explicitly (for example `{"trigger": "schedule"}` or `{"trigger": "webhook"}`).
+
 Use planner chat or the AI Composer only when the shape is still fuzzy.
 
 When you create or patch an automation, include:

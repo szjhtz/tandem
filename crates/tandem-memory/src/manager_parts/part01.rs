@@ -33,8 +33,28 @@ pub struct MemoryManager {
 }
 
 const MAX_KNOWLEDGE_PACK_ITEMS: usize = 3;
+const GUIDE_DOC_SOURCE_PREFIX: &str = "guide_docs:";
+const GUIDE_DOC_RECENCY_HALFLIFE_MS: f64 = 30.0 * 24.0 * 60.0 * 60.0 * 1000.0;
+const GUIDE_DOC_RECENCY_WEIGHT: f64 = 0.12;
 
 impl MemoryManager {
+    fn guide_doc_similarity(similarity: f64, chunk: &MemoryChunk, now_ms: i64) -> f64 {
+        if !chunk.source.starts_with(GUIDE_DOC_SOURCE_PREFIX) {
+            return similarity.clamp(0.0, 1.0);
+        }
+
+        let normalized_similarity = similarity.clamp(0.0, 1.0);
+        let source_mtime = chunk
+            .source_mtime
+            .filter(|value| *value > 0)
+            .unwrap_or_else(|| chunk.created_at.timestamp_millis());
+        let age_ms = (now_ms - source_mtime).max(0) as f64;
+        let recency_score = 1.0 / (1.0 + (age_ms / GUIDE_DOC_RECENCY_HALFLIFE_MS));
+        ((1.0 - GUIDE_DOC_RECENCY_WEIGHT) * normalized_similarity
+            + (GUIDE_DOC_RECENCY_WEIGHT * recency_score))
+            .clamp(0.0, 1.0)
+    }
+
     fn is_malformed_database_error(err: &crate::types::MemoryError) -> bool {
         err.to_string()
             .to_lowercase()
@@ -194,6 +214,7 @@ impl MemoryManager {
             }
         };
 
+        let now_ms = Utc::now().timestamp_millis();
         for search_tier in tiers_to_search {
             let tier_results = match self
                 .db
@@ -256,6 +277,11 @@ impl MemoryManager {
                 // sqlite-vec returns distance, where lower is more similar
                 // Cosine similarity ranges from -1 to 1, but for normalized vectors it's 0 to 1
                 let similarity = 1.0 - distance.clamp(0.0, 1.0);
+                let similarity = if search_tier == MemoryTier::Global {
+                    Self::guide_doc_similarity(similarity, &chunk, now_ms)
+                } else {
+                    similarity
+                };
 
                 results.push(MemorySearchResult { chunk, similarity });
             }
@@ -1244,4 +1270,3 @@ pub async fn create_memory_manager(app_data_dir: &Path) -> MemoryResult<MemoryMa
     let db_path = app_data_dir.join("tandem_memory.db");
     MemoryManager::new(&db_path).await
 }
-

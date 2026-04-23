@@ -38,6 +38,7 @@
 ## Developer and automation docs
 
 - /tandem-wow-demo-playbook/ - How agents should turn Tandem docs and engine contracts into showcase workflow and automation payloads.
+- /self-operator-playbook/ - Self-operator guide for agent review, governance-aware gap analysis, automation authoring, and trigger-based workflows.
 - /mcp-automated-agents/ - Automated agent workflows and MCP patterns.
 - /agent-workflow-mission-quickstart/ - Short checklist for agents creating, running, and maintaining Tandem workflows or missions.
 - /choosing-providers-and-models-for-agents/ - How agents should choose providers, defaults, and per-stage model overrides.
