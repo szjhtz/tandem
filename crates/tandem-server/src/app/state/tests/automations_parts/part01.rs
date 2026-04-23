@@ -720,6 +720,11 @@ fn generic_required_tools_prewrite_requirements_enable_repair() {
     assert!(requirements.concrete_read_required);
     assert!(requirements.successful_web_research_required);
     assert!(requirements.repair_on_unmet_requirements);
+    assert_eq!(requirements.repair_budget, Some(5));
+    assert_eq!(
+        requirements.repair_exhaustion_behavior,
+        Some(tandem_types::PrewriteRepairExhaustionBehavior::FailClosed)
+    );
     assert_eq!(requirements.coverage_mode, PrewriteCoverageMode::None);
 }
 
@@ -784,6 +789,11 @@ fn research_finalize_prewrite_requirements_skip_same_node_reads_and_websearch() 
     assert!(!requirements.web_research_required);
     assert!(!requirements.concrete_read_required);
     assert!(!requirements.successful_web_research_required);
+    assert_eq!(requirements.repair_budget, Some(5));
+    assert_eq!(
+        requirements.repair_exhaustion_behavior,
+        Some(tandem_types::PrewriteRepairExhaustionBehavior::FailClosed)
+    );
 }
 
 #[test]
@@ -826,6 +836,52 @@ fn explicit_input_files_skip_workspace_inspection_but_still_require_concrete_rea
     assert!(!requirements.workspace_inspection_required);
     assert!(requirements.concrete_read_required);
     assert!(requirements.repair_on_unmet_requirements);
+    assert_eq!(requirements.repair_budget, Some(5));
+    assert_eq!(
+        requirements.repair_exhaustion_behavior,
+        Some(tandem_types::PrewriteRepairExhaustionBehavior::FailClosed)
+    );
+}
+
+#[test]
+fn legacy_quality_mode_keeps_waive_and_write_repair_behavior() {
+    let node = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
+        node_id: "artifact".to_string(),
+        agent_id: "writer".to_string(),
+        objective: "Write notes.md".to_string(),
+        depends_on: Vec::new(),
+        input_refs: Vec::new(),
+        output_contract: Some(AutomationFlowOutputContract {
+            kind: "artifact".to_string(),
+            validator: Some(crate::AutomationOutputValidatorKind::GenericArtifact),
+            enforcement: None,
+            schema: None,
+            summary_guidance: None,
+        }),
+        retry_policy: None,
+        timeout_ms: None,
+        max_tool_calls: None,
+        stage_kind: None,
+        gate: None,
+        metadata: Some(json!({
+            "quality_mode": "legacy",
+            "builder": {
+                "output_path": "notes.md",
+                "required_tools": ["read"]
+            }
+        })),
+    };
+
+    let requirements =
+        automation_node_prewrite_requirements(&node, &["read".to_string(), "write".to_string()])
+            .expect("prewrite requirements");
+
+    assert_eq!(requirements.repair_budget, Some(5));
+    assert_eq!(
+        requirements.repair_exhaustion_behavior,
+        Some(tandem_types::PrewriteRepairExhaustionBehavior::WaiveAndWrite)
+    );
 }
 
 #[test]

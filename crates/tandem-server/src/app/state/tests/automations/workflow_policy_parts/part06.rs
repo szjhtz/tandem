@@ -179,6 +179,11 @@ fn brief_prewrite_requirements_follow_external_research_defaults() {
     assert!(!requirements.concrete_read_required);
     assert!(requirements.successful_web_research_required);
     assert!(requirements.repair_on_unmet_requirements);
+    assert_eq!(requirements.repair_budget, Some(5));
+    assert_eq!(
+        requirements.repair_exhaustion_behavior,
+        Some(tandem_types::PrewriteRepairExhaustionBehavior::FailClosed)
+    );
     assert_eq!(requirements.coverage_mode, PrewriteCoverageMode::None);
 }
 
@@ -238,6 +243,11 @@ fn research_synthesis_prewrite_requirements_enable_repair_without_explicit_tools
     assert!(!requirements.concrete_read_required);
     assert!(!requirements.successful_web_research_required);
     assert!(requirements.repair_on_unmet_requirements);
+    assert_eq!(requirements.repair_budget, Some(5));
+    assert_eq!(
+        requirements.repair_exhaustion_behavior,
+        Some(tandem_types::PrewriteRepairExhaustionBehavior::FailClosed)
+    );
 }
 
 #[test]

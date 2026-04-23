@@ -2,7 +2,19 @@
 
 This is the canonical release-notes file used by release tooling.
 
-## v0.4.38 (Unreleased)
+## v0.4.39 (Unreleased)
+
+This release makes governed workflow repair durable. Strict-quality automation nodes now pass their repair policy into the engine, fail closed when required evidence never materializes, and stop downstream workflow branches from advancing on placeholder artifacts.
+
+### Governed workflow repair
+
+- **Request-scoped repair policy**: Engine prewrite requirements now carry node-derived `repair_budget` and repair-exhaustion behavior so governed runs can enforce fail-closed repair semantics without depending only on a global strict-mode environment variable.
+- **Fail-closed strict-quality nodes**: Nodes resolved as `strict_research_v1` now block with a structured `repair_budget_exhausted` outcome when retries are consumed, instead of waiving unmet evidence requirements and proceeding to a best-effort write.
+- **Budget propagation from workflow enforcement**: The automation server now forwards node repair budgets and exhaustion behavior from existing `output_contract.enforcement` settings into the engine request, keeping workflow authoring on the same governance surface.
+- **Better repair-tool targeting**: When a repair is specifically missing concrete reads and workspace inspection is already satisfied, the engine now favors `read` over repeated `glob` exploration, making governed recovery attempts more purposeful.
+- **Validator and orchestration alignment**: Server-side repair inference now uses the same repair budget semantics as the engine, so strict governed nodes stay blocked after exhausted evidence-gathering instead of being treated as soft `needs_repair` completions.
+
+## v0.4.38 (Released 2026-04-22)
 
 This release moves recursive-authoring and governance policy behind a dedicated BUSL crate while keeping Tandem's public governance and agent surfaces stable across premium and OSS builds, and it also makes the automation planner much clearer when a long connector-backed plan is still working, needs clarification, or has fallen back after a failed planning run.
 

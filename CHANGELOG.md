@@ -5,7 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.4.38] - Unreleased
+## [0.4.39] - Unreleased
+
+### Added
+
+- **Request-scoped prewrite repair policy**: Engine-facing prewrite requirements now carry node-derived repair budget and repair-exhaustion behavior so governed automation steps can enforce fail-closed repair semantics without relying only on a global environment toggle.
+
+### Changed
+
+- **Governed workflow repair enforcement**: Strict-quality workflow nodes now inherit their repair behavior from `output_contract.enforcement`, allowing governed runs to fail closed after repair exhaustion while non-strict nodes keep the existing waive-and-write fallback.
+- **Repair-loop tool targeting**: Concrete-read repair guidance now prefers `read` once workspace inspection is already satisfied, reducing low-signal `glob` loops during governed artifact recovery.
+- **Automation/server repair-state alignment**: Automation validation and repair-state inference now use the same node repair budget and exhaustion semantics as the engine so downstream orchestration sees a consistent blocked state.
+
+### Fixed
+
+- **False forward progress after exhausted governed repairs**: Strict-quality research and artifact-writing nodes now emit a structured blocked completion with `repair_budget_exhausted` instead of waiving unmet evidence requirements and writing best-effort placeholder outputs.
+- **Governed retry-budget drift**: Node-level `repair_budget` now propagates from automation enforcement into engine execution, eliminating mismatches between validator repair counting and runtime repair retries.
+
+## [0.4.38] - Released 2026-04-22
 
 ### Added
 

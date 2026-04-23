@@ -151,8 +151,23 @@ pub struct PrewriteRequirements {
         alias = "repair_on_unmet_requirements"
     )]
     pub repair_on_unmet_requirements: bool,
+    #[serde(default, alias = "repairBudget", alias = "repair_budget")]
+    pub repair_budget: Option<u32>,
+    #[serde(
+        default,
+        alias = "repairExhaustionBehavior",
+        alias = "repair_exhaustion_behavior"
+    )]
+    pub repair_exhaustion_behavior: Option<PrewriteRepairExhaustionBehavior>,
     #[serde(default, alias = "coverageMode", alias = "coverage_mode")]
     pub coverage_mode: PrewriteCoverageMode,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PrewriteRepairExhaustionBehavior {
+    WaiveAndWrite,
+    FailClosed,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]

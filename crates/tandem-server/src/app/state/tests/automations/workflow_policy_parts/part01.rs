@@ -880,7 +880,7 @@ fn artifact_validation_uses_structured_repair_exhaustion_state_from_session_text
     );
     let session_text = r#"TOOL_MODE_REQUIRED_NOT_SATISFIED: PREWRITE_REQUIREMENTS_EXHAUSTED
 
-{"status":"blocked","reason":"prewrite requirements exhausted before final artifact validation","failureCode":"PREWRITE_REQUIREMENTS_EXHAUSTED","repairAttempt":2,"repairAttemptsRemaining":0,"repairExhausted":true,"unmetRequirements":["concrete_read_required","successful_web_research_required"]}"#;
+{"status":"blocked","reason":"repair budget exhausted before final artifact validation","failureCode":"PREWRITE_REQUIREMENTS_EXHAUSTED","blockedReasonCode":"repair_budget_exhausted","repairAttempt":2,"repairAttemptsRemaining":0,"repairExhausted":true,"unmetRequirements":["concrete_read_required","successful_web_research_required"]}"#;
     let (_accepted_output, metadata, rejected) = validate_automation_artifact_output(
         &node,
         &session,

@@ -11,8 +11,10 @@ fn infer_artifact_repair_state(
     repair_succeeded: bool,
     semantic_block_reason: Option<&str>,
     tool_telemetry: &Value,
+    repair_budget: Option<u32>,
 ) -> (u32, u32, bool) {
-    let default_budget = tandem_core::prewrite_repair_retry_max_attempts() as u32;
+    let default_budget =
+        repair_budget.unwrap_or_else(|| tandem_core::prewrite_repair_retry_max_attempts() as u32);
     let inferred_attempt = tool_telemetry
         .get("tool_call_counts")
         .and_then(|value| value.get("write"))

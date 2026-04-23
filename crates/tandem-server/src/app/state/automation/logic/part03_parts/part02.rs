@@ -1337,6 +1337,7 @@ pub(crate) fn validate_automation_artifact_output_with_context(
         repair_succeeded,
         semantic_block_reason.as_deref(),
         tool_telemetry,
+        enforcement.repair_budget,
     );
     let has_required_tools = !enforcement.required_tools.is_empty();
     let contract_requires_repair = !enforcement.retry_on_missing.is_empty()

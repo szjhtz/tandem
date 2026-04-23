@@ -937,6 +937,12 @@ pub(crate) fn automation_node_prewrite_requirements_impl(
         repair_on_unmet_requirements: brief_research_node
             || has_any_required_tools
             || !enforcement.retry_on_missing.is_empty(),
+        repair_budget: enforcement.repair_budget,
+        repair_exhaustion_behavior: Some(if enforcement::automation_node_is_strict_quality(node) {
+            tandem_types::PrewriteRepairExhaustionBehavior::FailClosed
+        } else {
+            tandem_types::PrewriteRepairExhaustionBehavior::WaiveAndWrite
+        }),
         coverage_mode: if brief_research_node {
             PrewriteCoverageMode::ResearchCorpus
         } else {

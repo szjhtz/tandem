@@ -163,6 +163,8 @@ mod tests {
             concrete_read_required: true,
             successful_web_research_required: true,
             repair_on_unmet_requirements: true,
+            repair_budget: None,
+            repair_exhaustion_behavior: None,
             coverage_mode: PrewriteCoverageMode::ResearchCorpus,
         }
     }

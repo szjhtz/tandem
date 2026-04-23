@@ -1,5 +1,7 @@
 use serde_json::{json, Value};
-use tandem_types::{PrewriteCoverageMode, PrewriteRequirements, ToolMode};
+use tandem_types::{
+    PrewriteCoverageMode, PrewriteRepairExhaustionBehavior, PrewriteRequirements, ToolMode,
+};
 
 use super::prewrite_gate::describe_unmet_prewrite_requirements_for_prompt;
 use super::{
@@ -58,7 +60,7 @@ pub(super) fn prewrite_requirements_exhausted_completion(
         unmet_codes.join(", ")
     };
     format!(
-        "TOOL_MODE_REQUIRED_NOT_SATISFIED: PREWRITE_REQUIREMENTS_EXHAUSTED: unmet prewrite requirements: {unmet}\n\n{{\"status\":\"blocked\",\"reason\":\"prewrite requirements exhausted before final artifact validation\",\"failureCode\":\"PREWRITE_REQUIREMENTS_EXHAUSTED\",\"repairAttempt\":{},\"repairAttemptsRemaining\":{},\"repairExhausted\":true,\"unmetRequirements\":{:?}}}",
+        "TOOL_MODE_REQUIRED_NOT_SATISFIED: PREWRITE_REQUIREMENTS_EXHAUSTED: unmet prewrite requirements: {unmet}\n\n{{\"status\":\"blocked\",\"reason\":\"repair budget exhausted before final artifact validation\",\"failureCode\":\"PREWRITE_REQUIREMENTS_EXHAUSTED\",\"blockedReasonCode\":\"repair_budget_exhausted\",\"repairAttempt\":{},\"repairAttemptsRemaining\":{},\"repairExhausted\":true,\"unmetRequirements\":{:?}}}",
         repair_attempt,
         repair_attempts_remaining,
         unmet_codes,
@@ -498,6 +500,7 @@ pub(super) fn is_web_research_tool(tool_name: &str) -> bool {
 pub(super) fn tool_matches_unmet_prewrite_repair_requirement(
     tool_name: &str,
     unmet_codes: &[&str],
+    workspace_inspection_satisfied: bool,
 ) -> bool {
     if is_workspace_write_tool(tool_name) {
         return false;
@@ -512,7 +515,12 @@ pub(super) fn tool_matches_unmet_prewrite_repair_requirement(
             "web_research_required" | "successful_web_research_required"
         )
     });
-    (needs_concrete_read && (normalized == "read" || normalized == "glob"))
+    (needs_concrete_read
+        && if workspace_inspection_satisfied {
+            normalized == "read"
+        } else {
+            normalized == "read" || normalized == "glob"
+        })
         || (needs_workspace_inspection && is_workspace_inspection_tool(&normalized))
         || (needs_web_research && is_web_research_tool(&normalized))
 }
@@ -521,11 +529,19 @@ pub(super) fn invalid_tool_args_retry_max_attempts() -> usize {
     2
 }
 
+pub(super) fn prewrite_repair_retry_budget(requirements: &PrewriteRequirements) -> usize {
+    requirements
+        .repair_budget
+        .and_then(|value| usize::try_from(value).ok())
+        .filter(|value| *value > 0)
+        .unwrap_or_else(prewrite_repair_retry_max_attempts)
+}
+
 /// When `TANDEM_PREWRITE_GATE_STRICT=true`, the engine refuses to waive the prewrite
-/// evidence gate even after exhausting repair retries. Instead of proceeding with
-/// an unverified write, it holds the gate and emits `prewrite.gate.strict_mode.blocked`.
-pub(super) fn prewrite_gate_strict_mode() -> bool {
-    std::env::var("TANDEM_PREWRITE_GATE_STRICT")
+/// evidence gate even after exhausting repair retries. Request-scoped fail-closed
+/// behavior applies the same semantics for governed workflow nodes.
+pub(super) fn prewrite_gate_strict_mode(requirements: &PrewriteRequirements) -> bool {
+    let env_override = std::env::var("TANDEM_PREWRITE_GATE_STRICT")
         .ok()
         .map(|v| {
             matches!(
@@ -533,7 +549,12 @@ pub(super) fn prewrite_gate_strict_mode() -> bool {
                 "1" | "true" | "yes" | "on"
             )
         })
-        .unwrap_or(false)
+        .unwrap_or(false);
+    env_override
+        || matches!(
+            requirements.repair_exhaustion_behavior,
+            Some(PrewriteRepairExhaustionBehavior::FailClosed)
+        )
 }
 
 pub fn prewrite_repair_retry_max_attempts() -> usize {

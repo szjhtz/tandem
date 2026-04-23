@@ -47,6 +47,8 @@ impl EngineLoop {
         let requested_context_mode = req.context_mode.clone().unwrap_or(ContextMode::Auto);
         let requested_write_required = req.write_required.unwrap_or(false);
         let requested_prewrite_requirements = req.prewrite_requirements.clone().unwrap_or_default();
+        let prewrite_repair_budget = prewrite_repair_retry_budget(&requested_prewrite_requirements);
+        let prewrite_fail_closed = prewrite_gate_strict_mode(&requested_prewrite_requirements);
         let request_tool_allowlist = req
             .tool_allowlist
             .clone()
@@ -419,6 +421,7 @@ impl EngineLoop {
                             tool_matches_unmet_prewrite_repair_requirement(
                                 &schema.name,
                                 &unmet_prewrite_codes,
+                                productive_workspace_inspection_total > 0,
                             )
                         })
                         .cloned()
@@ -1271,14 +1274,11 @@ impl EngineLoop {
                                 prewrite_satisfied,
                                 code_workflow_requested,
                             ) {
-                                if unmet_prewrite_repair_retry_count
-                                    < prewrite_repair_retry_max_attempts()
-                                {
+                                if unmet_prewrite_repair_retry_count < prewrite_repair_budget {
                                     unmet_prewrite_repair_retry_count += 1;
                                     let repair_attempt = unmet_prewrite_repair_retry_count;
                                     let repair_attempts_remaining =
-                                        prewrite_repair_retry_max_attempts()
-                                            .saturating_sub(repair_attempt);
+                                        prewrite_repair_budget.saturating_sub(repair_attempt);
                                     followup_context = Some(build_prewrite_repair_retry_context(
                                         &offered_tool_preview,
                                         latest_required_tool_failure_kind,
@@ -1310,9 +1310,15 @@ impl EngineLoop {
                                     continue;
                                 }
                                 if !prewrite_gate_waived {
-                                    if prewrite_gate_strict_mode() {
-                                        // Strict mode: refuse to waive; emit blocked event and
-                                        // continue so the gate retains control.
+                                    if prewrite_fail_closed {
+                                        let repair_attempt = unmet_prewrite_repair_retry_count;
+                                        let repair_attempts_remaining =
+                                            prewrite_repair_budget.saturating_sub(repair_attempt);
+                                        completion = prewrite_requirements_exhausted_completion(
+                                            &unmet_prewrite_codes,
+                                            repair_attempt,
+                                            repair_attempts_remaining,
+                                        );
                                         self.event_bus.publish(EngineEvent::new(
                                             "prewrite.gate.strict_mode.blocked",
                                             json!({
@@ -1322,13 +1328,30 @@ impl EngineLoop {
                                                 "unmetCodes": unmet_prewrite_codes,
                                             }),
                                         ));
-                                        continue;
+                                        self.event_bus.publish(EngineEvent::new(
+                                            "provider.call.iteration.finish",
+                                            json!({
+                                                "sessionID": session_id,
+                                                "messageID": user_message_id,
+                                                "iteration": iteration,
+                                                "finishReason": "prewrite_requirements_exhausted",
+                                                "acceptedToolCalls": accepted_tool_calls_in_cycle,
+                                                "rejectedToolCalls": 0,
+                                                "requiredToolFailureReason": RequiredToolFailureKind::PrewriteRequirementsExhausted.code(),
+                                                "repair": prewrite_repair_event_payload(
+                                                    repair_attempt,
+                                                    repair_attempts_remaining,
+                                                    &unmet_prewrite_codes,
+                                                    true,
+                                                ),
+                                            }),
+                                        ));
+                                        break;
                                     }
                                     prewrite_gate_waived = true;
                                     let repair_attempt = unmet_prewrite_repair_retry_count;
                                     let repair_attempts_remaining =
-                                        prewrite_repair_retry_max_attempts()
-                                            .saturating_sub(repair_attempt);
+                                        prewrite_repair_budget.saturating_sub(repair_attempt);
                                     followup_context = Some(build_prewrite_waived_write_context(
                                         &text,
                                         &unmet_prewrite_codes,
@@ -1469,15 +1492,13 @@ impl EngineLoop {
                             if requested_write_required
                                 && productive_write_tool_calls_total > 0
                                 && requested_prewrite_requirements.repair_on_unmet_requirements
-                                && unmet_prewrite_repair_retry_count
-                                    < prewrite_repair_retry_max_attempts()
+                                && unmet_prewrite_repair_retry_count < prewrite_repair_budget
                                 && !prewrite_satisfied
                             {
                                 unmet_prewrite_repair_retry_count += 1;
                                 let repair_attempt = unmet_prewrite_repair_retry_count;
                                 let repair_attempts_remaining =
-                                    prewrite_repair_retry_max_attempts()
-                                        .saturating_sub(repair_attempt);
+                                    prewrite_repair_budget.saturating_sub(repair_attempt);
                                 followup_context = Some(build_prewrite_repair_retry_context(
                                     &offered_tool_preview,
                                     latest_required_tool_failure_kind,
@@ -1507,6 +1528,49 @@ impl EngineLoop {
                                     }),
                                 ));
                                 continue;
+                            }
+                            if requested_write_required
+                                && productive_write_tool_calls_total > 0
+                                && requested_prewrite_requirements.repair_on_unmet_requirements
+                                && !prewrite_satisfied
+                                && prewrite_fail_closed
+                            {
+                                let repair_attempt = unmet_prewrite_repair_retry_count;
+                                let repair_attempts_remaining =
+                                    prewrite_repair_budget.saturating_sub(repair_attempt);
+                                completion = prewrite_requirements_exhausted_completion(
+                                    &unmet_prewrite_codes,
+                                    repair_attempt,
+                                    repair_attempts_remaining,
+                                );
+                                self.event_bus.publish(EngineEvent::new(
+                                    "prewrite.gate.strict_mode.blocked",
+                                    json!({
+                                        "sessionID": session_id,
+                                        "messageID": user_message_id,
+                                        "iteration": iteration,
+                                        "unmetCodes": unmet_prewrite_codes,
+                                    }),
+                                ));
+                                self.event_bus.publish(EngineEvent::new(
+                                    "provider.call.iteration.finish",
+                                    json!({
+                                        "sessionID": session_id,
+                                        "messageID": user_message_id,
+                                        "iteration": iteration,
+                                        "finishReason": "prewrite_requirements_exhausted",
+                                        "acceptedToolCalls": accepted_tool_calls_in_cycle,
+                                        "rejectedToolCalls": 0,
+                                        "requiredToolFailureReason": RequiredToolFailureKind::PrewriteRequirementsExhausted.code(),
+                                        "repair": prewrite_repair_event_payload(
+                                            repair_attempt,
+                                            repair_attempts_remaining,
+                                            &unmet_prewrite_codes,
+                                            true,
+                                        ),
+                                    }),
+                                ));
+                                break;
                             }
                             followup_context = Some(format!(
                                 "{}\nContinue with a concise final response and avoid repeating identical tool calls.",
@@ -1731,12 +1795,11 @@ impl EngineLoop {
                     ) && !prewrite_gate_waived
                     {
                         let unmet_prewrite_codes = prewrite_gate.unmet_codes.clone();
-                        if unmet_prewrite_repair_retry_count < prewrite_repair_retry_max_attempts()
-                        {
+                        if unmet_prewrite_repair_retry_count < prewrite_repair_budget {
                             unmet_prewrite_repair_retry_count += 1;
                             let repair_attempt = unmet_prewrite_repair_retry_count;
                             let repair_attempts_remaining =
-                                prewrite_repair_retry_max_attempts().saturating_sub(repair_attempt);
+                                prewrite_repair_budget.saturating_sub(repair_attempt);
                             followup_context = Some(build_prewrite_repair_retry_context(
                                 &offered_tool_preview,
                                 latest_required_tool_failure_kind,
@@ -1767,7 +1830,15 @@ impl EngineLoop {
                             ));
                             continue;
                         }
-                        if prewrite_gate_strict_mode() {
+                        if prewrite_fail_closed {
+                            let repair_attempt = unmet_prewrite_repair_retry_count;
+                            let repair_attempts_remaining =
+                                prewrite_repair_budget.saturating_sub(repair_attempt);
+                            completion = prewrite_requirements_exhausted_completion(
+                                &unmet_prewrite_codes,
+                                repair_attempt,
+                                repair_attempts_remaining,
+                            );
                             self.event_bus.publish(EngineEvent::new(
                                 "prewrite.gate.strict_mode.blocked",
                                 json!({
@@ -1777,12 +1848,30 @@ impl EngineLoop {
                                     "unmetCodes": unmet_prewrite_codes,
                                 }),
                             ));
-                            continue;
+                            self.event_bus.publish(EngineEvent::new(
+                                "provider.call.iteration.finish",
+                                json!({
+                                    "sessionID": session_id,
+                                    "messageID": user_message_id,
+                                    "iteration": iteration,
+                                    "finishReason": "prewrite_requirements_exhausted",
+                                    "acceptedToolCalls": accepted_tool_calls_in_cycle,
+                                    "rejectedToolCalls": 0,
+                                    "requiredToolFailureReason": RequiredToolFailureKind::PrewriteRequirementsExhausted.code(),
+                                    "repair": prewrite_repair_event_payload(
+                                        repair_attempt,
+                                        repair_attempts_remaining,
+                                        &unmet_prewrite_codes,
+                                        true,
+                                    ),
+                                }),
+                            ));
+                            break;
                         }
                         prewrite_gate_waived = true;
                         let repair_attempt = unmet_prewrite_repair_retry_count;
                         let repair_attempts_remaining =
-                            prewrite_repair_retry_max_attempts().saturating_sub(repair_attempt);
+                            prewrite_repair_budget.saturating_sub(repair_attempt);
                         followup_context = Some(build_prewrite_waived_write_context(
                             &text,
                             &unmet_prewrite_codes,
@@ -1894,11 +1983,34 @@ impl EngineLoop {
                     },
                 )
                 .prewrite_satisfied;
-                completion = synthesize_artifact_write_completion_from_tool_state(
-                    &text,
-                    final_prewrite_satisfied,
-                    prewrite_gate_waived,
-                );
+                if prewrite_fail_closed && !final_prewrite_satisfied {
+                    let unmet_prewrite_codes = evaluate_prewrite_gate(
+                        requested_write_required,
+                        &requested_prewrite_requirements,
+                        PrewriteProgress {
+                            productive_write_tool_calls_total,
+                            productive_workspace_inspection_total,
+                            productive_concrete_read_total,
+                            productive_web_research_total,
+                            successful_web_research_total,
+                            required_write_retry_count,
+                            unmet_prewrite_repair_retry_count,
+                            prewrite_gate_waived,
+                        },
+                    )
+                    .unmet_codes;
+                    completion = prewrite_requirements_exhausted_completion(
+                        &unmet_prewrite_codes,
+                        unmet_prewrite_repair_retry_count,
+                        prewrite_repair_budget.saturating_sub(unmet_prewrite_repair_retry_count),
+                    );
+                } else {
+                    completion = synthesize_artifact_write_completion_from_tool_state(
+                        &text,
+                        final_prewrite_satisfied,
+                        prewrite_gate_waived,
+                    );
+                }
             }
             if completion.trim().is_empty()
                 && !last_tool_outputs.is_empty()

@@ -1,4 +1,5 @@
 use super::*;
+use tandem_types::PrewriteRepairExhaustionBehavior;
 
 #[test]
 fn email_tool_detector_finds_mcp_gmail_tools() {
@@ -268,6 +269,8 @@ fn proactive_write_gate_applies_only_before_prewrite_is_satisfied() {
             concrete_read_required: true,
             successful_web_research_required: false,
             repair_on_unmet_requirements: true,
+            repair_budget: None,
+            repair_exhaustion_behavior: None,
             coverage_mode: PrewriteCoverageMode::ResearchCorpus,
         },
         PrewriteProgress {
@@ -627,6 +630,8 @@ fn prewrite_repair_retry_context_prioritizes_research_tools_before_write() {
         concrete_read_required: true,
         successful_web_research_required: true,
         repair_on_unmet_requirements: true,
+        repair_budget: None,
+        repair_exhaustion_behavior: None,
         coverage_mode: PrewriteCoverageMode::ResearchCorpus,
     };
     let prompt = build_prewrite_repair_retry_context(
@@ -660,6 +665,8 @@ fn empty_completion_retry_context_requires_write_when_prewrite_is_satisfied() {
         concrete_read_required: true,
         successful_web_research_required: false,
         repair_on_unmet_requirements: true,
+        repair_budget: None,
+        repair_exhaustion_behavior: None,
         coverage_mode: PrewriteCoverageMode::ResearchCorpus,
     };
     let prompt = build_empty_completion_retry_context(
@@ -684,6 +691,8 @@ fn empty_completion_retry_context_mentions_missing_prewrite_work() {
         concrete_read_required: true,
         successful_web_research_required: true,
         repair_on_unmet_requirements: true,
+        repair_budget: None,
+        repair_exhaustion_behavior: None,
         coverage_mode: PrewriteCoverageMode::ResearchCorpus,
     };
     let prompt = build_empty_completion_retry_context(
@@ -729,6 +738,28 @@ fn prewrite_repair_retry_budget_allows_five_repair_attempts() {
 }
 
 #[test]
+fn request_scoped_prewrite_repair_budget_overrides_default_budget() {
+    let requirements = PrewriteRequirements {
+        repair_budget: Some(3),
+        ..Default::default()
+    };
+    assert_eq!(prewrite_repair_retry_budget(&requirements), 3);
+}
+
+#[test]
+fn request_scoped_fail_closed_behavior_enables_strict_mode_without_env() {
+    let _guard = env_test_lock();
+    unsafe {
+        std::env::remove_var("TANDEM_PREWRITE_GATE_STRICT");
+    }
+    let requirements = PrewriteRequirements {
+        repair_exhaustion_behavior: Some(PrewriteRepairExhaustionBehavior::FailClosed),
+        ..Default::default()
+    };
+    assert!(prewrite_gate_strict_mode(&requirements));
+}
+
+#[test]
 fn prewrite_repair_tool_filter_removes_write_until_evidence_is_satisfied() {
     let offered = ["glob", "read", "websearch", "write", "edit"];
     let filtered = offered
@@ -742,6 +773,7 @@ fn prewrite_repair_tool_filter_removes_write_until_evidence_is_satisfied() {
                     "concrete_read_required",
                     "successful_web_research_required",
                 ],
+                false,
             )
         })
         .collect::<Vec<_>>();
@@ -755,10 +787,23 @@ fn prewrite_repair_tool_filter_restricts_to_glob_and_read_for_concrete_reads() {
         .iter()
         .copied()
         .filter(|tool| {
-            tool_matches_unmet_prewrite_repair_requirement(tool, &["concrete_read_required"])
+            tool_matches_unmet_prewrite_repair_requirement(tool, &["concrete_read_required"], false)
         })
         .collect::<Vec<_>>();
     assert_eq!(filtered, vec!["glob", "read"]);
+}
+
+#[test]
+fn prewrite_repair_tool_filter_prefers_read_after_workspace_inspection() {
+    let offered = ["glob", "read", "search", "write"];
+    let filtered = offered
+        .iter()
+        .copied()
+        .filter(|tool| {
+            tool_matches_unmet_prewrite_repair_requirement(tool, &["concrete_read_required"], true)
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(filtered, vec!["read"]);
 }
 
 #[test]
@@ -771,6 +816,7 @@ fn prewrite_repair_tool_filter_allows_glob_only_for_workspace_inspection() {
             tool_matches_unmet_prewrite_repair_requirement(
                 tool,
                 &["workspace_inspection_required", "concrete_read_required"],
+                false,
             )
         })
         .collect::<Vec<_>>();
@@ -783,6 +829,7 @@ fn prewrite_repair_tool_filter_allows_glob_only_for_workspace_inspection() {
             tool_matches_unmet_prewrite_repair_requirement(
                 tool,
                 &["concrete_read_required", "web_research_required"],
+                false,
             )
         })
         .collect::<Vec<_>>();
@@ -803,6 +850,7 @@ fn prewrite_repair_after_glob_restricts_to_glob_read_and_websearch() {
                     "successful_web_research_required",
                     "coverage_mode",
                 ],
+                false,
             )
         })
         .collect::<Vec<_>>();
@@ -821,6 +869,7 @@ fn prewrite_requirements_exhausted_completion_reports_structured_repair_state() 
     assert!(message.contains("\"repairAttempt\":2"));
     assert!(message.contains("\"repairAttemptsRemaining\":0"));
     assert!(message.contains("\"repairExhausted\":true"));
+    assert!(message.contains("\"blockedReasonCode\":\"repair_budget_exhausted\""));
     assert!(message.contains(
         "\"unmetRequirements\":[\"concrete_read_required\", \"successful_web_research_required\"]"
     ));
@@ -855,6 +904,8 @@ fn prewrite_gate_waived_disables_prewrite_gate_write() {
         concrete_read_required: true,
         successful_web_research_required: false,
         repair_on_unmet_requirements: true,
+        repair_budget: None,
+        repair_exhaustion_behavior: None,
         coverage_mode: PrewriteCoverageMode::ResearchCorpus,
     };
     let before = evaluate_prewrite_gate(
@@ -897,6 +948,8 @@ fn prewrite_gate_waived_disables_allow_repair_tools() {
         concrete_read_required: true,
         successful_web_research_required: true,
         repair_on_unmet_requirements: true,
+        repair_budget: None,
+        repair_exhaustion_behavior: None,
         coverage_mode: PrewriteCoverageMode::ResearchCorpus,
     };
     let before = evaluate_prewrite_gate(
@@ -945,6 +998,8 @@ fn force_write_only_enabled_after_prewrite_waiver() {
         concrete_read_required: true,
         successful_web_research_required: true,
         repair_on_unmet_requirements: true,
+        repair_budget: None,
+        repair_exhaustion_behavior: None,
         coverage_mode: PrewriteCoverageMode::ResearchCorpus,
     };
     let decision = evaluate_prewrite_gate(
@@ -975,6 +1030,8 @@ fn force_write_only_disabled_before_prewrite_waiver() {
         concrete_read_required: true,
         successful_web_research_required: true,
         repair_on_unmet_requirements: true,
+        repair_budget: None,
+        repair_exhaustion_behavior: None,
         coverage_mode: PrewriteCoverageMode::ResearchCorpus,
     };
     let decision = evaluate_prewrite_gate(
