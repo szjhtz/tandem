@@ -273,6 +273,9 @@ pub(crate) fn normalize_tool_args_with_mode(
         }
         args = sanitized;
     }
+    if tool_name_is_tandem_docs_mcp(&normalized_tool) {
+        args = ensure_tandem_docs_engine_version(args);
+    }
 
     NormalizedToolArgs {
         args,
@@ -1398,6 +1401,26 @@ fn tool_name_requires_query_arg(tool_name: &str) -> bool {
 fn tool_name_requires_doc_path_arg(tool_name: &str) -> bool {
     let normalized = normalize_tool_name(tool_name);
     normalized == "get_doc" || normalized.ends_with(".get_doc")
+}
+
+fn tool_name_is_tandem_docs_mcp(tool_name: &str) -> bool {
+    let normalized = normalize_tool_name(tool_name);
+    let is_tandem_docs_namespace =
+        normalized.contains("tandem_mcp") || normalized.contains("tandem-mcp");
+    is_tandem_docs_namespace
+        && (normalized.ends_with(".answer_how_to")
+            || normalized.ends_with(".search_docs")
+            || normalized.ends_with(".get_doc")
+            || normalized.ends_with(".get_start_path")
+            || normalized.ends_with(".recommend_next_docs")
+            || normalized.ends_with(".get_tandem_guide"))
+}
+
+fn ensure_tandem_docs_engine_version(args: Value) -> Value {
+    let mut obj = args.as_object().cloned().unwrap_or_default();
+    obj.entry("engine_version".to_string())
+        .or_insert_with(|| Value::String(env!("CARGO_PKG_VERSION").to_string()));
+    Value::Object(obj)
 }
 
 fn sanitize_url_candidate(raw: &str) -> Option<String> {

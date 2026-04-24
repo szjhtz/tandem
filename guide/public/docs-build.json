@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "repo": "frumu-ai/tandem",
+  "git_sha": "local",
+  "git_short_sha": "local",
+  "git_ref": "local",
+  "git_ref_name": "local",
+  "built_at": "2026-04-24T14:02:48.990Z",
+  "engine_version": "0.4.41",
+  "docs_channel": "stable"
+}

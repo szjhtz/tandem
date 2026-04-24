@@ -3,6 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "prebuild": "node scripts/write-docs-build-metadata.mjs",
     "dev": "astro dev",
     "build": "astro build",
     "check": "astro check",

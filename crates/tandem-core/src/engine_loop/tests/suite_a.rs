@@ -453,6 +453,13 @@ fn normalize_tool_args_answer_how_to_infers_task_from_user_prompt() {
         normalized.args.get("task").and_then(|v| v.as_str()),
         Some(user_text)
     );
+    assert_eq!(
+        normalized
+            .args
+            .get("engine_version")
+            .and_then(|v| v.as_str()),
+        Some(env!("CARGO_PKG_VERSION"))
+    );
     assert_eq!(normalized.args_source, "inferred_from_user");
     assert_eq!(normalized.args_integrity, "recovered");
 }
@@ -482,6 +489,13 @@ fn normalize_tool_args_search_docs_infers_query_from_user_prompt() {
     assert_eq!(
         normalized.args.get("query").and_then(|v| v.as_str()),
         Some(user_text)
+    );
+    assert_eq!(
+        normalized
+            .args
+            .get("engine_version")
+            .and_then(|v| v.as_str()),
+        Some(env!("CARGO_PKG_VERSION"))
     );
     assert_eq!(normalized.args_source, "inferred_from_user");
     assert_eq!(normalized.args_integrity, "recovered");
@@ -513,8 +527,33 @@ fn normalize_tool_args_get_doc_infers_path_from_user_url() {
         normalized.args.get("path").and_then(|v| v.as_str()),
         Some(user_text)
     );
+    assert_eq!(
+        normalized
+            .args
+            .get("engine_version")
+            .and_then(|v| v.as_str()),
+        Some(env!("CARGO_PKG_VERSION"))
+    );
     assert_eq!(normalized.args_source, "inferred_from_user");
     assert_eq!(normalized.args_integrity, "recovered");
+}
+
+#[test]
+fn normalize_tool_args_tandem_docs_keeps_existing_engine_version() {
+    let normalized = normalize_tool_args(
+        "mcp.tandem_mcp.search_docs",
+        json!({"query":"oauth setup", "engine_version":"0.1.0"}),
+        "different user prompt",
+        "",
+    );
+    assert!(!normalized.missing_terminal);
+    assert_eq!(
+        normalized
+            .args
+            .get("engine_version")
+            .and_then(|v| v.as_str()),
+        Some("0.1.0")
+    );
 }
 
 #[test]

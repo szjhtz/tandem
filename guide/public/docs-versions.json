@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "default_ref": "stable",
+  "stable": {
+    "ref": "stable",
+    "engine_version": "0.4.41",
+    "git_sha": "local",
+    "built_at": "2026-04-24T14:02:48.990Z"
+  },
+  "next": {
+    "ref": "next",
+    "git_sha": "local",
+    "built_at": "2026-04-24T14:02:48.990Z"
+  }
+}
