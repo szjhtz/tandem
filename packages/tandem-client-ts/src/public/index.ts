@@ -1654,6 +1654,7 @@ export interface WorkflowPlanDraftReviewRecord {
   created_at_ms?: number | null;
   updatedAtMs?: number | null;
   updated_at_ms?: number | null;
+  validation_state?: string;
   validation_status?: string;
   approval_status?: string;
   [key: string]: unknown;
@@ -1676,12 +1677,14 @@ export interface WorkflowPlannerSessionPlanningRecord {
   source_channel?: string | null;
   requesting_actor?: string | null;
   created_by_agent?: string | null;
+  draft_id?: string | null;
   linked_channel_session_id?: string | null;
   linked_draft_plan_id?: string | null;
   allowed_tools?: string[];
   blocked_tools?: string[];
   known_requirements?: string[];
   missing_requirements?: string[];
+  validation_state?: string;
   validation_status?: string;
   approval_status?: string;
   docs_mcp_enabled?: boolean | null;

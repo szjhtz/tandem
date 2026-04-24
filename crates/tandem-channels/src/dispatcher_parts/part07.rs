@@ -627,6 +627,16 @@ mod tests {
     }
 
     #[test]
+    fn workflow_planner_gate_is_not_implied_by_docs_mcp_servers() {
+        let prefs = ChannelToolPreferences {
+            enabled_mcp_servers: vec!["tandem-mcp".to_string()],
+            ..Default::default()
+        };
+
+        assert!(!channel_workflow_planner_enabled(&prefs));
+    }
+
+    #[test]
     fn channel_mcp_server_names_are_normalized_into_tool_allowlist_patterns() {
         let prefs = ChannelToolPreferences {
             enabled_mcp_servers: vec!["composio-1".to_string(), "tandem-mcp".to_string()],

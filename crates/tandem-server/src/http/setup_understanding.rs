@@ -249,6 +249,16 @@ pub(super) async fn resolve_setup_request(
         .get(1)
         .map(|(_, score)| score.score)
         .unwrap_or_default();
+    if top_kind == SetupIntentKind::WorkflowPlannerCreate
+        && workflow_planner_needs_clarification(&normalized)
+    {
+        return clarify_response(
+            SetupIntentKind::WorkflowPlannerCreate,
+            top_score.clone(),
+            &workflow_planner_clarifier_question(&normalized),
+            workflow_planner_clarifier_options(&normalized),
+        );
+    }
 
     let strong_automation = top_kind == SetupIntentKind::AutomationCreate
         && top_score.score >= 8
@@ -709,6 +719,7 @@ fn score_workflow_planner_create(input: &str) -> IntentScore {
             "blueprint",
         ],
     );
+    let has_creation_words = contains_any(input, &["create", "build", "make", "draft"]);
     let has_planning_phrase = contains_any(
         input,
         &[
@@ -735,6 +746,13 @@ fn score_workflow_planner_create(input: &str) -> IntentScore {
         score.evidence.push(SetupEvidence {
             kind: "keyword".to_string(),
             value: "plan_words".to_string(),
+        });
+    }
+    if has_creation_words {
+        score.score += 2;
+        score.evidence.push(SetupEvidence {
+            kind: "keyword".to_string(),
+            value: "creation_words".to_string(),
         });
     }
     if has_planning_phrase {
@@ -765,6 +783,201 @@ fn score_workflow_planner_create(input: &str) -> IntentScore {
         score.score = 0;
     }
     score
+}
+
+#[derive(Debug, Default)]
+struct WorkflowPlannerClarifyProfile {
+    has_schedule: bool,
+    has_source_hint: bool,
+    has_output_hint: bool,
+    has_tools_hint: bool,
+    has_approval_hint: bool,
+    has_memory_or_files_hint: bool,
+}
+
+fn workflow_planner_clarify_profile(input: &str) -> WorkflowPlannerClarifyProfile {
+    let lowered = input.to_ascii_lowercase();
+    WorkflowPlannerClarifyProfile {
+        has_schedule: extract_schedule_hint(&lowered).is_some()
+            || contains_any(
+                &lowered,
+                &[
+                    "daily",
+                    "weekly",
+                    "hourly",
+                    "every morning",
+                    "every day",
+                    "every week",
+                    "every hour",
+                ],
+            ),
+        has_source_hint: contains_any(
+            &lowered,
+            &[
+                "reddit",
+                "github",
+                "slack",
+                "discord",
+                "telegram",
+                "notion",
+                "docs",
+                "document",
+                "files",
+                "file",
+                "workspace",
+                "memory",
+                "email",
+                "gmail",
+                "calendar",
+                "jira",
+                "linear",
+                "airtable",
+                "rss",
+                "web",
+            ],
+        ),
+        has_output_hint: contains_any(
+            &lowered,
+            &[
+                "report",
+                "summary",
+                "digest",
+                "draft",
+                "document",
+                "dashboard",
+                "ticket",
+                "task",
+                "save",
+                "write",
+                "publish",
+                "post",
+                "send",
+            ],
+        ),
+        has_tools_hint: contains_any(
+            &lowered,
+            &[
+                "mcp",
+                "tool",
+                "tools",
+                "integration",
+                "integrations",
+                "server",
+            ],
+        ),
+        has_approval_hint: contains_any(
+            &lowered,
+            &[
+                "approval",
+                "approve",
+                "human review",
+                "review first",
+                "before sending",
+            ],
+        ),
+        has_memory_or_files_hint: contains_any(
+            &lowered,
+            &["memory", "files", "file", "workspace", "document", "docs"],
+        ),
+    }
+}
+
+fn workflow_planner_clarifier_topics(input: &str) -> Vec<String> {
+    let profile = workflow_planner_clarify_profile(input);
+    let mut topics = Vec::new();
+    if !profile.has_schedule {
+        topics.push("trigger or schedule".to_string());
+    }
+    if !profile.has_source_hint {
+        topics.push("input sources".to_string());
+    }
+    if !profile.has_output_hint {
+        topics.push("output destination".to_string());
+    }
+    if !profile.has_tools_hint {
+        topics.push("MCP/tools".to_string());
+    }
+    if !profile.has_approval_hint {
+        topics.push("approval".to_string());
+    }
+    if !profile.has_memory_or_files_hint {
+        topics.push("memory/files".to_string());
+    }
+    topics
+}
+
+fn workflow_planner_option_label(topic: &str) -> String {
+    let mut chars = topic.chars();
+    match chars.next() {
+        Some(first) => format!("{}{}", first.to_ascii_uppercase(), chars.as_str()),
+        None => topic.to_string(),
+    }
+}
+
+fn workflow_planner_clarifier_options(input: &str) -> Vec<SetupClarifierOption> {
+    let mut options = Vec::new();
+    let mut seen = HashSet::new();
+    for topic in workflow_planner_clarifier_topics(input).into_iter().take(3) {
+        let id = format!(
+            "workflow_planner_{}",
+            topic
+                .chars()
+                .map(|ch| {
+                    if ch.is_ascii_alphanumeric() {
+                        ch.to_ascii_lowercase()
+                    } else {
+                        '_'
+                    }
+                })
+                .collect::<String>()
+                .trim_matches('_')
+        );
+        if !seen.insert(id.clone()) {
+            continue;
+        }
+        options.push(SetupClarifierOption {
+            id,
+            label: workflow_planner_option_label(&topic),
+        });
+    }
+    if options.is_empty() {
+        options.push(SetupClarifierOption {
+            id: "workflow_planner_create".to_string(),
+            label: "Draft the workflow".to_string(),
+        });
+    }
+    options
+}
+
+fn workflow_planner_clarifier_question(input: &str) -> String {
+    let topics = workflow_planner_clarifier_topics(input);
+    let core = topics
+        .iter()
+        .take(3)
+        .cloned()
+        .collect::<Vec<_>>()
+        .join(", ");
+    let mut question = if core.is_empty() {
+        "What should the workflow do?".to_string()
+    } else {
+        format!("I need a few details before I draft this workflow: {core}.")
+    };
+    if topics
+        .iter()
+        .any(|topic| matches!(topic.as_str(), "MCP/tools" | "approval" | "memory/files"))
+    {
+        question
+            .push_str(" If it needs MCP tools, approval, or file/memory access, mention that too.");
+    }
+    question
+}
+
+fn workflow_planner_needs_clarification(input: &str) -> bool {
+    let profile = workflow_planner_clarify_profile(input);
+    let core_signals = usize::from(profile.has_schedule)
+        + usize::from(profile.has_source_hint)
+        + usize::from(profile.has_output_hint);
+    core_signals < 2
 }
 
 fn score_channel_setup_help(input: &str) -> IntentScore {

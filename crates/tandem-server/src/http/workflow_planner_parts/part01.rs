@@ -116,6 +116,8 @@ pub struct WorkflowPlannerSessionPlanningRecord {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub created_by_agent: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub draft_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub linked_channel_session_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub linked_draft_plan_id: Option<String>,
@@ -127,6 +129,8 @@ pub struct WorkflowPlannerSessionPlanningRecord {
     pub known_requirements: Vec<String>,
     #[serde(default)]
     pub missing_requirements: Vec<String>,
+    #[serde(default)]
+    pub validation_state: String,
     #[serde(default)]
     pub validation_status: String,
     #[serde(default)]

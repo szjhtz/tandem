@@ -1943,3 +1943,117 @@ async fn workflow_plan_import_rejects_missing_scope_snapshot() {
         })
         .unwrap_or(false));
 }
+
+#[tokio::test]
+async fn workflow_planner_session_create_normalizes_control_panel_provenance() {
+    let state = test_state().await;
+    configure_openai_provider(&state).await;
+    let mut rx = state.event_bus.subscribe();
+    let app = app_router(state.clone());
+    let _guard = PlannerEnvGuard::new(&["TANDEM_WORKFLOW_PLANNER_TEST_BUILD_RESPONSE"]);
+    _guard.set(
+        "TANDEM_WORKFLOW_PLANNER_TEST_BUILD_RESPONSE",
+        json!({
+            "action": "build",
+            "plan": llm_plan_json(
+                "Human Owned Workflow",
+                "Create a human-owned workflow draft.",
+                manual_schedule_json(),
+                "/tmp/control-panel-workspace",
+                vec![step_json(
+                    "draft_summary",
+                    "draft",
+                    "Draft the summary.",
+                    &[],
+                    "writer",
+                    json!([]),
+                    "report_markdown"
+                )],
+                Some(planner_preferences())
+            )
+        })
+        .to_string(),
+    );
+
+    let preview_resp = app
+        .clone()
+        .oneshot(preview_request(json!({
+            "prompt": "Create a human-owned workflow draft",
+            "workspace_root": "/tmp/control-panel-workspace",
+            "plan_source": "intent_planner_page",
+            "operator_preferences": planner_preferences()
+        })))
+        .await
+        .expect("preview response");
+    assert_eq!(preview_resp.status(), StatusCode::OK);
+    let preview_body = to_bytes(preview_resp.into_body(), usize::MAX)
+        .await
+        .expect("preview body");
+    let preview_payload: Value = serde_json::from_slice(&preview_body).expect("preview json");
+
+    let create_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/workflow-plans/sessions")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "project_slug": "planner-control-panel",
+                        "title": "Control Panel Draft",
+                        "workspace_root": "/tmp/control-panel-workspace",
+                        "goal": "Create a human-owned workflow draft",
+                        "plan_source": "intent_planner_page",
+                        "plan": preview_payload.get("plan").cloned(),
+                        "conversation": preview_payload.get("conversation").cloned(),
+                        "planner_diagnostics": preview_payload.get("planner_diagnostics").cloned(),
+                        "planning": {
+                            "mode": "channel",
+                            "source_platform": "control_panel",
+                            "validation_status": "pending",
+                            "approval_status": "not_required"
+                        }
+                    })
+                    .to_string(),
+                ))
+                .expect("create request"),
+        )
+        .await
+        .expect("create response");
+    assert_eq!(create_resp.status(), StatusCode::OK);
+    let create_body = to_bytes(create_resp.into_body(), usize::MAX)
+        .await
+        .expect("create body");
+    let create_payload: Value = serde_json::from_slice(&create_body).expect("create json");
+    let session = create_payload.get("session").expect("session");
+    assert_eq!(
+        session
+            .get("planning")
+            .and_then(|row| row.get("mode"))
+            .and_then(Value::as_str),
+        Some("workflow_planning")
+    );
+    assert_eq!(
+        session
+            .get("planning")
+            .and_then(|row| row.get("created_by_agent"))
+            .and_then(Value::as_str),
+        Some("human")
+    );
+    assert_eq!(
+        session
+            .get("planning")
+            .and_then(|row| row.get("source_platform"))
+            .and_then(Value::as_str),
+        Some("control_panel")
+    );
+    assert_eq!(
+        session
+            .get("planning")
+            .and_then(|row| row.get("draft_id"))
+            .and_then(Value::as_str),
+        session.get("current_plan_id").and_then(Value::as_str)
+    );
+    let _ = next_event_of_type(&mut rx, "workflow_planner.session.started").await;
+}

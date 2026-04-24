@@ -1,7 +1,5 @@
 use std::collections::BTreeSet;
 
-use tandem_workflows::plan_package::WorkflowPlanDraftReviewRecord;
-
 fn planner_session_title_from_record(session: &WorkflowPlannerSessionRecord) -> String {
     let title = session.title.trim();
     if !title.is_empty() {
@@ -35,6 +33,7 @@ fn planner_session_operation_running(session: &WorkflowPlannerSessionRecord) -> 
 
 fn workflow_planner_collect_capabilities(
     plan_package: &compiler_api::PlanPackage,
+    required_integrations: &[String],
 ) -> (Vec<String>, Vec<String>) {
     let mut required = BTreeSet::new();
     let mut requested = BTreeSet::new();
@@ -48,6 +47,15 @@ fn workflow_planner_collect_capabilities(
         if intent.required {
             required.insert(capability.to_string());
         }
+    }
+
+    for integration in required_integrations {
+        let capability = integration.trim();
+        if capability.is_empty() {
+            continue;
+        }
+        requested.insert(capability.to_string());
+        required.insert(capability.to_string());
     }
 
     for routine in &plan_package.routine_graph {
@@ -133,63 +141,38 @@ fn workflow_planner_validation_status(
     }
 }
 
-async fn workflow_planner_request_capability_approval(
-    state: &AppState,
-    session: &WorkflowPlannerSessionRecord,
-    planning: &WorkflowPlannerSessionPlanningRecord,
-    blocked_capabilities: &[String],
-    requested_capabilities: &[String],
-    preview_payload: &Value,
-    validation_status: &str,
+fn workflow_planner_validation_state(
+    legacy_status: &str,
+    validation: Option<&compiler_api::PlanValidationReport>,
+    readiness: Option<&CapabilityReadinessOutput>,
+    approval_status: &str,
 ) -> String {
-    if blocked_capabilities.is_empty() {
-        return "not_required".to_string();
-    }
-    if planning.approval_status.eq_ignore_ascii_case("requested") {
-        return "requested".to_string();
+    let capability_blocked = readiness
+        .map(|report| !report.blocking_issues.is_empty() || !report.runnable)
+        .unwrap_or(false);
+    let legacy_blocked = matches!(
+        legacy_status.to_ascii_lowercase().as_str(),
+        "blocked" | "approval_required" | "needs_approval"
+    );
+    if capability_blocked || legacy_blocked {
+        if approval_status.eq_ignore_ascii_case("requested") {
+            return "needs_approval".to_string();
+        }
+        return "blocked".to_string();
     }
 
-    let mcp_name = blocked_capabilities
-        .first()
-        .cloned()
-        .unwrap_or_else(|| "workflow_planner".to_string());
-    let rationale = format!(
-        "Workflow planner draft `{}` needs capability review for blocked capabilities: {}",
-        session.session_id,
-        blocked_capabilities.join(", ")
-    );
-    let context = json!({
-        "session_id": session.session_id,
-        "project_slug": session.project_slug,
-        "title": session.title,
-        "plan_id": session.current_plan_id,
-        "source_platform": planning.source_platform,
-        "source_channel": planning.source_channel,
-        "requesting_actor": planning.requesting_actor,
-        "created_by_agent": planning.created_by_agent,
-        "linked_channel_session_id": planning.linked_channel_session_id,
-        "linked_draft_plan_id": planning.linked_draft_plan_id,
-        "required_capabilities": planning.known_requirements,
-        "missing_requirements": planning.missing_requirements,
-        "blocked_capabilities": blocked_capabilities,
-        "requested_capabilities": requested_capabilities,
-        "docs_mcp_enabled": planning.docs_mcp_enabled,
-        "validation_status": validation_status,
-        "preview_payload": preview_payload,
-    });
-    let args = json!({
-        "agent_id": session.session_id,
-        "mcp_name": mcp_name.clone(),
-        "catalog_slug": mcp_name,
-        "rationale": rationale,
-        "requested_tools": blocked_capabilities,
-        "context": context,
-        "expires_at_ms": crate::now_ms() + 7 * 24 * 60 * 60 * 1000,
-    });
-    match state.tools.execute("mcp_request_capability", args).await {
-        Ok(_) => "requested".to_string(),
-        Err(_) => "blocked".to_string(),
+    let ready = validation
+        .map(|report| report.ready_for_apply || report.ready_for_activation)
+        .unwrap_or(false)
+        || matches!(
+            legacy_status.to_ascii_lowercase().as_str(),
+            "ready" | "ready_for_apply" | "ready_for_activation"
+        );
+    if ready {
+        return "valid".to_string();
     }
+
+    "incomplete".to_string()
 }
 
 async fn workflow_planner_session_store_operation_result(
@@ -314,6 +297,7 @@ async fn workflow_planner_session_response(
     let draft = state
         .get_workflow_plan_draft(session.current_plan_id.as_deref().unwrap_or_default())
         .await;
+    let draft_was_present = session.draft.is_some() || draft.is_some();
     let mut next_session = session.clone();
     let mut review_record: Option<WorkflowPlanDraftReviewRecord> = None;
     if let Some(draft) = draft {
@@ -336,7 +320,14 @@ async fn workflow_planner_session_response(
             serde_json::from_value::<compiler_api::PlanPackage>(plan_package_value.clone())
         {
             let (required_capabilities, requested_capabilities) =
-                workflow_planner_collect_capabilities(&plan_package);
+                workflow_planner_collect_capabilities(
+                    &plan_package,
+                    next_session
+                        .draft
+                        .as_ref()
+                        .map(|draft| draft.current_plan.requires_integrations.as_slice())
+                        .unwrap_or(&[]),
+                );
             let optional_capabilities = requested_capabilities
                 .iter()
                 .filter(|capability| !required_capabilities.contains(capability))
@@ -380,25 +371,17 @@ async fn workflow_planner_session_response(
                 .and_then(|planning| planning.docs_mcp_enabled)
                 .unwrap_or(false);
             let mut planning = next_session.planning.clone().unwrap_or_default();
-            if planning.mode.trim().is_empty() {
-                planning.mode = "planner".to_string();
-            }
-            if planning.source_platform.trim().is_empty() {
-                planning.source_platform = "control_panel".to_string();
-            }
-            if planning.started_at_ms.is_none() {
-                planning.started_at_ms = Some(crate::now_ms());
-            }
             let now = crate::now_ms();
-            planning.updated_at_ms = Some(now);
+            normalize_workflow_planning_record(
+                &mut planning,
+                next_session.current_plan_id.as_deref(),
+                now,
+            );
             planning.allowed_tools = requested_capabilities.clone();
             planning.blocked_tools = blocked_capabilities.clone();
             planning.known_requirements = required_capabilities.clone();
             planning.missing_requirements = blocked_capabilities.clone();
             planning.docs_mcp_enabled = Some(docs_mcp_used);
-            if let Some(plan_id) = next_session.current_plan_id.clone() {
-                planning.linked_draft_plan_id = Some(plan_id);
-            }
             let preview_payload = payload.clone();
             let approval_status = workflow_planner_request_capability_approval(
                 state,
@@ -412,6 +395,12 @@ async fn workflow_planner_session_response(
             .await;
             planning.validation_status = validation_status.clone();
             planning.approval_status = approval_status.clone();
+            planning.validation_state = workflow_planner_validation_state(
+                &validation_status,
+                plan_validation.as_ref(),
+                readiness.as_ref(),
+                &approval_status,
+            );
             next_session.planning = Some(planning.clone());
             review_record = Some(WorkflowPlanDraftReviewRecord {
                 required_capabilities: required_capabilities.clone(),
@@ -421,6 +410,7 @@ async fn workflow_planner_session_response(
                 preview_payload: Some(preview_payload.clone()),
                 created_at_ms: Some(now),
                 updated_at_ms: Some(now),
+                validation_state: planning.validation_state.clone(),
                 validation_status,
                 approval_status,
             });
@@ -437,6 +427,19 @@ async fn workflow_planner_session_response(
         .await;
     if let Some(draft) = next_session.draft.clone() {
         let _ = state.put_workflow_plan_draft(draft).await;
+    }
+    if let Some(planning) = next_session.planning.as_ref() {
+        let review = next_session
+            .draft
+            .as_ref()
+            .and_then(|draft| draft.review.as_ref());
+        workflow_planner_publish_session_events(
+            state,
+            &next_session,
+            planning,
+            review,
+            draft_was_present,
+        );
     }
     if let Some(object) = payload.as_object_mut() {
         object.insert(
@@ -559,6 +562,12 @@ pub(super) async fn workflow_planner_session_create(
         session.current_plan_id = Some(draft.current_plan.plan_id.clone());
         session.draft = Some(draft);
     }
+    if session.planning.is_none() && session.draft.is_some() {
+        session.planning = Some(WorkflowPlannerSessionPlanningRecord::default());
+    }
+    if let Some(planning) = session.planning.as_mut() {
+        normalize_workflow_planning_record(planning, session.current_plan_id.as_deref(), now);
+    }
     let stored = state
         .put_workflow_planner_session(session.clone())
         .await
@@ -571,6 +580,17 @@ pub(super) async fn workflow_planner_session_create(
                 })),
             )
         })?;
+    if let Some(planning) = stored.planning.as_ref() {
+        let review = stored
+            .draft
+            .as_ref()
+            .and_then(|draft| draft.review.as_ref());
+        workflow_planner_publish_event(
+            &state,
+            "workflow_planner.session.started",
+            workflow_planner_event_payload(&stored, planning, review),
+        );
+    }
     Ok(Json(json!({
         "session": stored,
     })))
@@ -674,6 +694,13 @@ pub(super) async fn workflow_planner_session_patch(
     if let Some(published_tasks) = input.published_tasks {
         session.published_tasks = published_tasks;
     }
+    if let Some(planning) = session.planning.as_mut() {
+        normalize_workflow_planning_record(
+            planning,
+            session.current_plan_id.as_deref(),
+            crate::now_ms(),
+        );
+    }
     let stored = state
         .put_workflow_planner_session(session)
         .await
@@ -752,6 +779,9 @@ pub(super) async fn workflow_planner_session_duplicate(
         })?;
         next.current_plan_id = Some(new_plan_id);
         next.draft = Some(duplicated);
+    }
+    if let Some(planning) = next.planning.as_mut() {
+        normalize_workflow_planning_record(planning, next.current_plan_id.as_deref(), now);
     }
     let stored = state
         .put_workflow_planner_session(next)

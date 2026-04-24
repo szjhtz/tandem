@@ -1,11 +1,3 @@
-use super::*;
-
-use std::collections::HashMap;
-use std::sync::{Mutex, MutexGuard, OnceLock};
-
-include!("workflow_planner_parts/part01.rs");
-
-use crate::workflow_planner::{WorkflowPlannerSessionPlanningRecord, WorkflowPlannerSessionRecord};
 use tandem_types::EngineEvent;
 use tandem_workflows::plan_package::WorkflowPlanDraftReviewRecord;
 
@@ -228,4 +220,3 @@ fn workflow_planner_publish_session_events(
         workflow_planner_publish_event(state, "workflow_planner.review.ready", event_payload);
     }
 }
-include!("workflow_planner_parts/part02.rs");

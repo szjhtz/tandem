@@ -1511,6 +1511,14 @@ async fn process_channel_message(
                                 session_map,
                             )
                             .await;
+                            let workflow_preview = if workflow_prompt.chars().count() > 120 {
+                                let mut clipped =
+                                    workflow_prompt.chars().take(117).collect::<String>();
+                                clipped.push('…');
+                                clipped
+                            } else {
+                                workflow_prompt.clone()
+                            };
                             let mut allowed_mcp_servers = tool_prefs.enabled_mcp_servers.clone();
                             if !allowed_mcp_servers
                                 .iter()
@@ -1538,7 +1546,7 @@ async fn process_channel_message(
                                 "plan_source": plan_source.clone(),
                                 "allowed_mcp_servers": allowed_mcp_servers.clone(),
                                 "planning": {
-                                    "mode": "channel",
+                                    "mode": "workflow_planning",
                                     "source_platform": msg.channel.clone(),
                                     "source_channel": msg.scope.id.clone(),
                                     "requesting_actor": msg.sender.clone(),
@@ -1630,12 +1638,12 @@ async fn process_channel_message(
                             let link = workflow_planner_control_panel_url(&planner_session_id);
                             match start_result {
                                 Ok(_) => format!(
-                                    "🗓️ Workflow planning started.\nReview it in the planner: {}\nSession: `{}`",
-                                    link, planner_session_id
+                                    "🗓️ Workflow planning started.\nPreview: {}\nReview it in the planner: {}\nSession: `{}`",
+                                    workflow_preview, link, planner_session_id
                                 ),
                                 Err(error) => format!(
-                                    "🗓️ Workflow planner session created, but draft start failed: {}\nReview it in the planner: {}\nSession: `{}`",
-                                    error, link, planner_session_id
+                                    "🗓️ Workflow planner session created, but draft start failed: {}\nPreview: {}\nReview it in the planner: {}\nSession: `{}`",
+                                    error, workflow_preview, link, planner_session_id
                                 ),
                             }
                         }

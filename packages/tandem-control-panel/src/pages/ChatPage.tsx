@@ -220,11 +220,15 @@ function setupCardFromResponse(response: SetupUnderstandResponse): SetupCard | n
   }
   if (response.intent_kind === "workflow_planner_create") {
     return {
-      title: "Workflow planning",
-      body: response.slots.goal || "Open the planner to draft a governed workflow plan.",
+      title: response.decision === "clarify" ? "Workflow planning questions" : "Workflow planning",
+      body:
+        response.clarifier?.question ||
+        response.slots.goal ||
+        "Open the planner to draft a governed workflow plan.",
       cta: "Open Planner",
       actionType: "open_planner",
       payload: response.proposed_action.payload || {},
+      clarifier: response.clarifier || undefined,
     };
   }
   return {
@@ -1365,14 +1369,15 @@ export function ChatPage({ client, api, toast, providerStatus, identity, navigat
                       key={option.id}
                       type="button"
                       className="tcp-btn tcp-btn-ghost"
-                      onClick={() =>
+                      onClick={() => {
+                        const isWorkflowPlanner = option.id.startsWith("workflow_planner_");
                         setSetupCard({
                           title:
                             option.id === "provider_setup"
                               ? "Provider setup"
                               : option.id === "integration_setup"
                                 ? "Tool connection"
-                                : option.id === "workflow_planner_create"
+                                : isWorkflowPlanner
                                   ? "Workflow planning"
                                   : "Automation setup",
                           body:
@@ -1380,15 +1385,15 @@ export function ChatPage({ client, api, toast, providerStatus, identity, navigat
                               ? "Open Providers to configure a provider."
                               : option.id === "integration_setup"
                                 ? "Open MCP to connect the tool you need."
-                                : option.id === "workflow_planner_create"
-                                  ? "Open the planner to draft the workflow plan."
+                                : isWorkflowPlanner
+                                  ? "Open the planner to answer the missing workflow details."
                                   : "Open Automations to build the workflow.",
                           cta:
                             option.id === "provider_setup"
                               ? "Open Providers"
                               : option.id === "integration_setup"
                                 ? "Open MCP"
-                                : option.id === "workflow_planner_create"
+                                : isWorkflowPlanner
                                   ? "Open Planner"
                                   : "Open Automations",
                           actionType:
@@ -1396,12 +1401,12 @@ export function ChatPage({ client, api, toast, providerStatus, identity, navigat
                               ? "open_provider_setup"
                               : option.id === "integration_setup"
                                 ? "open_mcp_setup"
-                                : option.id === "workflow_planner_create"
+                                : isWorkflowPlanner
                                   ? "open_planner"
                                   : "open_automations",
                           payload: setupCard.payload,
-                        })
-                      }
+                        });
+                      }}
                     >
                       {option.label}
                     </button>

@@ -1036,6 +1036,7 @@ async fn workflow_planner_sessions_support_crud_and_duplication() {
 async fn workflow_planner_session_start_async_persists_completed_operation() {
     let state = test_state().await;
     configure_openai_provider(&state).await;
+    let mut rx = state.event_bus.subscribe();
     let app = app_router(state.clone());
     let _guard = PlannerEnvGuard::new(&["TANDEM_WORKFLOW_PLANNER_TEST_BUILD_RESPONSE"]);
     _guard.set(
@@ -1077,7 +1078,15 @@ async fn workflow_planner_session_start_async_persists_completed_operation() {
                         "title": "Planner Async",
                         "workspace_root": "/tmp/async-workspace",
                         "goal": "Build a workflow plan asynchronously",
-                        "plan_source": "coding_task_planning"
+                        "plan_source": "coding_task_planning",
+                        "planning": {
+                            "mode": "channel",
+                            "source_platform": "control_panel",
+                            "requesting_actor": "human",
+                            "validation_status": "pending",
+                            "approval_status": "not_required",
+                            "docs_mcp_enabled": true
+                        }
                     })
                     .to_string(),
                 ))
@@ -1096,6 +1105,23 @@ async fn workflow_planner_session_start_async_persists_completed_operation() {
         .and_then(Value::as_str)
         .expect("session id")
         .to_string();
+    assert_eq!(
+        create_payload
+            .get("session")
+            .and_then(|row| row.get("planning"))
+            .and_then(|row| row.get("mode"))
+            .and_then(Value::as_str),
+        Some("workflow_planning")
+    );
+    assert_eq!(
+        create_payload
+            .get("session")
+            .and_then(|row| row.get("planning"))
+            .and_then(|row| row.get("created_by_agent"))
+            .and_then(Value::as_str),
+        Some("human")
+    );
+    let _ = next_event_of_type(&mut rx, "workflow_planner.session.started").await;
 
     let start_resp = app
         .clone()
@@ -1179,6 +1205,33 @@ async fn workflow_planner_session_start_async_persists_completed_operation() {
         .and_then(|row| row.get("current_plan_id"))
         .and_then(Value::as_str)
         .is_some());
+    assert_eq!(
+        payload
+            .get("session")
+            .and_then(|row| row.get("planning"))
+            .and_then(|row| row.get("mode"))
+            .and_then(Value::as_str),
+        Some("workflow_planning")
+    );
+    assert_eq!(
+        payload
+            .get("session")
+            .and_then(|row| row.get("planning"))
+            .and_then(|row| row.get("validation_state"))
+            .and_then(Value::as_str),
+        Some("valid")
+    );
+    assert_eq!(
+        payload
+            .get("session")
+            .and_then(|row| row.get("planning"))
+            .and_then(|row| row.get("draft_id"))
+            .and_then(Value::as_str),
+        payload
+            .get("session")
+            .and_then(|row| row.get("current_plan_id"))
+            .and_then(Value::as_str)
+    );
     assert!(payload
         .get("session")
         .and_then(|row| row.get("operation"))
@@ -1187,6 +1240,186 @@ async fn workflow_planner_session_start_async_persists_completed_operation() {
         .and_then(|row| row.get("messages"))
         .and_then(Value::as_array)
         .is_some());
+    let _ = next_event_of_type(&mut rx, "workflow_planner.draft.updated").await;
+    let _ = next_event_of_type(&mut rx, "workflow_planner.draft.validated").await;
+    let _ = next_event_of_type(&mut rx, "workflow_planner.review.ready").await;
+}
+
+#[tokio::test]
+async fn workflow_planner_session_start_async_surfaces_blocked_capabilities() {
+    let state = test_state().await;
+    configure_openai_provider(&state).await;
+    let mut rx = state.event_bus.subscribe();
+    let app = app_router(state.clone());
+    let _guard = PlannerEnvGuard::new(&[
+        "TANDEM_WORKFLOW_PLANNER_TEST_BUILD_RESPONSE",
+        "TANDEM_WORKFLOW_PLANNER_TEST_RESPONSE",
+    ]);
+    let mut build_plan = llm_plan_json(
+        "Blocked Capability Plan",
+        "Draft a workflow that posts to Acme Chat.",
+        manual_schedule_json(),
+        "/tmp/blocked-workspace",
+        vec![step_json(
+            "post_to_acme_chat",
+            "notify",
+            "Post the summary to Acme Chat.",
+            &[],
+            "operator",
+            json!([]),
+            "text_summary",
+        )],
+        Some(planner_preferences()),
+    );
+    if let Some(plan) = build_plan.as_object_mut() {
+        plan.insert(
+            "requires_integrations".to_string(),
+            json!(["acme_chat.post_message"]),
+        );
+    }
+    _guard.set(
+        "TANDEM_WORKFLOW_PLANNER_TEST_BUILD_RESPONSE",
+        json!({
+            "action": "build",
+            "plan": build_plan
+        })
+        .to_string(),
+    );
+
+    let create_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/workflow-plans/sessions")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "project_slug": "planner-blocked",
+                        "title": "Planner Blocked",
+                        "workspace_root": "/tmp/blocked-workspace",
+                        "goal": "Draft a workflow that posts to Acme Chat",
+                        "plan_source": "coding_task_planning",
+                        "operator_preferences": planner_preferences(),
+                        "planning": {
+                            "mode": "channel",
+                            "source_platform": "control_panel",
+                            "requesting_actor": "human",
+                            "validation_status": "pending",
+                            "approval_status": "not_required",
+                            "docs_mcp_enabled": true
+                        }
+                    })
+                    .to_string(),
+                ))
+                .expect("create request"),
+        )
+        .await
+        .expect("create response");
+    assert_eq!(create_resp.status(), StatusCode::OK);
+    let create_body = to_bytes(create_resp.into_body(), usize::MAX)
+        .await
+        .expect("create body");
+    let create_payload: Value = serde_json::from_slice(&create_body).expect("create json");
+    let session_id = create_payload
+        .get("session")
+        .and_then(|row| row.get("session_id"))
+        .and_then(Value::as_str)
+        .expect("session id")
+        .to_string();
+    let _ = next_event_of_type(&mut rx, "workflow_planner.session.started").await;
+
+    let start_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/workflow-plans/sessions/{session_id}/start-async"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "prompt": "Draft a workflow that posts to Acme Chat",
+                        "workspace_root": "/tmp/blocked-workspace"
+                    })
+                    .to_string(),
+                ))
+                .expect("start request"),
+        )
+        .await
+        .expect("start response");
+    assert_eq!(start_resp.status(), StatusCode::OK);
+
+    let mut payload: Option<Value> = None;
+    for _ in 0..40 {
+        let get_resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri(format!("/workflow-plans/sessions/{session_id}"))
+                    .body(Body::empty())
+                    .expect("get request"),
+            )
+            .await
+            .expect("get response");
+        assert_eq!(get_resp.status(), StatusCode::OK);
+        let get_body = to_bytes(get_resp.into_body(), usize::MAX)
+            .await
+            .expect("get body");
+        let response: Value = serde_json::from_slice(&get_body).expect("get json");
+        payload = Some(response.clone());
+        let op_status = response
+            .get("session")
+            .and_then(|row| row.get("operation"))
+            .and_then(|row| row.get("status"))
+            .and_then(Value::as_str);
+        if op_status == Some("completed") {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+
+    let payload = payload.expect("payload");
+    let session = payload.get("session").expect("session");
+    let validation_state = session
+        .get("planning")
+        .and_then(|row| row.get("validation_state"))
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    assert!(matches!(validation_state, "blocked" | "needs_approval"));
+    assert_eq!(
+        session
+            .get("planning")
+            .and_then(|row| row.get("mode"))
+            .and_then(Value::as_str),
+        Some("workflow_planning")
+    );
+    assert!(session
+        .get("planning")
+        .and_then(|row| row.get("blocked_tools"))
+        .and_then(Value::as_array)
+        .is_some_and(|rows| {
+            rows.iter()
+                .any(|row| row.as_str() == Some("acme_chat.post_message"))
+        }));
+    assert!(session
+        .get("draft")
+        .and_then(|row| row.get("review"))
+        .and_then(|row| row.get("blocked_capabilities"))
+        .and_then(Value::as_array)
+        .is_some_and(|rows| {
+            rows.iter()
+                .any(|row| row.as_str() == Some("acme_chat.post_message"))
+        }));
+    let approval_status = session
+        .get("planning")
+        .and_then(|row| row.get("approval_status"))
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    assert_ne!(approval_status, "not_required");
+    let _ = next_event_of_type(&mut rx, "workflow_planner.draft.updated").await;
+    let _ = next_event_of_type(&mut rx, "workflow_planner.requirements.missing").await;
+    let _ = next_event_of_type(&mut rx, "workflow_planner.capability.blocked").await;
 }
 
 #[tokio::test]

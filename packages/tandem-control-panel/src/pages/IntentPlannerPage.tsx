@@ -103,6 +103,26 @@ function formatStringList(values: unknown) {
   return items.length ? items.join(", ") : "—";
 }
 
+function workflowPlannerOwnerLabel(planning: any) {
+  const platform = safeString(planning?.source_platform);
+  const actor = safeString(planning?.created_by_agent || planning?.requesting_actor);
+  if (platform === "control_panel" && (!actor || actor === "human")) return "human";
+  return actor || "—";
+}
+
+function workflowPlannerPreviewSummary(review: any) {
+  const plan = review?.preview_payload?.plan || {};
+  const title = safeString(plan?.title || plan?.original_prompt);
+  const steps = Array.isArray(plan?.steps) ? plan.steps.length : 0;
+  const schedule = safeString(
+    plan?.schedule?.cron_expression || plan?.schedule?.type || plan?.schedule?.label
+  );
+  const parts = [title || "Workflow preview"];
+  if (steps) parts.push(`${steps} step${steps === 1 ? "" : "s"}`);
+  if (schedule) parts.push(schedule);
+  return parts.join(" • ");
+}
+
 function normalizeServers(raw: any) {
   const rows = Array.isArray(raw)
     ? raw
@@ -382,6 +402,33 @@ export function IntentPlannerPage({
   );
   const workflowPlannerReview = importedWorkflowSession?.draft?.review || null;
   const workflowPlannerPlanning = importedWorkflowSession?.planning || null;
+  const workflowPlannerPreviewPayload = workflowPlannerReview?.preview_payload || null;
+  const workflowPlannerPreviewPlan = workflowPlannerPreviewPayload?.plan || null;
+  const workflowPlannerOriginalRequest = safeString(
+    workflowPlannerPreviewPlan?.original_prompt ||
+      importedWorkflowSession?.goal ||
+      safeString(workflowPlannerSeed?.prompt || "") ||
+      importedWorkflowSession?.title ||
+      "—"
+  );
+  const workflowPlannerDraftId = safeString(
+    workflowPlannerPlanning?.draft_id ||
+      workflowPlannerPlanning?.linked_draft_plan_id ||
+      importedWorkflowSession?.current_plan_id ||
+      workflowPlannerPreviewPlan?.plan_id ||
+      "—"
+  );
+  const workflowPlannerDraftStatus = workflowPlannerReview ? "review ready" : "draft in progress";
+  const workflowPlannerValidationState = safeString(
+    workflowPlannerReview?.validation_state ||
+      workflowPlannerPlanning?.validation_state ||
+      "incomplete"
+  );
+  const workflowPlannerApprovalStatus = safeString(
+    workflowPlannerReview?.approval_status ||
+      workflowPlannerPlanning?.approval_status ||
+      "not_required"
+  );
   const workflowPlannerSeedPrompt = safeString(workflowPlannerSeed?.prompt || "");
   const workspaceParentDir = String((workspaceBrowserQuery.data as any)?.parent || "").trim();
   const workspaceCurrentBrowseDir = String(
@@ -1036,12 +1083,12 @@ export function IntentPlannerPage({
                 <Badge tone="ghost">{plannerHandoffSessionId}</Badge>
               ) : null}
             </div>
-            <div className="grid gap-1 md:grid-cols-2">
+            <div className="grid gap-1 md:grid-cols-2 xl:grid-cols-3">
               <div>
-                <div className="tcp-subtle text-xs">Title</div>
+                <div className="tcp-subtle text-xs">Original request</div>
                 <div>
                   {safeString(
-                    importedWorkflowSession?.title ||
+                    workflowPlannerOriginalRequest ||
                       workflowPlannerSeedPrompt ||
                       "Workflow planner"
                   )}
@@ -1068,6 +1115,40 @@ export function IntentPlannerPage({
                 </div>
               </div>
               <div>
+                <div className="tcp-subtle text-xs">Planning mode</div>
+                <div>{safeString(workflowPlannerPlanning?.mode || "workflow_planning")}</div>
+              </div>
+              <div>
+                <div className="tcp-subtle text-xs">Created by / actor</div>
+                <div>{safeString(workflowPlannerOwnerLabel(workflowPlannerPlanning))}</div>
+              </div>
+              <div>
+                <div className="tcp-subtle text-xs">Draft id</div>
+                <div>{workflowPlannerDraftId}</div>
+              </div>
+              <div>
+                <div className="tcp-subtle text-xs">Draft status</div>
+                <div>{workflowPlannerDraftStatus}</div>
+              </div>
+              <div>
+                <div className="tcp-subtle text-xs">Validation state</div>
+                <div>{workflowPlannerValidationState}</div>
+              </div>
+              <div>
+                <div className="tcp-subtle text-xs">Validation status</div>
+                <div>
+                  {safeString(
+                    workflowPlannerReview?.validation_status ||
+                      workflowPlannerPlanning?.validation_status ||
+                      "pending"
+                  )}
+                </div>
+              </div>
+              <div>
+                <div className="tcp-subtle text-xs">Approval requirements</div>
+                <div>{workflowPlannerApprovalStatus}</div>
+              </div>
+              <div>
                 <div className="tcp-subtle text-xs">Docs MCP</div>
                 <div>
                   {workflowPlannerReview?.docs_mcp_used ? "used in the draft" : "not used yet"}
@@ -1086,20 +1167,8 @@ export function IntentPlannerPage({
                 <div>{formatStringList(workflowPlannerPlanning?.missing_requirements)}</div>
               </div>
               <div>
-                <div className="tcp-subtle text-xs">Validation / approval</div>
-                <div>
-                  {safeString(
-                    workflowPlannerReview?.validation_status ||
-                      workflowPlannerPlanning?.validation_status ||
-                      "pending"
-                  )}
-                  {" / "}
-                  {safeString(
-                    workflowPlannerReview?.approval_status ||
-                      workflowPlannerPlanning?.approval_status ||
-                      "not_required"
-                  )}
-                </div>
+                <div className="tcp-subtle text-xs">Workflow preview</div>
+                <div>{workflowPlannerPreviewSummary(workflowPlannerReview)}</div>
               </div>
             </div>
           </div>

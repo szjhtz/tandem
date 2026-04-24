@@ -185,6 +185,12 @@ The same primitives should be reused wherever possible.
 
 The long-term test of the runtime is whether it can safely help develop, maintain, and improve Tandem itself.
 
+### 11. Bounded self-extension
+
+Tandem should allow agents to help extend the automation graph, but only through governed runtime primitives.
+
+Agents may propose, draft, and maintain workflows, but those extensions must remain scoped, attributable, validated, approval-aware, and revocable. Self-extension should never mean agents escaping the runtime model. It should mean agents creating new runtime-owned work through the same durable state, capability checks, approvals, artifacts, and lineage as everything else in Tandem.
+
 ---
 
 ## Canonical Runtime Shape

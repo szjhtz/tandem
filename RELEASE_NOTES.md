@@ -2,6 +2,26 @@
 
 This is the canonical release-notes file used by release tooling.
 
+## v0.4.41 (Unreleased)
+
+This unreleased build hardens chat-based workflow planning so drafts stay runtime-owned, visible, and governed before they are reviewed in the control panel.
+
+### Workflow planning visibility
+
+- **Explicit planning mode**: Planner sessions now persist `workflow_planning` state plus draft ID, source channel/platform, requesting actor, allowed and blocked tools, known and missing requirements, and validation state.
+- **Clarification-first drafting**: Missing workflow details now trigger focused follow-up questions about triggers, inputs, outputs, publish behavior, required tools, approval, and memory/files instead of a fake-ready draft.
+- **Structured audit trail**: Workflow planning now emits events for start, draft create/update, missing requirements, blocked capabilities, approval requests, validation, docs-MCP usage, and review readiness.
+
+### Governance and handoff
+
+- **Explicit blocked capabilities**: Required tools or MCPs that are not allowed stay blocked, are surfaced in the draft, and route through the existing approval queue instead of being silently widened.
+- **Draft-first external channels**: Telegram, Discord, and Slack still return a compact preview plus the control-panel review link, and they do not directly activate workflows in V1.1.
+- **Control-panel review details**: The planner review surface now shows the original request, source platform/channel, actor, draft status, validation status, required capabilities, blocked capabilities, approval requirements, and the generated preview.
+
+### Demo readiness
+
+- **Internal runbook**: Added `docs/internal/CHAT_WORKFLOW_PLANNER_DEMO.md` with setup, happy-path, missing-details, blocked-capability, and troubleshooting steps.
+
 ## v0.4.40 (Released 2026-04-24)
 
 This release adds channel-aware workflow planning, so chat-driven workflow requests can now open a governed planner session, persist review state, and hand off into the control panel for validation and approval instead of only seeding automation setup.

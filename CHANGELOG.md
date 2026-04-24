@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.41] - Unreleased
+
+### Added
+
+- **Workflow-planning visibility and provenance**: Chat-seeded workflow planning now persists explicit `workflow_planning` state with draft and session IDs, source channel/platform, requesting actor, allowed and blocked tools, known and missing requirements, and validation state.
+- **Clarification-first drafting**: Missing workflow details now trigger focused follow-up questions about triggers, inputs, outputs, publish behavior, required tools, approval, and memory/files instead of generating a vague draft.
+- **Control-panel handoff and audit events**: Workflow drafts now surface a review banner in the control panel, emit structured planning lifecycle events, and include a short preview plus review link in external replies.
+- **Internal demo runbook**: Added `docs/internal/CHAT_WORKFLOW_PLANNER_DEMO.md` for end-to-end manual testing.
+
+### Changed
+
+- **Capability governance stays explicit**: Blocked tools, missing requirements, and approval requests now flow through the existing planner and session structures instead of being widened silently.
+- **External channels stay draft-first**: Telegram, Discord, and Slack continue to return compact review-oriented responses and cannot directly activate workflows.
+- **Planner provenance**: Control-panel initiated requests remain human-owned, and agent-authored drafts retain their source provenance through reloads.
+
+### Fixed
+
+- **Docs MCP is not authoring permission**: Tandem Docs MCP availability no longer implies workflow-planning permission.
+- **Workflow planning fallthrough**: Bare workflow requests no longer fall through to generic setup when the channel has workflow planning enabled.
+
 ## [0.4.40] - Released 2026-04-24
 
 ### Added

@@ -105,6 +105,8 @@ pub struct WorkflowPlanDraftReviewRecord {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub updated_at_ms: Option<u64>,
     #[serde(default)]
+    pub validation_state: String,
+    #[serde(default)]
     pub validation_status: String,
     #[serde(default)]
     pub approval_status: String,
