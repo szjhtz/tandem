@@ -34,7 +34,11 @@ This document explains how Tandem clients communicate with `tandem-engine`, how 
 - `TANDEM_ENGINE_URL`
   - TUI explicit base URL override (takes precedence over host/port composition).
 - `TANDEM_API_TOKEN`
-  - When set, engine requires `Authorization: Bearer <token>` or `X-Tandem-Token: <token>` for API calls (except health).
+  - Sets the engine API token explicitly. If unset, `tandem-engine serve` loads or creates the shared token by default.
+- `TANDEM_API_TOKEN_FILE`
+  - Points the engine at an explicit non-empty token file before falling back to shared token storage.
+- `TANDEM_UNSAFE_NO_API_TOKEN`
+  - Advanced local-only opt-out. When set to `1`, direct engine serving runs without API token auth.
 - `TANDEM_SHARED_ENGINE_MODE`
   - Desktop/TUI shared-engine behavior toggle.
 
@@ -128,8 +132,9 @@ Desktop/TUI map these into their request-center UI flows.
 ## Security Notes
 
 - Engine binds to loopback (`127.0.0.1`) by default.
-- Optional token auth is supported via `TANDEM_API_TOKEN` (or runtime token endpoints) for exposed deployments.
-- Desktop sidecar mode auto-generates a local API token, injects it into sidecar env (`TANDEM_API_TOKEN`), and sends `X-Tandem-Token` on requests.
+- Token auth is enabled by default. `TANDEM_API_TOKEN` sets an explicit token, otherwise the engine loads or creates the shared token file.
+- `TANDEM_UNSAFE_NO_API_TOKEN=1` is the advanced local-only opt-out and should not be used for exposed deployments.
+- Desktop sidecar mode uses the shared local API token and sends `X-Tandem-Token` on requests.
 - Token persistence is keychain-first with fallback to the shared token file path.
 - TUI uses the same shared token material and also sends `X-Tandem-Token`.
 - Desktop Settings exposes token management UX: masked by default, explicit reveal, and copy.

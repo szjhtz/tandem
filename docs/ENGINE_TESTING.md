@@ -70,7 +70,11 @@ cd packages/tandem-control-panel && pnpm build && sudo systemctl restart tandem-
 
 ## API Token Security Validation
 
-Verify token-gated API behavior:
+`tandem-engine serve` enables API token auth by default. When no explicit token is provided, the
+engine loads or creates the shared Tandem credential using the same keychain-first/file-fallback
+mechanism as desktop and TUI.
+
+Verify explicit token-gated API behavior:
 
 ```bash
 cargo run -p tandem-ai -- serve --host 127.0.0.1 --port 39731 --state-dir .tandem --api-token tk_test_token
@@ -92,6 +96,15 @@ Desktop/TUI token checks:
 - Desktop Settings now shows `Engine API Token` masked by default with `Reveal` and `Copy`.
 - TUI supports `/engine token` for masked output and `/engine token show` for full output plus storage backend/path.
 - Storage backend is reported as `keychain`, `file`, `env`, or `memory`.
+
+Advanced local-only tokenless testing is available with:
+
+```bash
+cargo run -p tandem-ai -- serve --host 127.0.0.1 --port 39731 --unsafe-no-api-token
+```
+
+Do not use `--unsafe-no-api-token` for `0.0.0.0`, reverse-proxied, hosted, tunneled, or shared
+deployments.
 
 ## OS-Aware Runtime Validation
 

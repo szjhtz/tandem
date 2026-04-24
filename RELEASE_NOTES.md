@@ -15,6 +15,12 @@ This unreleased build adds chat-native automation drafts for Discord, Telegram, 
 - **Channel-bounded automation metadata**: Confirmed automations carry source platform, channel, sender, scope, output target, and channel-derived tool/security bounds so chat-created automations stay within the channel's configured permissions.
 - **Control-panel guidance**: Channel settings now describe next-reply capture, cancellation, confirmation, same-channel output defaults, and pending draft behavior without requiring a separate workflow-editor handoff.
 
+### Engine authentication
+
+- **Token auth by default**: `tandem-engine serve` now loads an explicit token, reads `TANDEM_API_TOKEN_FILE`, or creates a shared engine API token automatically when no token exists.
+- **Shared local credential**: Desktop, TUI, control-panel, and direct CLI flows can rely on the same keychain-first/file-fallback credential instead of leaving direct engine starts tokenless.
+- **Unsafe local opt-out**: Advanced trusted-local testing can still disable token auth with `--unsafe-no-api-token` or `TANDEM_UNSAFE_NO_API_TOKEN=1`; this mode is not intended for `0.0.0.0`, reverse-proxied, hosted, tunneled, or shared deployments.
+
 ### Workflow planning visibility
 
 - **Explicit planning mode**: Planner sessions now persist `workflow_planning` state plus draft ID, source channel/platform, requesting actor, allowed and blocked tools, known and missing requirements, and validation state.

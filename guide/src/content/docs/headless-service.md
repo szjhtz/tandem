@@ -150,7 +150,9 @@ For the storage-level breakdown of these layers, see [Memory Internals](https://
 
 ## Security Notes
 
-- Use `--api-token` (or `TANDEM_API_TOKEN`) whenever binding beyond localhost.
+- `tandem-engine serve` requires API token auth by default and will load or create a shared token when no explicit token is provided.
+- Use an explicit `--api-token` or `TANDEM_API_TOKEN` for hosted/headless deployments where operators need to manage rotation externally.
+- `--unsafe-no-api-token` is only for trusted local development and should not be used when binding beyond localhost.
 - Put TLS in front of Tandem when exposing it on a network.
 - Do not expose the service directly to the public internet without a reverse proxy.
 

@@ -3,7 +3,7 @@ title: Engine Authentication For Agents
 description: How agents and external clients obtain a Tandem engine token and authorize SDK or HTTP calls safely.
 ---
 
-Any agent, script, SDK client, or external service talking to `tandem-engine` over HTTP/SSE needs an engine token when auth is enabled.
+Any agent, script, SDK client, or external service talking to `tandem-engine` over HTTP/SSE needs an engine token. `tandem-engine serve` enables token auth by default.
 
 This page explains:
 
@@ -14,25 +14,39 @@ This page explains:
 
 ## The short version
 
-To start a local engine with a token:
+To start a local engine, run:
 
 ```bash
 tandem-engine serve \
   --hostname 127.0.0.1 \
-  --port 39731 \
-  --api-token "$(tandem-engine token generate)"
+  --port 39731
 ```
 
-Then authorize requests with either:
+If no explicit token is provided, the engine loads or creates the shared Tandem credential using the same keychain-first/file-fallback mechanism as desktop and TUI. Then authorize requests with either:
 
 - `X-Agent-Token: <token>`
+- `X-Tandem-Token: <token>`
+- `Authorization: Bearer <token>`
 - or an SDK client configured with `token: "<token>"`
 
 ## How tokens are usually created
 
+### Engine-managed default token
+
+By default, `tandem-engine serve` resolves its HTTP API token in this order:
+
+1. `--api-token` or `TANDEM_API_TOKEN`
+2. `TANDEM_API_TOKEN_FILE`
+3. the shared Tandem credential from keychain storage when available
+4. the shared token file when keychain storage is unavailable or empty
+5. a newly generated shared token if no shared token exists
+
+This is the preferred path for local desktop, TUI, control-panel, and direct CLI use because all
+clients can share the same engine credential.
+
 ### CLI-generated token
 
-The most common path is:
+For explicit deployments, an operator can still generate a token manually:
 
 ```bash
 tandem-engine token generate
@@ -107,6 +121,23 @@ Common legitimate sources are:
 - an SDK constructor that already has the token passed in
 
 Agents should **not** assume they are allowed to scan arbitrary files or shell history for secrets unless the task explicitly permits that.
+
+## Advanced tokenless local mode
+
+Operators can intentionally disable engine API token auth for trusted local development only:
+
+```bash
+tandem-engine serve --hostname 127.0.0.1 --port 39731 --unsafe-no-api-token
+```
+
+or:
+
+```bash
+TANDEM_UNSAFE_NO_API_TOKEN=1 tandem-engine serve --hostname 127.0.0.1 --port 39731
+```
+
+Agents should treat tokenless mode as exceptional. Do not recommend it for `0.0.0.0`,
+reverse-proxied, hosted, tunneled, shared-machine, or public deployments.
 
 ## How to authenticate HTTP calls
 

@@ -38,7 +38,11 @@ cargo test -p tandem-server -p tandem-core -p tandem-ai
 
 ## API token validation
 
-Start a token-gated engine:
+`tandem-engine serve` requires API token auth by default. Without an explicit token, the engine
+loads or creates the shared Tandem credential using the same keychain-first/file-fallback mechanism
+as desktop and TUI.
+
+Start an engine with an explicit test token:
 
 ```bash
 cargo run -p tandem-ai -- serve --host 127.0.0.1 --port 39731 --state-dir .tandem --api-token tk_test_token
@@ -51,6 +55,14 @@ curl -s http://127.0.0.1:39731/global/health | jq .
 curl -i -s http://127.0.0.1:39731/config/providers
 curl -s http://127.0.0.1:39731/config/providers -H "X-Agent-Token: tk_test_token" | jq .
 ```
+
+Tokenless local development is available only through the explicit unsafe opt-out:
+
+```bash
+cargo run -p tandem-ai -- serve --host 127.0.0.1 --port 39731 --unsafe-no-api-token
+```
+
+Do not use this opt-out with public, hosted, reverse-proxied, tunneled, or shared deployments.
 
 ## Automated test layers
 

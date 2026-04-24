@@ -47,7 +47,8 @@ tandem-engine serve [OPTIONS]
 - `--model <ID>`: Provider model override for this process.
 - `--api-key <KEY>`: API key override for the selected provider for this process.
 - `--config <PATH>`: Override config file path.
-- `--api-token <TOKEN>`: Require token auth for HTTP endpoints (Authorization Bearer, canonical `X-Agent-Token`, or compatibility `X-Tandem-Token`; env: `TANDEM_API_TOKEN`).
+- `--api-token <TOKEN>`: Set an explicit token for HTTP endpoints (Authorization Bearer, canonical `X-Agent-Token`, or compatibility `X-Tandem-Token`; env: `TANDEM_API_TOKEN`). If omitted, `serve` loads or creates a shared token by default.
+- `--unsafe-no-api-token`: Advanced local-only opt-out that disables HTTP API token auth (env: `TANDEM_UNSAFE_NO_API_TOKEN=1`).
 - `--web-ui`: Enable embedded web admin UI (env: `TANDEM_WEB_UI`).
 - `--web-ui-prefix <PATH>`: Path prefix for embedded web admin UI (default: `/admin`, env: `TANDEM_WEB_UI_PREFIX`).
 

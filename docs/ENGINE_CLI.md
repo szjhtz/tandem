@@ -60,7 +60,9 @@ Useful options:
 - `--config`
 - `TANDEM_ENGINE_HOST` (env override)
 - `TANDEM_ENGINE_PORT` (env override)
-- `TANDEM_API_TOKEN` (optional API auth token requirement)
+- `--api-token` / `TANDEM_API_TOKEN` (explicit API auth token)
+- `TANDEM_API_TOKEN_FILE` (explicit token file)
+- `--unsafe-no-api-token` / `TANDEM_UNSAFE_NO_API_TOKEN=1` (advanced local-only opt-out)
 
 The master CLI also understands `tandem service status`, `tandem update`,
 `tandem addon list`, and `tandem panel open` for the add-on flow.
@@ -271,7 +273,38 @@ Config file locations:
 - Windows: `%APPDATA%\\tandem\\config.json`
 - Override global location with `TANDEM_GLOBAL_CONFIG`
 
-## API Token Security (VPS/Public Deployments)
+## API Token Security
+
+`tandem-engine serve` requires API token authentication by default.
+
+Token resolution order:
+
+1. Use `--api-token` or `TANDEM_API_TOKEN` when provided.
+2. Use `TANDEM_API_TOKEN_FILE` when it points at a non-empty token file.
+3. Load the shared Tandem credential from keychain storage when available.
+4. Load the shared token file when keychain storage is unavailable or empty.
+5. If no shared token exists, generate one using the same keychain-first/file-fallback mechanism used by desktop and TUI.
+
+This means normal desktop, TUI, control-panel, and direct CLI flows can share the same local
+engine token without requiring users to manually pass a token on every start.
+
+Advanced local-only opt-out:
+
+```bash
+tandem-engine serve --hostname 127.0.0.1 --port 39731 --unsafe-no-api-token
+```
+
+or:
+
+```bash
+TANDEM_UNSAFE_NO_API_TOKEN=1 tandem-engine serve --hostname 127.0.0.1 --port 39731
+```
+
+Tokenless mode is intentionally named unsafe. Do not use it with `0.0.0.0`, reverse proxies,
+shared machines, hosted deployments, SSH tunnels, or any runtime that other users or browsers can
+reach.
+
+### Explicit Token For VPS/Public Deployments
 
 Generate a token:
 
@@ -279,7 +312,7 @@ Generate a token:
 tandem-engine token generate
 ```
 
-Run engine with token requirement:
+Run engine with an explicit token:
 
 ```bash
 TANDEM_API_TOKEN="tk_your_token_here" tandem-engine serve --hostname 0.0.0.0 --port 39731
