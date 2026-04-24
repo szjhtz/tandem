@@ -74,7 +74,7 @@ async function probeKbAdminConfig(baseUrl, deps) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), Number.isFinite(timeoutMs) ? timeoutMs : 2000);
   try {
-    const upstream = await fetch(`${baseUrl}/admin/config`, {
+    const upstream = await fetch(`${baseUrl}/admin/collections`, {
       method: "GET",
       headers,
       signal: controller.signal,
@@ -92,13 +92,12 @@ async function probeKbAdminConfig(baseUrl, deps) {
       return {
         reachable: false,
         status: upstream.status,
-        error: payload?.error || text || `KB admin config returned ${upstream.status}`,
+        error: payload?.error || text || `KB admin collections returned ${upstream.status}`,
       };
     }
     return {
       reachable: true,
       status: upstream.status,
-      config: payload && typeof payload === "object" ? payload : {},
     };
   } catch (error) {
     return {
@@ -161,7 +160,6 @@ export function createKnowledgebaseApiHandler(deps) {
         error: probe.reachable ? undefined : probe.error,
         admin_url: baseUrl,
         default_collection_id: String(deps.TANDEM_KB_DEFAULT_COLLECTION_ID || deps.KB_DEFAULT_COLLECTION_ID || "").trim(),
-        upstream_config: probe.reachable ? probe.config : undefined,
       });
       return true;
     }
