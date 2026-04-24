@@ -338,6 +338,101 @@ fn workflow_planner_clarifier_question(session: &serde_json::Value) -> Option<St
         .map(ToOwned::to_owned)
 }
 
+fn workflow_planner_channel_message_should_update(message: &str) -> bool {
+    let text = message.trim().to_ascii_lowercase();
+    if text.is_empty() {
+        return false;
+    }
+    if text.starts_with('/') {
+        return false;
+    }
+    if workflow_planner_plain_info_request(&text) {
+        return false;
+    }
+    contains_any_word(
+        &text,
+        &[
+            "workflow",
+            "draft",
+            "plan",
+            "schedule",
+            "trigger",
+            "notion",
+            "slack",
+            "reddit",
+            "github",
+            "docs",
+            "mcp",
+            "approval",
+            "approve",
+            "publish",
+            "send",
+            "save",
+            "store",
+            "report",
+            "summary",
+            "analysis",
+            "reference",
+            "references",
+            "link",
+            "links",
+            "change",
+            "update",
+            "revise",
+            "instead",
+            "yes",
+            "no",
+            "draft-only",
+            "drafts",
+        ],
+    )
+}
+
+fn workflow_planner_plain_info_request(text: &str) -> bool {
+    let starters = [
+        "what is ",
+        "what are ",
+        "who is ",
+        "who are ",
+        "where is ",
+        "where are ",
+        "when is ",
+        "when are ",
+        "how do i ",
+        "how do you ",
+        "how does ",
+        "tell me about ",
+        "explain ",
+        "what do i do",
+    ];
+    starters.iter().any(|starter| text.starts_with(starter))
+        && !contains_any_word(
+            text,
+            &[
+                "workflow", "draft", "planner", "plan", "notion", "slack", "mcp",
+            ],
+        )
+}
+
+fn contains_any_word(text: &str, words: &[&str]) -> bool {
+    words.iter().any(|word| text.contains(word))
+}
+
+fn workflow_planner_operational_question(question: &str) -> bool {
+    let lowered = question.to_ascii_lowercase();
+    lowered.contains("planner model settings")
+        || lowered.contains("configure a planner model")
+        || lowered.contains("planner model")
+}
+
+fn workflow_planner_review_line(link: &str, session_id: &str) -> String {
+    if link.starts_with("#/") {
+        format!("Review/apply: open planner session {session_id} in the control panel.")
+    } else {
+        format!("Review/apply: {link}")
+    }
+}
+
 fn workflow_planner_channel_summary_reply(
     session_payload: Option<&serde_json::Value>,
     session_id: &str,
@@ -346,7 +441,8 @@ fn workflow_planner_channel_summary_reply(
     let link = workflow_planner_control_panel_url(session_id);
     let Some(session) = session_payload.and_then(|payload| payload.get("session")) else {
         return format!(
-            "Workflow drafting started here.\nPreview: {preview}\nReply here with changes or missing details.\nReview/apply link: {link}\nSession: `{session_id}`"
+            "Workflow drafting started.\nPreview: {preview}\nReply here with changes or missing details.\n{}\nSession: {session_id}",
+            workflow_planner_review_line(&link, session_id)
         );
     };
 
@@ -357,7 +453,8 @@ fn workflow_planner_channel_summary_reply(
         .filter(|error| !error.trim().is_empty())
     {
         return format!(
-            "Workflow draft hit an error: {error}\nReply here with a simpler request or more detail.\nReview/apply link: {link}\nSession: `{session_id}`"
+            "Workflow draft hit an error: {error}\nReply here with a simpler request or more detail.\n{}\nSession: {session_id}",
+            workflow_planner_review_line(&link, session_id)
         );
     }
 
@@ -367,7 +464,8 @@ fn workflow_planner_channel_summary_reply(
         .unwrap_or_default();
     if status.eq_ignore_ascii_case("running") {
         return format!(
-            "Workflow drafting is still running here.\nPreview: {preview}\nReply with extra constraints anytime and I'll update this draft thread.\nReview/apply link: {link}\nSession: `{session_id}`"
+            "Workflow drafting is still running.\nPreview: {preview}\nReply with extra constraints anytime and I'll update this draft thread.\n{}\nSession: {session_id}",
+            workflow_planner_review_line(&link, session_id)
         );
     }
 
@@ -389,8 +487,16 @@ fn workflow_planner_channel_summary_reply(
 
     let mut lines = Vec::new();
     if let Some(question) = workflow_planner_clarifier_question(session) {
-        lines.push("Workflow draft needs one answer.".to_string());
-        lines.push(format!("Question: {question}"));
+        if workflow_planner_operational_question(&question) {
+            lines.push("Workflow draft paused: planner model settings are missing.".to_string());
+            lines.push(
+                "Ask an admin to configure the workflow planner model, then say: retry workflow draft."
+                    .to_string(),
+            );
+        } else {
+            lines.push("Workflow draft needs one answer.".to_string());
+            lines.push(question);
+        }
     } else if let Some(text) = workflow_planner_assistant_text(session) {
         lines.push(text);
     } else if let Some(plan) = workflow_planner_plan_from_session(session) {
@@ -413,7 +519,9 @@ fn workflow_planner_channel_summary_reply(
         lines.push(format!("Preview: {preview}"));
     }
 
-    lines.push(format!("Validation: {validation_state}"));
+    if validation_state != "valid" || !blocked.is_empty() || !missing.is_empty() {
+        lines.push(format!("Validation: {validation_state}"));
+    }
     if !blocked.is_empty() {
         lines.push(format!("Blocked capabilities: {}", blocked.join(", ")));
     }
@@ -421,10 +529,10 @@ fn workflow_planner_channel_summary_reply(
         lines.push(format!("Missing details: {}", missing.join(", ")));
     }
     lines.push(
-        "Reply here with answers or changes; activation still requires review/apply.".to_string(),
+        "Reply here with answers or changes. Activation still requires review/apply.".to_string(),
     );
-    lines.push(format!("Review/apply link: {link}"));
-    lines.push(format!("Session: `{session_id}`"));
+    lines.push(workflow_planner_review_line(&link, session_id));
+    lines.push(format!("Session: {session_id}"));
     lines.join("\n")
 }
 

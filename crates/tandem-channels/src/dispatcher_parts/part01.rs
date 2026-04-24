@@ -1446,7 +1446,9 @@ async fn process_channel_message(
             .get(&map_key)
             .and_then(|record| record.workflow_planner_session_id.clone())
     };
-    if let Some(planner_session_id) = linked_planner_session_id {
+    if let Some(planner_session_id) = linked_planner_session_id
+        .filter(|_| workflow_planner_channel_message_should_update(&prompt_content))
+    {
         if !channel_workflow_planner_enabled(&tool_prefs) {
             if let Err(e) = channel
                 .send(&SendMessage {

@@ -664,6 +664,7 @@ mod tests {
         assert!(reply.contains("Should Notion saves draft pages or publish pages?"));
         assert!(reply.contains("Missing details: notion publish mode"));
         assert!(reply.contains("Reply here with answers or changes"));
+        assert!(!reply.contains("`wfplan-session-1`"));
     }
 
     #[test]
@@ -694,7 +695,52 @@ mod tests {
         assert!(reply.contains("Workflow draft created: Reddit research workflow"));
         assert!(reply.contains("Validation: needs_approval"));
         assert!(reply.contains("Blocked capabilities: mcp.notion.pages_create"));
-        assert!(reply.contains("activation still requires review/apply"));
+        assert!(reply.contains("Activation still requires review/apply"));
+    }
+
+    #[test]
+    fn workflow_planner_channel_summary_explains_planner_model_pause() {
+        let payload = serde_json::json!({
+            "session": {
+                "operation": {
+                    "status": "completed",
+                    "response": {
+                        "clarifier": {
+                            "question": "This workflow needs planner model settings before Tandem can revise it. Configure a planner model and try again."
+                        }
+                    }
+                },
+                "planning": {
+                    "validation_state": "valid",
+                    "blocked_tools": [],
+                    "missing_requirements": []
+                }
+            }
+        });
+
+        let reply =
+            workflow_planner_channel_summary_reply(Some(&payload), "wfplan-session-3", "preview");
+
+        assert!(reply.contains("Workflow draft paused: planner model settings are missing."));
+        assert!(reply.contains("retry workflow draft"));
+        assert!(!reply.contains("Workflow draft needs one answer."));
+        assert!(!reply.contains("Validation: valid"));
+    }
+
+    #[test]
+    fn workflow_planner_linked_session_ignores_plain_information_requests() {
+        assert!(!workflow_planner_channel_message_should_update(
+            "what is Northstar Events?"
+        ));
+        assert!(!workflow_planner_channel_message_should_update(
+            "what do i do?"
+        ));
+        assert!(workflow_planner_channel_message_should_update(
+            "save the workflow references to Notion"
+        ));
+        assert!(workflow_planner_channel_message_should_update(
+            "yes, draft only before publishing"
+        ));
     }
 
     #[test]

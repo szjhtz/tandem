@@ -26,6 +26,7 @@ This unreleased build adds chat-native automation drafts for Discord, Telegram, 
 - **Explicit planning mode**: Planner sessions now persist `workflow_planning` state plus draft ID, source channel/platform, requesting actor, allowed and blocked tools, known and missing requirements, and validation state.
 - **Clarification-first drafting**: Missing workflow details now trigger focused follow-up questions about triggers, inputs, outputs, publish behavior, required tools, approval, and memory/files instead of a fake-ready draft.
 - **Connector-heavy workflow prompts**: Scheduled workflow prompts that mention MCPs or destinations such as Notion now route to workflow planning instead of being mistaken for integration setup.
+- **No planner thread hijacking**: Linked workflow planner sessions no longer capture ordinary informational chat like "what is ..." or "what do I do?", and planner-model setup pauses now explain the admin action instead of asking for an impossible answer.
 - **Structured audit trail**: Workflow planning now emits events for start, draft create/update, missing requirements, blocked capabilities, approval requests, validation, docs-MCP usage, and review readiness.
 
 ### Governance and handoff
