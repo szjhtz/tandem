@@ -1,6 +1,6 @@
 [package]
 name = "tandem"
-version = "0.4.40"
+version = "0.4.41"
 description = "A local-first, zero-trust AI workspace application"
 authors = ["Tandem Contributors"]
 edition = "2021"
@@ -86,37 +86,3 @@ debug = 1
 
 [profile.dev.package."*"]
 debug = 0
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
