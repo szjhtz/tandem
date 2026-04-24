@@ -296,6 +296,7 @@ async fn host_adapters_support_draft_revision_keep_flow() {
         },
         planner_diagnostics: None,
         last_success_materialization: None,
+        review: None,
     };
 
     let host = TestHost::new().with_llm_response(json!({

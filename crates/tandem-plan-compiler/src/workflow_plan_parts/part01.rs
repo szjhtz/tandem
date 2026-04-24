@@ -85,6 +85,7 @@ pub fn workflow_plan_draft_record<Plan: Clone>(
         planner_diagnostics,
         last_success_materialization: None,
         initial_plan: plan,
+        review: None,
     }
 }
 

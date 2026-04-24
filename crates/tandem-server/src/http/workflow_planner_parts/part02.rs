@@ -1,3 +1,7 @@
+use std::collections::BTreeSet;
+
+use tandem_workflows::plan_package::WorkflowPlanDraftReviewRecord;
+
 fn planner_session_title_from_record(session: &WorkflowPlannerSessionRecord) -> String {
     let title = session.title.trim();
     if !title.is_empty() {
@@ -27,6 +31,165 @@ fn planner_session_operation_running(session: &WorkflowPlannerSessionRecord) -> 
         .as_ref()
         .map(|operation| operation.status.eq_ignore_ascii_case("running"))
         .unwrap_or(false)
+}
+
+fn workflow_planner_collect_capabilities(
+    plan_package: &compiler_api::PlanPackage,
+) -> (Vec<String>, Vec<String>) {
+    let mut required = BTreeSet::new();
+    let mut requested = BTreeSet::new();
+
+    for intent in &plan_package.connector_intents {
+        let capability = intent.capability.trim();
+        if capability.is_empty() {
+            continue;
+        }
+        requested.insert(capability.to_string());
+        if intent.required {
+            required.insert(capability.to_string());
+        }
+    }
+
+    for routine in &plan_package.routine_graph {
+        for step in &routine.steps {
+            for requirement in &step.connector_requirements {
+                let capability = requirement.capability.trim();
+                if capability.is_empty() {
+                    continue;
+                }
+                requested.insert(capability.to_string());
+                if requirement.required {
+                    required.insert(capability.to_string());
+                }
+            }
+        }
+    }
+
+    (
+        required.into_iter().collect::<Vec<_>>(),
+        requested.into_iter().collect::<Vec<_>>(),
+    )
+}
+
+fn workflow_planner_blocked_capabilities(
+    readiness: Option<&CapabilityReadinessOutput>,
+) -> Vec<String> {
+    let mut blocked = BTreeSet::new();
+    if let Some(readiness) = readiness {
+        for capability in readiness
+            .missing_required_capabilities
+            .iter()
+            .chain(readiness.unbound_capabilities.iter())
+        {
+            let capability = capability.trim();
+            if !capability.is_empty() {
+                blocked.insert(capability.to_string());
+            }
+        }
+        for issue in &readiness.blocking_issues {
+            for capability in &issue.capability_ids {
+                let capability = capability.trim();
+                if !capability.is_empty() {
+                    blocked.insert(capability.to_string());
+                }
+            }
+        }
+    }
+    blocked.into_iter().collect()
+}
+
+fn workflow_planner_validation_status(
+    validation: Option<&compiler_api::PlanValidationReport>,
+    readiness: Option<&CapabilityReadinessOutput>,
+) -> String {
+    let ready_for_apply = validation
+        .map(|report| report.ready_for_apply)
+        .unwrap_or(false);
+    let ready_for_activation = validation
+        .map(|report| report.ready_for_activation)
+        .unwrap_or(false);
+    let blocker_count = validation
+        .map(|report| report.blocker_count)
+        .unwrap_or_default();
+    let warning_count = validation
+        .map(|report| report.warning_count)
+        .unwrap_or_default();
+    let capability_blocked = readiness
+        .map(|report| !report.blocking_issues.is_empty() || !report.runnable)
+        .unwrap_or(false);
+
+    if blocker_count == 0 && !capability_blocked && ready_for_apply {
+        if ready_for_activation {
+            "ready".to_string()
+        } else {
+            "ready_for_apply".to_string()
+        }
+    } else if blocker_count > 0 || capability_blocked {
+        "blocked".to_string()
+    } else if warning_count > 0 {
+        "warning".to_string()
+    } else {
+        "pending".to_string()
+    }
+}
+
+async fn workflow_planner_request_capability_approval(
+    state: &AppState,
+    session: &WorkflowPlannerSessionRecord,
+    planning: &WorkflowPlannerSessionPlanningRecord,
+    blocked_capabilities: &[String],
+    requested_capabilities: &[String],
+    preview_payload: &Value,
+    validation_status: &str,
+) -> String {
+    if blocked_capabilities.is_empty() {
+        return "not_required".to_string();
+    }
+    if planning.approval_status.eq_ignore_ascii_case("requested") {
+        return "requested".to_string();
+    }
+
+    let mcp_name = blocked_capabilities
+        .first()
+        .cloned()
+        .unwrap_or_else(|| "workflow_planner".to_string());
+    let rationale = format!(
+        "Workflow planner draft `{}` needs capability review for blocked capabilities: {}",
+        session.session_id,
+        blocked_capabilities.join(", ")
+    );
+    let context = json!({
+        "session_id": session.session_id,
+        "project_slug": session.project_slug,
+        "title": session.title,
+        "plan_id": session.current_plan_id,
+        "source_platform": planning.source_platform,
+        "source_channel": planning.source_channel,
+        "requesting_actor": planning.requesting_actor,
+        "created_by_agent": planning.created_by_agent,
+        "linked_channel_session_id": planning.linked_channel_session_id,
+        "linked_draft_plan_id": planning.linked_draft_plan_id,
+        "required_capabilities": planning.known_requirements,
+        "missing_requirements": planning.missing_requirements,
+        "blocked_capabilities": blocked_capabilities,
+        "requested_capabilities": requested_capabilities,
+        "docs_mcp_enabled": planning.docs_mcp_enabled,
+        "validation_status": validation_status,
+        "preview_payload": preview_payload,
+    });
+    let args = json!({
+        "agent_id": session.session_id,
+        "mcp_name": mcp_name.clone(),
+        "catalog_slug": mcp_name,
+        "rationale": rationale,
+        "requested_tools": blocked_capabilities,
+        "context": context,
+        "expires_at_ms": crate::now_ms() + 7 * 24 * 60 * 60 * 1000,
+    });
+    match state.tools.execute("mcp_request_capability", args).await {
+        Ok(_) => "requested".to_string(),
+        Err(_) => "blocked".to_string(),
+    }
 }
 
 async fn workflow_planner_session_store_operation_result(
@@ -130,32 +293,29 @@ async fn workflow_planner_session_response(
     session: &WorkflowPlannerSessionRecord,
     response: Json<Value>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    let plan = response.0.get("plan").cloned().unwrap_or(Value::Null);
-    let conversation = response
-        .0
-        .get("conversation")
-        .cloned()
-        .unwrap_or(Value::Null);
-    let planner_diagnostics = response
-        .0
+    let mut payload = response.0;
+    let plan = payload.get("plan").cloned().unwrap_or(Value::Null);
+    let conversation = payload.get("conversation").cloned().unwrap_or(Value::Null);
+    let planner_diagnostics = payload
         .get("planner_diagnostics")
-        .or_else(|| response.0.get("plannerDiagnostics"))
+        .or_else(|| payload.get("plannerDiagnostics"))
         .cloned()
         .unwrap_or(Value::Null);
-    let change_summary = response
-        .0
+    let change_summary = payload
         .get("change_summary")
         .cloned()
         .unwrap_or_else(|| Value::Array(Vec::new()));
-    let clarifier = response
-        .0
+    let clarifier = payload
         .get("clarifier")
         .cloned()
         .unwrap_or_else(|| json!({"status":"none"}));
+    let plan_package_value = payload.get("plan_package").cloned();
+    let plan_package_validation_value = payload.get("plan_package_validation").cloned();
     let draft = state
         .get_workflow_plan_draft(session.current_plan_id.as_deref().unwrap_or_default())
         .await;
     let mut next_session = session.clone();
+    let mut review_record: Option<WorkflowPlanDraftReviewRecord> = None;
     if let Some(draft) = draft {
         next_session.current_plan_id = Some(draft.current_plan.plan_id.clone());
         next_session.draft = Some(draft.clone());
@@ -169,18 +329,127 @@ async fn workflow_planner_session_response(
         if next_session.title.trim().is_empty() {
             next_session.title = planner_session_title_from_record(&next_session);
         }
-        let _ = state
-            .put_workflow_planner_session(next_session.clone())
-            .await;
     }
-    Ok(Json(json!({
-        "session": next_session,
-        "plan": plan,
-        "conversation": conversation,
-        "change_summary": change_summary,
-        "planner_diagnostics": planner_diagnostics,
-        "clarifier": clarifier,
-    })))
+
+    if let Some(plan_package_value) = plan_package_value {
+        if let Ok(plan_package) =
+            serde_json::from_value::<compiler_api::PlanPackage>(plan_package_value.clone())
+        {
+            let (required_capabilities, requested_capabilities) =
+                workflow_planner_collect_capabilities(&plan_package);
+            let optional_capabilities = requested_capabilities
+                .iter()
+                .filter(|capability| !required_capabilities.contains(capability))
+                .cloned()
+                .collect::<Vec<_>>();
+            let plan_validation = plan_package_validation_value.as_ref().and_then(|value| {
+                serde_json::from_value::<compiler_api::PlanValidationReport>(value.clone()).ok()
+            });
+            let readiness = if required_capabilities.is_empty() && optional_capabilities.is_empty()
+            {
+                None
+            } else {
+                let readiness_input = CapabilityReadinessInput {
+                    workflow_id: Some(
+                        next_session
+                            .current_plan_id
+                            .clone()
+                            .unwrap_or_else(|| next_session.session_id.clone()),
+                    ),
+                    required_capabilities: required_capabilities.clone(),
+                    optional_capabilities: optional_capabilities.clone(),
+                    provider_preference: next_session
+                        .planner_provider
+                        .trim()
+                        .is_empty()
+                        .then(Vec::new)
+                        .unwrap_or_else(|| vec![next_session.planner_provider.clone()]),
+                    available_tools: Vec::new(),
+                    allow_unbound: false,
+                };
+                evaluate_capability_readiness(state, &readiness_input)
+                    .await
+                    .ok()
+            };
+            let validation_status =
+                workflow_planner_validation_status(plan_validation.as_ref(), readiness.as_ref());
+            let blocked_capabilities = workflow_planner_blocked_capabilities(readiness.as_ref());
+            let docs_mcp_used = next_session
+                .planning
+                .as_ref()
+                .and_then(|planning| planning.docs_mcp_enabled)
+                .unwrap_or(false);
+            let mut planning = next_session.planning.clone().unwrap_or_default();
+            if planning.mode.trim().is_empty() {
+                planning.mode = "planner".to_string();
+            }
+            if planning.source_platform.trim().is_empty() {
+                planning.source_platform = "control_panel".to_string();
+            }
+            if planning.started_at_ms.is_none() {
+                planning.started_at_ms = Some(crate::now_ms());
+            }
+            let now = crate::now_ms();
+            planning.updated_at_ms = Some(now);
+            planning.allowed_tools = requested_capabilities.clone();
+            planning.blocked_tools = blocked_capabilities.clone();
+            planning.known_requirements = required_capabilities.clone();
+            planning.missing_requirements = blocked_capabilities.clone();
+            planning.docs_mcp_enabled = Some(docs_mcp_used);
+            if let Some(plan_id) = next_session.current_plan_id.clone() {
+                planning.linked_draft_plan_id = Some(plan_id);
+            }
+            let preview_payload = payload.clone();
+            let approval_status = workflow_planner_request_capability_approval(
+                state,
+                &next_session,
+                &planning,
+                &blocked_capabilities,
+                &requested_capabilities,
+                &preview_payload,
+                &validation_status,
+            )
+            .await;
+            planning.validation_status = validation_status.clone();
+            planning.approval_status = approval_status.clone();
+            next_session.planning = Some(planning.clone());
+            review_record = Some(WorkflowPlanDraftReviewRecord {
+                required_capabilities: required_capabilities.clone(),
+                requested_capabilities: requested_capabilities.clone(),
+                blocked_capabilities: blocked_capabilities.clone(),
+                docs_mcp_used,
+                preview_payload: Some(preview_payload.clone()),
+                created_at_ms: Some(now),
+                updated_at_ms: Some(now),
+                validation_status,
+                approval_status,
+            });
+        }
+    }
+    if let Some(review) = review_record {
+        if let Some(draft) = next_session.draft.as_mut() {
+            draft.review = Some(review);
+        }
+    }
+    next_session.updated_at_ms = crate::now_ms();
+    let _ = state
+        .put_workflow_planner_session(next_session.clone())
+        .await;
+    if let Some(draft) = next_session.draft.clone() {
+        let _ = state.put_workflow_plan_draft(draft).await;
+    }
+    if let Some(object) = payload.as_object_mut() {
+        object.insert(
+            "session".to_string(),
+            serde_json::to_value(next_session).unwrap_or(Value::Null),
+        );
+    } else {
+        payload = json!({
+            "session": next_session,
+            "response": payload,
+        });
+    }
+    Ok(Json(payload))
 }
 
 pub(super) async fn workflow_planner_session_list(
@@ -260,6 +529,7 @@ pub(super) async fn workflow_planner_session_create(
         import_validation: None,
         import_transform_log: Vec::new(),
         import_scope_snapshot: None,
+        planning: input.planning,
         operation: None,
         published_at_ms: None,
         published_tasks: Vec::new(),
@@ -284,6 +554,7 @@ pub(super) async fn workflow_planner_session_create(
             conversation,
             planner_diagnostics: input.planner_diagnostics,
             last_success_materialization: input.last_success_materialization,
+            review: None,
         };
         session.current_plan_id = Some(draft.current_plan.plan_id.clone());
         session.draft = Some(draft);
@@ -1097,6 +1368,7 @@ async fn workflow_plan_import_inner(
         operation: None,
         published_at_ms: None,
         published_tasks: Vec::new(),
+        planning: None,
         created_at_ms: crate::now_ms(),
         updated_at_ms: crate::now_ms(),
     };

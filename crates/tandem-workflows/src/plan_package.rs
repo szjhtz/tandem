@@ -88,6 +88,28 @@ fn default_workflow_plan_draft_revision() -> u32 {
     1
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct WorkflowPlanDraftReviewRecord {
+    #[serde(default)]
+    pub required_capabilities: Vec<String>,
+    #[serde(default)]
+    pub requested_capabilities: Vec<String>,
+    #[serde(default)]
+    pub blocked_capabilities: Vec<String>,
+    #[serde(default)]
+    pub docs_mcp_used: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preview_payload: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created_at_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updated_at_ms: Option<u64>,
+    #[serde(default)]
+    pub validation_status: String,
+    #[serde(default)]
+    pub approval_status: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkflowPlanDraftRecord<Plan = Value> {
     pub initial_plan: Plan,
@@ -99,4 +121,6 @@ pub struct WorkflowPlanDraftRecord<Plan = Value> {
     pub planner_diagnostics: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_success_materialization: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub review: Option<WorkflowPlanDraftReviewRecord>,
 }

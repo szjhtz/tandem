@@ -135,6 +135,7 @@ import type {
   WorkflowPlanPackBuilderExportRequest,
   WorkflowPlanPackBuilderExportResult,
   WorkflowPlanDraftRecord,
+  WorkflowPlannerSessionPlanningRecord,
   WorkflowPlannerSessionCreateResponse,
   WorkflowPlannerSessionDuplicateResponse,
   WorkflowPlannerSessionListResponse,
@@ -2674,6 +2675,7 @@ class WorkflowPlannerSessions {
     allowed_mcp_servers?: string[];
     operatorPreferences?: JsonObject;
     operator_preferences?: JsonObject;
+    planning?: WorkflowPlannerSessionPlanningRecord | null;
   }): Promise<WorkflowPlannerSessionCreateResponse> {
     return this.req<WorkflowPlannerSessionCreateResponse>("/workflow-plans/sessions", {
       method: "POST",
@@ -2694,6 +2696,7 @@ class WorkflowPlannerSessions {
           options.last_success_materialization ?? options.lastSuccessMaterialization,
         allowed_mcp_servers: options.allowed_mcp_servers ?? options.allowedMcpServers,
         operator_preferences: options.operator_preferences ?? options.operatorPreferences,
+        planning: options.planning,
       }),
     });
   }
@@ -2722,6 +2725,7 @@ class WorkflowPlannerSessions {
       allowed_mcp_servers?: string[];
       operatorPreferences?: JsonObject;
       operator_preferences?: JsonObject;
+      planning?: WorkflowPlannerSessionPlanningRecord | null;
       currentPlanId?: string;
       current_plan_id?: string;
       draft?: WorkflowPlanDraftRecord;
@@ -2745,6 +2749,7 @@ class WorkflowPlannerSessions {
           plan_source: patch.plan_source ?? patch.planSource,
           allowed_mcp_servers: patch.allowed_mcp_servers ?? patch.allowedMcpServers,
           operator_preferences: patch.operator_preferences ?? patch.operatorPreferences,
+          planning: patch.planning,
           current_plan_id: patch.current_plan_id ?? patch.currentPlanId,
           draft: patch.draft,
           published_at_ms: patch.published_at_ms ?? patch.publishedAtMs,

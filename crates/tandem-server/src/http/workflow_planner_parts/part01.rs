@@ -103,6 +103,42 @@ pub struct WorkflowPlannerSessionOperationRecord {
     pub error: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct WorkflowPlannerSessionPlanningRecord {
+    #[serde(default)]
+    pub mode: String,
+    #[serde(default)]
+    pub source_platform: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_channel: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requesting_actor: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created_by_agent: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub linked_channel_session_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub linked_draft_plan_id: Option<String>,
+    #[serde(default)]
+    pub allowed_tools: Vec<String>,
+    #[serde(default)]
+    pub blocked_tools: Vec<String>,
+    #[serde(default)]
+    pub known_requirements: Vec<String>,
+    #[serde(default)]
+    pub missing_requirements: Vec<String>,
+    #[serde(default)]
+    pub validation_status: String,
+    #[serde(default)]
+    pub approval_status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub docs_mcp_enabled: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub started_at_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updated_at_ms: Option<u64>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkflowPlannerSessionRecord {
     pub session_id: String,
@@ -131,6 +167,8 @@ pub struct WorkflowPlannerSessionRecord {
     pub allowed_mcp_servers: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub operator_preferences: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub planning: Option<WorkflowPlannerSessionPlanningRecord>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub import_validation: Option<compiler_api::PlanReplayReport>,
     #[serde(default)]
@@ -170,6 +208,8 @@ pub(super) struct WorkflowPlannerSessionCreateRequest {
     pub planner_model: Option<String>,
     #[serde(default)]
     pub plan_source: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub planning: Option<WorkflowPlannerSessionPlanningRecord>,
     #[serde(default)]
     pub plan: Option<crate::WorkflowPlan>,
     #[serde(default)]
@@ -206,6 +246,8 @@ pub(super) struct WorkflowPlannerSessionPatchRequest {
     pub allowed_mcp_servers: Option<Vec<String>>,
     #[serde(default)]
     pub operator_preferences: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub planning: Option<WorkflowPlannerSessionPlanningRecord>,
     #[serde(default)]
     pub current_plan_id: Option<String>,
     #[serde(default)]
@@ -262,6 +304,14 @@ pub(super) struct WorkflowPlannerSessionListItem {
     pub planner_provider: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub planner_model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_platform: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_channel: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub validation_status: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approval_status: Option<String>,
 }
 
 fn workflow_plan_import_summary(plan_package: &compiler_api::PlanPackage) -> serde_json::Value {
@@ -591,6 +641,7 @@ pub(crate) fn workflow_plan_import_draft(
             "derived_scope_snapshot": derived_scope_snapshot.clone(),
         })),
         last_success_materialization: None,
+        review: None,
     }
 }
 
@@ -686,6 +737,26 @@ fn workflow_planner_session_list_item(
         } else {
             Some(session.planner_model.clone())
         },
+        source_platform: session
+            .planning
+            .as_ref()
+            .map(|planning| planning.source_platform.clone())
+            .filter(|value| !value.trim().is_empty()),
+        source_channel: session
+            .planning
+            .as_ref()
+            .and_then(|planning| planning.source_channel.clone())
+            .filter(|value| !value.trim().is_empty()),
+        validation_status: session
+            .planning
+            .as_ref()
+            .map(|planning| planning.validation_status.clone())
+            .filter(|value| !value.trim().is_empty()),
+        approval_status: session
+            .planning
+            .as_ref()
+            .map(|planning| planning.approval_status.clone())
+            .filter(|value| !value.trim().is_empty()),
     }
 }
 

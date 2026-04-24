@@ -34,6 +34,7 @@ import { subscribeSse } from "../services/sse.js";
 const CHAT_UPLOAD_DIR = "uploads";
 const CHAT_AUTO_APPROVE_KEY = "tandem_control_panel_chat_auto_approve_tools";
 const AUTOMATION_PLANNER_SEED_KEY = "tandem.automations.plannerSeed";
+const WORKFLOW_PLANNER_SEED_KEY = "tandem.workflow.plannerSeed";
 const EXT_MIME: Record<string, string> = {
   md: "text/markdown",
   txt: "text/plain",
@@ -69,6 +70,7 @@ type SetupIntentKind =
   | "provider_setup"
   | "integration_setup"
   | "automation_create"
+  | "workflow_planner_create"
   | "channel_setup_help"
   | "setup_help"
   | "general";
@@ -163,6 +165,26 @@ function seedAutomationPlanner(payload: Record<string, unknown>) {
   }
 }
 
+function seedWorkflowPlanner(payload: Record<string, unknown>) {
+  try {
+    const prompt = String(payload?.prompt || payload?.goal || "").trim();
+    if (!prompt) return;
+    sessionStorage.setItem(
+      WORKFLOW_PLANNER_SEED_KEY,
+      JSON.stringify({
+        prompt,
+        plan_source: String(payload?.plan_source || "chat_setup").trim() || "chat_setup",
+        session_id: String(payload?.session_id || "").trim() || "",
+        source_platform: String(payload?.source_platform || "").trim() || "",
+        source_channel: String(payload?.source_channel || "").trim() || "",
+        workspace_root: String(payload?.workspace_root || "").trim() || "",
+      })
+    );
+  } catch {
+    // ignore
+  }
+}
+
 function toTextError(error: unknown) {
   return error instanceof Error ? error.message : String(error);
 }
@@ -193,6 +215,15 @@ function setupCardFromResponse(response: SetupUnderstandResponse): SetupCard | n
       body: response.slots.goal || "Create an automation from this request.",
       cta: "Open Automations",
       actionType: "open_automations",
+      payload: response.proposed_action.payload || {},
+    };
+  }
+  if (response.intent_kind === "workflow_planner_create") {
+    return {
+      title: "Workflow planning",
+      body: response.slots.goal || "Open the planner to draft a governed workflow plan.",
+      cta: "Open Planner",
+      actionType: "open_planner",
       payload: response.proposed_action.payload || {},
     };
   }
@@ -1341,25 +1372,33 @@ export function ChatPage({ client, api, toast, providerStatus, identity, navigat
                               ? "Provider setup"
                               : option.id === "integration_setup"
                                 ? "Tool connection"
-                                : "Automation setup",
+                                : option.id === "workflow_planner_create"
+                                  ? "Workflow planning"
+                                  : "Automation setup",
                           body:
                             option.id === "provider_setup"
                               ? "Open Providers to configure a provider."
                               : option.id === "integration_setup"
                                 ? "Open MCP to connect the tool you need."
-                                : "Open Automations to build the workflow.",
+                                : option.id === "workflow_planner_create"
+                                  ? "Open the planner to draft the workflow plan."
+                                  : "Open Automations to build the workflow.",
                           cta:
                             option.id === "provider_setup"
                               ? "Open Providers"
                               : option.id === "integration_setup"
                                 ? "Open MCP"
-                                : "Open Automations",
+                                : option.id === "workflow_planner_create"
+                                  ? "Open Planner"
+                                  : "Open Automations",
                           actionType:
                             option.id === "provider_setup"
                               ? "open_provider_setup"
                               : option.id === "integration_setup"
                                 ? "open_mcp_setup"
-                                : "open_automations",
+                                : option.id === "workflow_planner_create"
+                                  ? "open_planner"
+                                  : "open_automations",
                           payload: setupCard.payload,
                         })
                       }
@@ -1375,7 +1414,10 @@ export function ChatPage({ client, api, toast, providerStatus, identity, navigat
                 onClick={() => {
                   if (setupCard.actionType === "open_provider_setup") navigate("settings");
                   else if (setupCard.actionType === "open_mcp_setup") navigate("mcp");
-                  else if (setupCard.actionType === "open_automations") {
+                  else if (setupCard.actionType === "open_planner") {
+                    seedWorkflowPlanner(setupCard.payload);
+                    navigate("planner");
+                  } else if (setupCard.actionType === "open_automations") {
                     seedAutomationPlanner(setupCard.payload);
                     navigate("automations");
                   }

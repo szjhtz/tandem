@@ -244,6 +244,7 @@ pub(super) async fn workflow_learning_candidate_spawn_revision(
         import_validation: Some(validation),
         import_transform_log: preview.import_transform_log.clone(),
         import_scope_snapshot: Some(preview.derived_scope_snapshot.clone()),
+        planning: None,
         operation: None,
         published_at_ms: None,
         published_tasks: Vec::new(),

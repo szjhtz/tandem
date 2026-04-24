@@ -215,6 +215,7 @@ fn planner_contracts_roundtrip_without_server_types() {
             "step_count": 1,
             "context_object_count": 0
         })),
+        review: None,
     };
 
     let encoded = serde_json::to_value(&draft).unwrap();

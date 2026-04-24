@@ -169,6 +169,8 @@ struct ChannelSessionRecord {
     scope_kind: Option<String>,
     #[serde(default)]
     tool_preferences: Option<ChannelToolPreferences>,
+    #[serde(default)]
+    workflow_planner_session_id: Option<String>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -271,6 +273,7 @@ async fn load_channel_session_map() -> HashMap<String, ChannelSessionRecord> {
                         scope_id: None,
                         scope_kind: None,
                         tool_preferences: None,
+                        workflow_planner_session_id: None,
                     },
                 )
             })
@@ -804,6 +807,7 @@ pub struct ChannelToolPreferences {
     pub enabled_mcp_tools: Vec<String>,
 }
 
+const WORKFLOW_PLANNER_PSEUDO_TOOL: &str = "tandem.workflow_planner";
 const PUBLIC_DEMO_ALLOWED_TOOLS: &[&str] = &[
     "websearch",
     "webfetch",
@@ -878,7 +882,10 @@ fn sanitize_tool_preferences_for_security_profile(
                     .any(|allowed| allowed == tool)
             })
             .collect(),
-        disabled_tools,
+        disabled_tools: disabled_tools
+            .into_iter()
+            .filter(|tool| tool != WORKFLOW_PLANNER_PSEUDO_TOOL)
+            .collect(),
         enabled_mcp_servers: Vec::new(),
         enabled_mcp_tools: Vec::new(),
     }
@@ -1056,11 +1063,16 @@ mod tests {
         let prefs = ChannelToolPreferences {
             enabled_tools: vec![
                 "websearch".to_string(),
+                WORKFLOW_PLANNER_PSEUDO_TOOL.to_string(),
                 "bash".to_string(),
                 "webfetch_html".to_string(),
                 "bash".to_string(),
             ],
-            disabled_tools: vec!["read".to_string(), "read".to_string()],
+            disabled_tools: vec![
+                "read".to_string(),
+                WORKFLOW_PLANNER_PSEUDO_TOOL.to_string(),
+                "read".to_string(),
+            ],
             enabled_mcp_servers: vec!["github".to_string(), "slack".to_string()],
             enabled_mcp_tools: vec![
                 "mcp.github.create_issue".to_string(),
@@ -1122,6 +1134,7 @@ mod tests {
                 scope_id: Some("chat:123".to_string()),
                 scope_kind: Some("room".to_string()),
                 tool_preferences: None,
+                workflow_planner_session_id: None,
             },
         );
         map.insert(
@@ -1135,6 +1148,7 @@ mod tests {
                 scope_id: Some("chat:123".to_string()),
                 scope_kind: Some("room".to_string()),
                 tool_preferences: None,
+                workflow_planner_session_id: None,
             },
         );
         map.insert(
@@ -1148,6 +1162,7 @@ mod tests {
                 scope_id: Some("topic:1:2".to_string()),
                 scope_kind: Some("topic".to_string()),
                 tool_preferences: None,
+                workflow_planner_session_id: None,
             },
         );
         map.insert(
@@ -1161,6 +1176,7 @@ mod tests {
                 scope_id: Some("channel:9".to_string()),
                 scope_kind: Some("room".to_string()),
                 tool_preferences: None,
+                workflow_planner_session_id: None,
             },
         );
 

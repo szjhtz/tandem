@@ -140,6 +140,7 @@ async fn get_or_create_session(
             scope_id: Some(msg.scope.id.clone()),
             scope_kind: Some(session_scope_kind_label(msg).to_string()),
             tool_preferences: None,
+            workflow_planner_session_id: None,
         },
     );
     persist_session_map(&guard).await;
@@ -147,6 +148,23 @@ async fn get_or_create_session(
     refresh_channel_session_permissions(base_url, api_token, &session_id, security_profile).await;
 
     Some(session_id)
+}
+
+async fn set_channel_workflow_planner_session_id(
+    msg: &ChannelMessage,
+    session_map: &SessionMap,
+    workflow_planner_session_id: Option<String>,
+) {
+    let map_key = session_map_key(msg);
+    let mut guard = session_map.lock().await;
+    if let Some(record) = guard.get_mut(&map_key) {
+        record.workflow_planner_session_id = workflow_planner_session_id;
+        record.last_seen_at_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+        persist_session_map(&guard).await;
+    }
 }
 
 /// Submit a message to a Tandem session using `prompt_async` and stream
@@ -806,7 +824,7 @@ async fn handle_slash_command(
             workspace_command_text(action, msg, base_url, api_token, session_map).await
         }
         SlashCommand::Tools { action } => {
-            tools_command_text(action, msg, base_url, api_token).await
+            tools_command_text(action, msg, base_url, api_token, security_profile).await
         }
         SlashCommand::Mcp { action } => mcp_command_text(action, msg, base_url, api_token).await,
         SlashCommand::Packs { action } => packs_command_text(action, base_url, api_token).await,
@@ -1040,4 +1058,3 @@ Examples:\n\
 Tip: `/schedule plan` uses the current session workspace when available so the planner can target the right repo."
         .to_string()
 }
-

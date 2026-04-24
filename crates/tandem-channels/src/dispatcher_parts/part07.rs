@@ -439,6 +439,7 @@ mod tests {
             scope_id: Some("chat:42".to_string()),
             scope_kind: Some("room".to_string()),
             tool_preferences: None,
+            workflow_planner_session_id: None,
         };
         let serialized = serde_json::to_string(&record).unwrap();
         let deserialized: SessionRecord = serde_json::from_str(&serialized).unwrap();
@@ -584,7 +585,11 @@ mod tests {
     #[test]
     fn public_demo_tool_allowlist_cannot_be_widened_by_route_override() {
         let prefs = ChannelToolPreferences::default();
-        let route_allowlist = vec!["pack_builder".to_string(), "websearch".to_string()];
+        let route_allowlist = vec![
+            "pack_builder".to_string(),
+            "websearch".to_string(),
+            WORKFLOW_PLANNER_PSEUDO_TOOL.to_string(),
+        ];
         let result = build_channel_tool_allowlist(
             Some(&route_allowlist),
             &prefs,
@@ -593,6 +598,32 @@ mod tests {
         .expect("public demo allowlist");
 
         assert_eq!(result, vec!["websearch".to_string()]);
+    }
+
+    #[test]
+    fn workflow_planner_gate_is_removed_from_operator_allowlists() {
+        let prefs = ChannelToolPreferences {
+            enabled_tools: vec!["read".to_string(), WORKFLOW_PLANNER_PSEUDO_TOOL.to_string()],
+            disabled_tools: vec![WORKFLOW_PLANNER_PSEUDO_TOOL.to_string()],
+            ..Default::default()
+        };
+        let route_allowlist = vec![
+            "read".to_string(),
+            WORKFLOW_PLANNER_PSEUDO_TOOL.to_string(),
+            "websearch".to_string(),
+        ];
+
+        let result = build_channel_tool_allowlist(
+            Some(&route_allowlist),
+            &prefs,
+            ChannelSecurityProfile::Operator,
+        )
+        .expect("operator allowlist");
+
+        assert_eq!(result, vec!["read".to_string(), "websearch".to_string()]);
+        assert!(!result
+            .iter()
+            .any(|tool| tool == WORKFLOW_PLANNER_PSEUDO_TOOL));
     }
 
     #[test]
@@ -738,6 +769,7 @@ mod tests {
                 scope_id: None,
                 scope_kind: None,
                 tool_preferences: None,
+                workflow_planner_session_id: None,
             },
         );
         let session_map = std::sync::Arc::new(tokio::sync::Mutex::new(map));

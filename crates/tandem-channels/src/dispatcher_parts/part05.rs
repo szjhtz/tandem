@@ -338,15 +338,25 @@ async fn tools_command_text(
     msg: &ChannelMessage,
     base_url: &str,
     api_token: &str,
+    security_profile: ChannelSecurityProfile,
 ) -> String {
     match action {
-        ToolsCommand::Help => tools_help_text(ChannelSecurityProfile::Operator),
+        ToolsCommand::Help => tools_help_text(security_profile),
         ToolsCommand::List => {
             let prefs = load_channel_tool_preferences(&msg.channel, &msg.scope.id).await;
-            let enabled: std::collections::HashSet<String> =
-                prefs.enabled_tools.iter().cloned().collect();
-            let disabled: std::collections::HashSet<String> =
-                prefs.disabled_tools.iter().cloned().collect();
+            let planner_enabled = channel_workflow_planner_enabled(&prefs);
+            let enabled: std::collections::HashSet<String> = prefs
+                .enabled_tools
+                .iter()
+                .filter(|tool| tool.as_str() != WORKFLOW_PLANNER_PSEUDO_TOOL)
+                .cloned()
+                .collect();
+            let disabled: std::collections::HashSet<String> = prefs
+                .disabled_tools
+                .iter()
+                .filter(|tool| tool.as_str() != WORKFLOW_PLANNER_PSEUDO_TOOL)
+                .cloned()
+                .collect();
 
             let all_tools = [
                 "read",
@@ -379,7 +389,7 @@ async fn tools_command_text(
             for tool in all_tools {
                 if disabled.contains(tool) {
                     disabled_lines.push(tool.to_string());
-                } else if !prefs.enabled_tools.is_empty() && !enabled.contains(tool) {
+                } else if !enabled.is_empty() && !enabled.contains(tool) {
                     disabled_lines.push(tool.to_string());
                 } else {
                     default_lines.push(tool.to_string());
@@ -393,6 +403,14 @@ async fn tools_command_text(
             if !disabled_lines.is_empty() {
                 lines.push(format!("*Disabled:* {}", disabled_lines.join(", ")));
             }
+            lines.push(format!(
+                "*Workflow planner gate:* {}",
+                if planner_enabled {
+                    "enabled"
+                } else {
+                    "disabled"
+                }
+            ));
 
             let mcp_servers = mcp_servers_for_channel(base_url, api_token).await;
             if !mcp_servers.is_empty() {
@@ -420,6 +438,14 @@ async fn tools_command_text(
             let mut prefs = load_channel_tool_preferences(&msg.channel, &msg.scope.id).await;
             let mut added = Vec::new();
             for tool in &tools {
+                if tool == WORKFLOW_PLANNER_PSEUDO_TOOL {
+                    if !prefs.enabled_tools.contains(tool) {
+                        prefs.enabled_tools.push(tool.clone());
+                        added.push(tool.clone());
+                    }
+                    prefs.disabled_tools.retain(|t| t != tool);
+                    continue;
+                }
                 if !prefs.enabled_tools.contains(tool) {
                     prefs.enabled_tools.push(tool.clone());
                     added.push(tool.clone());
@@ -437,6 +463,14 @@ async fn tools_command_text(
             let mut prefs = load_channel_tool_preferences(&msg.channel, &msg.scope.id).await;
             let mut added = Vec::new();
             for tool in &tools {
+                if tool == WORKFLOW_PLANNER_PSEUDO_TOOL {
+                    if !prefs.disabled_tools.contains(tool) {
+                        prefs.disabled_tools.push(tool.clone());
+                        added.push(tool.clone());
+                    }
+                    prefs.enabled_tools.retain(|t| t != tool);
+                    continue;
+                }
                 if !prefs.disabled_tools.contains(tool) {
                     prefs.disabled_tools.push(tool.clone());
                     added.push(tool.clone());
@@ -1136,6 +1170,7 @@ async fn new_session_text(
             scope_id: Some(msg.scope.id.clone()),
             scope_kind: Some(session_scope_kind_label(msg).to_string()),
             tool_preferences: None,
+            workflow_planner_session_id: None,
         },
     );
     persist_session_map(&guard).await;
@@ -1212,6 +1247,7 @@ async fn resume_session_text(
                     scope_id: Some(msg.scope.id.clone()),
                     scope_kind: Some(session_scope_kind_label(msg).to_string()),
                     tool_preferences: None,
+                    workflow_planner_session_id: None,
                 },
             );
             persist_session_map(&guard).await;
@@ -1425,4 +1461,3 @@ async fn todos_text(
         .collect::<Vec<_>>();
     format!("🧾 Session todos:\n{}", lines.join("\n"))
 }
-

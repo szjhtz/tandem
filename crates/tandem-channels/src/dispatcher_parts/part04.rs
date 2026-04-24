@@ -68,6 +68,8 @@ fn tools_help_text(security_profile: ChannelSecurityProfile) -> String {
 /tools disable <tool1,tool2> — disable tools for this channel\n\
 /tools reset — reset to default tool scope\n\
 \n\
+Workflow planning gate: `tandem.workflow_planner`\n\
+\n\
 Available built-in tools: read, glob, ls, list, grep, codesearch, websearch,\nwebfetch, webfetch_html, bash, write, edit, apply_patch, todowrite, memory_search,\nmemory_store, memory_list, skill, task, question\n\n\
 Use `/mcp` commands to manage MCP server access."
         .to_string()
@@ -167,6 +169,40 @@ async fn workflow_planner_workspace_root(
                 .filter(|value| value.starts_with('/'))
                 .map(ToOwned::to_owned)
         })
+}
+
+fn workflow_planner_control_panel_url(session_id: &str) -> String {
+    let session_id = session_id.trim();
+    let base = std::env::var("TANDEM_CONTROL_PANEL_PUBLIC_URL")
+        .ok()
+        .map(|value| value.trim().trim_end_matches('/').to_string())
+        .filter(|value| !value.is_empty());
+    match base {
+        Some(base) => format!("{base}/#/planner?session_id={session_id}"),
+        None => format!("#/planner?session_id={session_id}"),
+    }
+}
+
+fn workflow_planner_channel_title(prompt: &str, channel: &str, sender: &str) -> String {
+    let prompt = prompt.trim().replace(['\n', '\r'], " ");
+    let channel = channel.trim();
+    let sender = sender.trim();
+    let base = if prompt.is_empty() {
+        if sender.is_empty() {
+            format!("Workflow planning from {channel}")
+        } else {
+            format!("Workflow planning from {channel} • {sender}")
+        }
+    } else if sender.is_empty() {
+        prompt
+    } else {
+        format!("{prompt} • {sender}")
+    };
+    let mut clipped = base.chars().take(64).collect::<String>();
+    if base.chars().count() > 64 {
+        clipped.push('…');
+    }
+    clipped
 }
 
 fn workflow_plan_summary(plan: &serde_json::Value) -> String {
@@ -993,4 +1029,3 @@ async fn public_channel_memory_tool_args(
     }
     args
 }
-

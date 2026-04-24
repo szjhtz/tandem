@@ -2,6 +2,23 @@
 
 This is the canonical release-notes file used by release tooling.
 
+## v0.4.40 (Released 2026-04-24)
+
+This release adds channel-aware workflow planning, so chat-driven workflow requests can now open a governed planner session, persist review state, and hand off into the control panel for validation and approval instead of only seeding automation setup.
+
+### Channel workflow planning
+
+- **Chat-to-planner handoff**: Workflow-intent messages now create or resume a planner session tied to the originating channel session, then open the workflow planner with the current draft.
+- **Intent detection favors planning**: `/api/engine/setup/understand` now recognizes workflow-planning requests directly, so prompts like "draft a workflow plan" route into planner mode instead of generic integration setup.
+- **Planner review state persists**: Planner sessions and drafts now record source platform/channel, linked session IDs, docs-MCP usage, required and blocked capabilities, validation status, approval status, and preview payloads so review survives reloads and follow-up messages.
+- **Control-panel review banner**: Channel-seeded planner sessions now reopen in the planner UI with a handoff banner that shows the source channel, capability requirements, and approval state.
+
+### Channel governance and safety
+
+- **Workflow-planner gate**: A new server-owned `tandem.workflow_planner` pseudo-tool controls whether a channel can produce workflow drafts, and public-demo channels sanitize it out of saved tool preferences.
+- **Capability approval flow**: Planner-detected capability gaps now route through the existing `mcp_request_capability` approval path instead of being dropped.
+- **External-channel guardrails**: Telegram, Discord, and Slack responses stay summary-only and point operators to the control panel for review instead of activating workflows directly.
+
 ## v0.4.39 (Released 2026-04-23)
 
 This release makes governed workflow repair durable. Strict-quality automation nodes now pass their repair policy into the engine, fail closed when required evidence never materializes, and stop downstream workflow branches from advancing on placeholder artifacts.

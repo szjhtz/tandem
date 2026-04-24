@@ -396,6 +396,7 @@ const CHANNEL_TOOL_GROUPS = [
   { label: "Memory", tools: ["memory_search", "memory_store", "memory_list"] },
   { label: "Other", tools: ["skill", "task", "question", "pack_builder"] },
 ] as const;
+const WORKFLOW_PLANNER_PSEUDO_TOOL = "tandem.workflow_planner";
 const PUBLIC_DEMO_ALLOWED_TOOLS = [
   "websearch",
   "webfetch",
@@ -803,8 +804,15 @@ function formatChannelScopeLabel(scope: ChannelScopeRow) {
 }
 
 function channelToolEnabled(prefs: ChannelToolPreferencesRow, tool: string) {
+  const explicitEnabled = prefs.enabled_tools.filter(
+    (entry) => entry !== WORKFLOW_PLANNER_PSEUDO_TOOL
+  );
+  if (tool === WORKFLOW_PLANNER_PSEUDO_TOOL) {
+    if (prefs.disabled_tools.includes(tool)) return false;
+    return prefs.enabled_tools.includes(tool);
+  }
   if (prefs.disabled_tools.includes(tool)) return false;
-  return prefs.enabled_tools.length === 0 || prefs.enabled_tools.includes(tool);
+  return explicitEnabled.length === 0 || explicitEnabled.includes(tool);
 }
 
 function nextChannelToolPreferences(
@@ -813,13 +821,31 @@ function nextChannelToolPreferences(
   enabled: boolean
 ): ChannelToolPreferencesRow {
   const disabled = prefs.disabled_tools.filter((entry) => entry !== tool);
-  const explicitEnabled = prefs.enabled_tools.length > 0 ? [...prefs.enabled_tools] : [];
+  const explicitEnabled = prefs.enabled_tools.filter(
+    (entry) => entry !== WORKFLOW_PLANNER_PSEUDO_TOOL
+  );
+  if (tool === WORKFLOW_PLANNER_PSEUDO_TOOL) {
+    if (enabled) {
+      return {
+        ...prefs,
+        disabled_tools: disabled,
+        enabled_tools: uniqueChannelValues([...prefs.enabled_tools, tool]),
+      };
+    }
+    return {
+      ...prefs,
+      disabled_tools: uniqueChannelValues([...disabled, tool]),
+      enabled_tools: prefs.enabled_tools.filter((entry) => entry !== tool),
+    };
+  }
   if (enabled) {
     return {
       ...prefs,
       disabled_tools: disabled,
       enabled_tools:
-        explicitEnabled.length > 0 ? uniqueChannelValues([...explicitEnabled, tool]) : [],
+        explicitEnabled.length > 0
+          ? uniqueChannelValues([...prefs.enabled_tools, tool])
+          : prefs.enabled_tools,
     };
   }
   return {
@@ -827,8 +853,8 @@ function nextChannelToolPreferences(
     disabled_tools: uniqueChannelValues([...disabled, tool]),
     enabled_tools:
       explicitEnabled.length > 0
-        ? explicitEnabled.filter((entry) => entry !== tool)
-        : explicitEnabled,
+        ? prefs.enabled_tools.filter((entry) => entry !== tool)
+        : prefs.enabled_tools,
   };
 }
 
@@ -4874,7 +4900,9 @@ export function SettingsPage({
                                 <div className="tcp-subtle text-xs">
                                   Built-in tools and MCP servers available to {channel} sessions.
                                 </div>
-                                {toolPrefs.enabled_tools.length > 0 ? (
+                                {toolPrefs.enabled_tools.some(
+                                  (tool) => tool !== WORKFLOW_PLANNER_PSEUDO_TOOL
+                                ) ? (
                                   <div className="mt-1 text-xs text-amber-300">
                                     Explicit built-in allowlist is active for this{" "}
                                     {scopeTargetLabel}.
@@ -4981,6 +5009,16 @@ export function SettingsPage({
                                     toolPrefs.enabled_mcp_tools.length === 1 ? "" : "s"
                                   } also selected.`
                                 : ""}
+                              {` ${
+                                toolAllowedForSecurityProfile(
+                                  draft.securityProfile,
+                                  WORKFLOW_PLANNER_PSEUDO_TOOL
+                                )
+                                  ? channelToolEnabled(toolPrefs, WORKFLOW_PLANNER_PSEUDO_TOOL)
+                                    ? "Workflow drafts from chat are enabled."
+                                    : "Workflow drafts from chat are disabled."
+                                  : "Workflow drafts stay disabled in public demo mode."
+                              }`}
                             </div>
 
                             <AnimatePresence initial={false}>
@@ -4994,6 +5032,49 @@ export function SettingsPage({
                                   className="overflow-hidden"
                                 >
                                   <div className="grid gap-3 pt-3">
+                                    <div className="grid gap-2">
+                                      <div className="tcp-subtle text-[11px] uppercase tracking-[0.24em]">
+                                        Workflow planning
+                                      </div>
+                                      <label className="flex items-center justify-between rounded-xl border border-slate-700/60 bg-slate-950/30 px-3 py-2 text-sm">
+                                        <div className="flex flex-col">
+                                          <span className="font-mono text-xs">
+                                            Allow workflow drafts from chat
+                                          </span>
+                                          <span className="tcp-subtle text-[11px]">
+                                            Stores the `tandem.workflow_planner` pseudo-tool in this
+                                            channel scope without changing the normal tool
+                                            allowlist.
+                                          </span>
+                                        </div>
+                                        <input
+                                          type="checkbox"
+                                          checked={channelToolEnabled(
+                                            toolPrefs,
+                                            WORKFLOW_PLANNER_PSEUDO_TOOL
+                                          )}
+                                          disabled={
+                                            saveChannelToolPreferencesMutation.isPending ||
+                                            !toolAllowedForSecurityProfile(
+                                              draft.securityProfile,
+                                              WORKFLOW_PLANNER_PSEUDO_TOOL
+                                            )
+                                          }
+                                          onChange={(e) =>
+                                            saveChannelToolPreferencesMutation.mutate({
+                                              channel,
+                                              scopeId: selectedScopeId || null,
+                                              payload: nextChannelToolPreferences(
+                                                toolPrefs,
+                                                WORKFLOW_PLANNER_PSEUDO_TOOL,
+                                                e.currentTarget.checked
+                                              ),
+                                            })
+                                          }
+                                        />
+                                      </label>
+                                    </div>
+
                                     {CHANNEL_TOOL_GROUPS.map((group) => (
                                       <div key={`${channel}-${group.label}`} className="grid gap-2">
                                         <div className="tcp-subtle text-[11px] uppercase tracking-[0.24em]">

@@ -289,8 +289,12 @@ fn format_setup_guidance_message(response: &SetupUnderstandResponse) -> String {
                 "This looks like channel setup help. Open the channel settings for `{target}` and confirm the bot token, allowed users, and mention-only settings."
             )
         }
+        SetupIntentKind::WorkflowPlannerCreate => {
+            "This looks like workflow planning. Open the planner in the control panel to draft, review, and apply the workflow plan there."
+                .to_string()
+        }
         SetupIntentKind::SetupHelp => {
-            "I can help with three setup paths here: provider setup, connecting external tools, or creating an automation. Reply with `1`, `2`, or `3`.".to_string()
+            "I can help with four setup paths here: provider setup, connecting external tools, creating an automation, or drafting a workflow plan. Reply with `1`, `2`, `3`, or `4`.".to_string()
         }
         SetupIntentKind::AutomationCreate | SetupIntentKind::General => {
             "I couldn't map that setup request cleanly.".to_string()
@@ -456,11 +460,53 @@ fn route_agent_for_channel_message(content: &str) -> AgentRouteDecision {
     }
 }
 
+const WORKFLOW_PLANNER_PSEUDO_TOOL: &str = "tandem.workflow_planner";
+
+fn channel_workflow_planner_enabled(prefs: &ChannelToolPreferences) -> bool {
+    prefs
+        .enabled_tools
+        .iter()
+        .any(|tool| tool == WORKFLOW_PLANNER_PSEUDO_TOOL)
+        && !prefs
+            .disabled_tools
+            .iter()
+            .any(|tool| tool == WORKFLOW_PLANNER_PSEUDO_TOOL)
+}
+
+fn channel_tool_preferences_without_planner_gate(
+    prefs: &ChannelToolPreferences,
+) -> ChannelToolPreferences {
+    ChannelToolPreferences {
+        enabled_tools: prefs
+            .enabled_tools
+            .iter()
+            .filter(|tool| tool.as_str() != WORKFLOW_PLANNER_PSEUDO_TOOL)
+            .cloned()
+            .collect(),
+        disabled_tools: prefs
+            .disabled_tools
+            .iter()
+            .filter(|tool| tool.as_str() != WORKFLOW_PLANNER_PSEUDO_TOOL)
+            .cloned()
+            .collect(),
+        enabled_mcp_servers: prefs.enabled_mcp_servers.clone(),
+        enabled_mcp_tools: prefs.enabled_mcp_tools.clone(),
+    }
+}
+
 fn build_channel_tool_allowlist(
     route_allowlist: Option<&Vec<String>>,
     tool_prefs: &ChannelToolPreferences,
     security_profile: ChannelSecurityProfile,
 ) -> Option<Vec<String>> {
+    let tool_prefs = channel_tool_preferences_without_planner_gate(tool_prefs);
+    let route_allowlist = route_allowlist.map(|allowlist| {
+        allowlist
+            .iter()
+            .filter(|tool| tool.as_str() != WORKFLOW_PLANNER_PSEUDO_TOOL)
+            .cloned()
+            .collect::<Vec<_>>()
+    });
     if security_profile == ChannelSecurityProfile::PublicDemo {
         let mut allowed = PUBLIC_DEMO_ALLOWED_TOOLS
             .iter()
@@ -486,8 +532,7 @@ fn build_channel_tool_allowlist(
         return Some(allowed);
     }
 
-    let pack_builder_override = route_allowlist;
-    if let Some(pb) = pack_builder_override {
+    if let Some(pb) = route_allowlist {
         return Some(pb.clone());
     }
 

@@ -97,6 +97,8 @@ pub struct SessionRecord {
     pub scope_kind: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_preferences: Option<ChannelToolPreferences>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workflow_planner_session_id: Option<String>,
 }
 
 /// `{channel_name}:{sender_id}` → Tandem `SessionRecord`
@@ -174,6 +176,7 @@ enum SetupIntentKind {
     ProviderSetup,
     IntegrationSetup,
     AutomationCreate,
+    WorkflowPlannerCreate,
     ChannelSetupHelp,
     SetupHelp,
     General,
@@ -354,6 +357,7 @@ async fn load_session_map() -> HashMap<String, SessionRecord> {
                     scope_id: None,
                     scope_kind: None,
                     tool_preferences: None,
+                    workflow_planner_session_id: None,
                 },
             );
         }
@@ -1272,19 +1276,19 @@ async fn process_channel_message(
         }
     }
 
+    let map_key = session_map_key(&msg);
+    let session_id =
+        get_or_create_session(&msg, base_url, api_token, session_map, security_profile).await;
+    let session_id = match session_id {
+        Some(id) => id,
+        None => {
+            error!("failed to get or create session for {}", map_key);
+            return;
+        }
+    };
     let thread_key = format!("{}:{}", msg.channel, msg.reply_target);
 
     if let Some(cmd) = parse_pack_builder_reply_command(&msg.content) {
-        let map_key = session_map_key(&msg);
-        let session_id =
-            get_or_create_session(&msg, base_url, api_token, session_map, security_profile).await;
-        let session_id = match session_id {
-            Some(id) => id,
-            None => {
-                error!("failed to get or create session for {}", map_key);
-                return;
-            }
-        };
         let response = match cmd {
             PackBuilderReplyCommand::Confirm => {
                 apply_pending_pack_builder(
@@ -1316,7 +1320,7 @@ async fn process_channel_message(
             if let Err(e) = channel
                 .send(&SendMessage {
                     content: reply,
-                    recipient: msg.reply_target,
+                    recipient: msg.reply_target.clone(),
                     image_urls: Vec::new(),
                 })
                 .await
@@ -1330,36 +1334,12 @@ async fn process_channel_message(
         }
     }
 
-    if let Err(e) = channel.start_typing(&msg.reply_target).await {
-        warn!(
-            "failed to start typing indicator for channel '{}': {e}",
-            channel.name()
-        );
-    }
-
-    let map_key = session_map_key(&msg);
-    let session_id =
-        get_or_create_session(&msg, base_url, api_token, session_map, security_profile).await;
-    let session_id = match session_id {
-        Some(id) => id,
-        None => {
-            error!("failed to get or create session for {}", map_key);
-            let _ = channel.stop_typing(&msg.reply_target).await;
-            return;
-        }
-    };
     let mut prompt_content = msg.content.clone();
     if let Some(attachment) = msg.attachment.as_deref() {
         if is_zip_attachment(&msg) {
             if let Some(pack_reply) =
                 handle_pack_attachment_if_present(&msg, base_url, api_token).await
             {
-                if let Err(e) = channel.stop_typing(&msg.reply_target).await {
-                    warn!(
-                        "failed to stop typing indicator for channel '{}': {e}",
-                        channel.name()
-                    );
-                }
                 if let Err(e) = channel
                     .send(&SendMessage {
                         content: pack_reply,
@@ -1396,8 +1376,323 @@ async fn process_channel_message(
         );
     }
 
-    let route = route_agent_for_channel_message(&msg.content);
     let tool_prefs = load_channel_tool_preferences(&msg.channel, &msg.scope.id).await;
+    let linked_planner_session_id = {
+        let guard = session_map.lock().await;
+        guard
+            .get(&map_key)
+            .and_then(|record| record.workflow_planner_session_id.clone())
+    };
+    if let Some(planner_session_id) = linked_planner_session_id {
+        if !channel_workflow_planner_enabled(&tool_prefs) {
+            if let Err(e) = channel
+                .send(&SendMessage {
+                    content:
+                        "🗓️ Workflow drafting is disabled for this channel. Enable the workflow planner gate in Settings to continue this thread."
+                            .to_string(),
+                    recipient: msg.reply_target.clone(),
+                    image_urls: Vec::new(),
+                })
+                .await
+            {
+                error!(
+                    "failed to send workflow-planner gate reply via '{}': {e}",
+                    channel.name()
+                );
+            }
+            return;
+        }
+
+        let response = workflow_plan_post(
+            &format!(
+                "/workflow-plans/sessions/{}/message-async",
+                sanitize_resource_segment(&planner_session_id)
+            ),
+            serde_json::json!({
+                "message": prompt_content.clone(),
+            }),
+            base_url,
+            api_token,
+        )
+        .await;
+        match response {
+            Ok(_) => {
+                let reply = format!(
+                    "🗓️ Workflow planning is in progress.\nReview it in the planner: {}\nSession: `{}`",
+                    workflow_planner_control_panel_url(&planner_session_id),
+                    planner_session_id,
+                );
+                if let Err(e) = channel
+                    .send(&SendMessage {
+                        content: reply,
+                        recipient: msg.reply_target.clone(),
+                        image_urls: Vec::new(),
+                    })
+                    .await
+                {
+                    error!(
+                        "failed to send workflow-planner channel reply via '{}': {e}",
+                        channel.name()
+                    );
+                }
+                return;
+            }
+            Err(error) => {
+                let lowered = error.to_ascii_lowercase();
+                if lowered.contains("not found")
+                    || error.contains("WORKFLOW_PLAN_SESSION_NOT_FOUND")
+                {
+                    set_channel_workflow_planner_session_id(&msg, session_map, None).await;
+                } else {
+                    if let Err(send_error) = channel
+                        .send(&SendMessage {
+                            content: format!("⚠️ Workflow planner update failed: {error}"),
+                            recipient: msg.reply_target.clone(),
+                            image_urls: Vec::new(),
+                        })
+                        .await
+                    {
+                        error!(
+                            "failed to send workflow-planner error reply via '{}': {send_error}",
+                            channel.name()
+                        );
+                    }
+                    return;
+                }
+            }
+        }
+    }
+
+    let setup_response = understand_setup_request(
+        base_url,
+        api_token,
+        &msg,
+        Some(&session_id),
+        &prompt_content,
+    )
+    .await
+    .ok();
+    if let Some(setup) = setup_response {
+        if setup.decision != SetupDecision::PassThrough {
+            let reply = match setup.decision {
+                SetupDecision::Clarify => setup
+                    .clarifier
+                    .as_ref()
+                    .map(format_setup_clarifier_message)
+                    .unwrap_or_else(|| format_setup_guidance_message(&setup)),
+                SetupDecision::Intercept => match setup.intent_kind {
+                    SetupIntentKind::WorkflowPlannerCreate => {
+                        if !channel_workflow_planner_enabled(&tool_prefs) {
+                            "🗓️ Workflow drafting is disabled for this channel. Enable the workflow planner gate in Settings to continue."
+                                .to_string()
+                        } else {
+                            let workflow_prompt = setup
+                                .proposed_action
+                                .payload
+                                .get("prompt")
+                                .and_then(|value| value.as_str())
+                                .map(str::trim)
+                                .filter(|value| !value.is_empty())
+                                .map(ToOwned::to_owned)
+                                .unwrap_or_else(|| prompt_content.clone());
+                            let plan_source = setup
+                                .proposed_action
+                                .payload
+                                .get("plan_source")
+                                .and_then(|value| value.as_str())
+                                .map(str::trim)
+                                .filter(|value| !value.is_empty())
+                                .map(ToOwned::to_owned)
+                                .unwrap_or_else(|| "channel_setup".to_string());
+                            let workspace_root = workflow_planner_workspace_root(
+                                &msg,
+                                base_url,
+                                api_token,
+                                session_map,
+                            )
+                            .await;
+                            let mut allowed_mcp_servers = tool_prefs.enabled_mcp_servers.clone();
+                            if !allowed_mcp_servers
+                                .iter()
+                                .any(|server| server.eq_ignore_ascii_case("tandem-mcp"))
+                            {
+                                allowed_mcp_servers.push("tandem-mcp".to_string());
+                            }
+                            let now = std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap()
+                                .as_millis() as u64;
+                            let create_body = serde_json::json!({
+                                "project_slug": format!("channel-{}", msg.channel.to_ascii_lowercase()),
+                                "title": workflow_planner_channel_title(
+                                    &workflow_prompt,
+                                    &msg.channel,
+                                    &msg.sender,
+                                ),
+                                "workspace_root": workspace_root.clone(),
+                                "goal": workflow_prompt.clone(),
+                                "notes": format!(
+                                    "Channel workflow handoff from {} / {}",
+                                    msg.channel, msg.sender
+                                ),
+                                "plan_source": plan_source.clone(),
+                                "allowed_mcp_servers": allowed_mcp_servers.clone(),
+                                "planning": {
+                                    "mode": "channel",
+                                    "source_platform": msg.channel.clone(),
+                                    "source_channel": msg.scope.id.clone(),
+                                    "requesting_actor": msg.sender.clone(),
+                                    "created_by_agent": "channel_dispatcher",
+                                    "linked_channel_session_id": session_id.clone(),
+                                    "allowed_tools": [WORKFLOW_PLANNER_PSEUDO_TOOL],
+                                    "blocked_tools": [],
+                                    "known_requirements": [],
+                                    "missing_requirements": [],
+                                    "validation_status": "pending",
+                                    "approval_status": "not_required",
+                                    "docs_mcp_enabled": true,
+                                    "started_at_ms": now,
+                                    "updated_at_ms": now,
+                                }
+                            });
+                            let created = workflow_plan_post(
+                                "/workflow-plans/sessions",
+                                create_body,
+                                base_url,
+                                api_token,
+                            )
+                            .await;
+                            let planner_session_id = match created {
+                                Ok(response) => response
+                                    .get("session")
+                                    .and_then(|value| value.get("session_id"))
+                                    .and_then(|value| value.as_str())
+                                    .map(|value| value.to_string()),
+                                Err(error) => {
+                                    let message =
+                                        format!("⚠️ Could not start workflow planning: {error}");
+                                    if let Err(send_error) = channel
+                                        .send(&SendMessage {
+                                            content: message,
+                                            recipient: msg.reply_target.clone(),
+                                            image_urls: Vec::new(),
+                                        })
+                                        .await
+                                    {
+                                        error!(
+                                            "failed to send workflow-planner create error via '{}': {send_error}",
+                                            channel.name()
+                                        );
+                                    }
+                                    return;
+                                }
+                            };
+                            let Some(planner_session_id) = planner_session_id else {
+                                if let Err(send_error) = channel
+                                    .send(&SendMessage {
+                                        content:
+                                            "⚠️ Workflow planning started, but Tandem could not read the planner session id."
+                                                .to_string(),
+                                        recipient: msg.reply_target.clone(),
+                                        image_urls: Vec::new(),
+                                    })
+                                    .await
+                                {
+                                    error!(
+                                        "failed to send workflow-planner id error via '{}': {send_error}",
+                                        channel.name()
+                                    );
+                                }
+                                return;
+                            };
+                            set_channel_workflow_planner_session_id(
+                                &msg,
+                                session_map,
+                                Some(planner_session_id.clone()),
+                            )
+                            .await;
+                            let start_body = serde_json::json!({
+                                "prompt": workflow_prompt,
+                                "plan_source": plan_source,
+                                "allowed_mcp_servers": allowed_mcp_servers,
+                                "workspace_root": workspace_root,
+                            });
+                            let start_result = workflow_plan_post(
+                                &format!(
+                                    "/workflow-plans/sessions/{}/start-async",
+                                    sanitize_resource_segment(&planner_session_id)
+                                ),
+                                start_body,
+                                base_url,
+                                api_token,
+                            )
+                            .await;
+                            let link = workflow_planner_control_panel_url(&planner_session_id);
+                            match start_result {
+                                Ok(_) => format!(
+                                    "🗓️ Workflow planning started.\nReview it in the planner: {}\nSession: `{}`",
+                                    link, planner_session_id
+                                ),
+                                Err(error) => format!(
+                                    "🗓️ Workflow planner session created, but draft start failed: {}\nReview it in the planner: {}\nSession: `{}`",
+                                    error, link, planner_session_id
+                                ),
+                            }
+                        }
+                    }
+                    SetupIntentKind::AutomationCreate => {
+                        let automation_prompt = setup
+                            .proposed_action
+                            .payload
+                            .get("prompt")
+                            .and_then(|value| value.as_str())
+                            .map(str::trim)
+                            .filter(|value| !value.is_empty())
+                            .map(ToOwned::to_owned)
+                            .unwrap_or_else(|| prompt_content.clone());
+                        preview_setup_automation(
+                            base_url,
+                            api_token,
+                            &session_id,
+                            &thread_key,
+                            &automation_prompt,
+                        )
+                        .await
+                        .unwrap_or_else(|| format_setup_guidance_message(&setup))
+                    }
+                    SetupIntentKind::ProviderSetup
+                    | SetupIntentKind::IntegrationSetup
+                    | SetupIntentKind::ChannelSetupHelp
+                    | SetupIntentKind::SetupHelp
+                    | SetupIntentKind::General => format_setup_guidance_message(&setup),
+                },
+                SetupDecision::PassThrough => format_setup_guidance_message(&setup),
+            };
+            if let Err(e) = channel
+                .send(&SendMessage {
+                    content: reply,
+                    recipient: msg.reply_target.clone(),
+                    image_urls: Vec::new(),
+                })
+                .await
+            {
+                error!(
+                    "failed to send setup-intercept reply via '{}': {e}",
+                    channel.name()
+                );
+            }
+            return;
+        }
+    }
+
+    if let Err(e) = channel.start_typing(&msg.reply_target).await {
+        warn!(
+            "failed to start typing indicator for channel '{}': {e}",
+            channel.name()
+        );
+    }
+
+    let route = route_agent_for_channel_message(&msg.content);
     let effective_allowlist =
         build_channel_tool_allowlist(route.tool_allowlist.as_ref(), &tool_prefs, security_profile);
 
@@ -1427,7 +1722,7 @@ async fn process_channel_message(
     if let Err(e) = channel
         .send(&SendMessage {
             content: reply_text,
-            recipient: msg.reply_target,
+            recipient: msg.reply_target.clone(),
             image_urls,
         })
         .await

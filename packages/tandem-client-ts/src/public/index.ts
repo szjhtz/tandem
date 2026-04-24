@@ -1640,6 +1640,22 @@ export interface WorkflowPlanDraftRecord {
   conversation: WorkflowPlanConversation;
   planner_diagnostics?: JsonValue;
   last_success_materialization?: JsonValue;
+  review?: WorkflowPlanDraftReviewRecord | null;
+  [key: string]: unknown;
+}
+
+export interface WorkflowPlanDraftReviewRecord {
+  required_capabilities?: string[];
+  requested_capabilities?: string[];
+  blocked_capabilities?: string[];
+  docs_mcp_used?: boolean;
+  preview_payload?: JsonObject | null;
+  createdAtMs?: number | null;
+  created_at_ms?: number | null;
+  updatedAtMs?: number | null;
+  updated_at_ms?: number | null;
+  validation_status?: string;
+  approval_status?: string;
   [key: string]: unknown;
 }
 
@@ -1651,6 +1667,26 @@ export interface WorkflowPlannerSessionOperationRecord {
   finished_at_ms?: number | null;
   response?: JsonValue;
   error?: string | null;
+  [key: string]: unknown;
+}
+
+export interface WorkflowPlannerSessionPlanningRecord {
+  mode?: string;
+  source_platform?: string;
+  source_channel?: string | null;
+  requesting_actor?: string | null;
+  created_by_agent?: string | null;
+  linked_channel_session_id?: string | null;
+  linked_draft_plan_id?: string | null;
+  allowed_tools?: string[];
+  blocked_tools?: string[];
+  known_requirements?: string[];
+  missing_requirements?: string[];
+  validation_status?: string;
+  approval_status?: string;
+  docs_mcp_enabled?: boolean | null;
+  started_at_ms?: number | null;
+  updated_at_ms?: number | null;
   [key: string]: unknown;
 }
 
@@ -1736,6 +1772,7 @@ export interface WorkflowPlannerSessionRecord {
   plan_source?: string;
   allowed_mcp_servers?: string[];
   operator_preferences?: JsonObject;
+  planning?: WorkflowPlannerSessionPlanningRecord | null;
   import_validation?: JsonObject | null;
   import_transform_log?: string[];
   import_scope_snapshot?: JsonObject | null;
@@ -1760,6 +1797,10 @@ export interface WorkflowPlannerSessionListItem {
   goal?: string | null;
   planner_provider?: string | null;
   planner_model?: string | null;
+  source_platform?: string | null;
+  source_channel?: string | null;
+  validation_status?: string | null;
+  approval_status?: string | null;
 }
 
 export interface WorkflowPlannerSessionListResponse {

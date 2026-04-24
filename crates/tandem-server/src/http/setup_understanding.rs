@@ -47,6 +47,7 @@ pub(super) enum SetupIntentKind {
     ProviderSetup,
     IntegrationSetup,
     AutomationCreate,
+    WorkflowPlannerCreate,
     ChannelSetupHelp,
     SetupHelp,
     General,
@@ -223,6 +224,7 @@ pub(super) async fn resolve_setup_request(
     let provider = score_provider_setup(&normalized, &setup_state.providers);
     let integration = score_integration_setup(&normalized, &setup_state.integrations);
     let automation = score_automation_create(&normalized, &setup_state.integrations);
+    let workflow_planner = score_workflow_planner_create(&normalized);
     let channel_help = score_channel_setup_help(&normalized);
     let setup_help = score_setup_help(&normalized, broad_setup);
 
@@ -230,6 +232,7 @@ pub(super) async fn resolve_setup_request(
     candidates.insert(SetupIntentKind::ProviderSetup, provider);
     candidates.insert(SetupIntentKind::IntegrationSetup, integration);
     candidates.insert(SetupIntentKind::AutomationCreate, automation);
+    candidates.insert(SetupIntentKind::WorkflowPlannerCreate, workflow_planner);
     candidates.insert(SetupIntentKind::ChannelSetupHelp, channel_help);
     candidates.insert(SetupIntentKind::SetupHelp, setup_help);
 
@@ -299,6 +302,15 @@ pub(super) async fn resolve_setup_request(
                 "delivery_target": top_score.slots.delivery_target.clone(),
                 "integration_targets": top_score.slots.integration_targets.clone(),
                 "plan_source": "chat_setup",
+            }),
+        ),
+        SetupIntentKind::WorkflowPlannerCreate => intercept_response(
+            SetupIntentKind::WorkflowPlannerCreate,
+            top_score.clone(),
+            "workflow_plan_preview",
+            json!({
+                "prompt": top_score.slots.goal.clone(),
+                "plan_source": request.surface.as_deref().unwrap_or("chat_setup"),
             }),
         ),
         SetupIntentKind::ChannelSetupHelp => intercept_response(
@@ -580,6 +592,20 @@ fn score_integration_setup(input: &str, state: &IntegrationSetupState) -> Intent
             }
         }
     }
+    if contains_any(
+        input,
+        &[
+            "workflow plan",
+            "workflow draft",
+            "draft a plan",
+            "draft the plan",
+            "turn this into a plan",
+            "build a plan",
+            "make a plan",
+        ],
+    ) {
+        score.score -= 8;
+    }
     if contains_any(input, AUTOMATION_VERBS)
         && (extract_schedule_hint(input).is_some() || integrations.len() >= 2)
     {
@@ -639,6 +665,103 @@ fn score_automation_create(input: &str, state: &IntegrationSetupState) -> Intent
         || input.contains("alert")
         || input.contains("notify");
     if !has_automation || !has_workflow_shape {
+        score.score = 0;
+    }
+    score
+}
+
+fn score_workflow_planner_create(input: &str) -> IntentScore {
+    let mut score = IntentScore::default();
+    if is_informational_only(input) {
+        return score;
+    }
+
+    let has_workflow_words = contains_any(
+        input,
+        &[
+            "workflow",
+            "workflows",
+            "pipeline",
+            "handoff",
+            "handoffs",
+            "orchestrate",
+            "orchestration",
+            "roadmap",
+            "road map",
+            "timeline",
+            "milestone",
+            "decompose",
+            "break down",
+            "multi-step",
+            "long-horizon",
+            "long term",
+        ],
+    );
+    let has_plan_words = contains_any(
+        input,
+        &[
+            "plan",
+            "planner",
+            "draft",
+            "design",
+            "sequence",
+            "structure",
+            "blueprint",
+        ],
+    );
+    let has_planning_phrase = contains_any(
+        input,
+        &[
+            "workflow plan",
+            "workflow draft",
+            "plan this workflow",
+            "draft a plan",
+            "draft the plan",
+            "turn this into a plan",
+            "build a plan",
+            "make a plan",
+        ],
+    );
+
+    if has_workflow_words {
+        score.score += 2;
+        score.evidence.push(SetupEvidence {
+            kind: "keyword".to_string(),
+            value: "workflow_words".to_string(),
+        });
+    }
+    if has_plan_words {
+        score.score += 1;
+        score.evidence.push(SetupEvidence {
+            kind: "keyword".to_string(),
+            value: "plan_words".to_string(),
+        });
+    }
+    if has_planning_phrase {
+        score.score += 10;
+        score.evidence.push(SetupEvidence {
+            kind: "pattern".to_string(),
+            value: "workflow_planning_phrase".to_string(),
+        });
+    }
+    if has_workflow_words && has_plan_words {
+        score.score += 2;
+    }
+    if contains_any(input, SETUP_VERBS) {
+        score.score += 1;
+    }
+    if contains_any(input, AUTOMATION_VERBS)
+        && (extract_schedule_hint(input).is_some() || extract_delivery_target(input).is_some())
+    {
+        score.score -= 5;
+    }
+    if contains_any(input, &["automation", "automate", "automations"]) && !has_planning_phrase {
+        score.score -= 2;
+    }
+
+    if score.score >= 4 {
+        score.slots.goal = Some(input.trim().to_string());
+    } else {
         score.score = 0;
     }
     score
@@ -785,6 +908,10 @@ fn default_clarifier_options() -> Vec<SetupClarifierOption> {
         SetupClarifierOption {
             id: "automation_create".to_string(),
             label: "Create an automation".to_string(),
+        },
+        SetupClarifierOption {
+            id: "workflow_planner_create".to_string(),
+            label: "Draft a workflow plan".to_string(),
         },
     ]
 }

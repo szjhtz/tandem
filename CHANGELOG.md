@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.40] - Released 2026-04-24
+
+### Added
+
+- **Channel workflow planning handoff**: Chat-driven workflow requests can now create or resume governed planner sessions, persist a review draft, and open the workflow planner with source-channel metadata plus a control-panel review link.
+- **Planner review metadata**: Workflow planner sessions and drafts now store source platform/channel, linked session IDs, docs-MCP usage, required and blocked capabilities, validation state, approval state, and preview payloads so review data survives reloads.
+
+### Changed
+
+- **Workflow-planner gate**: The new `tandem.workflow_planner` pseudo-tool now controls whether chat can seed workflow drafts, and public-demo channels strip the gate out of saved tool preferences.
+- **Planner intent routing**: Setup understanding now scores workflow-planning requests ahead of generic integration setup, which sends prompts like "draft a workflow plan" straight into planner mode.
+- **Planner capability governance**: Capability gaps discovered during planning now feed the existing `mcp_request_capability` approval path instead of being ignored.
+
+### Fixed
+
+- **External channel safety**: Telegram, Discord, and Slack workflow-intent replies stay summary-only and no longer activate workflows directly from chat.
+- **Planner allowlist integrity**: The workflow-planner gate is excluded from the real tool allowlist so it cannot widen channel MCP access or slip through sanitization.
+
 ## [0.4.39] - Released 2026-04-23
 
 ### Added

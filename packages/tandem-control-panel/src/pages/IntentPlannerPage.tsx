@@ -96,6 +96,13 @@ function safeString(value: unknown) {
   return String(value || "").trim();
 }
 
+function formatStringList(values: unknown) {
+  const items = Array.isArray(values)
+    ? values.map((value) => safeString(value)).filter(Boolean)
+    : [];
+  return items.length ? items.join(", ") : "—";
+}
+
 function normalizeServers(raw: any) {
   const rows = Array.isArray(raw)
     ? raw
@@ -173,6 +180,7 @@ function plannerPromptFromBrief(brief: IntentBriefDraft) {
 }
 
 const WORKFLOW_IMPORT_HANDOFF_KEY = "tandem.workflow.importHandoff.v1";
+const WORKFLOW_PLANNER_SEED_KEY = "tandem.workflow.plannerSeed";
 
 function loadWorkflowImportHandoff() {
   try {
@@ -190,6 +198,37 @@ function loadWorkflowImportHandoff() {
     };
   } catch {
     return null;
+  }
+}
+
+function loadWorkflowPlannerSeed() {
+  try {
+    const raw = sessionStorage.getItem(WORKFLOW_PLANNER_SEED_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return null;
+    return parsed as {
+      prompt?: string;
+      plan_source?: string;
+      session_id?: string;
+      source_platform?: string;
+      source_channel?: string;
+      workspace_root?: string;
+    };
+  } catch {
+    return null;
+  }
+}
+
+function parsePlannerSessionIdFromHash() {
+  try {
+    const hash = window.location.hash || "";
+    const query = hash.includes("?") ? hash.slice(hash.indexOf("?") + 1) : "";
+    const params = new URLSearchParams(query);
+    const sessionId = String(params.get("session_id") || "").trim();
+    return sessionId || "";
+  } catch {
+    return "";
   }
 }
 
@@ -227,9 +266,12 @@ export function IntentPlannerPage({
   const [importedWorkflowSessionApplied, setImportedWorkflowSessionApplied] = useState("");
   const [workflowImportHandoff, setWorkflowImportHandoff] =
     useState<ReturnType<typeof loadWorkflowImportHandoff>>(null);
+  const [workflowPlannerSeed, setWorkflowPlannerSeed] =
+    useState<ReturnType<typeof loadWorkflowPlannerSeed>>(null);
   const [workspaceBrowserOpen, setWorkspaceBrowserOpen] = useState(false);
   const [workspaceBrowserDir, setWorkspaceBrowserDir] = useState("");
   const [workspaceBrowserSearch, setWorkspaceBrowserSearch] = useState("");
+  const workflowPlannerSessionIdFromHash = useMemo(() => parsePlannerSessionIdFromHash(), []);
 
   const draftKey = useMemo(() => plannerDraftStorageKey(identity.botName), [identity.botName]);
   const namedDraftPrefix = useMemo(
@@ -269,13 +311,16 @@ export function IntentPlannerPage({
         method: "GET",
       }).catch(() => ({})),
   });
+  const plannerHandoffSessionId = safeString(
+    workflowPlannerSeed?.session_id ||
+      workflowImportHandoff?.session_id ||
+      workflowPlannerSessionIdFromHash
+  );
   const importedWorkflowSessionQuery = useQuery({
-    queryKey: ["intent-planner", "workflow-import-handoff", workflowImportHandoff?.session_id],
-    enabled: !!workflowImportHandoff?.session_id,
+    queryKey: ["intent-planner", "workflow-handoff", plannerHandoffSessionId],
+    enabled: !!plannerHandoffSessionId,
     queryFn: () =>
-      client.workflowPlannerSessions
-        .get(String(workflowImportHandoff?.session_id || ""))
-        .catch(() => ({ session: null })),
+      client.workflowPlannerSessions.get(plannerHandoffSessionId).catch(() => ({ session: null })),
   });
 
   const providerOptions = useMemo<PlannerProviderOption[]>(() => {
@@ -335,6 +380,9 @@ export function IntentPlannerPage({
   const importedWorkflowSourceKind = safeString(
     importedWorkflowSession?.source_kind || workflowImportHandoff?.source_kind || ""
   );
+  const workflowPlannerReview = importedWorkflowSession?.draft?.review || null;
+  const workflowPlannerPlanning = importedWorkflowSession?.planning || null;
+  const workflowPlannerSeedPrompt = safeString(workflowPlannerSeed?.prompt || "");
   const workspaceParentDir = String((workspaceBrowserQuery.data as any)?.parent || "").trim();
   const workspaceCurrentBrowseDir = String(
     (workspaceBrowserQuery.data as any)?.dir || workspaceBrowserDir || ""
@@ -370,11 +418,12 @@ export function IntentPlannerPage({
 
   useEffect(() => {
     setWorkflowImportHandoff(loadWorkflowImportHandoff());
+    setWorkflowPlannerSeed(loadWorkflowPlannerSeed());
   }, []);
 
   useEffect(() => {
-    if (!workflowImportHandoff?.session_id || !importedWorkflowSession) return;
-    if (importedWorkflowSession.session_id !== workflowImportHandoff.session_id) return;
+    if (!plannerHandoffSessionId || !importedWorkflowSession) return;
+    if (importedWorkflowSession.session_id !== plannerHandoffSessionId) return;
     if (importedWorkflowSessionApplied === importedWorkflowSession.session_id) return;
 
     const importedPlan =
@@ -425,13 +474,67 @@ export function IntentPlannerPage({
     setPlanPackageReplay(null);
     setOverlapAnalysis(null);
     setTeachingLibrary(null);
+    const sessionReview = importedWorkflowSession.draft?.review || null;
+    const sessionPreview = sessionReview?.preview_payload || null;
+    if (sessionReview && sessionPreview) {
+      setPlannerDiagnostics(
+        sessionPreview.planner_diagnostics ||
+          importedWorkflowSession.draft?.planner_diagnostics ||
+          null
+      );
+      setValidationReport(sessionPreview.plan_package_validation || null);
+      setPlanPackage(sessionPreview.plan_package || null);
+      setPlanPackageBundle(sessionPreview.plan_package_bundle || null);
+      setPlanPackageReplay(sessionPreview.plan_package_replay || null);
+      setOverlapAnalysis(sessionPreview.overlap_analysis || null);
+      setTeachingLibrary(sessionPreview.teaching_library || null);
+      setPlannerDraftUpdatedAtMs(
+        Number.isFinite(Number(sessionReview.updated_at_ms))
+          ? Number(sessionReview.updated_at_ms)
+          : Number.isFinite(Number(importedWorkflowSession.updated_at_ms))
+            ? Number(importedWorkflowSession.updated_at_ms)
+            : null
+      );
+    }
     setPlanningState("idle");
     setPlannerDraftRestored(true);
     setPlannerDraftHydrated(true);
     setNamedDraftName(safeString(importedWorkflowSession.title || importedPlan.title));
     setImportedWorkflowSessionApplied(importedWorkflowSession.session_id);
-    clearWorkflowImportHandoff(false);
-  }, [importedWorkflowSession, importedWorkflowSessionApplied, workflowImportHandoff?.session_id]);
+    if (workflowImportHandoff?.session_id === plannerHandoffSessionId) {
+      clearWorkflowImportHandoff(false);
+    }
+  }, [
+    importedWorkflowSession,
+    importedWorkflowSessionApplied,
+    plannerHandoffSessionId,
+    workflowImportHandoff?.session_id,
+  ]);
+
+  useEffect(() => {
+    if (!workflowPlannerSeed?.prompt) return;
+    if (plannerHandoffSessionId) return;
+    if (plannerDraftHydrated && safeString(plannerInput || brief.goal)) return;
+
+    const seedPrompt = safeString(workflowPlannerSeed.prompt);
+    if (!seedPrompt) return;
+
+    setBrief((current) => ({
+      ...current,
+      goal: seedPrompt,
+      workspaceRoot: safeString(workflowPlannerSeed.workspace_root || current.workspaceRoot),
+    }));
+    setPlannerInput(seedPrompt);
+    setPlanningState("idle");
+    setPlannerDraftRestored(false);
+    setPlannerDraftHydrated(true);
+  }, [
+    brief.goal,
+    plannerDraftHydrated,
+    plannerHandoffSessionId,
+    plannerInput,
+    workflowPlannerSeed,
+  ]);
 
   const resetLocalState = () => {
     clearPlannerDraft(draftKey);
@@ -910,6 +1013,91 @@ export function IntentPlannerPage({
                     importedWorkflowSession?.current_plan_id ||
                       workflowImportHandoff.current_plan_id ||
                       "—"
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        </PanelCard>
+      ) : null}
+
+      {(plannerHandoffSessionId || workflowPlannerSeedPrompt) && !workflowImportHandoff ? (
+        <PanelCard
+          title="Workflow planner handoff"
+          subtitle="This planner session was seeded from chat or a channel and will resume the governed draft here."
+          className="mb-4"
+        >
+          <div className="grid gap-3 text-sm">
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge tone={plannerHandoffSessionId ? "info" : "warn"}>
+                {plannerHandoffSessionId ? "session" : "seed"}
+              </Badge>
+              {plannerHandoffSessionId ? (
+                <Badge tone="ghost">{plannerHandoffSessionId}</Badge>
+              ) : null}
+            </div>
+            <div className="grid gap-1 md:grid-cols-2">
+              <div>
+                <div className="tcp-subtle text-xs">Title</div>
+                <div>
+                  {safeString(
+                    importedWorkflowSession?.title ||
+                      workflowPlannerSeedPrompt ||
+                      "Workflow planner"
+                  )}
+                </div>
+              </div>
+              <div>
+                <div className="tcp-subtle text-xs">Source platform</div>
+                <div>
+                  {safeString(
+                    workflowPlannerPlanning?.source_platform ||
+                      workflowPlannerSeed?.source_platform ||
+                      "chat"
+                  )}
+                </div>
+              </div>
+              <div>
+                <div className="tcp-subtle text-xs">Source channel</div>
+                <div>
+                  {safeString(
+                    workflowPlannerPlanning?.source_channel ||
+                      workflowPlannerSeed?.source_channel ||
+                      "—"
+                  )}
+                </div>
+              </div>
+              <div>
+                <div className="tcp-subtle text-xs">Docs MCP</div>
+                <div>
+                  {workflowPlannerReview?.docs_mcp_used ? "used in the draft" : "not used yet"}
+                </div>
+              </div>
+              <div>
+                <div className="tcp-subtle text-xs">Required capabilities</div>
+                <div>{formatStringList(workflowPlannerReview?.required_capabilities)}</div>
+              </div>
+              <div>
+                <div className="tcp-subtle text-xs">Blocked capabilities</div>
+                <div>{formatStringList(workflowPlannerReview?.blocked_capabilities)}</div>
+              </div>
+              <div>
+                <div className="tcp-subtle text-xs">Missing requirements</div>
+                <div>{formatStringList(workflowPlannerPlanning?.missing_requirements)}</div>
+              </div>
+              <div>
+                <div className="tcp-subtle text-xs">Validation / approval</div>
+                <div>
+                  {safeString(
+                    workflowPlannerReview?.validation_status ||
+                      workflowPlannerPlanning?.validation_status ||
+                      "pending"
+                  )}
+                  {" / "}
+                  {safeString(
+                    workflowPlannerReview?.approval_status ||
+                      workflowPlannerPlanning?.approval_status ||
+                      "not_required"
                   )}
                 </div>
               </div>
