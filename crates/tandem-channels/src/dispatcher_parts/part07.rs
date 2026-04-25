@@ -675,6 +675,21 @@ mod tests {
     }
 
     #[test]
+    fn explicit_mcp_context_makes_factual_questions_strict_even_when_channel_toggle_is_off() {
+        let prefs = ChannelToolPreferences {
+            enabled_mcp_servers: vec!["kb".to_string()],
+            ..Default::default()
+        };
+        let message = "Can you ban a Discord user who is spamming?";
+
+        assert!(channel_message_is_factual_question(message));
+        assert!(effective_channel_strict_kb_grounding(
+            message, false, &prefs
+        ));
+        assert!(strict_kb_prefers_answer_mode(message, false, &prefs));
+    }
+
+    #[test]
     fn strict_kb_routing_prefers_answer_mode_without_explicit_mcp_preferences() {
         let prefs = ChannelToolPreferences::default();
 

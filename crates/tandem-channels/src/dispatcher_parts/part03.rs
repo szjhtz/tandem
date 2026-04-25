@@ -184,6 +184,7 @@ async fn run_in_session(
     agent: Option<&str>,
     tool_allowlist: Option<&Vec<String>>,
     channel_name: &str,
+    strict_kb_grounding_override: Option<bool>,
 ) -> anyhow::Result<String> {
     let timeout_secs: u64 = std::env::var("TANDEM_CHANNEL_MAX_WAIT_SECONDS")
         .ok()
@@ -226,7 +227,9 @@ async fn run_in_session(
     if let Some(model) = model_spec {
         body["model"] = model;
     }
-    if channel_runtime_config.strict_kb_grounding {
+    let strict_kb_grounding =
+        strict_kb_grounding_override.unwrap_or(channel_runtime_config.strict_kb_grounding);
+    if strict_kb_grounding {
         body["strict_kb_grounding"] = serde_json::json!(true);
     }
 
@@ -460,7 +463,7 @@ async fn run_in_session(
         }
     }
 
-    if channel_runtime_config.strict_kb_grounding {
+    if strict_kb_grounding {
         // Fast runs may complete before we attach SSE, and persisted assistant
         // messages can lag slightly behind run completion. Retry briefly.
         for _ in 0..20 {

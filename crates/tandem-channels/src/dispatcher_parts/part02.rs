@@ -743,10 +743,20 @@ fn strict_kb_prefers_answer_mode(
     strict_kb_grounding: bool,
     prefs: &ChannelToolPreferences,
 ) -> bool {
-    let _has_explicit_mcp_context = channel_has_enabled_mcp_context(prefs);
-    strict_kb_grounding
+    effective_channel_strict_kb_grounding(message, strict_kb_grounding, prefs)
         && channel_message_is_factual_question(message)
         && !channel_message_has_explicit_workflow_intent(message)
+}
+
+fn effective_channel_strict_kb_grounding(
+    message: &str,
+    configured_strict_kb_grounding: bool,
+    prefs: &ChannelToolPreferences,
+) -> bool {
+    configured_strict_kb_grounding
+        || (channel_has_enabled_mcp_context(prefs)
+            && channel_message_is_factual_question(message)
+            && !channel_message_has_explicit_workflow_intent(message))
 }
 
 fn setup_intent_requires_explicit_workflow_authoring(intent: &SetupIntentKind) -> bool {

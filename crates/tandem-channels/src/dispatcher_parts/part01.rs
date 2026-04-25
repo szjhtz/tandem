@@ -1514,6 +1514,11 @@ async fn process_channel_message(
     let strict_kb_is_factual_question = channel_message_is_factual_question(&prompt_content);
     let strict_kb_has_explicit_workflow_intent =
         channel_message_has_explicit_workflow_intent(&prompt_content);
+    let effective_strict_kb_grounding = effective_channel_strict_kb_grounding(
+        &prompt_content,
+        channel_runtime_config.strict_kb_grounding,
+        &tool_prefs,
+    );
     let strict_kb_answer_mode_preferred = strict_kb_prefers_answer_mode(
         &prompt_content,
         channel_runtime_config.strict_kb_grounding,
@@ -1899,7 +1904,7 @@ async fn process_channel_message(
                                 &thread_key,
                                 &automation_prompt,
                                 &tool_prefs,
-                                channel_runtime_config.strict_kb_grounding,
+                                effective_strict_kb_grounding,
                                 security_profile,
                                 pending_interactions,
                             )
@@ -1954,6 +1959,7 @@ async fn process_channel_message(
         route.agent.as_deref(),
         effective_allowlist.as_ref(),
         &msg.channel,
+        Some(effective_strict_kb_grounding),
     )
     .await;
     if let Err(e) = channel.stop_typing(&msg.reply_target).await {
