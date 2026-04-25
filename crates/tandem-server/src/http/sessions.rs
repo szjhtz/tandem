@@ -67,12 +67,13 @@ fn mcp_server_is_knowledgebase(server: &tandem_runtime::McpServer) -> bool {
 fn explicit_allowlist_patterns_for_mcp_server(
     allowlist: &[String],
     server_name: &str,
+    strict_kb_grounding: bool,
 ) -> Vec<String> {
     let namespace = mcp_namespace_segment_for_grounding(server_name);
     let prefix = format!("mcp.{namespace}.");
     let wildcard = format!("mcp.{namespace}.*");
     let mut seen = std::collections::HashSet::new();
-    allowlist
+    let mut patterns = allowlist
         .iter()
         .map(|entry| entry.trim().to_ascii_lowercase())
         .filter(|entry| !entry.is_empty() && entry != "*")
@@ -80,7 +81,14 @@ fn explicit_allowlist_patterns_for_mcp_server(
             entry == &wildcard || entry.starts_with(&prefix) || entry == &format!("mcp.{namespace}")
         })
         .filter(|entry| seen.insert(entry.clone()))
-        .collect()
+        .collect::<Vec<_>>();
+    if patterns.is_empty()
+        && strict_kb_grounding
+        && allowlist.iter().any(|entry| entry.trim() == "*")
+    {
+        patterns.push(wildcard);
+    }
+    patterns
 }
 
 fn send_message_request_text(req: &SendMessageRequest) -> String {
@@ -145,7 +153,11 @@ async fn derive_session_kb_grounding_policy(
         if !server.enabled || !mcp_server_is_knowledgebase(server) {
             continue;
         }
-        let patterns = explicit_allowlist_patterns_for_mcp_server(allowlist, &server.name);
+        let patterns = explicit_allowlist_patterns_for_mcp_server(
+            allowlist,
+            &server.name,
+            req.strict_kb_grounding.unwrap_or(false),
+        );
         if patterns.is_empty() {
             continue;
         }

@@ -229,6 +229,21 @@ async fn run_prompt_sync_messages(
     question: &str,
     strict_kb_grounding: bool,
 ) -> Vec<Value> {
+    run_prompt_sync_messages_with_allowlist(
+        state,
+        question,
+        strict_kb_grounding,
+        json!(["mcp.kb.*"]),
+    )
+    .await
+}
+
+async fn run_prompt_sync_messages_with_allowlist(
+    state: AppState,
+    question: &str,
+    strict_kb_grounding: bool,
+    tool_allowlist: Value,
+) -> Vec<Value> {
     let session = Session::new(Some("strict kb".to_string()), Some(".".to_string()));
     let session_id = session.id.clone();
     state
@@ -252,7 +267,7 @@ async fn run_prompt_sync_messages(
                     "provider_id": "strict-kb-test",
                     "model_id": "strict-kb-test-1"
                 },
-                "tool_allowlist": ["mcp.kb.*"],
+                "tool_allowlist": tool_allowlist,
                 "strict_kb_grounding": strict_kb_grounding
             })
             .to_string(),
@@ -1434,6 +1449,45 @@ async fn prompt_sync_strict_kb_grounding_blocks_generic_platform_instructions() 
         .contains("delete message history"));
     assert!(!assistant.to_ascii_lowercase().contains("confirm the ban"));
     assert!(!assistant.to_ascii_lowercase().contains("moderation menu"));
+}
+
+#[tokio::test]
+async fn prompt_sync_strict_kb_grounding_wildcard_allowlist_still_forces_kb_policy() {
+    let state = strict_kb_test_state(
+        r#"{"documents":[{"relative_path":"discord-community-rules.md","content":"The bot may only explain moderation policy, but must not ban, timeout, delete, or moderate users directly unless a future tool explicitly grants that capability. Moderators may delete spam, move conversations, warn users, or timeout users for up to 24 hours. Only Mira Kovac can approve permanent bans during the event."}]}"#,
+        vec![
+            StrictKbProviderStep::ToolCall {
+                tool: "mcp.kb.search_documents".to_string(),
+                args: json!({ "query": "Can you ban a Discord user who is spamming?" }),
+            },
+            StrictKbProviderStep::Text(
+                "I can’t directly ban a Discord user from here because I don’t have an active Discord moderation/admin connection. Right-click the user, select Ban, delete recent message history, and confirm."
+                    .to_string(),
+            ),
+        ],
+    )
+    .await;
+    let messages = run_prompt_sync_messages_with_allowlist(
+        state,
+        "Can you ban a Discord user who is spamming?",
+        true,
+        json!(["*"]),
+    )
+    .await;
+    let assistant = latest_assistant_text(&messages);
+    assert!(
+        assistant.contains("I cannot ban users from here."),
+        "assistant={}",
+        assistant
+    );
+    assert!(assistant.contains("Discord Community Rules"));
+    assert!(assistant.contains("must not ban"));
+    assert!(!assistant.to_ascii_lowercase().contains("right-click"));
+    assert!(!assistant.to_ascii_lowercase().contains("select ban"));
+    assert!(!assistant
+        .to_ascii_lowercase()
+        .contains("delete recent message history"));
+    assert!(!assistant.to_ascii_lowercase().contains("confirm"));
 }
 
 #[tokio::test]

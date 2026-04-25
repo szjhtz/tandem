@@ -46,6 +46,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Strict KB external-action leakage**: Strict KB answers to external action questions now stay extractive and policy-only, preventing generic platform UI steps such as Discord ban instructions from leaking into channel replies.
 - **Strict KB provider-error repair**: Provider stream decode failures during strict KB turns now get a strict grounding repair pass and a non-streaming synthesis retry before any channel-safe fallback is returned.
 - **Strict KB final-answer enforcement**: Strict KB channel replies now render final answers from retrieved evidence sentences instead of model-authored helpful prose, closing the escape hatch for invented payout processes, staff-directory advice, escalation channels, and platform how-to steps.
+- **Strict KB wildcard channel grounding**: Channels with default wildcard tool access now still force enabled knowledgebase MCPs into the strict KB search policy, so Telegram/Discord KB bots do not bypass grounding unless the KB MCP is explicitly disabled.
 
 ## [0.4.40] - Released 2026-04-24
 
