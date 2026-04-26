@@ -220,6 +220,13 @@ pub fn compile_mission_runtime_projection(
 
     nodes.sort_by(|a, b| node_sort_key(a, &phase_rank).cmp(&node_sort_key(b, &phase_rank)));
 
+    // Default-on approval gates: walk the projected nodes and wrap any
+    // workstream whose bound agent's tool allowlist includes a
+    // `RequiresApproval` action (CRM writes, outbound emails, payments, etc.).
+    // Approval/Review stages already carry explicit gates from the blueprint
+    // and are skipped.
+    inject_default_approval_gates(&mut nodes, &agents);
+
     let typed_coder_metadata = extract_coder_metadata(blueprint);
     let mut metadata = serde_json::Map::from_iter([
         ("builder_kind".to_string(), json!("mission_blueprint")),
@@ -330,6 +337,131 @@ fn projected_gate(gate: &tandem_workflows::HumanApprovalGate) -> ProjectedAutoma
         rework_targets: gate.rework_targets.clone(),
         instructions: gate.instructions.clone(),
     }
+}
+
+/// Walk the projected nodes and wrap workstream nodes whose tool allowlist
+/// includes a `RequiresApproval` action with a default
+/// `ProjectedAutomationApprovalGate`. Idempotent: nodes with an explicit
+/// `gate` are left untouched. Approval/Review stages already carry their
+/// blueprint gates and are skipped.
+///
+/// This is the default-on policy that makes the agent-owned-workflows pitch
+/// real: even if the planner agent forgets to add a gate, the compiler adds
+/// one for any node that touches an external mutation. Operators can override
+/// per-step at scope-review time (`SkipApproval` toggle in `ScopeInspector`)
+/// — that override is recorded in node metadata and consulted here.
+pub(crate) fn inject_default_approval_gates(
+    nodes: &mut [ProjectedAutomationNode<ProjectedMissionInputRef, OutputContractSeed>],
+    agents: &[ProjectedAutomationAgentProfile],
+) {
+    let agent_lookup: HashMap<&str, &ProjectedAutomationAgentProfile> =
+        agents.iter().map(|a| (a.agent_id.as_str(), a)).collect();
+
+    for node in nodes.iter_mut() {
+        if node.gate.is_some() {
+            continue;
+        }
+        // Approval/Review stage gates are blueprint-owned; skip.
+        if matches!(
+            node.stage_kind,
+            Some(ProjectedAutomationStageKind::Approval)
+                | Some(ProjectedAutomationStageKind::Review)
+        ) {
+            continue;
+        }
+        if node_skip_approval_override(node) {
+            continue;
+        }
+
+        let allowlist = node_tool_allowlist(node, &agent_lookup);
+        if tandem_tools::approval_classifier::allowlist_is_wildcard(&allowlist) {
+            // Wildcard allowlists default to a gate: we cannot reason about
+            // which tool the agent will pick at runtime.
+            node.gate = Some(default_injected_gate(&format!(
+                "Wildcard tool allowlist: agent may invoke any registered tool. \
+                 Approve before this step runs."
+            )));
+            continue;
+        }
+        match tandem_tools::approval_classifier::classify_node_allowlist(&allowlist) {
+            tandem_tools::approval_classifier::ApprovalClassification::RequiresApproval => {
+                node.gate = Some(default_injected_gate(&format!(
+                    "Step `{}` will invoke a tool that mutates an external system. \
+                     Review the proposed action before it runs.",
+                    node.objective.lines().next().unwrap_or(&node.node_id)
+                )));
+            }
+            tandem_tools::approval_classifier::ApprovalClassification::UserConfigurable => {
+                // Doubt-case: the allowlist mixes safe tools with unknown
+                // ones. Fail closed but mark the gate as configurable so
+                // scope-review can offer a "skip approval" toggle.
+                let mut gate = default_injected_gate(&format!(
+                    "Step `{}` may invoke an unrecognized tool. Approve once, \
+                     or open scope review to mark this step auto-approved.",
+                    node.objective.lines().next().unwrap_or(&node.node_id)
+                ));
+                gate.required = true;
+                node.gate = Some(gate);
+            }
+            tandem_tools::approval_classifier::ApprovalClassification::NoApproval => {
+                // No external mutation; do not add a gate.
+            }
+        }
+    }
+}
+
+fn default_injected_gate(instructions: &str) -> ProjectedAutomationApprovalGate {
+    ProjectedAutomationApprovalGate {
+        required: true,
+        decisions: vec![
+            "approve".to_string(),
+            "rework".to_string(),
+            "cancel".to_string(),
+        ],
+        rework_targets: Vec::new(),
+        instructions: Some(instructions.to_string()),
+    }
+}
+
+/// Resolve the effective tool allowlist for a node by consulting:
+///   1. The node's `metadata.builder.tool_allowlist_override` if present
+///      (review-stage nodes carry this).
+///   2. The bound agent's `tool_allowlist` (workstream nodes get their
+///      allowlist from the agent the compiler created for them).
+fn node_tool_allowlist<I, O>(
+    node: &ProjectedAutomationNode<I, O>,
+    agents: &HashMap<&str, &ProjectedAutomationAgentProfile>,
+) -> Vec<String> {
+    if let Some(metadata) = node.metadata.as_ref() {
+        if let Some(values) = metadata
+            .pointer("/builder/tool_allowlist_override")
+            .and_then(Value::as_array)
+        {
+            let allowlist: Vec<String> = values
+                .iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect();
+            if !allowlist.is_empty() {
+                return allowlist;
+            }
+        }
+    }
+    if let Some(agent) = agents.get(node.agent_id.as_str()) {
+        return agent.tool_allowlist.clone();
+    }
+    Vec::new()
+}
+
+/// Operators can pin a step as auto-approved at scope-review time. We honor
+/// the override here so the compiler does not re-inject a gate the human
+/// already explicitly waived. The override lives at
+/// `metadata.approval.skip_approval = true` (a UI-emitted hint).
+fn node_skip_approval_override<I, O>(node: &ProjectedAutomationNode<I, O>) -> bool {
+    node.metadata
+        .as_ref()
+        .and_then(|m| m.pointer("/approval/skip_approval"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
 }
 
 fn review_stage_metadata(
@@ -495,5 +627,204 @@ mod tests {
                 .and_then(Value::as_str),
             Some("coder_run")
         );
+    }
+
+    fn workstream_with_tools(id: &str, tools: Vec<String>) -> WorkstreamBlueprint {
+        WorkstreamBlueprint {
+            workstream_id: id.to_string(),
+            title: id.to_string(),
+            objective: format!("objective for {id}"),
+            role: "worker".to_string(),
+            priority: None,
+            phase_id: None,
+            lane: None,
+            milestone: None,
+            template_id: None,
+            prompt: format!("Do {id}"),
+            model_override: None,
+            tool_allowlist_override: tools,
+            mcp_servers_override: Vec::new(),
+            depends_on: Vec::new(),
+            input_refs: Vec::new(),
+            output_contract: OutputContractBlueprint {
+                kind: "brief".to_string(),
+                schema: None,
+                summary_guidance: None,
+            },
+            retry_policy: None,
+            timeout_ms: None,
+            metadata: None,
+        }
+    }
+
+    fn blueprint_with_workstreams(workstreams: Vec<WorkstreamBlueprint>) -> MissionBlueprint {
+        MissionBlueprint {
+            mission_id: "mission-gates".to_string(),
+            title: "Gate test mission".to_string(),
+            goal: "Validate compiler-injected gates".to_string(),
+            success_criteria: vec!["passes".to_string()],
+            shared_context: None,
+            workspace_root: "/tmp/project".to_string(),
+            orchestrator_template_id: None,
+            phases: Vec::new(),
+            milestones: Vec::new(),
+            team: MissionTeamBlueprint {
+                allowed_template_ids: Vec::new(),
+                default_model_policy: Some(json!({"provider_id":"test","model_id":"model"})),
+                allowed_mcp_servers: vec!["github".to_string()],
+                max_parallel_agents: Some(3),
+                mission_budget: None,
+                orchestrator_only_tool_calls: false,
+            },
+            workstreams,
+            review_stages: Vec::new(),
+            metadata: None,
+        }
+    }
+
+    fn worker_node<'a>(
+        projection: &'a ProjectedAutomationDraft<ProjectedMissionInputRef, OutputContractSeed>,
+        node_id: &str,
+    ) -> &'a ProjectedAutomationNode<ProjectedMissionInputRef, OutputContractSeed> {
+        projection
+            .nodes
+            .iter()
+            .find(|n| n.node_id == node_id)
+            .unwrap_or_else(|| panic!("node `{node_id}` missing"))
+    }
+
+    #[test]
+    fn injects_gate_when_workstream_uses_crm_write_tool() {
+        let blueprint = blueprint_with_workstreams(vec![workstream_with_tools(
+            "outreach",
+            vec!["mcp.hubspot.create_contact".to_string()],
+        )]);
+        let projection = compile_mission_runtime_projection(&blueprint);
+        let node = worker_node(&projection, "outreach");
+        let gate = node.gate.as_ref().expect("gate auto-injected");
+        assert!(gate.required);
+        assert_eq!(
+            gate.decisions,
+            vec![
+                "approve".to_string(),
+                "rework".to_string(),
+                "cancel".to_string()
+            ]
+        );
+        assert!(gate.instructions.is_some());
+    }
+
+    #[test]
+    fn injects_gate_when_workstream_uses_outbound_email() {
+        let blueprint = blueprint_with_workstreams(vec![workstream_with_tools(
+            "send",
+            vec!["send_email".to_string()],
+        )]);
+        let projection = compile_mission_runtime_projection(&blueprint);
+        let gate = worker_node(&projection, "send")
+            .gate
+            .as_ref()
+            .expect("gate auto-injected for outbound email");
+        assert!(gate.required);
+    }
+
+    #[test]
+    fn does_not_inject_gate_for_pure_read_workstream() {
+        let blueprint = blueprint_with_workstreams(vec![workstream_with_tools(
+            "research",
+            vec![
+                "read".to_string(),
+                "websearch".to_string(),
+                "mcp.github.list_issues".to_string(),
+            ],
+        )]);
+        let projection = compile_mission_runtime_projection(&blueprint);
+        assert!(
+            worker_node(&projection, "research").gate.is_none(),
+            "pure read-only workstream should not gate"
+        );
+    }
+
+    #[test]
+    fn injects_gate_for_wildcard_allowlist() {
+        // Empty tool_allowlist_override → compiler defaults the agent to `*`,
+        // which is the "I can call anything" case. Compiler must gate.
+        let blueprint =
+            blueprint_with_workstreams(vec![workstream_with_tools("freeform", Vec::new())]);
+        let projection = compile_mission_runtime_projection(&blueprint);
+        let gate = worker_node(&projection, "freeform")
+            .gate
+            .as_ref()
+            .expect("wildcard allowlist must gate");
+        assert!(gate
+            .instructions
+            .as_deref()
+            .unwrap_or_default()
+            .to_lowercase()
+            .contains("wildcard"));
+    }
+
+    #[test]
+    fn injects_gate_for_unknown_tool_failing_closed() {
+        let blueprint = blueprint_with_workstreams(vec![workstream_with_tools(
+            "mystery",
+            vec![
+                "read".to_string(),
+                "mcp.unknown_vendor.do_something".to_string(),
+            ],
+        )]);
+        let projection = compile_mission_runtime_projection(&blueprint);
+        let gate = worker_node(&projection, "mystery")
+            .gate
+            .as_ref()
+            .expect("unknown tool should fail closed");
+        assert!(gate.required);
+    }
+
+    #[test]
+    fn respects_explicit_skip_approval_metadata_override() {
+        // Build the projection normally (which would inject a gate),
+        // then run inject_default_approval_gates on a manually-prepared
+        // node carrying the skip-approval override to verify it is honored.
+        let mut projection = compile_mission_runtime_projection(&blueprint_with_workstreams(vec![
+            workstream_with_tools("outreach", vec!["mcp.hubspot.create_contact".to_string()]),
+        ]));
+        // Strip the auto-injected gate, set the override, re-run injection.
+        projection.nodes[0].gate = None;
+        let mut metadata = projection.nodes[0]
+            .metadata
+            .clone()
+            .unwrap_or_else(|| json!({}));
+        metadata["approval"] = json!({ "skip_approval": true });
+        projection.nodes[0].metadata = Some(metadata);
+
+        inject_default_approval_gates(&mut projection.nodes, &projection.agents);
+        assert!(
+            projection.nodes[0].gate.is_none(),
+            "skip_approval override must prevent re-injection"
+        );
+    }
+
+    #[test]
+    fn does_not_overwrite_explicit_blueprint_gate() {
+        let mut projection = compile_mission_runtime_projection(&blueprint_with_workstreams(vec![
+            workstream_with_tools("outreach", vec!["mcp.hubspot.create_contact".to_string()]),
+        ]));
+        // Replace the auto-injected gate with a custom one, then re-run
+        // injection. The custom gate must survive untouched.
+        projection.nodes[0].gate = Some(ProjectedAutomationApprovalGate {
+            required: true,
+            decisions: vec!["approve".to_string()],
+            rework_targets: vec!["draft".to_string()],
+            instructions: Some("custom per-blueprint instructions".to_string()),
+        });
+        inject_default_approval_gates(&mut projection.nodes, &projection.agents);
+        let gate = projection.nodes[0].gate.as_ref().expect("gate retained");
+        assert_eq!(
+            gate.instructions.as_deref(),
+            Some("custom per-blueprint instructions")
+        );
+        assert_eq!(gate.decisions, vec!["approve".to_string()]);
+        assert_eq!(gate.rework_targets, vec!["draft".to_string()]);
     }
 }

@@ -1,3 +1,5 @@
+#[path = "approval_classifier.rs"]
+pub mod approval_classifier;
 #[path = "builtin_tools.rs"]
 mod builtin_tools;
 #[path = "tool_metadata.rs"]

@@ -32,6 +32,11 @@ pub(crate) fn workflow_plan_common_sections() -> String {
             "- when the workflow is team or swarm style, include operator_preferences.max_parallel_agents so the runtime can fan out more than one active agent and the control panel can edit the cap later\n",
             "- when a step summarizes, merges, or finalizes upstream work, include explicit input_refs for the upstream steps it synthesizes instead of relying on depends_on alone\n",
             "- final synthesis steps must say which upstream artifacts or findings they are consolidating and must require a concrete synthesis rather than a generic recap\n",
+            "Approval gates:\n",
+            "- the runtime auto-wraps any step whose tool allowlist includes a high-stakes action (outbound communications, CRM/SOR writes, payments, public posts, file deletes outside scratch) in a human-approval gate\n",
+            "- you do not need to add gates yourself; describe the workflow as if approvals are present at those points so the human reviewing scope sees a coherent picture\n",
+            "- batch related external actions into one step when possible (e.g. one `send_outreach` step that emits five drafts) so the human approves once instead of N times\n",
+            "- when an approval gate is the point of a step (e.g. a Review stage that humans MUST decide before downstream work runs), declare it explicitly with stage_kind=Approval so the gate is part of the blueprint instead of compiler-injected\n",
             "{}",
         ),
         step_id_examples,
@@ -90,5 +95,15 @@ mod tests {
         assert!(sections.contains("max_parallel_agents"));
         assert!(sections.contains("explicit input_refs for the upstream steps"));
         assert!(sections.contains("final recap, merged summary, or daily rollup"));
+    }
+
+    #[test]
+    fn workflow_plan_common_sections_include_approval_gate_policy() {
+        let sections = workflow_plan_common_sections();
+        assert!(sections.contains("Approval gates:"));
+        assert!(sections.contains("auto-wraps any step whose tool allowlist"));
+        assert!(sections.contains("you do not need to add gates yourself"));
+        assert!(sections.contains("batch related external actions"));
+        assert!(sections.contains("stage_kind=Approval"));
     }
 }

@@ -15,6 +15,7 @@ serde_json = "1"
 sha2 = "0.10"
 tandem-core = { path = "../tandem-core", version = "0.4.41" }
 tandem-orchestrator = { path = "../tandem-orchestrator", version = "0.4.41" }
+tandem-tools = { path = "../tandem-tools", version = "0.4.41" }
 tandem-types = { path = "../tandem-types", version = "0.4.41" }
 tandem-workflows = { path = "../tandem-workflows", version = "0.4.41" }
 

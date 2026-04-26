@@ -23,6 +23,7 @@ export type RouteId =
   | "memory"
   | "teams"
   | "runs"
+  | "approvals"
   | "settings"
   | "packs-detail"
   | "teams-detail";

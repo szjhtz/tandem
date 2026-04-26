@@ -13,6 +13,7 @@ export const ROUTES = [
   ["orchestrator", "Task Board", "workflow"],
   ["memory", "Memory", "database"],
   ["runs", "Runs", "activity"],
+  ["approvals", "Approvals", "shield-check"],
   ["settings", "Settings", "settings"],
   // Legacy routes kept for backwards compat (not in primary nav)
   ["packs", "Packs", "package"],
@@ -41,6 +42,7 @@ const NAV_ROUTE_ORDER = [
   "memory",
   "files",
   "runs",
+  "approvals",
   "settings",
 ];
 

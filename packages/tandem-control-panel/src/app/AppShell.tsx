@@ -52,6 +52,10 @@ const ROUTE_META: Record<string, { title: string; subtitle: string }> = {
     title: "Runs",
     subtitle: "Live operations overview with queue state and per-run inspection.",
   },
+  approvals: {
+    title: "Approvals Inbox",
+    subtitle: "Pending human approvals across every workflow that has paused on a gate.",
+  },
   settings: {
     title: "Settings",
     subtitle: "Provider defaults, identity, themes, and runtime diagnostics.",

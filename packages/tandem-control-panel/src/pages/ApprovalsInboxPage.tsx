@@ -1,0 +1,333 @@
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useState } from "react";
+import { api } from "../lib/api";
+import { renderMarkdownSafe } from "../lib/markdown";
+import { AnimatedPage, Badge, PanelCard } from "../ui/index.tsx";
+import { EmptyState, PageCard } from "./ui";
+import type { AppPageProps } from "./pageTypes";
+
+/**
+ * ApprovalsInboxPage
+ *
+ * One operator-shaped page that aggregates every pending approval across
+ * automation_v2 mission runs (and, in future, coder + workflow runs). Backed
+ * by `GET /approvals/pending` — the cross-subsystem aggregator added in W1.5.
+ *
+ * Goals:
+ * - Polled every 5s (SSE upgrade is a later improvement; polling is fine for v1).
+ * - Approve / Reject / Rework against the authoritative subsystem handler
+ *   (`POST /automations/v2/runs/{run_id}/gate`) — never re-implement decision
+ *   logic here.
+ * - Race-aware: a 409 from the gate endpoint surfaces the winner's identity
+ *   (W2.6), so the inbox renders "already decided by …" instead of an error
+ *   when another surface beat us to it.
+ */
+
+type DecisionKind = "approve" | "rework" | "cancel";
+
+type ApprovalRequest = {
+  request_id: string;
+  source: string;
+  tenant: { org_id: string; workspace_id: string; user_id?: string };
+  run_id: string;
+  node_id?: string;
+  workflow_name?: string;
+  action_kind?: string;
+  action_preview_markdown?: string;
+  surface_payload?: Record<string, any> | null;
+  requested_at_ms: number;
+  expires_at_ms?: number;
+  decisions?: Array<DecisionKind | string>;
+  rework_targets?: string[];
+  instructions?: string;
+};
+
+type PendingResponse = {
+  approvals?: ApprovalRequest[];
+  count?: number;
+};
+
+function formatRelativeTime(ms: number): string {
+  const seconds = Math.max(0, Math.round((Date.now() - ms) / 1000));
+  if (seconds < 60) return `${seconds}s ago`;
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.round(hours / 24);
+  return `${days}d ago`;
+}
+
+function decideEndpointFor(request: ApprovalRequest): string | null {
+  const explicit = (request.surface_payload as any)?.decide_endpoint;
+  if (typeof explicit === "string" && explicit.startsWith("/")) {
+    return explicit;
+  }
+  if (request.source === "automation_v2" && request.run_id) {
+    return `/automations/v2/runs/${request.run_id}/gate`;
+  }
+  return null;
+}
+
+async function postDecision(
+  request: ApprovalRequest,
+  decision: DecisionKind,
+  reason?: string
+): Promise<{ ok: boolean; alreadyDecidedBy?: string; conflictBody?: any }> {
+  const endpoint = decideEndpointFor(request);
+  if (!endpoint) {
+    throw new Error(`No decide endpoint known for source=${request.source}`);
+  }
+  try {
+    await api(endpoint, {
+      method: "POST",
+      body: JSON.stringify({ decision, reason: reason || undefined }),
+    });
+    return { ok: true };
+  } catch (error: any) {
+    // Surface the W2.6 race body when a 409 lands.
+    if (error?.status === 409) {
+      // The api() helper has already extracted error.message from the body;
+      // we cannot read winningDecision here without changes to api(). For v1
+      // we fall back to a friendly message and let the caller toast it.
+      return {
+        ok: false,
+        alreadyDecidedBy: "another operator",
+        conflictBody: error?.message,
+      };
+    }
+    throw error;
+  }
+}
+
+function decisionStyle(decision: DecisionKind): string {
+  switch (decision) {
+    case "approve":
+      return "tcp-btn h-8 px-3 text-xs bg-emerald-600 text-white hover:bg-emerald-500";
+    case "cancel":
+      return "tcp-btn h-8 px-3 text-xs bg-rose-600 text-white hover:bg-rose-500";
+    case "rework":
+      return "tcp-btn h-8 px-3 text-xs";
+  }
+}
+
+function decisionLabel(decision: DecisionKind): string {
+  switch (decision) {
+    case "approve":
+      return "Approve";
+    case "rework":
+      return "Rework";
+    case "cancel":
+      return "Cancel run";
+  }
+}
+
+export function ApprovalsInboxPage({ toast }: AppPageProps) {
+  const queryClient = useQueryClient();
+  const [reasonByRequest, setReasonByRequest] = useState<Record<string, string>>({});
+  const [showReasonForm, setShowReasonForm] = useState<string | null>(null);
+
+  const pendingQuery = useQuery<PendingResponse>({
+    queryKey: ["approvals", "pending"],
+    queryFn: async () => {
+      const res = await api("/approvals/pending");
+      return (res || {}) as PendingResponse;
+    },
+    refetchInterval: 5000,
+    staleTime: 0,
+  });
+
+  const decideMutation = useMutation({
+    mutationFn: async (vars: {
+      request: ApprovalRequest;
+      decision: DecisionKind;
+      reason?: string;
+    }) => {
+      return postDecision(vars.request, vars.decision, vars.reason);
+    },
+    onSuccess: async (result, vars) => {
+      if (result.ok) {
+        toast(
+          "ok",
+          `${decisionLabel(vars.decision)}d gate ${vars.request.workflow_name || vars.request.run_id}`
+        );
+      } else {
+        toast("warn", `Already decided by ${result.alreadyDecidedBy || "another operator"}.`);
+      }
+      await queryClient.invalidateQueries({ queryKey: ["approvals", "pending"] });
+      setShowReasonForm(null);
+    },
+    onError: (error: any) => {
+      toast("err", error?.message || String(error));
+    },
+  });
+
+  const approvals = pendingQuery.data?.approvals ?? [];
+  const count = approvals.length;
+
+  return (
+    <AnimatedPage className="grid h-full min-h-0 gap-4">
+      <PageCard
+        title="Approvals Inbox"
+        subtitle="Pending approvals across every workflow that has paused on a human gate. Decisions go through the authoritative subsystem handler."
+        actions={
+          <div className="flex items-center gap-3 text-xs">
+            <Badge tone={count > 0 ? "warn" : "ok"}>{count} pending</Badge>
+            <button
+              className="tcp-btn h-8 px-3 text-xs"
+              onClick={() => pendingQuery.refetch()}
+              disabled={pendingQuery.isFetching}
+            >
+              <i data-lucide="refresh-cw"></i>
+              Refresh
+            </button>
+          </div>
+        }
+        fullHeight
+      >
+        {pendingQuery.isLoading ? (
+          <EmptyState title="Checking for pending approvals…" text="Polling /approvals/pending" />
+        ) : approvals.length === 0 ? (
+          <EmptyState
+            title="No approvals waiting"
+            text="Workflows with auto-injected approval gates pause here when they reach an external action."
+          />
+        ) : (
+          <div className="grid gap-4">
+            {approvals.map((request) => (
+              <PanelCard
+                key={request.request_id}
+                title={request.workflow_name || request.run_id}
+                subtitle={
+                  request.action_kind
+                    ? `${sourceLabel(request.source)} · ${request.action_kind}`
+                    : sourceLabel(request.source)
+                }
+                actions={
+                  <span className="text-xs text-tcp-text-tertiary">
+                    {formatRelativeTime(request.requested_at_ms)}
+                  </span>
+                }
+              >
+                <div className="grid gap-3 text-sm">
+                  {request.instructions ? (
+                    <div className="text-tcp-text-secondary">{request.instructions}</div>
+                  ) : null}
+                  {request.action_preview_markdown ? (
+                    <div
+                      className="prose prose-invert max-w-none text-sm"
+                      dangerouslySetInnerHTML={{
+                        __html: renderMarkdownSafe(request.action_preview_markdown),
+                      }}
+                    />
+                  ) : null}
+                  <div className="flex flex-wrap gap-2 text-xs text-tcp-text-tertiary">
+                    <span>
+                      <strong>run:</strong> <code>{request.run_id}</code>
+                    </span>
+                    {request.node_id ? (
+                      <span>
+                        <strong>node:</strong> <code>{request.node_id}</code>
+                      </span>
+                    ) : null}
+                    <span>
+                      <strong>tenant:</strong>{" "}
+                      <code>
+                        {request.tenant.org_id}/{request.tenant.workspace_id}
+                      </code>
+                    </span>
+                  </div>
+
+                  {showReasonForm === request.request_id ? (
+                    <div className="grid gap-2 rounded-md border border-tcp-border-subtle p-3">
+                      <label className="text-xs font-medium">
+                        Rework feedback (sent to the agent so it can revise)
+                      </label>
+                      <textarea
+                        className="tcp-input h-20 w-full rounded text-xs"
+                        placeholder="What should change before this can be approved?"
+                        value={reasonByRequest[request.request_id] || ""}
+                        onChange={(event) =>
+                          setReasonByRequest((current) => ({
+                            ...current,
+                            [request.request_id]: event.target.value,
+                          }))
+                        }
+                      />
+                      <div className="flex justify-end gap-2">
+                        <button
+                          className="tcp-btn h-8 px-3 text-xs"
+                          onClick={() => setShowReasonForm(null)}
+                          disabled={decideMutation.isPending}
+                        >
+                          Dismiss
+                        </button>
+                        <button
+                          className={decisionStyle("rework")}
+                          onClick={() =>
+                            decideMutation.mutate({
+                              request,
+                              decision: "rework",
+                              reason: reasonByRequest[request.request_id] || "",
+                            })
+                          }
+                          disabled={decideMutation.isPending}
+                        >
+                          Send back for rework
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex flex-wrap items-center gap-2 pt-1">
+                      {(request.decisions || ["approve", "rework", "cancel"]).map((raw) => {
+                        const decision = String(raw).toLowerCase() as DecisionKind;
+                        if (!["approve", "rework", "cancel"].includes(decision)) {
+                          return null;
+                        }
+                        if (decision === "rework") {
+                          return (
+                            <button
+                              key={decision}
+                              className={decisionStyle(decision)}
+                              onClick={() => setShowReasonForm(request.request_id)}
+                              disabled={decideMutation.isPending}
+                            >
+                              {decisionLabel(decision)}
+                            </button>
+                          );
+                        }
+                        return (
+                          <button
+                            key={decision}
+                            className={decisionStyle(decision)}
+                            onClick={() => decideMutation.mutate({ request, decision })}
+                            disabled={decideMutation.isPending}
+                          >
+                            {decisionLabel(decision)}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              </PanelCard>
+            ))}
+          </div>
+        )}
+      </PageCard>
+    </AnimatedPage>
+  );
+}
+
+function sourceLabel(source: string): string {
+  switch (source) {
+    case "automation_v2":
+      return "automation v2";
+    case "coder":
+      return "coder";
+    case "workflow":
+      return "workflow";
+    default:
+      return source;
+  }
+}
