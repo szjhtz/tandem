@@ -76,6 +76,9 @@ fn automation_node_legacy_builder(
 }
 
 fn automation_node_legacy_web_research_expected(node: &AutomationFlowNode) -> bool {
+    if automation_node_allows_optional_web_research(node) {
+        return false;
+    }
     if let Some(explicit) = automation_node_legacy_builder(node)
         .and_then(|builder| builder.get("web_research_expected"))
         .and_then(Value::as_bool)

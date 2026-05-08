@@ -881,6 +881,141 @@ fn mcp_citations_contract_defaults_to_artifact_only_without_local_read_gates() {
 }
 
 #[test]
+fn tandem_mcp_reference_node_does_not_require_web_research() {
+    let mut node = bare_node();
+    node.node_id = "gather_tandem_reference".to_string();
+    node.objective = "Use Tandem MCP docs as reference if needed via mcp.tandem_mcp.search_docs, mcp.tandem_mcp.get_doc, mcp.tandem_mcp.get_tandem_guide, or mcp.tandem_mcp.answer_how_to to collect relevant Tandem guidance for reliable automation runs, workflow validation, approvals, connector use, and Tandem Run details. Return only relevant excerpts and citations; do not invent undocumented Tandem behavior.".to_string();
+    node.output_contract = Some(AutomationFlowOutputContract {
+        kind: "structured_json".to_string(),
+        validator: Some(crate::AutomationOutputValidatorKind::StructuredJson),
+        enforcement: None,
+        schema: None,
+        summary_guidance: None,
+    });
+    node.metadata = Some(json!({
+        "builder": {
+            "task_class": "connector_research",
+            "web_research_expected": false
+        },
+        "tool_allowlist": [
+            "mcp.tandem_mcp.search_docs",
+            "mcp.tandem_mcp.get_doc",
+            "mcp.tandem_mcp.get_tandem_guide",
+            "mcp.tandem_mcp.answer_how_to"
+        ]
+    }));
+
+    let caps = automation_tool_capability_ids(&node, "artifact_write");
+
+    assert!(caps.contains(&"artifact_write".to_string()));
+    assert!(
+        !caps.contains(&"web_research".to_string()),
+        "Tandem MCP docs are connector-backed source tools, not general web research: {caps:?}"
+    );
+
+    let available_tool_names = [
+        "mcp_list".to_string(),
+        "mcp.tandem_mcp.search_docs".to_string(),
+        "mcp.tandem_mcp.get_doc".to_string(),
+        "mcp.tandem_mcp.get_tandem_guide".to_string(),
+        "mcp.tandem_mcp.answer_how_to".to_string(),
+        "write".to_string(),
+    ]
+    .into_iter()
+    .collect::<std::collections::HashSet<_>>();
+    let resolution = automation_resolve_capabilities(
+        &node,
+        "artifact_write",
+        &[
+            "mcp.tandem_mcp.search_docs".to_string(),
+            "mcp.tandem_mcp.get_doc".to_string(),
+            "mcp.tandem_mcp.get_tandem_guide".to_string(),
+            "mcp.tandem_mcp.answer_how_to".to_string(),
+            "mcp_list".to_string(),
+            "write".to_string(),
+        ],
+        &available_tool_names,
+    );
+
+    assert_eq!(
+        automation_capability_resolution_missing_capabilities(&resolution),
+        Vec::<String>::new(),
+        "Tandem MCP source tools plus write should satisfy preflight: {resolution:#}"
+    );
+}
+
+#[test]
+fn capability_ids_optional_web_context_offers_web_without_requiring_research_gate() {
+    let mut node = bare_node();
+    node.node_id = "gather_supporting_context".to_string();
+    node.objective = "Use web research and web_fetch only when useful to add supporting context for tools, market references, or claims that emerged from collect_reddit_signals. Do not replace Reddit as the primary evidence source. Return concise citations; if no web context is needed, return an empty citations list with rationale.".to_string();
+    node.output_contract = Some(AutomationFlowOutputContract {
+        kind: "citations".to_string(),
+        validator: Some(crate::AutomationOutputValidatorKind::GenericArtifact),
+        enforcement: None,
+        schema: None,
+        summary_guidance: None,
+    });
+    node.metadata = Some(json!({
+        "builder": {
+            "output_path": ".tandem/artifacts/gather-supporting-context.json"
+        }
+    }));
+
+    let caps = automation_tool_capability_ids(&node, "artifact_write");
+    let enforcement = automation_node_output_enforcement(&node);
+
+    assert!(
+        !caps.contains(&"web_research".to_string()),
+        "optional web context should offer web tools without making web research a hard preflight capability"
+    );
+    assert!(
+        !enforcement
+            .required_tools
+            .iter()
+            .any(|tool| tool == "websearch"),
+        "optional web context should not make websearch a required tool"
+    );
+    assert!(
+        !enforcement
+            .required_evidence
+            .iter()
+            .any(|evidence| evidence == "external_sources"),
+        "optional web context should not require external source evidence"
+    );
+    assert!(
+        !enforcement
+            .prewrite_gates
+            .iter()
+            .any(|gate| gate == "successful_web_research"),
+        "optional web context should not install a successful-web-research gate"
+    );
+
+    let requested = normalize_automation_requested_tools(
+        &node,
+        ".",
+        vec!["web_research".to_string(), "web_fetch".to_string()],
+    );
+    assert!(requested.iter().any(|tool| tool == "websearch"));
+    assert!(requested.iter().any(|tool| tool == "webfetch"));
+
+    let no_web_tools_available = ["read".to_string(), "write".to_string()]
+        .into_iter()
+        .collect::<std::collections::HashSet<_>>();
+    let resolution = automation_resolve_capabilities(
+        &node,
+        "artifact_write",
+        &["read".to_string(), "write".to_string()],
+        &no_web_tools_available,
+    );
+    assert_eq!(
+        automation_capability_resolution_missing_capabilities(&resolution),
+        Vec::<String>::new(),
+        "optional web context must not fail preflight when web tools are not offered: {resolution:#}"
+    );
+}
+
+#[test]
 fn auto_cleaned_marker_file_rejection_is_downgraded_when_output_is_valid() {
     assert!(super::should_downgrade_auto_cleaned_marker_rejection(
         Some("undeclared marker files created: .tandem_ack"),
