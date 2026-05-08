@@ -81,11 +81,7 @@ mod tests {
 
         assert!(workflow_step_allows_optional_web_research(objective));
         assert!(
-            !workflow_step_expects_web_research(
-                "gather_supporting_context",
-                "research",
-                objective,
-            ),
+            !workflow_step_expects_web_research("gather_supporting_context", "research", objective,),
             "optional web context must not become a required web-research step"
         );
 
@@ -783,6 +779,16 @@ The Notion page should include:
             "Summarize the local workspace docs.",
             &[]
         ));
+    }
+
+    #[test]
+    fn workflow_step_allows_optional_connector_references_for_tandem_docs() {
+        let objective = "Use Tandem MCP docs as reference if needed via mcp.tandem_mcp.search_docs, mcp.tandem_mcp.get_doc, mcp.tandem_mcp.get_tandem_guide, or mcp.tandem_mcp.answer_how_to to collect relevant Tandem guidance. Return only relevant excerpts and citations.";
+
+        assert!(workflow_step_allows_optional_connector_references(
+            objective
+        ));
+        assert!(workflow_plan_should_surface_mcp_discovery(objective, &[]));
     }
 
     #[test]

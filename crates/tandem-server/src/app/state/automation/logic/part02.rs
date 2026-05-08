@@ -443,6 +443,7 @@ pub(crate) fn normalize_automation_requested_tools(
         }
     }
     let connector_source_node = !automation_node_is_code_workflow(node)
+        && !enforcement::automation_node_allows_optional_connector_references(node)
         && (connector_hint_mentions || normalized.iter().any(|tool| tool.starts_with("mcp.")));
     if connector_source_node {
         normalized.retain(|tool| {
@@ -522,6 +523,7 @@ pub(crate) fn automation_requested_tools_for_node(
             &automation_connector_hint_text(node),
         );
     let connector_source_node = !automation_node_is_code_workflow(node)
+        && !enforcement::automation_node_allows_optional_connector_references(node)
         && (connector_hint_mentions
             || node_runtime_impl::automation_node_metadata_tool_allowlist(node)
                 .iter()
@@ -571,6 +573,7 @@ pub(crate) fn automation_node_prewrite_requirements_impl(
         .as_deref()
         .unwrap_or("artifact_only");
     let connector_source_node = !automation_node_is_code_workflow(node)
+        && !enforcement::automation_node_allows_optional_connector_references(node)
         && !super::prompting_impl::automation_node_concrete_mcp_tool_allowlist(node).is_empty();
     let workspace_inspection_required = requested_tools
         .iter()

@@ -124,6 +124,14 @@ pub(crate) fn automation_node_allows_optional_web_research(node: &AutomationFlow
     mentions_web && has_optional_language
 }
 
+pub(crate) fn automation_node_allows_optional_connector_references(
+    node: &AutomationFlowNode,
+) -> bool {
+    tandem_plan_compiler::api::workflow_step_allows_optional_connector_references(
+        &automation_node_workspace_intent_text(node),
+    )
+}
+
 pub(crate) fn automation_node_prefers_mcp_servers(node: &AutomationFlowNode) -> bool {
     automation_node_legacy_builder(node)
         .and_then(|builder| builder.get("preferred_mcp_servers"))

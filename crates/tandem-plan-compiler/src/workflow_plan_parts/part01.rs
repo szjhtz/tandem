@@ -145,6 +145,28 @@ pub fn workflow_step_allows_optional_web_research(text: &str) -> bool {
     mentions_web && has_optional_language
 }
 
+pub fn workflow_step_allows_optional_connector_references(text: &str) -> bool {
+    let lowered = text.trim().to_ascii_lowercase();
+    if lowered.is_empty() {
+        return false;
+    }
+    let mentions_connector = workflow_plan_mentions_connector_backed_sources(&lowered);
+    let has_optional_language = lowered.contains("as reference if needed")
+        || lowered.contains("reference if needed")
+        || lowered.contains("only when useful")
+        || lowered.contains("when useful")
+        || lowered.contains("if useful")
+        || lowered.contains("if needed")
+        || lowered.contains("if no context is needed")
+        || lowered.contains("if no connector context is needed")
+        || lowered.contains("empty citations list")
+        || lowered.contains("empty citations")
+        || lowered.contains("do not replace reddit")
+        || lowered.contains("do not replace the primary evidence");
+
+    mentions_connector && has_optional_language
+}
+
 pub fn workflow_step_metadata_defaults(
     step_id: &str,
     kind: &str,

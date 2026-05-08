@@ -726,12 +726,23 @@ pub(crate) fn render_automation_v2_prompt_with_options(
         &connector_discovery_text,
         &agent.mcp_policy.allowed_servers,
     ) {
+        let optional_connector_reference =
+            enforcement::automation_node_allows_optional_connector_references(node);
         let concrete_connector_tools = automation_prompt_concrete_connector_tools(
             requested_tools,
             &agent.mcp_policy.allowed_servers,
         );
         let concrete_connector_line = if concrete_connector_tools.is_empty() {
             String::new()
+        } else if optional_connector_reference {
+            format!(
+                "\n- Concrete connector source tools available for this node include: {}.\n- These connector tools are optional for this objective. Use a concrete `mcp.*` source tool only when the objective or upstream evidence makes connector-backed context useful.\n- If no connector context is needed, write the artifact with an empty citations/evidence list and a concise rationale instead of forcing a connector call.",
+                concrete_connector_tools
+                    .iter()
+                    .map(|tool| format!("`{tool}`"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
         } else {
             format!(
                 "\n- Concrete connector source tools available for this node include: {}.\n- If this node is collecting connector-backed source evidence, call at least one concrete `mcp.*` source tool after `mcp_list` and before writing the artifact. `mcp_list`, `glob`, `grep`, `edit`, and `apply_patch` are not source evidence.\n- If the connector tool returns no results or errors, preserve the attempted concrete tool name, arguments, and result/limitation in the artifact; do not silently report zero evidence after discovery only.",
@@ -822,9 +833,20 @@ pub(crate) fn render_automation_v2_prompt_with_options(
         write_scope_rule
     ));
     if let Some(output_path) = required_output_path.as_ref() {
+        let optional_connector_reference =
+            enforcement::automation_node_allows_optional_connector_references(node);
         let concrete_mcp_tools = automation_node_concrete_mcp_tool_allowlist(node);
         let concrete_mcp_line = if concrete_mcp_tools.is_empty() {
             String::new()
+        } else if optional_connector_reference {
+            format!(
+                "\n- For optional connector-backed context, call a concrete source tool only if useful for this node: {}. If not useful, do not force a connector call; record an empty citations/evidence list with rationale.",
+                concrete_mcp_tools
+                    .iter()
+                    .map(|tool| format!("`{}`", tool))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
         } else {
             format!(
                 "\n- For connector-backed source work, `mcp_list` is discovery only; it does not satisfy source evidence. Call at least one concrete source tool before writing the artifact: {}.",
@@ -848,9 +870,15 @@ pub(crate) fn render_automation_v2_prompt_with_options(
                 output_path
             )
         };
+        let concrete_sources_line = if optional_connector_reference {
+            "- Read or inspect concrete sources only when they are required or useful for the node."
+        } else {
+            "- Read or inspect the concrete sources required by the node."
+        };
         sections.push(format!(
-            "Artifact Delivery Order:\n- If MCP Discovery is present, call `mcp_list` before reading or comparing sources so you know which connector-backed tools are available.{}\n- If you need to understand catalog availability or surface a missing connector, call `mcp_list_catalog` next.\n- If the gap requires operator review, use `mcp_request_capability` to file it through the approval queue.\n- Read or inspect the concrete sources required by the node.{}\n- On retries, rewrite the required files in the current attempt even if the content is identical.\n- Do not stop with only a chat summary; the required files are the deliverables.",
+            "Artifact Delivery Order:\n- If MCP Discovery is present, call `mcp_list` before reading or comparing sources so you know which connector-backed tools are available.{}\n- If you need to understand catalog availability or surface a missing connector, call `mcp_list_catalog` next.\n- If the gap requires operator review, use `mcp_request_capability` to file it through the approval queue.\n{}{}\n- On retries, rewrite the required files in the current attempt even if the content is identical.\n- Do not stop with only a chat summary; the required files are the deliverables.",
             concrete_mcp_line,
+            concrete_sources_line,
             if workspace_write_order.is_empty() {
                 format!(
                     "\n- Write the required run artifact to `{}` before ending this attempt.",

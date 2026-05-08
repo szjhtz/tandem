@@ -434,7 +434,7 @@ pub(crate) fn validate_automation_artifact_output_with_context(
         let connector_discovery_required =
             tandem_plan_compiler::api::workflow_plan_mentions_connector_backed_sources(
                 &connector_discovery_text,
-            );
+            ) && !enforcement::automation_node_allows_optional_connector_references(node);
         let selected_mcp_server_names = tool_telemetry
             .get("capability_resolution")
             .and_then(|value| value.get("mcp_tool_diagnostics"))
@@ -1240,7 +1240,7 @@ pub(crate) fn validate_automation_artifact_output_with_context(
         let connector_discovery_required =
             tandem_plan_compiler::api::workflow_plan_mentions_connector_backed_sources(
                 &connector_discovery_text,
-            );
+            ) && !enforcement::automation_node_allows_optional_connector_references(node);
         let requires_read = enforcement.required_tools.iter().any(|tool| tool == "read");
         let requires_websearch = enforcement
             .required_tools

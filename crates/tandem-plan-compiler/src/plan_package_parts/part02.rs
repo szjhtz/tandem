@@ -379,6 +379,10 @@ fn step_connector_requirements(step: &WorkflowPlanStep<Value, Value>) -> Vec<Con
     let optional_web_context = format!("{}\n{}", step.objective, builder_prompt);
     let optional_web_research =
         crate::workflow_plan::workflow_step_allows_optional_web_research(&optional_web_context);
+    let optional_connector_references =
+        crate::workflow_plan::workflow_step_allows_optional_connector_references(
+            &optional_web_context,
+        );
     let web_research_expected = step
         .metadata
         .as_ref()
@@ -408,8 +412,11 @@ fn step_connector_requirements(step: &WorkflowPlanStep<Value, Value>) -> Vec<Con
                 normalized_capability.as_str(),
                 "websearch" | "webfetch" | "web_fetch" | "web_research"
             );
+            let optional_connector_tool =
+                optional_connector_references && normalized_capability.starts_with("mcp.");
             if capability.is_empty()
                 || (optional_web_research && optional_web_tool)
+                || optional_connector_tool
                 || requirements
                     .iter()
                     .any(|existing| existing.capability == capability)

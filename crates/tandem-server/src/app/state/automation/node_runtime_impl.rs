@@ -374,6 +374,7 @@ pub(crate) fn normalize_automation_requested_tools(
         }
     }
     let connector_source_node = !automation_node_is_code_workflow(node)
+        && !super::enforcement::automation_node_allows_optional_connector_references(node)
         && (connector_hint_mentions || normalized.iter().any(|tool| tool.starts_with("mcp.")));
     if connector_source_node {
         normalized.retain(|tool| {
@@ -601,6 +602,7 @@ pub(crate) fn automation_requested_tools_for_node(
             &automation_connector_hint_text(node),
         );
     let connector_source_node = !automation_node_is_code_workflow(node)
+        && !super::enforcement::automation_node_allows_optional_connector_references(node)
         && (connector_hint_mentions
             || automation_node_metadata_tool_allowlist(node)
                 .iter()

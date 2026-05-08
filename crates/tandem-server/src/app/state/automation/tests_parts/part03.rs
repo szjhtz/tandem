@@ -1307,6 +1307,85 @@ fn validation_accepts_structured_json_handoff_from_verified_artifact() {
 }
 
 #[test]
+fn validation_accepts_optional_tandem_mcp_reference_without_connector_call() {
+    let workspace_root = std::env::temp_dir().join(format!(
+        "tandem-optional-mcp-reference-{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&workspace_root).expect("create workspace");
+    let mut node = bare_node();
+    node.node_id = "gather_tandem_reference".to_string();
+    node.objective = "Use Tandem MCP docs as reference if needed via mcp.tandem_mcp.search_docs, mcp.tandem_mcp.get_doc, mcp.tandem_mcp.get_tandem_guide, or mcp.tandem_mcp.answer_how_to to collect relevant Tandem guidance for reliable automation runs, workflow validation, approvals, connector use, and Tandem Run details. Return only relevant excerpts and citations; do not invent undocumented Tandem behavior.".to_string();
+    node.output_contract = Some(AutomationFlowOutputContract {
+        kind: "structured_json".to_string(),
+        validator: Some(crate::AutomationOutputValidatorKind::StructuredJson),
+        enforcement: None,
+        schema: None,
+        summary_guidance: None,
+    });
+    node.metadata = Some(json!({
+        "builder": {
+            "output_path": ".tandem/artifacts/gather-tandem-reference.json"
+        },
+        "tool_allowlist": [
+            "mcp.tandem_mcp.search_docs",
+            "mcp.tandem_mcp.get_doc",
+            "mcp.tandem_mcp.get_tandem_guide",
+            "mcp.tandem_mcp.answer_how_to"
+        ]
+    }));
+    let artifact = serde_json::to_string_pretty(&json!({
+        "status": "completed",
+        "citations": [],
+        "rationale": "No Tandem docs context was needed for the upstream findings in this run."
+    }))
+    .expect("serialize artifact");
+    let session = Session::new(Some("{\"status\":\"completed\"}".to_string()), None);
+    let snapshot = std::collections::BTreeSet::new();
+
+    let (accepted, validation, rejected) = validate_automation_artifact_output(
+        &node,
+        &session,
+        workspace_root.to_str().expect("workspace root"),
+        "{\"status\":\"completed\"}",
+        &json!({
+            "executed_tools": ["write"],
+            "requested_tools": [
+                "mcp_list",
+                "mcp.tandem_mcp.search_docs",
+                "mcp.tandem_mcp.get_doc",
+                "mcp.tandem_mcp.get_tandem_guide",
+                "mcp.tandem_mcp.answer_how_to",
+                "write"
+            ],
+            "capability_resolution": {
+                "mcp_tool_diagnostics": {
+                    "selected_servers": ["tandem-mcp"]
+                }
+            },
+            "verified_output_materialized_by_current_attempt": true
+        }),
+        None,
+        Some((
+            ".tandem/artifacts/gather-tandem-reference.json".to_string(),
+            artifact,
+        )),
+        &snapshot,
+    );
+
+    assert!(accepted.is_some(), "{validation:#}");
+    assert_eq!(validation["validation_outcome"], "passed");
+    assert!(!validation["unmet_requirements"]
+        .as_array()
+        .expect("unmet array")
+        .iter()
+        .any(|value| value.as_str() == Some("mcp_connector_source_missing")));
+    assert!(rejected.is_none(), "{rejected:?}");
+
+    let _ = std::fs::remove_dir_all(&workspace_root);
+}
+
+#[test]
 fn validation_accepts_notion_fetch_markdown_as_connector_source_evidence() {
     let workspace_root = std::env::temp_dir().join(format!(
         "tandem-notion-fetch-artifact-{}",

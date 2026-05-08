@@ -597,6 +597,9 @@ pub(crate) fn automation_requested_server_scoped_mcp_tools(
     ) {
         return Vec::new();
     }
+    if enforcement::automation_node_allows_optional_connector_references(node) {
+        return Vec::new();
+    }
     let concrete_tools = super::prompting_impl::automation_node_concrete_mcp_tool_allowlist(node);
     if !concrete_tools.is_empty() {
         return concrete_tools;

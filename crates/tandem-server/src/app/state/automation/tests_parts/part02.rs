@@ -900,6 +900,82 @@ fn tandem_mcp_reference_node_does_not_require_web_research() {
 }
 
 #[test]
+fn optional_tandem_mcp_reference_does_not_prompt_for_required_connector_source() {
+    let mut node = bare_node();
+    node.node_id = "gather_tandem_reference".to_string();
+    node.objective = "Use Tandem MCP docs as reference if needed via mcp.tandem_mcp.search_docs, mcp.tandem_mcp.get_doc, mcp.tandem_mcp.get_tandem_guide, or mcp.tandem_mcp.answer_how_to to collect relevant Tandem guidance for reliable automation runs, workflow validation, approvals, connector use, and Tandem Run details. Return only relevant excerpts and citations; do not invent undocumented Tandem behavior.".to_string();
+    node.output_contract = Some(AutomationFlowOutputContract {
+        kind: "structured_json".to_string(),
+        validator: Some(crate::AutomationOutputValidatorKind::StructuredJson),
+        enforcement: None,
+        schema: None,
+        summary_guidance: None,
+    });
+    node.metadata = Some(json!({
+        "builder": {
+            "output_path": ".tandem/artifacts/gather-tandem-reference.json"
+        },
+        "tool_allowlist": [
+            "mcp.tandem_mcp.search_docs",
+            "mcp.tandem_mcp.get_doc",
+            "mcp.tandem_mcp.get_tandem_guide",
+            "mcp.tandem_mcp.answer_how_to"
+        ]
+    }));
+    let automation = automation_with_output_targets(vec![node.clone()], Vec::new());
+    let agent = crate::AutomationAgentProfile {
+        agent_id: "a1".to_string(),
+        template_id: None,
+        display_name: "Docs Researcher".to_string(),
+        avatar_url: None,
+        model_policy: None,
+        skills: Vec::new(),
+        tool_policy: crate::AutomationAgentToolPolicy {
+            allowlist: Vec::new(),
+            denylist: Vec::new(),
+        },
+        mcp_policy: crate::AutomationAgentMcpPolicy {
+            allowed_servers: vec!["tandem-mcp".to_string()],
+            allowed_tools: None,
+        },
+        approval_policy: None,
+    };
+    let prompt = render_automation_v2_prompt(
+        &automation,
+        "/tmp/workspace",
+        "run-optional-mcp",
+        &node,
+        1,
+        &agent,
+        &[],
+        &[
+            "mcp_list".to_string(),
+            "mcp.tandem_mcp.search_docs".to_string(),
+            "mcp.tandem_mcp.get_doc".to_string(),
+            "mcp.tandem_mcp.get_tandem_guide".to_string(),
+            "mcp.tandem_mcp.answer_how_to".to_string(),
+            "write".to_string(),
+        ],
+        None,
+        None,
+        None,
+    );
+
+    assert!(
+        prompt.contains("These connector tools are optional for this objective"),
+        "{prompt}"
+    );
+    assert!(
+        !prompt.contains("Call at least one concrete source tool before writing"),
+        "{prompt}"
+    );
+    assert!(
+        !prompt.contains("call at least one concrete `mcp.*` source tool"),
+        "{prompt}"
+    );
+}
+
+#[test]
 fn capability_ids_optional_web_context_offers_web_without_requiring_research_gate() {
     let mut node = bare_node();
     node.node_id = "gather_supporting_context".to_string();
