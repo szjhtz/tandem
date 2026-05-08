@@ -132,6 +132,10 @@ function resolveTargetPath(pathname) {
   }
   if (rest[0] === "reindex") return "/admin/reindex";
   if (rest[0] === "config") return "/admin/config";
+  if (rest[0] === "prompts" && rest.length === 1) return "/admin/prompts";
+  if (rest[0] === "prompts" && rest.length === 2) {
+    return `/admin/prompts/${encodeIncomingPathSegment(rest[1])}`;
+  }
   return "";
 }
 
@@ -179,7 +183,9 @@ export function createKnowledgebaseApiHandler(deps) {
       (incoming.pathname === "/api/knowledgebase/collections" && method !== "GET") ||
       (incoming.pathname === "/api/knowledgebase/documents" && !["GET", "POST"].includes(method)) ||
       (incoming.pathname.startsWith("/api/knowledgebase/documents/") && !["GET", "PUT", "DELETE"].includes(method)) ||
-      (incoming.pathname === "/api/knowledgebase/reindex" && method !== "POST")
+      (incoming.pathname === "/api/knowledgebase/reindex" && method !== "POST") ||
+      (incoming.pathname === "/api/knowledgebase/prompts" && method !== "GET") ||
+      (incoming.pathname.startsWith("/api/knowledgebase/prompts/") && !["GET", "PUT", "DELETE"].includes(method))
     ) {
       sendJson(res, 405, { ok: false, error: "Method not allowed." });
       return true;

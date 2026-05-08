@@ -5,6 +5,7 @@ import { renderIcons } from "../app/icons.js";
 import { renderMarkdownSafe } from "../lib/markdown";
 import { useCapabilities } from "../features/system/queries.ts";
 import { KnowledgebaseUploadPanel } from "../features/knowledgebase/KnowledgebaseUploadPanel";
+import { KnowledgebasePromptsPanel } from "../features/knowledgebase/KnowledgebasePromptsPanel";
 import { ConfirmDialog, PromptDialog } from "../components/ControlPanelDialogs";
 import { MemoryImportDialog } from "../components/MemoryImportDialog";
 import { AnimatedPage, PanelCard, Toolbar, Badge } from "../ui/index.tsx";
@@ -549,6 +550,7 @@ export function FilesPage({ api, client, toast }: AppPageProps) {
         toast={toast}
         defaultCollectionId={defaultKnowledgebaseCollectionId}
       />
+      <KnowledgebasePromptsPanel api={api} toast={toast} />
       <PanelCard
         fullHeight
         title="Files"
