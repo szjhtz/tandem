@@ -37,6 +37,48 @@ function useDialogIconRender(active: boolean) {
   return rootRef;
 }
 
+function safeWorkflowExportName(raw: string) {
+  const cleaned = String(raw || "workflow-automation")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return cleaned || "workflow-automation";
+}
+
+function downloadWorkflowRecoveryBundle(workflowEditDraft: any) {
+  const automationId = String(workflowEditDraft?.automationId || "").trim();
+  const bundle = {
+    exported_at: new Date().toISOString(),
+    export_kind: "tandem_workflow_recovery_bundle",
+    export_version: 1,
+    automation_id: automationId,
+    name: String(workflowEditDraft?.name || automationId || "Workflow automation").trim(),
+    description: String(workflowEditDraft?.description || "").trim(),
+    recovery_prompt: String(workflowEditDraft?.recoveryPrompt || "").trim(),
+    source_automation: workflowEditDraft?.sourceAutomation || null,
+    editable_snapshot: {
+      schedule_kind: workflowEditDraft?.scheduleKind || "",
+      workspace_root: workflowEditDraft?.workspaceRoot || "",
+      execution_mode: workflowEditDraft?.executionMode || "",
+      selected_mcp_servers: workflowEditDraft?.selectedMcpServers || [],
+      selected_mcp_tools: workflowEditDraft?.selectedMcpTools || null,
+      nodes: workflowEditDraft?.nodes || [],
+    },
+  };
+  const blob = new Blob([JSON.stringify(bundle, null, 2)], {
+    type: "application/json;charset=utf-8",
+  });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = `${safeWorkflowExportName(automationId || workflowEditDraft?.name)}-recovery.json`;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+}
+
 export function LegacyAutomationEditDialog({
   editDraft,
   setEditDraft,
@@ -301,6 +343,7 @@ export function WorkflowAutomationEditDialog({
   updateWorkflowAutomationMutation,
   automationsV2List = [],
   client,
+  onRecreateWorkflowAutomation,
 }: any) {
   const dialogRef = useDialogIconRender(!!workflowEditDraft);
   if (!workflowEditDraft) return null;
@@ -398,6 +441,57 @@ export function WorkflowAutomationEditDialog({
                     {validateWorkspaceRootInput(workflowEditDraft.workspaceRoot)}
                   </div>
                 ) : null}
+              </div>
+            </AccordionSection>
+
+            <AccordionSection
+              title="Recovery"
+              description="Export the compiled workflow and preserved planning metadata, or seed a clean workflow generation from the original prompt."
+              icon="archive"
+            >
+              <div className="rounded-lg border border-slate-800/70 bg-slate-950/30 p-3">
+                <div className="text-xs uppercase tracking-[0.16em] text-slate-500">
+                  Original prompt
+                </div>
+                {String(workflowEditDraft.recoveryPrompt || "").trim() ? (
+                  <pre className="mt-2 max-h-36 overflow-auto whitespace-pre-wrap rounded-md border border-slate-800/70 bg-black/20 p-3 text-xs leading-5 text-slate-300">
+                    {String(workflowEditDraft.recoveryPrompt || "").trim()}
+                  </pre>
+                ) : (
+                  <div className="mt-2 text-xs text-amber-200">
+                    No original workflow prompt was found in this automation metadata. Export still
+                    includes the compiled automation for manual recovery.
+                  </div>
+                )}
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  className="tcp-btn h-9 px-3 text-sm"
+                  onClick={() => downloadWorkflowRecoveryBundle(workflowEditDraft)}
+                >
+                  <i data-lucide="download"></i>
+                  Export recovery JSON
+                </button>
+                <button
+                  type="button"
+                  className="tcp-btn h-9 px-3 text-sm"
+                  onClick={() =>
+                    onRecreateWorkflowAutomation?.({
+                      automationId: workflowEditDraft.automationId,
+                      prompt: workflowEditDraft.recoveryPrompt,
+                    })
+                  }
+                  disabled={!String(workflowEditDraft.recoveryPrompt || "").trim()}
+                >
+                  <i data-lucide="refresh-cw"></i>
+                  Re-create from prompt
+                </button>
+              </div>
+              <div className="text-xs text-slate-500">
+                Re-create does not mutate this automation. It opens the current workflow generator
+                with the recovered prompt so upgrades to the compiler/runtime can produce a fresh
+                workflow.
               </div>
             </AccordionSection>
 

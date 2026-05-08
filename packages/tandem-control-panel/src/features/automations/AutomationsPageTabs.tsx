@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { renderIcons } from "../../app/icons.js";
+import { seedAutomationPlanner } from "../chat/chatPageHelpers";
 
 type ActiveTab = "create" | "calendar" | "list" | "running";
 type CreateMode = "simple" | "advanced" | "composer";
@@ -10,6 +11,41 @@ function SectionTitle({ icon, label }: { icon: string; label: string }) {
       <i data-lucide={icon} className="h-4 w-4 text-amber-300/90"></i>
       <span>{label}</span>
     </span>
+  );
+}
+
+function recreateWorkflowFromPrompt({
+  payload,
+  toast,
+  setAdvancedEditAutomation,
+  setCreateMode,
+  setTab,
+  composerEnabled,
+}: {
+  payload: any;
+  toast: any;
+  setAdvancedEditAutomation: (automation: any | null) => void;
+  setCreateMode: (mode: CreateMode) => void;
+  setTab: (tab: ActiveTab) => void;
+  composerEnabled: boolean;
+}) {
+  const prompt = String(payload?.prompt || "").trim();
+  if (!prompt) {
+    toast("err", "No original prompt was found for this workflow.");
+    return;
+  }
+  seedAutomationPlanner({
+    prompt,
+    plan_source: "workflow_recreate",
+  });
+  setAdvancedEditAutomation(null);
+  setCreateMode(composerEnabled ? "composer" : "simple");
+  setTab("create");
+  toast(
+    "ok",
+    composerEnabled
+      ? "Opened AI Composer with the recovered workflow prompt."
+      : "Opened Create with the recovered workflow prompt."
   );
 }
 
@@ -79,6 +115,15 @@ export function AutomationsPageTabs({
     }
     setTab(nextTab);
   };
+  const onRecreateWorkflowAutomation = (payload: any) =>
+    recreateWorkflowFromPrompt({
+      payload,
+      toast,
+      setAdvancedEditAutomation,
+      setCreateMode,
+      setTab,
+      composerEnabled,
+    });
 
   return (
     <div className="flex flex-col h-full gap-4">
@@ -239,6 +284,7 @@ export function AutomationsPageTabs({
                 setCreateMode("advanced");
                 setTab("create");
               }}
+              onRecreateWorkflowAutomation={onRecreateWorkflowAutomation}
             />
           </PageCardComponent>
         ) : tab === "list" ? (
@@ -259,6 +305,7 @@ export function AutomationsPageTabs({
                 setCreateMode("advanced");
                 setTab("create");
               }}
+              onRecreateWorkflowAutomation={onRecreateWorkflowAutomation}
             />
           </PageCardComponent>
         ) : tab === "running" ? (
@@ -279,6 +326,7 @@ export function AutomationsPageTabs({
                 setCreateMode("advanced");
                 setTab("create");
               }}
+              onRecreateWorkflowAutomation={onRecreateWorkflowAutomation}
             />
           </PageCardComponent>
         ) : (
@@ -299,6 +347,7 @@ export function AutomationsPageTabs({
                 setCreateMode("advanced");
                 setTab("create");
               }}
+              onRecreateWorkflowAutomation={onRecreateWorkflowAutomation}
             />
           </PageCardComponent>
         )}

@@ -142,6 +142,7 @@ export function MyAutomationsContent({ state, actions, helpers }: any) {
     isPausedAutomation,
     onSelectRunId,
     onOpenRunningView,
+    onRecreateWorkflowAutomation,
     toast,
     setDeleteConfirm,
     navigate,
@@ -1170,6 +1171,7 @@ export function MyAutomationsContent({ state, actions, helpers }: any) {
         updateWorkflowAutomationMutation={updateWorkflowAutomationMutation}
         automationsV2List={automationsV2 ?? []}
         client={client}
+        onRecreateWorkflowAutomation={onRecreateWorkflowAutomation}
       />
       <DeleteAutomationDialog
         deleteConfirm={deleteConfirm}

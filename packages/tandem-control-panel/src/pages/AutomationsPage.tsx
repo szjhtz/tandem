@@ -58,6 +58,8 @@ interface WorkflowEditDraft {
   automationId: string;
   name: string;
   description: string;
+  recoveryPrompt: string;
+  sourceAutomation: any | null;
   scheduleKind: "manual" | "cron" | "interval";
   cronExpression: string;
   intervalSeconds: string;
@@ -705,6 +707,8 @@ function workflowAutomationToEditDraft(automation: any): WorkflowEditDraft | nul
     automationId,
     name: String(automation?.name || automationId).trim(),
     description: String(automation?.description || "").trim(),
+    recoveryPrompt: extractWorkflowRecoveryPrompt(automation),
+    sourceAutomation: cloneJsonValue(automation),
     scheduleKind: scheduleEditor.scheduleKind,
     cronExpression: scheduleEditor.cronExpression,
     intervalSeconds: String(scheduleEditor.intervalSeconds),
@@ -1205,6 +1209,36 @@ function workflowNodeModelPolicyWithOverride(
   return nextPolicy;
 }
 
+function firstNonEmptyString(...values: any[]) {
+  for (const value of values) {
+    const text = String(value || "").trim();
+    if (text) return text;
+  }
+  return "";
+}
+
+function extractWorkflowRecoveryPrompt(automation: any) {
+  const metadata =
+    automation?.metadata && typeof automation.metadata === "object" ? automation.metadata : {};
+  return firstNonEmptyString(
+    metadata?.original_prompt,
+    metadata?.originalPrompt,
+    metadata?.normalized_prompt,
+    metadata?.normalizedPrompt,
+    metadata?.plan_package_bundle?.plan?.mission?.goal,
+    metadata?.planPackageBundle?.plan?.mission?.goal,
+    metadata?.plan_package?.plan?.mission?.goal,
+    metadata?.planPackage?.plan?.mission?.goal,
+    metadata?.plan_package?.scope_snapshot?.plan?.mission?.goal,
+    metadata?.planPackage?.scopeSnapshot?.plan?.mission?.goal,
+    metadata?.plan_package_bundle?.scope_snapshot?.mission?.goal,
+    metadata?.planPackageBundle?.scopeSnapshot?.mission?.goal,
+    automation?.mission?.goal,
+    automation?.mission?.objective,
+    automation?.objective
+  );
+}
+
 // ─── Wizard Steps ───────────────────────────────────────────────────────────
 
 // moved Step1Goal to features/automations/create
@@ -1224,6 +1258,7 @@ export function MyAutomations({
   onSelectRunId,
   onOpenRunningView,
   onOpenAdvancedEdit,
+  onRecreateWorkflowAutomation,
   defaultRunningSectionsOpen,
 }: {
   client: any;
@@ -1234,6 +1269,7 @@ export function MyAutomations({
   onSelectRunId: (runId: string) => void;
   onOpenRunningView: () => void;
   onOpenAdvancedEdit: (automation: any) => void;
+  onRecreateWorkflowAutomation?: (payload: any) => void;
   defaultRunningSectionsOpen?: {
     active?: boolean;
     issues?: boolean;
@@ -1275,6 +1311,7 @@ export function MyAutomations({
       onSelectRunId={onSelectRunId}
       onOpenRunningView={onOpenRunningView}
       onOpenAdvancedEdit={onOpenAdvancedEdit}
+      onRecreateWorkflowAutomation={onRecreateWorkflowAutomation}
       defaultRunningSectionsOpen={defaultRunningSectionsOpen}
       automationWizardConfig={AUTOMATION_WIZARD_CONFIG}
       helperFns={{
