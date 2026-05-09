@@ -158,6 +158,8 @@ pub(crate) fn publish_automation_v2_failure_event(
             "agent_id": node.map(|row| row.agent_id.as_str()),
             "agent_role": node.map(|row| row.agent_id.as_str()),
             "component": "automation_v2",
+            "effective_execution_profile": run.effective_execution_profile.as_str(),
+            "requested_execution_profile": run.requested_execution_profile.map(|p| p.as_str()),
             "attempt": attempts,
             "max_attempts": max_attempts,
             "retry_exhausted": attempts >= max_attempts,
