@@ -13,6 +13,7 @@ import {
 } from "../ui/index.tsx";
 import { EmptyState } from "./ui";
 import { LazyJson } from "../features/automations/LazyJson";
+import { GraduationSummaryPanel } from "../features/automations/GraduationSummaryPanel";
 import { formatCompactNumber } from "../lib/format";
 import type { AppPageProps } from "./pageTypes";
 
@@ -395,6 +396,13 @@ export function DashboardPage(props: AppPageProps) {
             ))}
           </div>
         )}
+      </PanelCard>
+
+      <PanelCard
+        title="Graduation review"
+        subtitle="Per-class accept rate for relaxed Guided/YOLO outputs."
+      >
+        <GraduationSummaryPanel client={client} />
       </PanelCard>
 
       <SplitView
