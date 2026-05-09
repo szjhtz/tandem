@@ -52,6 +52,11 @@ import { MyAutomationsContent } from "./MyAutomationsContent";
 import { useBufferedAppender } from "./useBufferedAppender";
 import { useSelectedRunLifecycle } from "./useSelectedRunLifecycle";
 import { buildPlannerProviderOptions } from "../planner/plannerShared";
+import {
+  executionProfileLabel,
+  workflowEffectiveExecutionProfile,
+  workflowRequestedExecutionProfile,
+} from "./AutomationsRunHelpers";
 
 export function MyAutomationsContainer({
   client,
@@ -420,11 +425,17 @@ export function MyAutomationsContainer({
     onError: (error) => toast("err", error instanceof Error ? error.message : String(error)),
   });
   const runNowV2Mutation = useMutation({
-    mutationFn: async ({ id }: { id: string }) => {
+    mutationFn: async ({
+      id,
+      executionProfile,
+    }: {
+      id: string;
+      executionProfile?: "strict" | "guided" | "yolo";
+    }) => {
       if (!client?.automationsV2?.runNow) {
         throw new Error("Workflow run now is not available in this client.");
       }
-      return client.automationsV2.runNow(id);
+      return client.automationsV2.runNow(id, executionProfile ? { executionProfile } : undefined);
     },
     onSuccess: async (payload: any) => {
       const runId = String(payload?.run?.run_id || payload?.run?.runId || "").trim();
@@ -1911,6 +1922,13 @@ export function MyAutomationsContainer({
     if (runStatusDerivedNote) {
       rows.push({ label: "status note", value: runStatusDerivedNote });
     }
+    const effectiveProfile = workflowEffectiveExecutionProfile(selectedRun);
+    const requestedProfile = workflowRequestedExecutionProfile(selectedRun);
+    const profileValue =
+      requestedProfile && requestedProfile !== effectiveProfile
+        ? `${executionProfileLabel(effectiveProfile)} (requested ${executionProfileLabel(requestedProfile)})`
+        : executionProfileLabel(effectiveProfile);
+    rows.push({ label: "execution profile", value: profileValue });
     rows.push({ label: "artifacts", value: String(runArtifacts.length) });
     if (isWorkflowRun) {
       rows.push({ label: "tasks", value: String(workflowProjection.tasks.length) });

@@ -3299,8 +3299,12 @@ class AutomationsV2 {
 
   async runNow(
     id: string,
-    options?: { dryRun?: boolean }
+    options?: { dryRun?: boolean; executionProfile?: "strict" | "guided" | "yolo" }
   ): Promise<{ ok?: boolean; dry_run?: boolean; dryRun?: boolean; run?: AutomationV2RunRecord }> {
+    const body: Record<string, unknown> = { dry_run: options?.dryRun === true };
+    if (options?.executionProfile) {
+      body.execution_profile = options.executionProfile;
+    }
     return this.req<{
       ok?: boolean;
       dry_run?: boolean;
@@ -3308,9 +3312,7 @@ class AutomationsV2 {
       run?: AutomationV2RunRecord;
     }>(`/automations/v2/${encodeURIComponent(id)}/run_now`, {
       method: "POST",
-      body: JSON.stringify({
-        dry_run: options?.dryRun === true,
-      }),
+      body: JSON.stringify(body),
     });
   }
 

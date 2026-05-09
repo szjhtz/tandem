@@ -1,4 +1,5 @@
 import { DeferredJson } from "./LazyJson";
+import { ExperimentalArtifactBadge } from "./ExecutionProfileBadges";
 import { normalizeManagedFilesExplorerPath } from "../files/explorerHandoff";
 
 type WorkflowArtifactEntry = {
@@ -8,6 +9,17 @@ type WorkflowArtifactEntry = {
   paths: string[];
   artifact: unknown;
 };
+
+function extractArtifactValidation(artifact: unknown): unknown {
+  if (!artifact || typeof artifact !== "object") return null;
+  const record = artifact as Record<string, unknown>;
+  return (
+    record.artifact_validation ||
+    record.artifactValidation ||
+    (record.validation && typeof record.validation === "object" ? record.validation : null) ||
+    null
+  );
+}
 
 type WorkflowArtifactsPanelProps = {
   artifactCount: number;
@@ -47,7 +59,12 @@ export function WorkflowArtifactsPanel({
               >
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-xs font-medium text-slate-200">{entry.name}</span>
-                  <span className="tcp-subtle text-[11px]">{entry.kind || "artifact"}</span>
+                  <span className="flex items-center gap-1 text-[11px]">
+                    <ExperimentalArtifactBadge
+                      validation={extractArtifactValidation(entry.artifact)}
+                    />
+                    <span className="tcp-subtle">{entry.kind || "artifact"}</span>
+                  </span>
                 </div>
               </summary>
               {entry.paths.length ? (

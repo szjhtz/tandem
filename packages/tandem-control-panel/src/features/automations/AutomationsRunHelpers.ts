@@ -16,6 +16,87 @@ import {
   workflowSessionIds,
 } from "../orchestration/workflowStability";
 
+export type ExecutionProfile = "strict" | "guided" | "yolo";
+
+export function executionProfileLabel(value?: string | null): string {
+  if (value === "yolo") return "YOLO";
+  if (value === "guided") return "Guided";
+  return "Strict";
+}
+
+export function executionProfileDescription(value?: string | null): string {
+  if (value === "yolo") {
+    return "Exploratory run. Runtime logging, receipts, spend caps, and approvals remain active.";
+  }
+  if (value === "guided") {
+    return "Assisted iteration. Non-critical validation failures become warnings; critical failures still block.";
+  }
+  return "Production discipline. All validators enforced.";
+}
+
+export function workflowEffectiveExecutionProfile(run: any): ExecutionProfile {
+  const raw = String(
+    run?.effective_execution_profile ||
+      run?.effectiveExecutionProfile ||
+      run?.requested_execution_profile ||
+      run?.requestedExecutionProfile ||
+      ""
+  )
+    .trim()
+    .toLowerCase();
+  if (raw === "guided" || raw === "yolo") return raw;
+  return "strict";
+}
+
+export function workflowRequestedExecutionProfile(run: any): ExecutionProfile | null {
+  const raw = String(run?.requested_execution_profile || run?.requestedExecutionProfile || "")
+    .trim()
+    .toLowerCase();
+  if (raw === "strict" || raw === "guided" || raw === "yolo") return raw;
+  return null;
+}
+
+export function artifactValidationIsExperimental(validation: any): boolean {
+  if (!validation || typeof validation !== "object") return false;
+  return Boolean(
+    validation.experimental === true ||
+    String(validation.effective_outcome || validation.effectiveOutcome || "")
+      .trim()
+      .toLowerCase() === "experimental"
+  );
+}
+
+export function artifactValidationRelaxedClasses(
+  validation: any
+): Array<{
+  class: string;
+  detail?: string;
+  original_outcome?: string;
+  effective_outcome?: string;
+}> {
+  if (!validation || typeof validation !== "object") return [];
+  const raw =
+    (validation.relaxed_validator_classes as unknown[]) ||
+    (validation.relaxedValidatorClasses as unknown[]) ||
+    [];
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((row): row is Record<string, unknown> => Boolean(row && typeof row === "object"))
+    .map((row) => ({
+      class: String(row["class"] ?? ""),
+      detail: typeof row["detail"] === "string" ? (row["detail"] as string) : undefined,
+      original_outcome:
+        typeof row["original_outcome"] === "string"
+          ? (row["original_outcome"] as string)
+          : undefined,
+      effective_outcome:
+        typeof row["effective_outcome"] === "string"
+          ? (row["effective_outcome"] as string)
+          : undefined,
+    }))
+    .filter((row) => row.class.length > 0);
+}
+
 export function isActiveRunStatus(status: string) {
   const normalized = String(status || "")
     .trim()

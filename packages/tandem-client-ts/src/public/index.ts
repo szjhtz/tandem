@@ -2140,6 +2140,8 @@ export interface WorkflowPlannerSessionResetResponse extends WorkflowPlanChatRes
   session?: WorkflowPlannerSessionRecord;
 }
 
+export type ExecutionProfile = "strict" | "guided" | "yolo";
+
 export interface AutomationV2RunRecord {
   runId: string;
   automationId: string;
@@ -2147,6 +2149,10 @@ export interface AutomationV2RunRecord {
   checkpoint?: JsonObject;
   activeSessionIds?: string[];
   activeInstanceIds?: string[];
+  /** Resolved execution profile for this run (snake_case from server). */
+  effective_execution_profile?: ExecutionProfile;
+  /** Caller-supplied profile override at run-now time, if any. */
+  requested_execution_profile?: ExecutionProfile;
   [key: string]: unknown;
 }
 
