@@ -7,6 +7,7 @@ import {
   WorkflowAutomationEditDialog,
 } from "./MyAutomationsDialogs";
 import { RunDebuggerDialog } from "./RunDebuggerDialog";
+import { ExecutionProfilePill } from "./ExecutionProfileBadges";
 import { EmptyState } from "../../pages/ui";
 import {
   WORKFLOW_LIBRARY_SOURCE_FILTERS,
@@ -315,6 +316,19 @@ export function MyAutomationsContent({ state, actions, helpers }: any) {
           {formatAutomationV2ScheduleLabel(automation?.schedule)}
         </div>
 
+        {(() => {
+          const savedProfile = String(automation?.execution?.profile || "").toLowerCase();
+          if (!savedProfile || savedProfile === "strict") return null;
+          return (
+            <div className="tcp-subtle text-[11px] font-medium flex items-center gap-1.5">
+              <i data-lucide="shield" className="w-3 h-3"></i>
+              <span>
+                Profile: <ExecutionProfilePill profile={savedProfile} />
+              </span>
+            </div>
+          );
+        })()}
+
         {createdAtMs ? (
           <div className="tcp-subtle text-[11px] font-medium flex items-center gap-1.5">
             <i data-lucide="clock" className="w-3 h-3"></i>
@@ -327,10 +341,43 @@ export function MyAutomationsContent({ state, actions, helpers }: any) {
             className="tcp-btn-primary flex-1 h-8 px-2 text-[11px]"
             onClick={() => runNowV2Mutation.mutate({ id })}
             disabled={!id || runNowV2Mutation.isPending}
+            title="Run with the automation's saved execution profile"
           >
             <i data-lucide="play" className="w-3 h-3"></i>
             {runNowV2Mutation.isPending ? "Starting..." : "Run"}
           </button>
+          <details className="relative">
+            <summary
+              className="tcp-btn h-8 px-2 text-[11px] list-none cursor-pointer flex items-center"
+              title="Run once with a profile override (does not change the saved automation)"
+            >
+              <i data-lucide="chevrons-up-down" className="w-3 h-3"></i>
+            </summary>
+            <div
+              className="absolute right-0 top-9 z-10 flex flex-col rounded border border-slate-700/60 bg-slate-900/95 p-1 shadow-lg"
+              style={{ minWidth: "9rem" }}
+            >
+              {(["strict", "guided", "yolo"] as const).map((profile) => (
+                <button
+                  key={profile}
+                  type="button"
+                  className="tcp-btn h-7 px-2 text-[11px] justify-start"
+                  onClick={(event) => {
+                    event.preventDefault();
+                    const details = event.currentTarget.closest(
+                      "details"
+                    ) as HTMLDetailsElement | null;
+                    if (details) details.open = false;
+                    runNowV2Mutation.mutate({ id, executionProfile: profile });
+                  }}
+                  disabled={!id || runNowV2Mutation.isPending}
+                >
+                  Run as{" "}
+                  {profile === "yolo" ? "YOLO" : profile.charAt(0).toUpperCase() + profile.slice(1)}
+                </button>
+              ))}
+            </div>
+          </details>
           <button
             className="tcp-btn h-8 px-2 text-[11px]"
             onClick={() =>
