@@ -3485,6 +3485,72 @@ class AutomationsV2 {
     );
   }
 
+  /**
+   * Records a human accept/reject signal on a single node output. Idempotent —
+   * `changed: false` means the disposition was already that value.
+   */
+  async setTaskDisposition(
+    runId: string,
+    nodeId: string,
+    disposition: "unmarked" | "accepted" | "rejected" | "re_ran_strict",
+    reason?: string
+  ): Promise<{
+    ok?: boolean;
+    changed?: boolean;
+    node_id?: string;
+    disposition?: string;
+    reason?: string;
+    run?: AutomationV2RunRecord;
+  }> {
+    return this.req<{
+      ok?: boolean;
+      changed?: boolean;
+      node_id?: string;
+      disposition?: string;
+      reason?: string;
+      run?: AutomationV2RunRecord;
+    }>(
+      `/automations/v2/runs/${encodeURIComponent(runId)}/tasks/${encodeURIComponent(nodeId)}/disposition`,
+      { method: "PATCH", body: JSON.stringify({ disposition, reason: reason ?? "" }) }
+    );
+  }
+
+  /**
+   * Read-only graduation telemetry: per-`ValidatorClass` accept/reject counts
+   * over a rolling window. Drives the per-class graduation dashboard.
+   */
+  async graduationSummary(params?: {
+    windowHours?: number;
+    automationId?: string;
+    limit?: number;
+  }): Promise<{
+    ok?: boolean;
+    window_hours?: number;
+    since_ms?: number;
+    scanned_runs?: number;
+    automation_id?: string | null;
+    summary?: {
+      total_outputs_scanned?: number;
+      total_relaxed_outputs?: number;
+      by_class?: Record<
+        string,
+        {
+          accepted?: number;
+          rejected?: number;
+          re_ran_strict?: number;
+          unmarked?: number;
+        }
+      >;
+    };
+  }> {
+    const search = new URLSearchParams();
+    if (params?.windowHours !== undefined) search.set("window_hours", String(params.windowHours));
+    if (params?.automationId) search.set("automation_id", params.automationId);
+    if (params?.limit !== undefined) search.set("limit", String(params.limit));
+    const query = search.toString();
+    return this.req(`/automations/v2/graduation/summary${query ? `?${query}` : ""}`);
+  }
+
   async claimBacklogTask(
     runId: string,
     taskId: string,

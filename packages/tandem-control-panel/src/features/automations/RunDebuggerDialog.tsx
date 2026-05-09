@@ -161,6 +161,7 @@ export function RunDebuggerDialog({ state, actions, helpers }: any) {
     workflowTaskContinueMutation,
     workflowTaskRetryMutation,
     workflowTaskRequeueMutation,
+    workflowTaskDispositionMutation,
     workflowRepairMutation,
     workflowRecoverMutation,
     backlogTaskClaimMutation,
@@ -619,6 +620,40 @@ export function RunDebuggerDialog({ state, actions, helpers }: any) {
                                 selectedBoardTaskArtifactValidation
                               );
                               if (relaxed.length === 0) return null;
+                              const validationObj = (selectedBoardTaskArtifactValidation ||
+                                {}) as Record<string, unknown>;
+                              const currentDisposition = String(
+                                (validationObj["human_disposition"] as string | undefined) ||
+                                  (validationObj["humanDisposition"] as string | undefined) ||
+                                  "unmarked"
+                              );
+                              const dispositionPending =
+                                workflowTaskDispositionMutation?.isPending ?? false;
+                              const pendingTarget = String(
+                                workflowTaskDispositionMutation?.variables?.disposition || ""
+                              );
+                              const pendingNode = String(
+                                workflowTaskDispositionMutation?.variables?.nodeId || ""
+                              );
+                              const dispositionOptions = [
+                                { value: "accepted", label: "Accept" },
+                                { value: "rejected", label: "Reject" },
+                                { value: "re_ran_strict", label: "Re-ran Strict" },
+                              ] as const;
+                              const handleDisposition = (
+                                value: "accepted" | "rejected" | "re_ran_strict" | "unmarked"
+                              ) => {
+                                const runId = String(selectedRunId || "").trim();
+                                const nodeId = String(selectedBoardTaskNodeId || "").trim();
+                                if (!runId || !nodeId || !workflowTaskDispositionMutation?.mutate) {
+                                  return;
+                                }
+                                workflowTaskDispositionMutation.mutate({
+                                  runId,
+                                  nodeId,
+                                  disposition: value,
+                                });
+                              };
                               return (
                                 <div className="rounded-md border border-amber-700/40 bg-amber-950/20 p-2 sm:col-span-2">
                                   <div className="tcp-subtle">profile relaxation</div>
@@ -627,6 +662,50 @@ export function RunDebuggerDialog({ state, actions, helpers }: any) {
                                       validation={selectedBoardTaskArtifactValidation}
                                     />
                                   </div>
+                                  {selectedBoardTaskNodeId ? (
+                                    <div className="mt-2 grid gap-2">
+                                      <div className="tcp-subtle text-[11px]">
+                                        graduation review · current:{" "}
+                                        <span className="font-medium text-slate-100">
+                                          {currentDisposition.replace(/_/g, " ")}
+                                        </span>
+                                      </div>
+                                      <div className="flex flex-wrap gap-2">
+                                        {dispositionOptions.map((option) => {
+                                          const isCurrent = currentDisposition === option.value;
+                                          const isPendingThis =
+                                            dispositionPending &&
+                                            pendingTarget === option.value &&
+                                            pendingNode === selectedBoardTaskNodeId;
+                                          return (
+                                            <button
+                                              key={option.value}
+                                              type="button"
+                                              className={isCurrent ? "tcp-btn-primary" : "tcp-btn"}
+                                              disabled={
+                                                isCurrent || dispositionPending || !selectedRunId
+                                              }
+                                              onClick={() => handleDisposition(option.value)}
+                                            >
+                                              {isPendingThis ? "Saving..." : option.label}
+                                            </button>
+                                          );
+                                        })}
+                                        {currentDisposition !== "unmarked" ? (
+                                          <button
+                                            type="button"
+                                            className="tcp-btn"
+                                            disabled={dispositionPending || !selectedRunId}
+                                            onClick={() => handleDisposition("unmarked")}
+                                          >
+                                            {dispositionPending && pendingTarget === "unmarked"
+                                              ? "Saving..."
+                                              : "Clear"}
+                                          </button>
+                                        ) : null}
+                                      </div>
+                                    </div>
+                                  ) : null}
                                 </div>
                               );
                             })()}

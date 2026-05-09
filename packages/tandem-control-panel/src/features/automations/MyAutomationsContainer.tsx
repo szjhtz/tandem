@@ -674,6 +674,42 @@ export function MyAutomationsContainer({
     },
     onError: (error) => toast("err", friendlyEngineError(error, "Task requeue failed.")),
   });
+  const workflowTaskDispositionMutation = useMutation({
+    mutationFn: async ({
+      runId,
+      nodeId,
+      disposition,
+      reason,
+    }: {
+      runId: string;
+      nodeId: string;
+      disposition: "unmarked" | "accepted" | "rejected" | "re_ran_strict";
+      reason?: string;
+    }) => {
+      if (!client?.automationsV2?.setTaskDisposition) {
+        throw new Error("Task disposition is not available in this client.");
+      }
+      return client.automationsV2.setTaskDisposition(runId, nodeId, disposition, reason);
+    },
+    onSuccess: async (payload: any) => {
+      const runId = String(
+        payload?.run?.run_id || payload?.run?.runId || selectedRunId || ""
+      ).trim();
+      const disposition = String(payload?.disposition || "");
+      const changed = payload?.changed === true;
+      toast(
+        "ok",
+        changed
+          ? `Marked artifact as ${disposition.replace(/_/g, " ")}.`
+          : `Already marked ${disposition.replace(/_/g, " ")}.`
+      );
+      await queryClient.invalidateQueries({ queryKey: ["automations"] });
+      if (runId) {
+        onSelectRunId(runId);
+      }
+    },
+    onError: (error) => toast("err", friendlyEngineError(error, "Disposition update failed.")),
+  });
   const backlogTaskClaimMutation = useMutation({
     mutationFn: async ({
       runId,
@@ -736,6 +772,7 @@ export function MyAutomationsContainer({
     workflowTaskRetryMutation.reset();
     workflowTaskContinueMutation.reset();
     workflowTaskRequeueMutation.reset();
+    workflowTaskDispositionMutation.reset();
     backlogTaskClaimMutation.reset();
     backlogTaskRequeueMutation.reset();
   }, [
@@ -747,6 +784,7 @@ export function MyAutomationsContainer({
     workflowRecoverMutation,
     workflowRepairMutation,
     workflowTaskContinueMutation,
+    workflowTaskDispositionMutation,
     workflowTaskRequeueMutation,
     workflowTaskRetryMutation,
   ]);
@@ -2548,6 +2586,7 @@ export function MyAutomationsContainer({
           workflowTaskRetryMutation.reset();
           workflowTaskContinueMutation.reset();
           workflowTaskRequeueMutation.reset();
+          workflowTaskDispositionMutation.reset();
           backlogTaskClaimMutation.reset();
           backlogTaskRequeueMutation.reset();
           void Promise.all([
@@ -2634,6 +2673,7 @@ export function MyAutomationsContainer({
         workflowTaskContinueMutation,
         workflowTaskRetryMutation,
         workflowTaskRequeueMutation,
+        workflowTaskDispositionMutation,
         workflowRepairMutation,
         workflowRecoverMutation,
         backlogTaskClaimMutation,
