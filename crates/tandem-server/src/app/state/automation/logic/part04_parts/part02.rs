@@ -413,8 +413,10 @@ pub(crate) async fn execute_automation_v2_node(
     ));
     requested_tools.sort();
     requested_tools.dedup();
-    let has_selected_mcp_servers_policy =
-        !selected_mcp_server_names.is_empty() && selected_mcp_source == "policy";
+    let has_selected_mcp_servers_policy = !selected_mcp_server_names.is_empty()
+        && selected_mcp_source == "policy"
+        && automation_output_validator_kind(node)
+            != crate::AutomationOutputValidatorKind::ReviewDecision;
     let mut requested_tools =
         automation_add_mcp_list_when_scoped(requested_tools, has_selected_mcp_servers_policy);
     let concrete_mcp_repair_tools = if attempt > 1 {

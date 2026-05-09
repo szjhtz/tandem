@@ -1008,6 +1008,33 @@ fn connector_backed_publish_node_requests_named_server_mcp_tools() {
 }
 
 #[test]
+fn review_decision_nodes_do_not_request_server_scoped_mcp_tools() {
+    let mut node = bare_node();
+    node.node_id = "validate_report".to_string();
+    node.objective =
+        "Review the synthesized report against Notion, Reddit, and Tandem MCP source artifacts."
+            .to_string();
+    node.output_contract = Some(AutomationFlowOutputContract {
+        kind: "review".to_string(),
+        validator: Some(crate::AutomationOutputValidatorKind::ReviewDecision),
+        enforcement: None,
+        schema: None,
+        summary_guidance: None,
+    });
+
+    let requested = automation_requested_server_scoped_mcp_tools(
+        &node,
+        &[
+            "notion".to_string(),
+            "reddit-gmail".to_string(),
+            "tandem-mcp".to_string(),
+        ],
+    );
+
+    assert!(requested.is_empty());
+}
+
+#[test]
 fn connector_source_nodes_do_not_offer_source_mutation_tools() {
     let mut node = bare_node();
     node.objective =

@@ -189,6 +189,112 @@ fn connector_backed_automation_prompt_surfaces_mcp_discovery_guidance() {
 }
 
 #[test]
+fn review_decision_prompt_suppresses_mcp_discovery_guidance() {
+    let automation = AutomationV2Spec {
+        automation_id: "automation-review-mcp".to_string(),
+        name: "Review MCP Prompt".to_string(),
+        description: None,
+        status: crate::AutomationV2Status::Active,
+        schedule: crate::AutomationV2Schedule {
+            schedule_type: crate::AutomationV2ScheduleType::Manual,
+            cron_expression: None,
+            interval_seconds: None,
+            timezone: "UTC".to_string(),
+            misfire_policy: crate::RoutineMisfirePolicy::RunOnce,
+        },
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
+        agents: Vec::new(),
+        flow: crate::AutomationFlowSpec { nodes: Vec::new() },
+        execution: crate::AutomationExecutionPolicy {
+            profile: None,
+            max_parallel_agents: Some(1),
+            max_total_runtime_ms: None,
+            max_total_tool_calls: None,
+            max_total_tokens: None,
+            max_total_cost_usd: None,
+        },
+        output_targets: Vec::new(),
+        created_at_ms: 0,
+        updated_at_ms: 0,
+        creator_id: "test".to_string(),
+        workspace_root: Some("/tmp".to_string()),
+        metadata: None,
+        next_fire_at_ms: None,
+        last_fired_at_ms: None,
+        scope_policy: None,
+        watch_conditions: Vec::new(),
+        handoff_config: None,
+    };
+    let node = AutomationFlowNode {
+        node_id: "validate_report".to_string(),
+        agent_id: "reviewer".to_string(),
+        objective:
+            "Review the synthesized report against Notion, Reddit, and Tandem MCP source artifacts."
+                .to_string(),
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
+        depends_on: Vec::new(),
+        input_refs: Vec::new(),
+        output_contract: Some(AutomationFlowOutputContract {
+            kind: "review".to_string(),
+            validator: Some(crate::AutomationOutputValidatorKind::ReviewDecision),
+            enforcement: None,
+            schema: None,
+            summary_guidance: None,
+        }),
+        retry_policy: None,
+        timeout_ms: None,
+        max_tool_calls: None,
+        stage_kind: None,
+        gate: None,
+        metadata: None,
+    };
+    let agent = AutomationAgentProfile {
+        agent_id: "reviewer".to_string(),
+        template_id: None,
+        display_name: "Reviewer".to_string(),
+        avatar_url: None,
+        model_policy: None,
+        skills: Vec::new(),
+        tool_policy: crate::AutomationAgentToolPolicy {
+            allowlist: vec!["read".to_string()],
+            denylist: Vec::new(),
+        },
+        mcp_policy: crate::AutomationAgentMcpPolicy {
+            allowed_servers: vec![
+                "notion".to_string(),
+                "reddit-gmail".to_string(),
+                "tandem-mcp".to_string(),
+            ],
+            allowed_tools: None,
+        },
+        approval_policy: None,
+    };
+
+    assert_eq!(
+        automation_output_validator_kind(&node),
+        crate::AutomationOutputValidatorKind::ReviewDecision
+    );
+
+    let prompt = render_automation_v2_prompt(
+        &automation,
+        "/tmp",
+        "run-review-mcp",
+        &node,
+        1,
+        &agent,
+        &[],
+        &["read".to_string()],
+        None,
+        None,
+        None,
+    );
+
+    assert!(!prompt.contains("MCP Discovery:"));
+    assert!(prompt.contains("Review Decision Output Contract:"));
+    assert!(prompt.contains("top-level `approved`"));
+}
+
+#[test]
 fn compare_results_prompt_prioritizes_mcp_discovery_and_artifact_delivery() {
     let automation = AutomationV2Spec {
         automation_id: "automation-compare-results".to_string(),

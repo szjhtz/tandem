@@ -722,10 +722,12 @@ pub(crate) fn render_automation_v2_prompt_with_options(
             automation_prompt_apply_runtime_placeholders(local_prompt, runtime_values)
         )
     };
-    if tandem_plan_compiler::api::workflow_plan_should_surface_mcp_discovery(
-        &connector_discovery_text,
-        &agent.mcp_policy.allowed_servers,
-    ) {
+    if validator_kind != crate::AutomationOutputValidatorKind::ReviewDecision
+        && tandem_plan_compiler::api::workflow_plan_should_surface_mcp_discovery(
+            &connector_discovery_text,
+            &agent.mcp_policy.allowed_servers,
+        )
+    {
         let optional_connector_reference =
             enforcement::automation_node_allows_optional_connector_references(node);
         let concrete_connector_tools = automation_prompt_concrete_connector_tools(

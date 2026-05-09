@@ -591,6 +591,11 @@ pub(crate) fn automation_requested_server_scoped_mcp_tools(
     node: &AutomationFlowNode,
     selected_server_names: &[String],
 ) -> Vec<String> {
+    if automation_output_validator_kind(node)
+        == crate::AutomationOutputValidatorKind::ReviewDecision
+    {
+        return Vec::new();
+    }
     let connector_hint_text = automation_connector_hint_text(node);
     if !tandem_plan_compiler::api::workflow_plan_mentions_connector_backed_sources(
         &connector_hint_text,
