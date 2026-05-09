@@ -98,6 +98,8 @@ interface WizardState {
   cronExpression: string;
   executionMode: ExecutionMode;
   maxParallelAgents: string;
+  /** "" means inherit system default (Strict). */
+  executionProfile: "" | "strict" | "guided" | "yolo";
   modelProvider: string;
   modelId: string;
   plannerModelProvider: string;
@@ -164,6 +166,7 @@ function buildDefaultWizard(
     cronExpression: String(current?.cronExpression || ""),
     executionMode: current?.executionMode ?? "team",
     maxParallelAgents: String(current?.maxParallelAgents || "4"),
+    executionProfile: current?.executionProfile ?? "",
     modelProvider: preferredProvider,
     modelId: String(current?.modelId || preferredModels[0] || ""),
     plannerModelProvider: String(current?.plannerModelProvider || ""),
@@ -1403,13 +1406,45 @@ export function AgentAutomationPage({
     setBusyKey("apply-plan");
     setError(null);
     try {
-      await workflowPlansApply({
+      const applyResponse = await workflowPlansApply({
         plan: planPreview,
         creator_id: "desktop",
         ...(wizard.exportPackDraft
           ? { pack_builder_export: { enabled: true, auto_apply: false } }
           : {}),
       });
+      // If the user picked a non-default execution profile in the
+      // wizard, stamp it onto the freshly-created automation. The plan
+      // applier doesn't accept a profile override directly, so we
+      // follow up with an automationsV2Update.
+      const chosenProfile = wizard.executionProfile;
+      if (chosenProfile === "strict" || chosenProfile === "guided" || chosenProfile === "yolo") {
+        const newAutomationId = String(
+          (applyResponse?.automation as Record<string, unknown> | undefined)?.automation_id ||
+            (applyResponse?.automation as Record<string, unknown> | undefined)?.automationId ||
+            ""
+        ).trim();
+        const automationSnapshot = applyResponse?.automation as Record<string, unknown> | undefined;
+        if (newAutomationId && automationSnapshot) {
+          const existingExecution = (automationSnapshot.execution || {}) as Record<string, unknown>;
+          try {
+            await automationsV2Update(newAutomationId, {
+              execution: {
+                ...existingExecution,
+                profile: chosenProfile,
+              },
+            } as Partial<AutomationV2Spec>);
+          } catch (profileError) {
+            // Non-fatal: the automation was created, the profile just
+            // didn't stick. Surface for visibility but don't roll back.
+            setError(
+              `Automation created, but execution profile (${chosenProfile}) could not be applied: ${
+                profileError instanceof Error ? profileError.message : String(profileError)
+              }`
+            );
+          }
+        }
+      }
       const nextWizard = buildDefaultWizard(activeProject, providers);
       setWizard(nextWizard);
       setWizardStep(1);
@@ -2152,6 +2187,36 @@ export function AgentAutomationPage({
                             updateWizard({ maxParallelAgents: event.target.value })
                           }
                         />
+                      </div>
+                      <div className="grid gap-3 sm:grid-cols-1">
+                        <label className="block text-sm font-medium text-text">
+                          Execution Profile
+                          <select
+                            value={wizard.executionProfile || ""}
+                            onChange={(event) =>
+                              updateWizard({
+                                executionProfile: event.target.value as
+                                  | ""
+                                  | "strict"
+                                  | "guided"
+                                  | "yolo",
+                              })
+                            }
+                            className="mt-2 h-10 w-full rounded-lg border border-border bg-surface px-3 text-sm text-text outline-none focus:border-primary focus:ring-1 focus:ring-primary"
+                          >
+                            <option value="">System default (Strict)</option>
+                            <option value="strict">Strict — production discipline</option>
+                            <option value="guided">Guided — assisted iteration</option>
+                            <option value="yolo">YOLO — exploratory</option>
+                          </select>
+                          <span className="mt-1 block text-xs text-text-muted">
+                            {wizard.executionProfile === "yolo"
+                              ? "Non-critical validation continues as experimental; spend caps and approvals still enforced."
+                              : wizard.executionProfile === "guided"
+                                ? "Non-critical validation becomes warnings; critical failures still block."
+                                : "All validators enforced. Use Guided/YOLO during validator hardening to unblock recoverable runs."}
+                          </span>
+                        </label>
                       </div>
                       <div className="grid gap-3 sm:grid-cols-2">
                         <label className="block text-sm font-medium text-text">
