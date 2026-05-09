@@ -1462,6 +1462,105 @@ fn validation_accepts_notion_fetch_markdown_as_connector_source_evidence() {
 }
 
 #[test]
+fn structured_json_connector_fetch_does_not_require_workspace_inspection() {
+    let workspace_root = std::env::temp_dir().join(format!(
+        "tandem-notion-row-inspection-{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&workspace_root).expect("create workspace");
+    let mut node = bare_node();
+    node.node_id = "inspect_notion_row".to_string();
+    node.objective = "Fetch and inspect only the existing Notion database row at https://www.notion.so/f3975ce71d8d45318bea2812c65f209b inside Operational Workflow Results collection://892d3e9b-2bf8-4b3e-a541-dc725f77295d, confirming the target page/row identity and current editable fields. Do not create a database, top-level page, workspace page, or new database row.".to_string();
+    node.output_contract = Some(AutomationFlowOutputContract {
+        kind: "structured_json".to_string(),
+        validator: Some(crate::AutomationOutputValidatorKind::StructuredJson),
+        enforcement: Some(crate::AutomationOutputEnforcement {
+            validation_profile: Some("artifact_only".to_string()),
+            required_tools: vec!["mcp.notion.notion_fetch".to_string()],
+            required_tool_calls: Vec::new(),
+            required_evidence: Vec::new(),
+            required_sections: Vec::new(),
+            prewrite_gates: vec!["workspace_inspection".to_string()],
+            retry_on_missing: vec!["workspace_inspection".to_string()],
+            terminal_on: vec!["completed".to_string()],
+            repair_budget: Some(2),
+            session_text_recovery: Some("require_prewrite_satisfied".to_string()),
+        }),
+        schema: None,
+        summary_guidance: None,
+    });
+    node.metadata = Some(json!({
+        "builder": {
+            "output_path": ".tandem/artifacts/inspect-notion-row.json"
+        },
+        "tool_allowlist": [
+            "mcp.notion.*",
+            "mcp.notion.notion_fetch",
+            "write"
+        ]
+    }));
+    let artifact = json!({
+        "status": "completed",
+        "target": {
+            "url": "https://www.notion.so/f3975ce71d8d45318bea2812c65f209b",
+            "page_id": "f3975ce71d8d45318bea2812c65f209b",
+            "collection": "collection://892d3e9b-2bf8-4b3e-a541-dc725f77295d"
+        },
+        "source_evidence": {
+            "tool": "mcp.notion.notion_fetch",
+            "result": "Fetched existing Notion page in Operational Workflow Results with editable properties."
+        },
+        "editable_fields": ["Name", "Status", "Summary", "Evidence", "Sources", "Run ID"]
+    })
+    .to_string();
+    let session = Session::new(Some("notion row inspection".to_string()), None);
+    let snapshot = std::collections::BTreeSet::new();
+
+    let (accepted, validation, rejected) = validate_automation_artifact_output(
+        &node,
+        &session,
+        workspace_root.to_str().expect("workspace root"),
+        "{\"status\":\"completed\"}",
+        &json!({
+            "executed_tools": [
+                "mcp_list",
+                "mcp.notion.notion_fetch",
+                "write"
+            ],
+            "requested_tools": [
+                "mcp_list",
+                "mcp.notion.*",
+                "mcp.notion.notion_fetch",
+                "write"
+            ],
+            "capability_resolution": {
+                "mcp_tool_diagnostics": {
+                    "selected_servers": ["notion"]
+                }
+            },
+            "verified_output_materialized_by_current_attempt": true
+        }),
+        None,
+        Some((
+            ".tandem/artifacts/inspect-notion-row.json".to_string(),
+            artifact,
+        )),
+        &snapshot,
+    );
+
+    assert!(accepted.is_some());
+    assert_eq!(validation["validation_outcome"], "passed");
+    assert!(!validation["unmet_requirements"]
+        .as_array()
+        .expect("unmet array")
+        .iter()
+        .any(|value| value.as_str() == Some("workspace_inspection_required")));
+    assert!(rejected.is_none(), "{rejected:?}");
+
+    let _ = std::fs::remove_dir_all(&workspace_root);
+}
+
+#[test]
 fn validation_accepts_unknown_mcp_server_artifact_from_concrete_tool_receipt() {
     let workspace_root = std::env::temp_dir().join(format!(
         "tandem-dynamic-mcp-artifact-{}",
