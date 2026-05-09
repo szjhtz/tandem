@@ -153,6 +153,7 @@ pub(crate) fn detect_automation_node_status(
     let validation_repairable = (validator_kind
         == crate::AutomationOutputValidatorKind::ResearchBrief
         || validator_kind == crate::AutomationOutputValidatorKind::GenericArtifact
+        || validator_kind == crate::AutomationOutputValidatorKind::ReviewDecision
         || has_required_tools
         || validator_kind == crate::AutomationOutputValidatorKind::StructuredJson)
         && !research_repair_exhausted;
