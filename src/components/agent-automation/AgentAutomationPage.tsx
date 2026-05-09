@@ -117,6 +117,8 @@ interface WorkflowEditDraft {
   cronExpression: string;
   executionMode: ExecutionMode;
   maxParallelAgents: string;
+  /** "" means inherit system default (Strict). */
+  executionProfile: "" | "strict" | "guided" | "yolo";
   modelProvider: string;
   modelId: string;
   plannerModelProvider: string;
@@ -543,6 +545,13 @@ function workflowAutomationToEditDraft(automation: AutomationV2Spec): WorkflowEd
     timezone: schedule.timezone,
     executionMode: maxParallelRaw > 1 ? "swarm" : "team",
     maxParallelAgents: String(maxParallelRaw > 0 ? maxParallelRaw : 1),
+    executionProfile: ((): "" | "strict" | "guided" | "yolo" => {
+      const raw = String((automation.execution as any)?.profile || "")
+        .trim()
+        .toLowerCase();
+      if (raw === "strict" || raw === "guided" || raw === "yolo") return raw;
+      return "";
+    })(),
     modelProvider: String(prefs.model_provider || "").trim(),
     modelId: String(prefs.model_id || "").trim(),
     plannerModelProvider: String(
@@ -1502,6 +1511,11 @@ export function AgentAutomationPage({
                   Math.min(16, Number.parseInt(String(editDraft.maxParallelAgents || "4"), 10) || 4)
                 )
               : 1,
+          ...(editDraft.executionProfile === "strict" ||
+          editDraft.executionProfile === "guided" ||
+          editDraft.executionProfile === "yolo"
+            ? { profile: editDraft.executionProfile }
+            : { profile: null }),
         },
         agents,
         metadata: {
@@ -3879,6 +3893,41 @@ export function AgentAutomationPage({
                       )
                     }
                   />
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <label className="block text-sm font-medium text-text">
+                    Execution Profile
+                    <select
+                      value={editDraft.executionProfile || ""}
+                      onChange={(event) =>
+                        setEditDraft((current) =>
+                          current
+                            ? {
+                                ...current,
+                                executionProfile: event.target.value as
+                                  | ""
+                                  | "strict"
+                                  | "guided"
+                                  | "yolo",
+                              }
+                            : current
+                        )
+                      }
+                      className="mt-2 h-10 w-full rounded-lg border border-border bg-surface px-3 text-sm text-text outline-none focus:border-primary focus:ring-1 focus:ring-primary"
+                    >
+                      <option value="">System default (Strict)</option>
+                      <option value="strict">Strict — production discipline</option>
+                      <option value="guided">Guided — assisted iteration</option>
+                      <option value="yolo">YOLO — exploratory</option>
+                    </select>
+                    <span className="mt-1 block text-xs text-text-muted">
+                      {editDraft.executionProfile === "yolo"
+                        ? "Non-critical validation continues as experimental; spend caps and approvals still enforced."
+                        : editDraft.executionProfile === "guided"
+                          ? "Non-critical validation becomes warnings; critical failures still block."
+                          : "All validators enforced. Use Guided/YOLO during validator hardening to unblock recoverable runs."}
+                    </span>
+                  </label>
                 </div>
                 <div className="grid gap-3 sm:grid-cols-2">
                   <label className="block text-sm font-medium text-text">
