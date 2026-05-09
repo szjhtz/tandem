@@ -1012,9 +1012,14 @@ pub(super) async fn automations_v2_run_now(
         .await
         .map_err(super::governance::governance_error_response)?;
     let dry_run = input.dry_run;
+    let requested_execution_profile = input.execution_profile;
     let run = if dry_run {
         state
-            .create_automation_v2_dry_run(&automation, "manual")
+            .create_automation_v2_dry_run_with_profile(
+                &automation,
+                "manual",
+                requested_execution_profile,
+            )
             .await
             .map_err(|error| {
                 (
@@ -1027,7 +1032,11 @@ pub(super) async fn automations_v2_run_now(
             })?
     } else {
         state
-            .create_automation_v2_run(&automation, "manual")
+            .create_automation_v2_run_with_profile(
+                &automation,
+                "manual",
+                requested_execution_profile,
+            )
             .await
             .map_err(|error| {
                 (
@@ -1069,6 +1078,8 @@ pub(super) async fn automations_v2_run_now(
             "runID": run.run_id,
             "dryRun": dry_run,
             "requestedBy": actor,
+            "requestedExecutionProfile": requested_execution_profile.map(|p| p.as_str()),
+            "effectiveExecutionProfile": run.effective_execution_profile.as_str(),
         }),
     )
     .await;

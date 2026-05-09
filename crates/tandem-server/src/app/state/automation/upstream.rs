@@ -231,6 +231,9 @@ mod tests {
             trigger_reason: None,
             consumed_handoff_id: None,
             learning_summary: None,
+            effective_execution_profile:
+                crate::automation_v2::execution_profile::ExecutionProfile::Strict,
+            requested_execution_profile: None,
         }
     }
 

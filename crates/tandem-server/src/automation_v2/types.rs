@@ -1193,6 +1193,16 @@ pub struct AutomationV2RunRecord {
     pub consumed_handoff_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub learning_summary: Option<WorkflowLearningRunSummary>,
+    /// Effective execution profile for this run, resolved at run start
+    /// from optional run-level override, automation policy, or Strict.
+    /// See `automation_v2::types::resolve_effective_execution_profile`.
+    #[serde(default)]
+    pub effective_execution_profile: crate::automation_v2::execution_profile::ExecutionProfile,
+    /// What the caller explicitly requested at run-now time, if any.
+    /// `None` means the run inherited from the automation/system default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requested_execution_profile:
+        Option<crate::automation_v2::execution_profile::ExecutionProfile>,
 }
 
 fn default_tenant_context() -> TenantContext {

@@ -95,6 +95,9 @@ fn test_run_with_output(output: Value) -> crate::automation_v2::types::Automatio
         trigger_reason: None,
         consumed_handoff_id: None,
         learning_summary: None,
+        effective_execution_profile:
+            crate::automation_v2::execution_profile::ExecutionProfile::Strict,
+        requested_execution_profile: None,
     }
 }
 
