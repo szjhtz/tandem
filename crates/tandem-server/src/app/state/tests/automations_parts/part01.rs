@@ -1742,6 +1742,46 @@ async fn create_automation_v2_run_inherits_workflow_profile_when_no_override() {
 }
 
 #[tokio::test]
+async fn create_automation_v2_run_with_profile_stamps_snapshot_with_effective() {
+    use crate::automation_v2::execution_profile::ExecutionProfile;
+    let root = std::env::temp_dir().join(format!(
+        "tandem-execution-profile-snapshot-{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&root).expect("state root");
+    let mut state = test_state_with_path(root.join("shared.json"));
+    state.automations_v2_path = root.join("automations_v2.json");
+    state.automation_governance_path = root.join("automation_governance.json");
+    let automation = AutomationSpecBuilder::new("automation-profile-snapshot")
+        .name("Profile snapshot")
+        .execution_profile(ExecutionProfile::Strict)
+        .build();
+    state
+        .put_automation_v2(automation.clone())
+        .await
+        .expect("persist automation");
+    // Run-level override of YOLO on a Strict-saved automation. The snapshot
+    // stored on the run must carry profile=YOLO so downstream validation
+    // logic that reads automation.execution.profile (e.g. the repair-budget
+    // multiplier) honors the override.
+    let run = state
+        .create_automation_v2_run_with_profile(&automation, "manual", Some(ExecutionProfile::Yolo))
+        .await
+        .expect("create run");
+    let snapshot = run
+        .automation_snapshot
+        .as_ref()
+        .expect("snapshot set on run");
+    assert_eq!(
+        snapshot.execution.profile,
+        Some(ExecutionProfile::Yolo),
+        "snapshot must carry the run-level effective profile"
+    );
+    // Original spec object is not mutated.
+    assert_eq!(automation.execution.profile, Some(ExecutionProfile::Strict));
+}
+
+#[tokio::test]
 async fn create_automation_v2_dry_run_with_profile_persists_override() {
     use crate::automation_v2::execution_profile::ExecutionProfile;
     let root = std::env::temp_dir().join(format!(

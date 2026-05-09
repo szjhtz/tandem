@@ -1136,6 +1136,13 @@ impl AppState {
                 automation,
                 requested_execution_profile,
             );
+        // Stamp the resolved profile onto the snapshot so downstream
+        // validation logic that reads `automation.execution.profile`
+        // (e.g. the repair-budget multiplier in
+        // validate_automation_artifact_output_with_context) honors the
+        // run-level override without needing the run record itself.
+        let mut snapshot = automation.clone();
+        snapshot.execution.profile = Some(effective_execution_profile);
         let run = AutomationV2RunRecord {
             run_id: format!("automation-v2-run-{}", uuid::Uuid::new_v4()),
             automation_id: automation.automation_id.clone(),
@@ -1162,7 +1169,7 @@ impl AppState {
                 last_failure: None,
             },
             runtime_context,
-            automation_snapshot: Some(automation.clone()),
+            automation_snapshot: Some(snapshot),
             pause_reason: None,
             resume_reason: None,
             detail: None,
@@ -1221,6 +1228,10 @@ impl AppState {
                 automation,
                 requested_execution_profile,
             );
+        // Stamp the resolved profile onto the snapshot — see
+        // create_automation_v2_run_with_profile for rationale.
+        let mut snapshot = automation.clone();
+        snapshot.execution.profile = Some(effective_execution_profile);
         let run = AutomationV2RunRecord {
             run_id: format!("automation-v2-run-{}", uuid::Uuid::new_v4()),
             automation_id: automation.automation_id.clone(),
@@ -1247,7 +1258,7 @@ impl AppState {
                 last_failure: None,
             },
             runtime_context,
-            automation_snapshot: Some(automation.clone()),
+            automation_snapshot: Some(snapshot),
             pause_reason: None,
             resume_reason: None,
             detail: Some("dry_run".to_string()),
