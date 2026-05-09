@@ -1196,6 +1196,31 @@ pub async fn run_automation_v2_run(
                             row.requested_execution_profile,
                             &[],
                         );
+                        // Experimental-input propagation: if any upstream
+                        // dependency of this node already produced an
+                        // experimental output, mark this output's
+                        // artifact_validation experimental too and record
+                        // which upstreams tainted it. Pure metadata; does
+                        // not change status. See PROPOSAL.md
+                        // "Experimental Propagation".
+                        if let Some(node_def) =
+                            automation.flow.nodes.iter().find(|n| n.node_id == node_id)
+                        {
+                            let upstream: Vec<(&str, &Value)> = node_def
+                                .depends_on
+                                .iter()
+                                .filter_map(|dep| {
+                                    row.checkpoint
+                                        .node_outputs
+                                        .get(dep)
+                                        .map(|value| (dep.as_str(), value))
+                                })
+                                .collect();
+                            crate::automation_v2::execution_profile::propagate_experimental_input_taint(
+                                &mut output,
+                                upstream,
+                            );
+                        }
                     }
                     let session_id = crate::app::state::automation_output_session_id(&output);
                     let summary = output

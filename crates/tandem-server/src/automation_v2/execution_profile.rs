@@ -250,6 +250,78 @@ pub fn decide_profile_validation(
     }
 }
 
+/// Marks an output as carrying experimental input taint when one or more
+/// upstream node outputs are themselves experimental. Pure metadata: writes
+/// `artifact_validation.experimental = true` and
+/// `artifact_validation.tainted_inputs = [upstream_node_id, ...]` without
+/// touching `output.status`. Returns `true` when taint was applied.
+///
+/// Rationale (PROPOSAL.md "Experimental Propagation"): a downstream node's
+/// own validation may pass even when its inputs were accepted under a
+/// relaxed profile. Without taint propagation the run-level
+/// "experimental" flag would silently disappear at the first cleanly-passing
+/// downstream step. Propagating taint keeps receipts honest and lets
+/// `run_completed` consumers filter experimental runs.
+pub fn propagate_experimental_input_taint<'a, I>(output: &mut Value, upstream_outputs: I) -> bool
+where
+    I: IntoIterator<Item = (&'a str, &'a Value)>,
+{
+    let tainted: Vec<String> = upstream_outputs
+        .into_iter()
+        .filter_map(|(node_id, upstream_output)| {
+            let is_experimental = upstream_output
+                .get("artifact_validation")
+                .and_then(|av| av.get("experimental"))
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            if is_experimental {
+                Some(node_id.to_string())
+            } else {
+                None
+            }
+        })
+        .collect();
+    if tainted.is_empty() {
+        return false;
+    }
+
+    let object = match output.as_object_mut() {
+        Some(map) => map,
+        None => return false,
+    };
+    if !object.contains_key("artifact_validation") {
+        object.insert(
+            "artifact_validation".to_string(),
+            Value::Object(serde_json::Map::new()),
+        );
+    }
+    let validation = object
+        .get_mut("artifact_validation")
+        .and_then(Value::as_object_mut)
+        .expect("artifact_validation present (just inserted if missing)");
+
+    let already_experimental = validation
+        .get("experimental")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    validation.insert("experimental".to_string(), json!(true));
+    validation
+        .entry("tainted_inputs".to_string())
+        .or_insert_with(|| Value::Array(Vec::new()));
+    if let Some(arr) = validation
+        .get_mut("tainted_inputs")
+        .and_then(Value::as_array_mut)
+    {
+        for node_id in tainted {
+            let already_listed = arr.iter().any(|value| value.as_str() == Some(&node_id));
+            if !already_listed {
+                arr.push(json!(node_id));
+            }
+        }
+    }
+    !already_experimental
+}
+
 /// Profile-aware repair budget multiplier, bounded above by global caps in
 /// `AutomationExecutionPolicy`. Returns the effective number of repair
 /// attempts allowed for the given declared budget under `profile`.
@@ -889,6 +961,89 @@ mod tests {
         let augmented =
             augment_output_with_profile_relaxation(&mut output, ExecutionProfile::Yolo, None, &[]);
         assert!(!augmented);
+    }
+
+    #[test]
+    fn taint_propagation_marks_downstream_experimental() {
+        let mut output = json!({
+            "status": "completed",
+            "artifact_validation": {
+                "validation_outcome": "passed",
+            }
+        });
+        let upstream_a = json!({
+            "artifact_validation": { "experimental": true }
+        });
+        let upstream_b = json!({
+            "artifact_validation": { "experimental": false }
+        });
+        let tainted = propagate_experimental_input_taint(
+            &mut output,
+            vec![("node-a", &upstream_a), ("node-b", &upstream_b)],
+        );
+        assert!(tainted);
+        let validation = output.pointer("/artifact_validation").unwrap();
+        assert_eq!(
+            validation.get("experimental").and_then(Value::as_bool),
+            Some(true)
+        );
+        let tainted_inputs = validation
+            .get("tainted_inputs")
+            .and_then(Value::as_array)
+            .unwrap();
+        let names: Vec<&str> = tainted_inputs.iter().filter_map(Value::as_str).collect();
+        assert_eq!(names, vec!["node-a"]);
+        // Status is intentionally unchanged by taint propagation.
+        assert_eq!(
+            output.get("status").and_then(Value::as_str),
+            Some("completed")
+        );
+    }
+
+    #[test]
+    fn taint_propagation_no_op_when_no_upstream_experimental() {
+        let mut output = json!({
+            "artifact_validation": { "validation_outcome": "passed" }
+        });
+        let upstream = json!({ "artifact_validation": { "experimental": false } });
+        let tainted = propagate_experimental_input_taint(&mut output, vec![("node-a", &upstream)]);
+        assert!(!tainted);
+        let validation = output.pointer("/artifact_validation").unwrap();
+        assert!(validation.get("experimental").is_none());
+        assert!(validation.get("tainted_inputs").is_none());
+    }
+
+    #[test]
+    fn taint_propagation_creates_artifact_validation_when_absent() {
+        let mut output = json!({ "status": "completed" });
+        let upstream = json!({ "artifact_validation": { "experimental": true } });
+        let tainted =
+            propagate_experimental_input_taint(&mut output, vec![("upstream", &upstream)]);
+        assert!(tainted);
+        let validation = output.pointer("/artifact_validation").unwrap();
+        assert_eq!(
+            validation.get("experimental").and_then(Value::as_bool),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn taint_propagation_already_experimental_returns_false() {
+        let mut output = json!({
+            "artifact_validation": { "experimental": true }
+        });
+        let upstream = json!({ "artifact_validation": { "experimental": true } });
+        let tainted =
+            propagate_experimental_input_taint(&mut output, vec![("upstream", &upstream)]);
+        // Returns false because it was already experimental, but tainted_inputs
+        // should still be populated for receipts.
+        assert!(!tainted);
+        let validation = output.pointer("/artifact_validation").unwrap();
+        let tainted_inputs = validation
+            .get("tainted_inputs")
+            .and_then(Value::as_array)
+            .unwrap();
+        assert_eq!(tainted_inputs.len(), 1);
     }
 
     #[test]
