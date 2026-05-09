@@ -364,6 +364,7 @@ export function AutomationComposerPanel({
   const [createdAutomation, setCreatedAutomation] = useState<any | null>(null);
   const [createdAutomationId, setCreatedAutomationId] = useState("");
   const [payloadMode, setPayloadMode] = useState<"json" | "yaml">("json");
+  const [executionProfile, setExecutionProfile] = useState<"" | "strict" | "guided" | "yolo">("");
   const [agentTestMode, setAgentTestMode] = useState(false);
   const [agentTestAgentId, setAgentTestAgentId] = useState(DEFAULT_AGENT_ID);
   const [validationMessage, setValidationMessage] = useState("");
@@ -712,9 +713,24 @@ export function AutomationComposerPanel({
       if (validationErrors.length) {
         throw new Error(validationErrors[0]);
       }
+      // If the user picked a non-default execution profile, stamp it
+      // onto the generated payload's execution policy before submission
+      // so the new automation lands with the chosen default.
+      const submissionPayload =
+        executionProfile === "strict" ||
+        executionProfile === "guided" ||
+        executionProfile === "yolo"
+          ? {
+              ...generatedPayload,
+              execution: {
+                ...((generatedPayload as Record<string, any>).execution || {}),
+                profile: executionProfile,
+              },
+            }
+          : generatedPayload;
       const response = agentTestMode
-        ? await createAsAgentRequest(generatedPayload)
-        : await client.automationsV2.create(generatedPayload as any);
+        ? await createAsAgentRequest(submissionPayload)
+        : await client.automationsV2.create(submissionPayload as any);
       const automationId = automationIdFromResponse(response);
       const automation = response?.automation || response?.automation_v2 || response || null;
       return { response, automationId, automation, runAfterCreate };
@@ -1037,6 +1053,31 @@ export function AutomationComposerPanel({
               >
                 Create + run now
               </button>
+            </div>
+          </div>
+          <div className="mt-3 grid gap-1">
+            <label className="text-xs text-slate-400">Execution profile (saved default)</label>
+            <select
+              className="tcp-input"
+              value={executionProfile}
+              onChange={(e) =>
+                setExecutionProfile(
+                  (e.target as HTMLSelectElement).value as "" | "strict" | "guided" | "yolo"
+                )
+              }
+              disabled={createMutation.isPending}
+            >
+              <option value="">System default (Strict)</option>
+              <option value="strict">Strict — production discipline</option>
+              <option value="guided">Guided — assisted iteration</option>
+              <option value="yolo">YOLO — exploratory</option>
+            </select>
+            <div className="text-xs text-slate-500">
+              {executionProfile === "yolo"
+                ? "Non-critical validation continues as experimental; spend caps and approvals still enforced."
+                : executionProfile === "guided"
+                  ? "Non-critical validation becomes warnings; critical failures still block."
+                  : "All validators enforced. Use Guided/YOLO during validator hardening to unblock recoverable runs."}
             </div>
           </div>
         </div>
