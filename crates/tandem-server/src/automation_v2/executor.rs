@@ -8,6 +8,16 @@ use crate::automation_v2::types::{AutomationRunStatus, AutomationStopKind};
 use crate::util::time::now_ms;
 
 include!("executor_helpers.rs");
+
+fn normalized_output_contract_value(
+    node: &crate::automation_v2::types::AutomationFlowNode,
+) -> Option<Value> {
+    let mut contract = node.output_contract.clone()?;
+    contract.enforcement =
+        Some(crate::app::state::automation::automation_node_output_enforcement(node));
+    Some(serde_json::to_value(contract).unwrap_or(Value::Null))
+}
+
 pub(crate) fn publish_automation_v2_failure_event(
     state: &AppState,
     automation: &crate::AutomationV2Spec,
@@ -158,13 +168,13 @@ pub(crate) fn publish_automation_v2_failure_event(
             "reason": reason,
             "error": failure.map(|row| row.reason.as_str()).or(run.detail.as_deref()),
             "error_kind": error_kind,
-            "expected_output": node.and_then(|row| row.output_contract.as_ref()).map(|row| serde_json::to_value(row).unwrap_or(Value::Null)),
+            "expected_output": node.and_then(normalized_output_contract_value),
             "actual_output": output.and_then(|row| row.get("summary")).and_then(Value::as_str),
             "artifact_refs": artifact_refs,
             "missing_workspace_files": missing_workspace_files,
             "required_next_tool_actions": required_next_tool_actions,
             "input_refs": node.map(|row| serde_json::to_value(&row.input_refs).unwrap_or(Value::Null)).unwrap_or(Value::Null),
-            "output_contract": node.and_then(|row| row.output_contract.as_ref()).map(|row| serde_json::to_value(row).unwrap_or(Value::Null)),
+            "output_contract": node.and_then(normalized_output_contract_value),
             "validation_errors": validation_errors,
             "attempt_verdict_chain": attempt_verdict_chain,
             "attempt_review_chain": attempt_review_chain,
@@ -1641,7 +1651,7 @@ pub async fn run_automation_v2_run(
                             consumes_model_attempt_budget: failure_class != "provider_transient",
                             consumes_repair_budget: failure_class == "contract_miss",
                             expected: json!({
-                                "output_contract": node.output_contract,
+                                "output_contract": normalized_output_contract_value(&node),
                                 "required_output_path": crate::app::state::automation::automation_node_required_output_path(&node),
                             }),
                             observed: json!({

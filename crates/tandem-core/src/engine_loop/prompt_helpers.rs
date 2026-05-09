@@ -302,8 +302,27 @@ pub(super) fn provider_tool_mode_for_selected_tools(
 
 pub(super) fn requires_web_research_prompt(input: &str) -> bool {
     let lower = input.to_ascii_lowercase();
+    if (lower.contains("upstream web research")
+        || lower.contains("web research artifact")
+        || lower.contains("web research handoff"))
+        && (lower.contains("do not repeat")
+            || lower.contains("without repeating")
+            || lower.contains("no fresh web research")
+            || lower.contains("do not rerun")
+            || lower.contains("source of truth"))
+    {
+        return false;
+    }
     [
-        "research",
+        "web research",
+        "web_research",
+        "websearch",
+        "web search",
+        "webfetch",
+        "web fetch",
+        "look up",
+        "search the web",
+        "browse the web",
         "top news",
         "today's news",
         "todays news",
