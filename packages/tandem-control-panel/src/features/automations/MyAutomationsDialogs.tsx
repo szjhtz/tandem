@@ -623,6 +623,39 @@ export function WorkflowAutomationEditDialog({
                       : "Team and swarm runs use this value as the concurrency cap for parallel sub-tasks."}
                   </div>
                 </div>
+                <div className="grid gap-1">
+                  <label className="text-xs text-slate-400">Execution profile</label>
+                  <select
+                    className="tcp-input"
+                    value={workflowEditDraft.executionProfile || ""}
+                    onChange={(e) =>
+                      setWorkflowEditDraft((current: any) =>
+                        current
+                          ? {
+                              ...current,
+                              executionProfile: (e.target as HTMLSelectElement).value as
+                                | ""
+                                | "strict"
+                                | "guided"
+                                | "yolo",
+                            }
+                          : current
+                      )
+                    }
+                  >
+                    <option value="">System default (Strict)</option>
+                    <option value="strict">Strict — production discipline</option>
+                    <option value="guided">Guided — assisted iteration</option>
+                    <option value="yolo">YOLO — exploratory</option>
+                  </select>
+                  <div className="text-xs text-slate-500">
+                    {workflowEditDraft.executionProfile === "yolo"
+                      ? "Non-critical validation failures continue as experimental; spend caps and approvals still enforced."
+                      : workflowEditDraft.executionProfile === "guided"
+                        ? "Non-critical validation failures become warnings; critical failures still block."
+                        : "All validators enforced. Use Guided/YOLO during validator hardening to unblock recoverable runs."}
+                  </div>
+                </div>
               </div>
             </AccordionSection>
 

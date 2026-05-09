@@ -950,6 +950,11 @@ export function MyAutomationsContainer({
                   2,
                   Math.min(16, Number.parseInt(String(draft.maxParallelAgents || "4"), 10) || 4)
                 ),
+          ...(draft.executionProfile === "strict" ||
+          draft.executionProfile === "guided" ||
+          draft.executionProfile === "yolo"
+            ? { profile: draft.executionProfile }
+            : { profile: null }),
         },
         flow: existing?.flow
           ? {

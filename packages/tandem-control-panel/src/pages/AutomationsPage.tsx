@@ -67,6 +67,8 @@ interface WorkflowEditDraft {
   workspaceRoot: string;
   executionMode: ExecutionMode;
   maxParallelAgents: string;
+  /** Saved execution profile ("strict" | "guided" | "yolo"). Empty string = inherit system default (Strict). */
+  executionProfile: "" | "strict" | "guided" | "yolo";
   modelProvider: string;
   modelId: string;
   plannerModelProvider: string;
@@ -728,6 +730,15 @@ function workflowAutomationToEditDraft(automation: any): WorkflowEditDraft | nul
     maxParallelAgents: String(
       Number.isFinite(maxParallelRaw) && maxParallelRaw > 0 ? Math.round(maxParallelRaw) : 1
     ),
+    executionProfile: ((): "" | "strict" | "guided" | "yolo" => {
+      const raw = String(
+        automation?.execution?.profile || (automation?.execution as any)?.executionProfile || ""
+      )
+        .trim()
+        .toLowerCase();
+      if (raw === "strict" || raw === "guided" || raw === "yolo") return raw;
+      return "";
+    })(),
     modelProvider: workflowModelProvider,
     modelId: workflowModelId,
     plannerModelProvider: String(
