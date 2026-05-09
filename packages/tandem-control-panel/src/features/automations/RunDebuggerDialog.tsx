@@ -12,6 +12,8 @@ import { WorkflowRunTelemetryPanel } from "./WorkflowRunTelemetryPanel";
 import { WorkflowRunSummaryPanel } from "./WorkflowRunSummaryPanel";
 import { WorkflowTaskSignalsPanel } from "./WorkflowTaskSignalsPanel";
 import { LazyJson, DeferredJson } from "./LazyJson";
+import { ExperimentalArtifactBadge, RelaxationOutcomeSummary } from "./ExecutionProfileBadges";
+import { artifactValidationRelaxedClasses } from "./AutomationsRunHelpers";
 import { formatCompactNumber } from "../../lib/format";
 import { normalizeManagedFilesExplorerPath, openFilesExplorer } from "../files/explorerHandoff";
 
@@ -571,8 +573,11 @@ export function RunDebuggerDialog({ state, actions, helpers }: any) {
                             </div>
                             <div className="rounded-md border border-slate-800/80 bg-slate-950/30 p-2">
                               <div className="tcp-subtle">validation outcome</div>
-                              <div className="mt-1 font-medium text-slate-100">
-                                {selectedBoardTaskValidationOutcome || "n/a"}
+                              <div className="mt-1 flex items-center gap-2 font-medium text-slate-100">
+                                <span>{selectedBoardTaskValidationOutcome || "n/a"}</span>
+                                <ExperimentalArtifactBadge
+                                  validation={selectedBoardTaskArtifactValidation}
+                                />
                               </div>
                             </div>
                             <div className="rounded-md border border-slate-800/80 bg-slate-950/30 p-2">
@@ -609,6 +614,22 @@ export function RunDebuggerDialog({ state, actions, helpers }: any) {
                                 <div className="mt-1 font-medium text-slate-100">n/a</div>
                               )}
                             </div>
+                            {(() => {
+                              const relaxed = artifactValidationRelaxedClasses(
+                                selectedBoardTaskArtifactValidation
+                              );
+                              if (relaxed.length === 0) return null;
+                              return (
+                                <div className="rounded-md border border-amber-700/40 bg-amber-950/20 p-2 sm:col-span-2">
+                                  <div className="tcp-subtle">profile relaxation</div>
+                                  <div className="mt-1">
+                                    <RelaxationOutcomeSummary
+                                      validation={selectedBoardTaskArtifactValidation}
+                                    />
+                                  </div>
+                                </div>
+                              );
+                            })()}
                             <div className="rounded-md border border-slate-800/80 bg-slate-950/30 p-2 sm:col-span-2">
                               <div className="tcp-subtle">receipt ledger</div>
                               {selectedBoardTaskReceiptLedger ? (
