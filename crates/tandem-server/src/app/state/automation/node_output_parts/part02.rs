@@ -19,6 +19,30 @@ fn automation_status_scan_window(text: &str) -> String {
     }
 }
 
+fn parse_review_decision_status_json(raw: &str) -> Option<Value> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let mut seen = std::collections::BTreeSet::<String>::new();
+    std::iter::once(trimmed.to_string())
+        .chain(extract_markdown_json_blocks(trimmed))
+        .chain(extract_loose_json_blocks(trimmed))
+        .filter_map(|candidate| {
+            let normalized = candidate.trim().to_string();
+            if normalized.is_empty() || !seen.insert(normalized.clone()) {
+                return None;
+            }
+            let value = serde_json::from_str::<Value>(&normalized).ok()?;
+            let object = value.as_object()?;
+            object.get("status").and_then(Value::as_str)?;
+            object.get("approved").and_then(Value::as_bool)?;
+            Some(value)
+        })
+        .next()
+}
+
 fn automation_node_is_bug_monitor_triage_handoff(node: &AutomationFlowNode) -> bool {
     node.metadata
         .as_ref()
@@ -157,7 +181,12 @@ pub(crate) fn detect_automation_node_status(
         || has_required_tools
         || validator_kind == crate::AutomationOutputValidatorKind::StructuredJson)
         && !research_repair_exhausted;
-    let parsed = parse_status_json_with_tail_window(session_text);
+    let parsed = if validator_kind == crate::AutomationOutputValidatorKind::ReviewDecision {
+        parse_review_decision_status_json(session_text)
+            .or_else(|| parse_status_json_with_tail_window(session_text))
+    } else {
+        parse_status_json_with_tail_window(session_text)
+    };
     let approved = parsed
         .as_ref()
         .and_then(|value| value.get("approved"))

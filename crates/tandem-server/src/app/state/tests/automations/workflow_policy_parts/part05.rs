@@ -415,6 +415,62 @@ fn malformed_review_tool_result_requests_repair_instead_of_terminal_block() {
 }
 
 #[test]
+fn review_decision_accepts_extended_json_status_payload() {
+    let node = AutomationFlowNode {
+        knowledge: tandem_orchestrator::KnowledgeBinding::default(),
+        node_id: "validate_report".to_string(),
+        agent_id: "reviewer".to_string(),
+        objective: "Review the synthesized report and approve or reject it.".to_string(),
+        depends_on: vec!["synthesize_report".to_string()],
+        input_refs: Vec::new(),
+        output_contract: Some(AutomationFlowOutputContract {
+            kind: "review".to_string(),
+            validator: Some(crate::AutomationOutputValidatorKind::ReviewDecision),
+            enforcement: None,
+            schema: None,
+            summary_guidance: None,
+        }),
+        retry_policy: None,
+        timeout_ms: None,
+        max_tool_calls: None,
+        stage_kind: None,
+        gate: None,
+        metadata: None,
+    };
+    let session_text = r#"{
+  "status": "completed",
+  "approved": false,
+  "reason": "The report has weak support for some claims.",
+  "confirmed": [
+    "Report includes Summary, Key Findings, Market Notes, Reddit Signals, Sources, and Tandem Run details."
+  ],
+  "unverified_or_weakly_supported": [
+    "Some market-summary claims were not directly substantiated by visible upstream artifacts."
+  ]
+}"#;
+
+    let (status, reason, approved): (String, Option<String>, Option<bool>) =
+        detect_automation_node_status(
+            &node,
+            session_text,
+            None,
+            &json!({
+                "requested_tools": ["read"],
+                "executed_tools": ["read"],
+                "tool_call_counts": {"read": 3}
+            }),
+            None,
+        );
+
+    assert_eq!(status, "blocked");
+    assert_eq!(
+        reason.as_deref(),
+        Some("The report has weak support for some claims.")
+    );
+    assert_eq!(approved, Some(false));
+}
+
+#[test]
 fn artifact_workflow_with_materialized_output_completes_without_explicit_status_json() {
     let node = AutomationFlowNode {
         knowledge: tandem_orchestrator::KnowledgeBinding::default(),
