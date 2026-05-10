@@ -250,6 +250,9 @@ pub(crate) fn validate_automation_artifact_output_with_context(
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
+        let requested_concrete_mcp_tool = requested_tools_for_contract
+            .iter()
+            .any(|tool| tool.starts_with("mcp.") && tool != "mcp_list" && !tool.ends_with(".*"));
         let requested_has_read = tool_telemetry
             .get("requested_tools")
             .and_then(Value::as_array)
@@ -667,6 +670,15 @@ pub(crate) fn validate_automation_artifact_output_with_context(
         let selected_text = selected_assessment
             .map(|assessment| assessment.text.as_str())
             .unwrap_or(text.as_str());
+        let connector_source_unavailable_with_recorded_limitation = connector_discovery_required
+            && !automation_node_is_outbound_action(node)
+            && !connector_action_patterns.is_empty()
+            && !requested_concrete_mcp_tool
+            && !executed_concrete_mcp_tool
+            && artifact_text_has_connector_source_evidence_or_limitation(selected_text);
+        if connector_source_unavailable_with_recorded_limitation {
+            unmet_requirements.retain(|item| item != "mcp_connector_source_missing");
+        }
         if validator_kind == crate::AutomationOutputValidatorKind::StructuredJson
             && structured_handoff.is_none()
         {

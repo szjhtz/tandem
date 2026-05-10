@@ -1393,6 +1393,92 @@ fn validation_accepts_concrete_mcp_source_from_top_level_diagnostics() {
 }
 
 #[test]
+fn validation_accepts_required_connector_limitation_when_source_tool_unavailable() {
+    let workspace_root = std::env::temp_dir().join(format!(
+        "tandem-required-mcp-limitation-{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&workspace_root).expect("create workspace");
+    let mut node = bare_node();
+    node.node_id = "gather_reddit_signals".to_string();
+    node.objective = "Use Reddit MCP to research current community discussions about making AI agents reliable for business workflows. Retrieve representative posts or comments and summarize recurring signals with Reddit source links or identifiers.".to_string();
+    node.output_contract = Some(AutomationFlowOutputContract {
+        kind: "structured_json".to_string(),
+        validator: Some(crate::AutomationOutputValidatorKind::StructuredJson),
+        enforcement: None,
+        schema: None,
+        summary_guidance: None,
+    });
+    node.metadata = Some(json!({
+        "builder": {
+            "output_path": ".tandem/artifacts/gather-reddit-signals.json"
+        },
+        "tool_allowlist": [
+            "mcp_list",
+            "mcp.reddit_gmail.*",
+            "write"
+        ]
+    }));
+    let artifact = serde_json::to_string_pretty(&json!({
+        "status": "completed",
+        "node_id": "gather_reddit_signals",
+        "recurring_signals": [],
+        "connector_limitations": [{
+            "connector": "reddit-gmail",
+            "limitation": "No concrete mcp.reddit_gmail.* source tool was available in this attempt after discovery."
+        }],
+        "source_limitations": [
+            "The Reddit connector was unavailable, so this run records the limitation instead of fabricating Reddit evidence."
+        ]
+    }))
+    .expect("serialize artifact");
+    let session = Session::new(Some("{\"status\":\"completed\"}".to_string()), None);
+    let snapshot = std::collections::BTreeSet::new();
+
+    let (accepted, validation, rejected) = validate_automation_artifact_output(
+        &node,
+        &session,
+        workspace_root.to_str().expect("workspace root"),
+        "{\"status\":\"completed\"}",
+        &json!({
+            "executed_tools": ["mcp_list", "write"],
+            "requested_tools": ["mcp_list", "write"],
+            "capability_resolution": {
+                "mcp_tool_diagnostics": {
+                    "selected_servers": ["reddit-gmail"],
+                    "missing_selected_servers": ["reddit-gmail"],
+                    "servers": [{
+                        "name": "reddit-gmail",
+                        "exists": false,
+                        "enabled": false,
+                        "connected": false,
+                        "sync_error": "server_not_found"
+                    }]
+                }
+            },
+            "verified_output_materialized_by_current_attempt": true
+        }),
+        None,
+        Some((
+            ".tandem/artifacts/gather-reddit-signals.json".to_string(),
+            artifact,
+        )),
+        &snapshot,
+    );
+
+    assert!(accepted.is_some(), "{validation:#}");
+    assert_eq!(validation["validation_outcome"], "passed");
+    assert!(!validation["unmet_requirements"]
+        .as_array()
+        .expect("unmet array")
+        .iter()
+        .any(|value| value.as_str() == Some("mcp_connector_source_missing")));
+    assert!(rejected.is_none(), "{rejected:?}");
+
+    let _ = std::fs::remove_dir_all(&workspace_root);
+}
+
+#[test]
 fn validation_accepts_optional_tandem_mcp_reference_without_connector_call() {
     let workspace_root = std::env::temp_dir().join(format!(
         "tandem-optional-mcp-reference-{}",
