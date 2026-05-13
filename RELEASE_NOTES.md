@@ -75,6 +75,10 @@ The control panel exposes this in both Workflow Studio and the existing automati
 
 The runtime also understands node MCP policy when computing concrete MCP allowlists and connector discovery behavior. Explicit node policies, including empty custom policies, are treated as intentional constraints. A regression test covers the Gmail approval case by allowing `mcp.reddit_gmail.gmail_send_draft` on the post-approval node while filtering out `gmail_create_email_draft` and `gmail_send_email`.
 
+Channel-level MCP server toggles are now enforced as a hard runtime boundary. If an MCP server is disabled for a channel or conversation scope, agents do not receive tools from that connection, even when stale exact-tool preferences or a route-level allowlist still mention those tools. Exact MCP tool selections only apply while their owning server is enabled; selecting exact tools now narrows access rather than layering on top of a server wildcard. Channel defaults also avoid a broad `*` tool allowlist so MCP access must be explicitly granted.
+
+The channel settings UI now mirrors that model. Disabling an MCP server clears exact-tool selections for that server on save, exact-tool pickers are visibly inactive until the server is enabled, and the summary counts only active exact MCP tools. Telegram, Discord, and Slack settings also expose a `Strict KB grounding` toggle so operators can intentionally opt a channel into factual-question KB grounding without confusing that behavior with MCP tool access.
+
 ## v0.5.4 (Released 2026-05-05)
 
 This patch fixes automation schedule timezone handling, tightens the distinction between local source-code research and final research synthesis, and introduces marketplace-ready workflow pack import/export.
