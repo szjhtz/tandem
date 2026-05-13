@@ -27,6 +27,38 @@ function normalizeMcpNamespaceSegment(raw: string) {
   return out.replace(/^_+|_+$/g, "") || "mcp";
 }
 
+function uniqueStrings(values: string[]) {
+  return Array.from(
+    new Set(values.map((value) => String(value || "").trim()).filter(Boolean))
+  ).sort();
+}
+
+function mcpServerToolCache(server: any): string[] {
+  return Array.isArray(server?.toolCache)
+    ? server.toolCache.map((tool: any) => String(tool || "").trim()).filter(Boolean)
+    : [];
+}
+
+function mcpToolBelongsToServer(toolName: string, serverName: string) {
+  const prefix = `mcp.${normalizeMcpNamespaceSegment(serverName)}.`;
+  return String(toolName || "").startsWith(prefix);
+}
+
+function inferMcpServersFromTools(tools: string[], servers: any[]) {
+  return uniqueStrings(
+    servers
+      .filter((server) => tools.some((tool) => mcpToolBelongsToServer(tool, server.name)))
+      .map((server) => server.name)
+  );
+}
+
+function mcpToolsForServers(servers: any[], selectedServerNames: string[]) {
+  const selectedSet = new Set(selectedServerNames);
+  return servers
+    .filter((server) => selectedSet.has(server.name))
+    .flatMap((server) => mcpServerToolCache(server));
+}
+
 function useDialogIconRender(active: boolean) {
   const rootRef = useRef<HTMLDivElement | null>(null);
 
@@ -1018,6 +1050,18 @@ export function WorkflowAutomationEditDialog({
                                 ...(workflowEditDraft.mcpOtherAllowedTools || []),
                                 ...(workflowEditDraft.selectedMcpTools || []),
                               ];
+                      const explicitTaskMcpTools = uniqueStrings([
+                        ...(node.mcpOtherAllowedTools || []),
+                        ...(node.mcpAllowedTools || []),
+                      ]);
+                      const inferredTaskServers = inferMcpServersFromTools(
+                        explicitTaskMcpTools,
+                        mcpServers
+                      );
+                      const taskMcpServerNames = uniqueStrings([
+                        ...(node.mcpAllowedServers || []),
+                        ...inferredTaskServers,
+                      ]);
                       const nodeSendCapable = nodeMcpTools.some(toolLooksSendCapable);
                       return (
                         <div
@@ -1242,38 +1286,86 @@ export function WorkflowAutomationEditDialog({
                                       }
                                     />
                                   </div>
-                                  <div className="grid gap-1">
-                                    <label className="text-xs text-slate-400">
-                                      Task MCP servers
-                                    </label>
-                                    <input
-                                      className="tcp-input font-mono text-xs"
-                                      value={(node.mcpAllowedServers || []).join(", ")}
-                                      onInput={(e) =>
-                                        setWorkflowEditDraft((current: any) =>
-                                          current
-                                            ? {
-                                                ...current,
-                                                nodes: current.nodes.map((row: any) =>
-                                                  row.nodeId === node.nodeId
-                                                    ? {
-                                                        ...row,
-                                                        mcpAllowedServers: (
-                                                          e.target as HTMLInputElement
-                                                        ).value
-                                                          .split(/[\n,]/g)
-                                                          .map((value: string) =>
-                                                            String(value || "").trim()
+                                  <div className="grid gap-2">
+                                    <div className="flex flex-wrap items-center justify-between gap-2">
+                                      <label className="text-xs text-slate-400">
+                                        Task MCP servers
+                                      </label>
+                                      <span className="text-[11px] text-slate-500">
+                                        Select runtime servers to reveal all available task tools.
+                                      </span>
+                                    </div>
+                                    {mcpServers.length ? (
+                                      <div className="flex flex-wrap gap-2">
+                                        {mcpServers.map((server: any) => {
+                                          const selected = taskMcpServerNames.includes(server.name);
+                                          return (
+                                            <button
+                                              key={server.name}
+                                              type="button"
+                                              className={`tcp-btn h-7 px-2 text-xs ${
+                                                selected
+                                                  ? "border-amber-400/60 bg-amber-400/10 text-amber-300"
+                                                  : ""
+                                              }`}
+                                              onClick={() =>
+                                                setWorkflowEditDraft((current: any) => {
+                                                  if (!current) return current;
+                                                  return {
+                                                    ...current,
+                                                    nodes: current.nodes.map((row: any) => {
+                                                      if (row.nodeId !== node.nodeId) return row;
+                                                      const currentServers = uniqueStrings([
+                                                        ...(row.mcpAllowedServers || []),
+                                                        ...inferMcpServersFromTools(
+                                                          [
+                                                            ...(row.mcpOtherAllowedTools || []),
+                                                            ...(row.mcpAllowedTools || []),
+                                                          ],
+                                                          mcpServers
+                                                        ),
+                                                      ]);
+                                                      const nextServers = selected
+                                                        ? currentServers.filter(
+                                                            (name) => name !== server.name
                                                           )
-                                                          .filter(Boolean),
-                                                      }
-                                                    : row
-                                                ),
+                                                        : uniqueStrings([
+                                                            ...currentServers,
+                                                            server.name,
+                                                          ]);
+                                                      const nextAllowedTools = Array.isArray(
+                                                        row.mcpAllowedTools
+                                                      )
+                                                        ? row.mcpAllowedTools.filter(
+                                                            (toolName: string) =>
+                                                              !selected ||
+                                                              !mcpToolBelongsToServer(
+                                                                toolName,
+                                                                server.name
+                                                              )
+                                                          )
+                                                        : row.mcpAllowedTools;
+                                                      return {
+                                                        ...row,
+                                                        mcpAllowedServers: nextServers,
+                                                        mcpAllowedTools: nextAllowedTools,
+                                                      };
+                                                    }),
+                                                  };
+                                                })
                                               }
-                                            : current
-                                        )
-                                      }
-                                    />
+                                            >
+                                              {server.name}{" "}
+                                              {server.connected ? "• connected" : "• disconnected"}
+                                            </button>
+                                          );
+                                        })}
+                                      </div>
+                                    ) : (
+                                      <div className="text-xs text-slate-500">
+                                        No MCP servers are currently visible to the runtime.
+                                      </div>
+                                    )}
                                   </div>
                                   <div className="grid gap-1">
                                     <label className="text-xs text-slate-400">
@@ -1311,13 +1403,10 @@ export function WorkflowAutomationEditDialog({
                                   <McpToolAllowlistEditor
                                     title="Task MCP tool access"
                                     subtitle="This task-level allowlist overrides the workflow MCP selection for only this step."
-                                    discoveredTools={mcpServers
-                                      .filter((server: any) =>
-                                        (node.mcpAllowedServers || []).includes(server.name)
-                                      )
-                                      .flatMap((server: any) =>
-                                        Array.isArray(server.toolCache) ? server.toolCache : []
-                                      )}
+                                    discoveredTools={mcpToolsForServers(
+                                      mcpServers,
+                                      taskMcpServerNames
+                                    )}
                                     value={node.mcpAllowedTools}
                                     onChange={(next) =>
                                       setWorkflowEditDraft((current: any) =>

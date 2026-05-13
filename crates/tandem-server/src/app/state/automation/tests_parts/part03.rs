@@ -1958,6 +1958,89 @@ fn validation_accepts_unknown_mcp_server_artifact_from_concrete_tool_receipt() {
 }
 
 #[test]
+fn outbound_connector_mutation_failure_requires_retry_even_with_failure_artifact() {
+    let workspace_root = std::env::temp_dir().join(format!(
+        "tandem-external-mutation-failure-{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&workspace_root).expect("create workspace");
+    let mut node = bare_node();
+    node.node_id = "save_notion_report".to_string();
+    node.objective = "Save the completed report into the existing Notion database.".to_string();
+    node.output_contract = Some(AutomationFlowOutputContract {
+        kind: "report_markdown".to_string(),
+        validator: Some(crate::AutomationOutputValidatorKind::GenericArtifact),
+        enforcement: None,
+        schema: None,
+        summary_guidance: None,
+    });
+    node.metadata = Some(json!({
+        "builder": {
+            "output_path": ".tandem/artifacts/save-notion-report.md",
+            "task_kind": "publish"
+        },
+        "tool_allowlist": [
+            "mcp.any_user_name.notion_create_pages",
+            "write"
+        ]
+    }));
+    let artifact = "# Notion Publication Report\n\nThe Notion create failed with schema validation; no row was created.";
+    let session = Session::new(Some("failed notion publication".to_string()), None);
+    let snapshot = std::collections::BTreeSet::new();
+
+    let (accepted, validation, rejected) = validate_automation_artifact_output(
+        &node,
+        &session,
+        workspace_root.to_str().expect("workspace root"),
+        "{\"status\":\"completed\"}",
+        &json!({
+            "executed_tools": [
+                "mcp_list",
+                "mcp.any_user_name.notion_create_pages",
+                "write"
+            ],
+            "failed_tools": [
+                "mcp.any_user_name.notion_create_pages"
+            ],
+            "external_mutation_attempted": true,
+            "external_mutation_succeeded": false,
+            "latest_external_mutation_failure": "Property \"Report Date\" not found in the data source",
+            "requested_tools": [
+                "mcp_list",
+                "mcp.any_user_name.notion_create_pages",
+                "write"
+            ],
+            "capability_resolution": {
+                "mcp_tool_diagnostics": {
+                    "selected_servers": ["any-user-name"]
+                }
+            },
+            "verified_output_materialized_by_current_attempt": true
+        }),
+        None,
+        Some((
+            ".tandem/artifacts/save-notion-report.md".to_string(),
+            artifact.to_string(),
+        )),
+        &snapshot,
+    );
+
+    assert!(accepted.is_none(), "{validation}");
+    assert_eq!(validation["validation_outcome"], "needs_repair");
+    assert!(validation["unmet_requirements"]
+        .as_array()
+        .expect("unmet array")
+        .iter()
+        .any(|value| value.as_str() == Some("external_mutation_failed")));
+    assert!(rejected
+        .as_deref()
+        .unwrap_or_default()
+        .contains("external delivery mutation failed"));
+
+    let _ = std::fs::remove_dir_all(&workspace_root);
+}
+
+#[test]
 fn validation_rejects_connector_source_inventory_only_artifact() {
     let workspace_root = std::env::temp_dir().join(format!(
         "tandem-connector-inventory-only-artifact-{}",

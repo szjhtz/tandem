@@ -69,6 +69,9 @@ pub(crate) fn summarize_automation_tool_activity(
     let mut email_delivery_attempted = false;
     let mut email_delivery_succeeded = false;
     let mut latest_email_delivery_failure = None::<String>;
+    let mut external_mutation_attempted = false;
+    let mut external_mutation_succeeded = false;
+    let mut latest_external_mutation_failure = None::<String>;
     let mut failed_tools = Vec::<String>::new();
     let mut latest_tool_failure = None::<Value>;
     for message in &session.messages {
@@ -92,6 +95,7 @@ pub(crate) fn summarize_automation_tool_activity(
                 "websearch" | "webfetch" | "webfetch_html"
             );
             let is_email_tool = automation_tool_name_is_email_delivery(&normalized);
+            let is_external_mutation_tool = automation_tool_name_is_external_mutation(&normalized);
             let result_failure = automation_tool_result_failure_reason(result.as_ref());
             if error.as_ref().is_some_and(|value| !value.trim().is_empty())
                 || result_failure.is_some()
@@ -129,6 +133,15 @@ pub(crate) fn summarize_automation_tool_activity(
                 if is_email_tool {
                     email_delivery_attempted = true;
                     latest_email_delivery_failure = error
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                        .map(str::to_string)
+                        .or_else(|| result_failure.clone());
+                }
+                if is_external_mutation_tool {
+                    external_mutation_attempted = true;
+                    latest_external_mutation_failure = error
                         .as_deref()
                         .map(str::trim)
                         .filter(|value| !value.is_empty())
@@ -256,6 +269,11 @@ pub(crate) fn summarize_automation_tool_activity(
                 email_delivery_succeeded = true;
                 latest_email_delivery_failure = None;
             }
+            if is_external_mutation_tool {
+                external_mutation_attempted = true;
+                external_mutation_succeeded = true;
+                latest_external_mutation_failure = None;
+            }
         }
     }
     if executed_tools.is_empty() {
@@ -379,6 +397,9 @@ pub(crate) fn summarize_automation_tool_activity(
         "email_delivery_attempted": email_delivery_attempted,
         "email_delivery_succeeded": email_delivery_succeeded,
         "latest_email_delivery_failure": latest_email_delivery_failure,
+        "external_mutation_attempted": external_mutation_attempted,
+        "external_mutation_succeeded": external_mutation_succeeded,
+        "latest_external_mutation_failure": latest_external_mutation_failure,
         "verification_expected": verification.get("verification_expected").cloned().unwrap_or(json!(false)),
         "verification_command": verification.get("verification_command").cloned().unwrap_or(Value::Null),
         "verification_plan": verification.get("verification_plan").cloned().unwrap_or(json!([])),

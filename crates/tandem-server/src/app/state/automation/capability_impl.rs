@@ -159,6 +159,10 @@ pub(crate) fn automation_tool_name_is_email_draft(tool_name: &str) -> bool {
     tool_name_matches_profile(tool_name, ToolCapabilityProfile::EmailDraft)
 }
 
+pub(crate) fn automation_tool_name_is_external_mutation(tool_name: &str) -> bool {
+    tool_name_matches_profile(tool_name, ToolCapabilityProfile::ExternalMutation)
+}
+
 fn automation_capability_profile(capability_id: &str) -> Option<ToolCapabilityProfile> {
     match capability_id {
         "workspace_read" => Some(ToolCapabilityProfile::WorkspaceRead),

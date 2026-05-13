@@ -12,6 +12,7 @@ pub enum ToolCapabilityProfile {
     EmailDelivery,
     EmailSend,
     EmailDraft,
+    ExternalMutation,
 }
 
 pub fn canonical_tool_name(name: &str) -> String {
@@ -62,6 +63,9 @@ pub fn tool_name_matches_profile(tool_name: &str, profile: ToolCapabilityProfile
         ToolCapabilityProfile::EmailDelivery => tool_name_looks_like_email_delivery(tool_name),
         ToolCapabilityProfile::EmailSend => tool_name_looks_like_email_send(tool_name),
         ToolCapabilityProfile::EmailDraft => tool_name_looks_like_email_draft(tool_name),
+        ToolCapabilityProfile::ExternalMutation => {
+            tool_name_looks_like_external_mutation(tool_name)
+        }
     }
 }
 
@@ -101,6 +105,13 @@ fn tool_schema_matches_profile_from_metadata(
         }
         ToolCapabilityProfile::MemoryOperation => {
             capabilities.domains.contains(&ToolDomain::Memory)
+        }
+        ToolCapabilityProfile::ExternalMutation => {
+            capabilities.network_access
+                && (capabilities.effects.contains(&ToolEffect::Write)
+                    || capabilities.effects.contains(&ToolEffect::Patch)
+                    || capabilities.effects.contains(&ToolEffect::Delete)
+                    || capabilities.effects.contains(&ToolEffect::Execute))
         }
         ToolCapabilityProfile::EmailDelivery
         | ToolCapabilityProfile::EmailSend
@@ -218,6 +229,66 @@ fn tool_name_is_mcp_connector_tool(tool_name: &str) -> bool {
     tool_name.trim().to_ascii_lowercase().starts_with("mcp.")
 }
 
+fn tool_name_looks_like_external_mutation(tool_name: &str) -> bool {
+    if tool_name_is_mcp_connector_tool(tool_name) {
+        return mcp_tool_action_name(tool_name)
+            .is_some_and(|action| tool_action_looks_like_external_mutation(&action));
+    }
+    tool_action_looks_like_external_mutation(tool_name)
+}
+
+fn tool_action_looks_like_external_mutation(tool_name: &str) -> bool {
+    let tokens = tool_name_tokens(tool_name);
+    let compact = tool_name_compact(tool_name);
+    let has = |needle: &str| tool_name_tokens_contains(&tokens, needle);
+
+    if [
+        "get", "fetch", "list", "search", "retrieve", "read", "find", "query", "about", "top",
+    ]
+    .iter()
+    .any(|needle| has(needle))
+        && ![
+            "create", "update", "delete", "send", "insert", "post", "publish", "write",
+        ]
+        .iter()
+        .any(|needle| has(needle))
+    {
+        return false;
+    }
+
+    [
+        "create",
+        "update",
+        "delete",
+        "remove",
+        "move",
+        "duplicate",
+        "send",
+        "insert",
+        "edit",
+        "post",
+        "publish",
+        "comment",
+        "upload",
+        "append",
+        "add",
+        "patch",
+        "write",
+        "submit",
+        "approve",
+        "archive",
+    ]
+    .iter()
+    .any(|needle| has(needle))
+        || compact.contains("createpage")
+        || compact.contains("createpages")
+        || compact.contains("updatepage")
+        || compact.contains("senddraft")
+        || compact.contains("sendemail")
+        || compact.contains("createdraft")
+        || compact.contains("updatedraft")
+}
+
 fn mcp_tool_action_name(tool_name: &str) -> Option<String> {
     let normalized = tool_name.trim().to_ascii_lowercase().replace('-', "_");
     normalized
@@ -331,6 +402,26 @@ mod tests {
         assert!(!tool_name_matches_profile(
             "mcp.reddit_gmail.gmail_settings_send_as_get",
             ToolCapabilityProfile::EmailSend
+        ));
+    }
+
+    #[test]
+    fn mcp_action_name_identifies_external_mutations_without_server_name() {
+        assert!(tool_name_matches_profile(
+            "mcp.poop.notion_create_pages",
+            ToolCapabilityProfile::ExternalMutation
+        ));
+        assert!(tool_name_matches_profile(
+            "mcp.anything.gmail_send_draft",
+            ToolCapabilityProfile::ExternalMutation
+        ));
+        assert!(!tool_name_matches_profile(
+            "mcp.anything.notion_fetch",
+            ToolCapabilityProfile::ExternalMutation
+        ));
+        assert!(!tool_name_matches_profile(
+            "mcp.anything.reddit_search_across_subreddits",
+            ToolCapabilityProfile::ExternalMutation
         ));
     }
 }

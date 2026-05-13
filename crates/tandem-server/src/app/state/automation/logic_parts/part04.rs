@@ -37,7 +37,13 @@ fn session_has_notion_database_property_update(session: &Session) -> bool {
             else {
                 return false;
             };
-            if tool != "mcp.notion.notion_update_page"
+            if !tool
+                .trim()
+                .to_ascii_lowercase()
+                .replace('-', "_")
+                .rsplit('.')
+                .next()
+                .is_some_and(|action| action == "notion_update_page")
                 || error.as_ref().is_some_and(|value| !value.trim().is_empty())
                 || automation_tool_result_failure_reason(result.as_ref()).is_some()
             {
@@ -446,25 +452,57 @@ pub(crate) fn validate_automation_artifact_output_with_context(
         let notion_database_property_update_satisfied =
             !notion_database_row_update_requires_properties
                 || session_has_notion_database_property_update(session);
+        let connector_delivery_like_node = automation_node_is_outbound_action(node)
+            || matches!(
+                task_kind.as_deref(),
+                Some(
+                    "delivery"
+                        | "connector_action"
+                        | "external_action"
+                        | "notion_update"
+                        | "publish"
+                )
+            )
+            || ((node_action_text.contains("notion")
+                || node_action_text.contains("database")
+                || node_action_text.contains("row"))
+                && (node_action_text.contains("update")
+                    || node_action_text.contains("save")
+                    || node_action_text.contains("write")));
+        let external_mutation_attempted = tool_telemetry
+            .get("external_mutation_attempted")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let external_mutation_succeeded = tool_telemetry
+            .get("external_mutation_succeeded")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let latest_external_mutation_failure = tool_telemetry
+            .get("latest_external_mutation_failure")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or("external mutation tool call failed");
         let connector_action_receipt_satisfied = concrete_mcp_action_succeeded
             && notion_database_property_update_satisfied
-            && (automation_node_is_outbound_action(node)
-                || matches!(
-                    task_kind.as_deref(),
-                    Some(
-                        "delivery"
-                            | "connector_action"
-                            | "external_action"
-                            | "notion_update"
-                            | "publish"
-                    )
-                )
-                || ((node_action_text.contains("notion")
-                    || node_action_text.contains("database")
-                    || node_action_text.contains("row"))
-                    && (node_action_text.contains("update")
-                        || node_action_text.contains("save")
-                        || node_action_text.contains("write"))));
+            && connector_delivery_like_node;
+        if connector_delivery_like_node
+            && external_mutation_attempted
+            && !external_mutation_succeeded
+        {
+            unmet_requirements.push("external_mutation_failed".to_string());
+            accepted_output = None;
+            let reason = format!(
+                "external delivery mutation failed and no later successful mutation was recorded: {}",
+                latest_external_mutation_failure
+            );
+            if semantic_block_reason.is_none() {
+                semantic_block_reason = Some(reason.clone());
+            }
+            if rejected_reason.is_none() {
+                rejected_reason = Some(reason);
+            }
+        }
         if concrete_mcp_action_succeeded
             && notion_database_row_update_requires_properties
             && !notion_database_property_update_satisfied
@@ -1295,9 +1333,20 @@ pub(crate) fn validate_automation_artifact_output_with_context(
             let had_web_research_artifact_contradiction = unmet_requirements
                 .iter()
                 .any(|value| value == "web_research_artifact_contradicts_tool_receipts");
+            let had_external_mutation_failed = unmet_requirements
+                .iter()
+                .any(|value| value == "external_mutation_failed");
             unmet_requirements.clear();
             if had_read_only_source_mutation {
                 unmet_requirements.push("read_only_source_mutations".to_string());
+            }
+            if had_external_mutation_failed {
+                unmet_requirements.push("external_mutation_failed".to_string());
+                semantic_block_reason = Some(
+                    "external delivery mutation failed and no later successful mutation was recorded"
+                        .to_string(),
+                );
+                rejected_reason = semantic_block_reason.clone();
             }
             if had_web_research_artifact_contradiction {
                 unmet_requirements
@@ -1307,7 +1356,7 @@ pub(crate) fn validate_automation_artifact_output_with_context(
                         .to_string(),
                 );
                 rejected_reason = semantic_block_reason.clone();
-            } else {
+            } else if !had_external_mutation_failed {
                 repair_succeeded = true;
             }
             if let Some(object) = validation_basis.as_object_mut() {
@@ -1681,6 +1730,9 @@ pub(crate) fn validate_automation_artifact_output_with_context(
     let node_attempt_exhausted = tool_telemetry_u32(tool_telemetry, "node_attempt")
         .zip(tool_telemetry_u32(tool_telemetry, "node_max_attempts"))
         .is_some_and(|(attempt, max_attempts)| attempt >= max_attempts);
+    let external_mutation_failed = unmet_requirements
+        .iter()
+        .any(|value| value == "external_mutation_failed");
     let repairable_contract_miss_with_node_budget = node_attempt_has_retry_remaining
         && unmet_requirements.iter().any(|value| {
             matches!(
@@ -1688,6 +1740,7 @@ pub(crate) fn validate_automation_artifact_output_with_context(
                 "mcp_connector_source_missing"
                     | "mcp_connector_source_artifact_missing"
                     | "mcp_required_tool_missing"
+                    | "external_mutation_failed"
                     | "structured_handoff_missing"
             )
         });
@@ -1702,6 +1755,7 @@ pub(crate) fn validate_automation_artifact_output_with_context(
     let has_required_tools = !enforcement.required_tools.is_empty();
     let contract_requires_repair = !enforcement.retry_on_missing.is_empty()
         || has_required_tools
+        || external_mutation_failed
         || validator_kind == crate::AutomationOutputValidatorKind::StructuredJson;
     let current_attempt_has_recorded_activity = validation_basis
         .get("current_attempt_has_recorded_activity")
@@ -1750,6 +1804,10 @@ pub(crate) fn validate_automation_artifact_output_with_context(
     } else {
         "passed"
     };
+    if external_mutation_failed {
+        accepted_output = None;
+        accepted_candidate_source = None;
+    }
     let should_classify = contract_requires_repair;
     let latest_web_research_failure = tool_telemetry
         .get("latest_web_research_failure")

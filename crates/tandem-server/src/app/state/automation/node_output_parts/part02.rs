@@ -665,6 +665,28 @@ pub(crate) fn detect_automation_node_status(
     if automation_node_requires_email_delivery(node) && email_delivery_succeeded {
         return ("completed".to_string(), explicit_reason, approved);
     }
+    let external_mutation_failed = artifact_validation
+        .and_then(|value| value.get("unmet_requirements"))
+        .and_then(Value::as_array)
+        .is_some_and(|items| {
+            items.iter().any(|item| {
+                item.as_str()
+                    .map(str::trim)
+                    .is_some_and(|raw| raw == "external_mutation_failed")
+            })
+        });
+    if external_mutation_failed {
+        return (
+            "needs_repair".to_string(),
+            explicit_reason.or_else(|| {
+                artifact_validation
+                    .and_then(|value| value.get("semantic_block_reason"))
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+            }),
+            approved,
+        );
+    }
     // If the artifact exists on disk but the session text has no parseable status JSON,
     // accept as completed. The artifact is the authoritative output — a missing compact
     // status in the text is a prompt-compliance gap, not a runtime failure.
@@ -831,6 +853,9 @@ pub(crate) fn detect_automation_node_failure_kind(
         }
         if has_unmet("mcp_required_tool_failed") {
             return Some("mcp_required_tool_failed".to_string());
+        }
+        if has_unmet("external_mutation_failed") {
+            return Some("external_mutation_failed".to_string());
         }
         if has_unmet("no_concrete_reads")
             || has_unmet("concrete_read_required")

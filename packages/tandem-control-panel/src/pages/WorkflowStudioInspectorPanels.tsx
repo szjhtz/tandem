@@ -46,6 +46,53 @@ function toolLooksSendCapable(tool: string) {
   );
 }
 
+function normalizeMcpNamespaceSegment(raw: string) {
+  let out = "";
+  let previousUnderscore = false;
+  for (const ch of String(raw || "").trim()) {
+    if (/^[a-z0-9]$/i.test(ch)) {
+      out += ch.toLowerCase();
+      previousUnderscore = false;
+    } else if (!previousUnderscore) {
+      out += "_";
+      previousUnderscore = true;
+    }
+  }
+  return out.replace(/^_+|_+$/g, "") || "mcp";
+}
+
+function uniqueStrings(values: string[]) {
+  return Array.from(
+    new Set(values.map((value) => String(value || "").trim()).filter(Boolean))
+  ).sort();
+}
+
+function mcpToolBelongsToServer(toolName: string, serverName: string) {
+  const prefix = `mcp.${normalizeMcpNamespaceSegment(serverName)}.`;
+  return String(toolName || "").startsWith(prefix);
+}
+
+function inferMcpServersFromTools(
+  tools: string[],
+  serverRows: Array<{ name: string; toolCache: string[] }>
+) {
+  return uniqueStrings(
+    serverRows
+      .filter((server) => tools.some((tool) => mcpToolBelongsToServer(tool, server.name)))
+      .map((server) => server.name)
+  );
+}
+
+function mcpToolsForServers(
+  serverRows: Array<{ name: string; toolCache: string[] }>,
+  selectedServerNames: string[]
+) {
+  const selectedSet = new Set(selectedServerNames);
+  return serverRows
+    .filter((server) => selectedSet.has(server.name))
+    .flatMap((server) => server.toolCache || []);
+}
+
 export function WorkflowStudioInspectorPanels(props: InspectorPanelsProps) {
   const {
     draft,
@@ -97,6 +144,14 @@ export function WorkflowStudioInspectorPanels(props: InspectorPanelsProps) {
           ? `MCP: ${selectedNodeMcpTools.length} tools`
           : "MCP: none"
       : "inherits agent tools";
+  const selectedNodeExplicitMcpTools = uniqueStrings([
+    ...(selectedNode?.mcpOtherAllowedTools || []),
+    ...(selectedNode?.mcpAllowedTools || []),
+  ]);
+  const selectedNodeMcpServerNames = uniqueStrings([
+    ...(selectedNode?.mcpAllowedServers || []),
+    ...inferMcpServersFromTools(selectedNodeExplicitMcpTools, mcpServerRows),
+  ]);
 
   return (
     <>
@@ -521,36 +576,77 @@ export function WorkflowStudioInspectorPanels(props: InspectorPanelsProps) {
                         }
                       />
                     </label>
-                    <label className="grid gap-1">
-                      <span className="text-xs text-slate-400">Task MCP Servers</span>
-                      <input
-                        className="tcp-input text-sm"
-                        value={joinCsv(selectedNode.mcpAllowedServers || [])}
-                        placeholder={joinCsv(mcpServers) || "No MCP servers detected"}
-                        onInput={(event) =>
-                          updateNode(selectedNode.nodeId, {
-                            mcpAllowedServers: splitCsv((event.target as HTMLInputElement).value),
-                          })
-                        }
-                      />
-                    </label>
-                    {(selectedNode.mcpAllowedServers || []).length ? (
-                      <McpToolAllowlistEditor
-                        title="Task MCP tool access"
-                        subtitle="This list applies only to the selected task. Unchecked tools cannot be reintroduced by capability inference."
-                        discoveredTools={mcpServerRows
-                          .filter((server) =>
-                            (selectedNode.mcpAllowedServers || []).includes(server.name)
-                          )
-                          .flatMap((server) => server.toolCache)}
-                        value={selectedNode.mcpAllowedTools ?? null}
-                        onChange={(next) =>
-                          updateNode(selectedNode.nodeId, { mcpAllowedTools: next })
-                        }
-                        collapsible
-                        defaultCollapsed
-                      />
-                    ) : null}
+                    <div className="grid gap-2">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <span className="text-xs text-slate-400">Task MCP Servers</span>
+                        <span className="text-[11px] text-slate-500">
+                          Select runtime servers to reveal all available task tools.
+                        </span>
+                      </div>
+                      {mcpServerRows.length ? (
+                        <div className="flex flex-wrap gap-2">
+                          {mcpServerRows.map((server) => {
+                            const selected = selectedNodeMcpServerNames.includes(server.name);
+                            return (
+                              <button
+                                key={server.name}
+                                type="button"
+                                className={
+                                  selected
+                                    ? "tcp-btn-primary h-7 px-2 text-xs"
+                                    : "tcp-btn h-7 px-2 text-xs"
+                                }
+                                onClick={() => {
+                                  const currentServers = uniqueStrings([
+                                    ...(selectedNode.mcpAllowedServers || []),
+                                    ...inferMcpServersFromTools(
+                                      selectedNodeExplicitMcpTools,
+                                      mcpServerRows
+                                    ),
+                                  ]);
+                                  const nextServers = selected
+                                    ? currentServers.filter((name) => name !== server.name)
+                                    : uniqueStrings([...currentServers, server.name]);
+                                  const nextAllowedTools = Array.isArray(
+                                    selectedNode.mcpAllowedTools
+                                  )
+                                    ? selectedNode.mcpAllowedTools.filter(
+                                        (toolName: string) =>
+                                          !selected ||
+                                          !mcpToolBelongsToServer(toolName, server.name)
+                                      )
+                                    : selectedNode.mcpAllowedTools;
+                                  updateNode(selectedNode.nodeId, {
+                                    mcpAllowedServers: nextServers,
+                                    mcpAllowedTools: nextAllowedTools,
+                                  });
+                                }}
+                              >
+                                {server.name}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <div className="text-xs text-slate-500">
+                          No MCP servers are currently visible to the runtime.
+                        </div>
+                      )}
+                    </div>
+                    <McpToolAllowlistEditor
+                      title="Task MCP tool access"
+                      subtitle="This list applies only to the selected task. Unchecked tools stay visible so they can be restored."
+                      discoveredTools={mcpToolsForServers(
+                        mcpServerRows,
+                        selectedNodeMcpServerNames
+                      )}
+                      value={selectedNode.mcpAllowedTools ?? null}
+                      onChange={(next) =>
+                        updateNode(selectedNode.nodeId, { mcpAllowedTools: next })
+                      }
+                      collapsible
+                      defaultCollapsed
+                    />
                   </>
                 ) : null}
               </div>

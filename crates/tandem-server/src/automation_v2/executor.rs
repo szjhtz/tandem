@@ -647,9 +647,11 @@ fn yolo_must_not_relax_required_source_reads(output: &Value) -> bool {
         .and_then(Value::as_array)
         .is_some_and(|items| {
             items.iter().any(|item| {
-                item.as_str()
-                    .map(str::trim)
-                    .is_some_and(|raw| raw == "required_source_paths_not_read")
+                item.as_str().map(str::trim).is_some_and(|raw| {
+                    raw == "required_source_paths_not_read"
+                        || raw == "external_mutation_failed"
+                        || raw == "mcp_required_tool_failed"
+                })
             })
         })
 }
@@ -671,6 +673,8 @@ fn yolo_safety_blocker_category(category: &str) -> bool {
             | "deterministic_verification_failed"
             | "unsafe_raw_write_rejected"
             | "placeholder_overwrite_rejected"
+            | "external_mutation_failed"
+            | "mcp_required_tool_failed"
     )
 }
 

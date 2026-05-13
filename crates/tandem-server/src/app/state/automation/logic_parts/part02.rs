@@ -1327,6 +1327,13 @@ pub(crate) fn semantic_block_reason_for_requirements(
         Some("artifact is placeholder-like or incomplete".to_string())
     } else if has_unmet("mcp_required_tool_missing") {
         Some("required MCP tool calls were not completed".to_string())
+    } else if has_unmet("external_mutation_failed") {
+        Some(
+            "external delivery mutation failed and no later successful mutation was recorded"
+                .to_string(),
+        )
+    } else if has_unmet("mcp_required_tool_failed") {
+        Some("required MCP tool call failed and needs repair".to_string())
     } else if has_unmet("mcp_connector_source_artifact_missing") {
         Some(
             "connector-backed source artifact contains connector inventory only, not source evidence"
