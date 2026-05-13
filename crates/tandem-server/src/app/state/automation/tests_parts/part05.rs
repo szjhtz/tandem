@@ -576,6 +576,48 @@ fn standup_filler_detection_accepts_concrete_updates() {
     );
 }
 
+#[test]
+fn successful_external_mutation_is_terminal_without_status_json() {
+    use super::node_output::detect_automation_node_status;
+    let mut node = bare_node();
+    node.objective = "Save the completed report to Notion.".to_string();
+    node.output_contract = Some(AutomationFlowOutputContract {
+        kind: "text_summary".to_string(),
+        validator: Some(crate::AutomationOutputValidatorKind::GenericArtifact),
+        enforcement: None,
+        schema: None,
+        summary_guidance: None,
+    });
+    let tool_telemetry = json!({
+        "external_mutation_attempted": true,
+        "external_mutation_succeeded": true,
+        "executed_tools": [
+            "mcp_list",
+            "mcp.some_user_named_server.notion_create_pages",
+            "mcp.some_user_named_server.notion_fetch"
+        ]
+    });
+    let artifact_validation = json!({
+        "validation_outcome": "passed",
+        "unmet_requirements": []
+    });
+    let session_text = "Created the Notion page and verified it by fetching the page back.";
+
+    let (status, reason, _) = detect_automation_node_status(
+        &node,
+        session_text,
+        None,
+        &tool_telemetry,
+        Some(&artifact_validation),
+    );
+
+    assert_eq!(status, "completed");
+    assert!(
+        reason.is_none(),
+        "successful side effects should not be retried because of missing compact status JSON"
+    );
+}
+
 // -----------------------------------------------------------------------
 // Standup gap fill — T2: enriched repair reason (item D)
 // -----------------------------------------------------------------------
