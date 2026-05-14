@@ -90,6 +90,7 @@ pub(crate) fn approval_request_to_card(
     let mut correlation = json!({
         "request_id": request.request_id,
         "source": request.source,
+        "automation_v2_run_id": request.run_id,
         "run_id": request.run_id,
         "node_id": request.node_id,
     });
@@ -195,7 +196,7 @@ impl ApprovalNotifier for ChannelApprovalNotifier {
             .map_err(|err| NotifierError::Transient(err.to_string()))?;
         if let Some(message_map) = self.message_map.as_ref() {
             message_map
-                .record_sent(&request.request_id, sent)
+                .record_approval_sent(request, sent)
                 .await
                 .map_err(|err| {
                     NotifierError::Transient(format!("failed to persist approval message: {err}"))
@@ -298,6 +299,9 @@ mod tests {
             card.correlation["request_id"],
             "automation_v2:run-1:send_email"
         );
+        assert_eq!(card.correlation["automation_v2_run_id"], "run-1");
+        assert_eq!(card.correlation["run_id"], "run-1");
+        assert_eq!(card.correlation["node_id"], "send_email");
     }
 
     #[tokio::test]
@@ -336,6 +340,11 @@ mod tests {
         assert_eq!(record.channel, "fake");
         assert_eq!(record.recipient, "C123");
         assert_eq!(record.message_id, "msg-1");
+        let thread = message_map
+            .get_thread_for_run(&request.run_id)
+            .await
+            .unwrap();
+        assert_eq!(thread.message_id, "msg-1");
     }
 
     #[tokio::test]
