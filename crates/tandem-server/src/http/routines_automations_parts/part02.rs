@@ -1995,6 +1995,35 @@ async fn update_channel_approval_decision(
                 .await
                 .map_err(|error| anyhow::anyhow!(error.to_string()))?;
         }
+        "telegram" => {
+            let Some(telegram_value) = effective.pointer("/channels/telegram").cloned() else {
+                return Ok(());
+            };
+            let cfg: crate::TelegramConfigFile = serde_json::from_value(telegram_value)?;
+            if cfg.bot_token.trim().is_empty() {
+                return Ok(());
+            }
+
+            let telegram_config = tandem_channels::config::TelegramConfig {
+                bot_token: cfg.bot_token,
+                allowed_users: crate::config::channels::normalize_allowed_users_or_wildcard(
+                    cfg.allowed_users,
+                ),
+                mention_only: cfg.mention_only,
+                style_profile: cfg.style_profile,
+                security_profile: cfg.security_profile,
+            };
+            let channel = tandem_channels::telegram::TelegramChannel::new(telegram_config);
+            channel
+                .update_card_for_decision(
+                    &card,
+                    &record.message_id,
+                    &decided_by_display,
+                    &decision_summary,
+                )
+                .await
+                .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        }
         _ => {}
     }
     Ok(())

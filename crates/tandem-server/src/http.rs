@@ -648,6 +648,49 @@ async fn run_approval_outbound(state: AppState) {
             }
         }
     }
+    if let Some(telegram_value) = channels.get("telegram") {
+        match serde_json::from_value::<TelegramConfigFile>(telegram_value.clone()) {
+            Ok(cfg)
+                if !cfg.bot_token.trim().is_empty()
+                    && cfg
+                        .approval_chat_id
+                        .as_deref()
+                        .map(|value| !value.trim().is_empty())
+                        .unwrap_or(false) =>
+            {
+                let recipient = cfg.approval_chat_id.unwrap_or_default();
+                let telegram_config = tandem_channels::config::TelegramConfig {
+                    bot_token: cfg.bot_token,
+                    allowed_users: crate::config::channels::normalize_allowed_users_or_wildcard(
+                        cfg.allowed_users,
+                    ),
+                    mention_only: cfg.mention_only,
+                    style_profile: cfg.style_profile,
+                    security_profile: cfg.security_profile,
+                };
+                notifiers.push(Arc::new(
+                    crate::app::notifiers::telegram::from_config_with_message_map(
+                        telegram_config,
+                        recipient,
+                        message_map.clone(),
+                    ),
+                ));
+            }
+            Ok(_) => {
+                tracing::warn!(
+                    target: "tandem_server::approval_outbound",
+                    "Telegram approval notifier disabled because bot_token or approval_chat_id is empty"
+                );
+            }
+            Err(error) => {
+                tracing::warn!(
+                    target: "tandem_server::approval_outbound",
+                    %error,
+                    "Telegram approval notifier disabled because config could not be parsed"
+                );
+            }
+        }
+    }
 
     if notifiers.is_empty() {
         tracing::info!(

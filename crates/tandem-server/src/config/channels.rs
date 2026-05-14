@@ -3,6 +3,9 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TelegramConfigFile {
     pub bot_token: String,
+    /// Telegram chat ID where approval cards should be posted.
+    #[serde(default)]
+    pub approval_chat_id: Option<String>,
     #[serde(default = "default_allow_all")]
     pub allowed_users: Vec<String>,
     #[serde(default)]
