@@ -1,4 +1,5 @@
 fn build_channel_session_create_body(
+    msg: &ChannelMessage,
     title: &str,
     security_profile: ChannelSecurityProfile,
     project_id: Option<&str>,
@@ -6,6 +7,13 @@ fn build_channel_session_create_body(
     let mut payload = serde_json::json!({
         "title": title,
         "permission": build_channel_session_permissions(security_profile),
+        "source_kind": "channel",
+        "source_metadata": {
+            "channel": msg.channel,
+            "user_id": msg.sender,
+            "scope_kind": session_scope_kind_label(msg),
+            "scope_id": msg.scope.id,
+        },
     });
     if let Some(project_id) = project_id {
         payload["project_id"] = serde_json::json!(project_id);
@@ -93,6 +101,7 @@ async fn get_or_create_session(
         None
     };
     let body = build_channel_session_create_body(
+        msg,
         &title,
         security_profile,
         public_memory_project_id.as_deref(),

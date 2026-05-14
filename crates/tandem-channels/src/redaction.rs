@@ -1,6 +1,5 @@
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
-use std::time::Instant;
 
 use regex::Regex;
 
@@ -138,6 +137,7 @@ fn configured_patterns() -> &'static [Regex] {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Instant;
 
     #[test]
     fn redacts_aws_access_key() {

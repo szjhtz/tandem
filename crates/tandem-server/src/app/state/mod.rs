@@ -33,6 +33,7 @@ use tandem_workflows::{
 };
 
 use crate::agent_teams::AgentTeamRuntime;
+use crate::app::rate_limit::ChannelRateLimiter;
 use crate::app::startup::{StartupSnapshot, StartupState, StartupStatus};
 use crate::automation_v2::governance::GovernanceState;
 use crate::automation_v2::types::*;
@@ -105,6 +106,7 @@ pub struct AppState {
             >,
         >,
     >,
+    pub channel_rate_limiter: Arc<ChannelRateLimiter>,
     pub automation_governance: Arc<RwLock<GovernanceState>>,
     pub governance_engine: Arc<dyn GovernancePolicyEngine>,
     pub automation_v2_runs: Arc<RwLock<std::collections::HashMap<String, AutomationV2RunRecord>>>,
