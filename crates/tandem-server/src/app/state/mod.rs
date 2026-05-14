@@ -58,6 +58,7 @@ use crate::{
 };
 
 pub mod approval_message_map;
+pub mod channel_user_capabilities;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -85,6 +86,14 @@ pub struct AppState {
             std::collections::HashMap<
                 String,
                 crate::http::channel_automation_drafts::ChannelAutomationDraftRecord,
+            >,
+        >,
+    >,
+    pub channel_user_capabilities: Arc<
+        RwLock<
+            std::collections::HashMap<
+                String,
+                channel_user_capabilities::ChannelUserCapabilityRecord,
             >,
         >,
     >,
@@ -154,6 +163,7 @@ pub struct AppState {
     pub routine_runs_path: PathBuf,
     pub automations_v2_path: PathBuf,
     pub channel_automation_drafts_path: PathBuf,
+    pub channel_user_capabilities_path: PathBuf,
     pub automation_governance_path: PathBuf,
     pub automation_v2_runs_path: PathBuf,
     pub automation_v2_runs_archive_path: PathBuf,

@@ -46,6 +46,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Telegram approval rework completion**: Telegram approval cards now use persisted opaque callback IDs for long run/node identifiers, while legacy truncated callbacks remain fail-closed. Rework taps send a force-reply prompt, capture the operator's next valid reply for that chat/user, and dispatch the feedback as a `rework` gate decision.
 - **Threaded approval status replies**: Channel adapters now expose a shared thread-reply primitive. After an approval decision updates the original card, Tandem posts a short follow-up into the stored Slack thread, Discord thread/channel target, or Telegram topic when available.
 - **Channel command capability tiers**: Built-in slash commands now carry read/act/approve/reconfigure tiers, and dispatcher execution checks those tiers against the channel security profile before running a command.
+- **Persisted channel user capabilities**: Added `channel_user_capabilities.json` state for explicit per-channel user capability assignments, with load/persist/upsert helpers and profile-tier fallback for users that have not enrolled yet.
 
 ### Fixed
 

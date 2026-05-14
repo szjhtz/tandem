@@ -124,6 +124,10 @@ pub(crate) fn resolve_channel_automation_drafts_path() -> PathBuf {
     resolve_canonical_data_file_path("channel_automation_drafts.json")
 }
 
+pub(crate) fn resolve_channel_user_capabilities_path() -> PathBuf {
+    resolve_canonical_data_file_path("channel_user_capabilities.json")
+}
+
 pub(crate) fn resolve_approval_message_map_path() -> PathBuf {
     resolve_canonical_data_file_path("approval_message_map.json")
 }
