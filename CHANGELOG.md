@@ -52,6 +52,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Per-user channel rate limiting**: Added in-memory token buckets keyed by channel user, with separate prompt and approval-decision budgets. Channel-origin `prompt_sync` requests default to 10 prompts/minute, approval interactions default to 30 decisions/minute, and `429` responses include `Retry-After`.
 - **Workspace pinning for channel sessions**: Sessions can now carry `pinned_workspace_id`; channel-created sessions pin to the server workspace and enrollment records can preserve an explicit pin. Tool execution and sandbox checks use the pinned workspace for channel sessions and return `ToolDenied { reason: WorkspaceScope }` when file paths target another workspace.
 - **Streaming audit export**: Added `GET /audit/stream` as an admin-gated newline-delimited JSON feed for approval decisions, tool execution ledger events, and channel capability changes.
+- **Step-up confirmation for channel reconfiguration**: Reconfigure-tier channel commands such as `/providers`, `/model`, `/schedule`, `/automations`, and `/config` now stop at a dispatcher middleware unless the message includes a fresh desktop-issued PIN. PINs expire after 5 minutes and are stripped before slash-command parsing so the confirmation token cannot leak into command arguments.
 
 ### Fixed
 

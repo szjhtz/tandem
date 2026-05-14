@@ -62,6 +62,8 @@ What ships now:
 
 - **Streaming audit export**: `GET /audit/stream` now exposes an admin-gated newline-delimited JSON feed for external SIEM-style consumers. The stream normalizes approval decisions, tool execution ledger records, and channel capability changes into records with actor, command, workspace, tool call, result, timestamp, and channel fields where available.
 
+- **Step-up confirmation for channel reconfiguration**: Reconfigure-tier slash commands now require a fresh second-surface confirmation before execution. The dispatcher blocks `/providers`, `/model`, `/schedule`, `/automations`, and `/config` with a "step-up required" response unless the chat message carries a desktop-issued PIN from the last 5 minutes. The PIN token is removed before command parsing so it is not treated as a model id, schedule prompt, or config argument.
+
 - **Dispatcher baseline cleanup**: Channel dispatcher tests now match the registry-driven help output and concrete operator tool allowlist behavior, keeping the approval-channel test suite aligned with the current dispatcher contract.
 
 ## v0.5.5 (2026-05-13)

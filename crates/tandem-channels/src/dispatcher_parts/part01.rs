@@ -34,7 +34,7 @@ use tracing::{error, info, warn};
 
 use crate::channel_registry::{
     command_allowed_by_tier, command_capability, registered_channels, slash_command_capabilities,
-    ChannelCommandCapability, ChannelRuntimeDiagnostics,
+    ChannelCommandCapability, ChannelRuntimeDiagnostics, CommandTier,
 };
 use crate::config::{ChannelSecurityProfile, ChannelsConfig};
 use crate::redaction::redact_outbound;
@@ -1360,7 +1360,8 @@ async fn process_channel_message(
     let security_profile = channel_security_profile(&msg.channel, security_profiles);
     // --- Slash command intercept ---
     if msg.content.starts_with('/') {
-        if let Some(cmd) = parse_slash_command(&msg.content) {
+        let command_text = strip_step_up_pin_from_command(&msg.content);
+        if let Some(cmd) = parse_slash_command(&command_text) {
             let response = handle_slash_command(
                 cmd,
                 &msg,

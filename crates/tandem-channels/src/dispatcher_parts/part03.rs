@@ -898,6 +898,9 @@ async fn handle_slash_command(
             reason
         );
     }
+    if let Some(reason) = step_up_required_reason(&cmd, msg) {
+        return reason;
+    }
     match cmd {
         SlashCommand::Help { topic } => help_text(topic.as_deref(), security_profile),
         SlashCommand::ListSessions => list_sessions_text(msg, base_url, api_token).await,
@@ -1027,6 +1030,82 @@ fn blocked_command_reason(
     } else {
         None
     }
+}
+
+fn step_up_required_reason(cmd: &SlashCommand, msg: &ChannelMessage) -> Option<String> {
+    let command_name = slash_command_name(cmd);
+    let capability = command_capability(command_name)?;
+    if capability.tier() != CommandTier::Reconfigure || reconfigure_step_up_satisfied(msg) {
+        return None;
+    }
+    Some(format!(
+        "🔐 Step-up required for `{}`.\nConfirm this action in the desktop app, or retry with a fresh PIN issued there within the last 5 minutes.",
+        command_name
+    ))
+}
+
+const CHANNEL_STEP_UP_PIN_ENV: &str = "TANDEM_CHANNEL_STEP_UP_PIN";
+const CHANNEL_STEP_UP_PIN_ISSUED_AT_MS_ENV: &str = "TANDEM_CHANNEL_STEP_UP_PIN_ISSUED_AT_MS";
+const CHANNEL_STEP_UP_TTL_MS: u64 = 5 * 60 * 1000;
+
+fn reconfigure_step_up_satisfied(msg: &ChannelMessage) -> bool {
+    let Some(provided_pin) = extract_step_up_pin(&msg.content) else {
+        return false;
+    };
+    let expected_pin = match std::env::var(CHANNEL_STEP_UP_PIN_ENV) {
+        Ok(value) if !value.trim().is_empty() => value,
+        _ => return false,
+    };
+    if provided_pin != expected_pin.trim() {
+        return false;
+    }
+    let issued_at_ms = match std::env::var(CHANNEL_STEP_UP_PIN_ISSUED_AT_MS_ENV)
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+    {
+        Some(value) => value,
+        None => return false,
+    };
+    now_ms().saturating_sub(issued_at_ms) <= CHANNEL_STEP_UP_TTL_MS
+}
+
+fn extract_step_up_pin(content: &str) -> Option<String> {
+    let mut tokens = content.split_whitespace().peekable();
+    while let Some(token) = tokens.next() {
+        if token == "--pin" {
+            return tokens.next().map(|pin| pin.trim().to_string());
+        }
+        if let Some(pin) = token.strip_prefix("--pin=") {
+            return Some(pin.trim().to_string());
+        }
+        if let Some(pin) = token.strip_prefix("pin:") {
+            return Some(pin.trim().to_string());
+        }
+    }
+    None
+}
+
+fn strip_step_up_pin_from_command(content: &str) -> String {
+    let mut stripped = Vec::new();
+    let mut tokens = content.split_whitespace().peekable();
+    while let Some(token) = tokens.next() {
+        if token == "--pin" {
+            tokens.next();
+            continue;
+        }
+        if token.starts_with("--pin=") || token.starts_with("pin:") {
+            continue;
+        }
+        stripped.push(token);
+    }
+    stripped.join(" ")
+}
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
 }
 
 fn slash_command_name(cmd: &SlashCommand) -> &'static str {

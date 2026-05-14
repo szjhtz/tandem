@@ -183,6 +183,16 @@ mod tests {
     }
 
     #[test]
+    fn strip_step_up_pin_keeps_model_id_clean() {
+        let command_text = strip_step_up_pin_from_command("/model gpt-5-mini --pin 123456");
+        let cmd = parse_slash_command(&command_text);
+        assert!(matches!(
+            cmd,
+            Some(SlashCommand::Model { ref model_id }) if model_id == "gpt-5-mini"
+        ));
+    }
+
+    #[test]
     fn parse_help() {
         assert!(matches!(
             parse_slash_command("/help"),
@@ -203,6 +213,50 @@ mod tests {
         assert!(parse_slash_command("/unknown").is_none());
         assert!(parse_slash_command("not a command").is_none());
         assert!(parse_slash_command("").is_none());
+    }
+
+    #[test]
+    fn reconfigure_command_without_step_up_is_blocked() {
+        let env = DispatcherEnvGuard::new(&[
+            CHANNEL_STEP_UP_PIN_ENV,
+            CHANNEL_STEP_UP_PIN_ISSUED_AT_MS_ENV,
+        ]);
+        let _env = env;
+        let mut msg = test_channel_message("channel:room-a");
+        msg.content = "/providers".to_string();
+
+        let reason = step_up_required_reason(&SlashCommand::Providers, &msg).unwrap();
+        assert!(reason.contains("Step-up required"));
+    }
+
+    #[test]
+    fn reconfigure_command_accepts_fresh_step_up_pin() {
+        let env = DispatcherEnvGuard::new(&[
+            CHANNEL_STEP_UP_PIN_ENV,
+            CHANNEL_STEP_UP_PIN_ISSUED_AT_MS_ENV,
+        ]);
+        env.set(CHANNEL_STEP_UP_PIN_ENV, "123456");
+        env.set(CHANNEL_STEP_UP_PIN_ISSUED_AT_MS_ENV, now_ms().to_string());
+        let mut msg = test_channel_message("channel:room-a");
+        msg.content = "/schedule plan daily standup --pin 123456".to_string();
+
+        assert!(step_up_required_reason(
+            &SlashCommand::Schedule {
+                action: ScheduleCommand::Plan {
+                    prompt: "daily standup".to_string(),
+                },
+            },
+            &msg,
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn read_command_does_not_require_step_up() {
+        let mut msg = test_channel_message("channel:room-a");
+        msg.content = "/status".to_string();
+
+        assert!(step_up_required_reason(&SlashCommand::Status, &msg).is_none());
     }
 
     #[test]
@@ -481,7 +535,9 @@ mod tests {
 
     #[test]
     fn channel_session_create_body_allows_memory_and_browser_tools() {
+        let msg = test_channel_message("channel:room-a");
         let body = build_channel_session_create_body(
+            &msg,
             "Channel Session",
             ChannelSecurityProfile::Operator,
             None,
@@ -525,7 +581,9 @@ mod tests {
 
     #[test]
     fn public_demo_session_create_body_disables_workspace_and_shell_access() {
+        let msg = test_channel_message("channel:room-a");
         let body = build_channel_session_create_body(
+            &msg,
             "Public Demo Session",
             ChannelSecurityProfile::PublicDemo,
             Some("channel-public::discord::room-a"),
