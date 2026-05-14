@@ -32,6 +32,12 @@ pub struct TelegramConfigFile {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DiscordConfigFile {
     pub bot_token: String,
+    /// Discord channel ID where approval cards should be posted.
+    ///
+    /// Reading/listening can still be scoped by guild and mention settings,
+    /// but outbound approval delivery needs an explicit destination channel.
+    #[serde(default)]
+    pub approval_channel_id: Option<String>,
     #[serde(default)]
     pub guild_id: Option<String>,
     #[serde(default = "default_allow_all")]

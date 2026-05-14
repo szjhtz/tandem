@@ -1879,7 +1879,7 @@ pub(crate) async fn automations_v2_run_gate_decide(
     }
     let _ =
         super::context_runs::sync_automation_v2_run_blackboard(&state, &automation, &updated).await;
-    spawn_slack_approval_decision_update(
+    spawn_channel_approval_decision_update(
         state.clone(),
         super::approvals::automation_v2_run_to_approval_request(&current, &gate),
         decision.clone(),
@@ -1892,24 +1892,25 @@ pub(crate) async fn automations_v2_run_gate_decide(
     ))
 }
 
-fn spawn_slack_approval_decision_update(
+fn spawn_channel_approval_decision_update(
     state: AppState,
     request: tandem_types::ApprovalRequest,
     decision: String,
     reason: Option<String>,
 ) {
     tokio::spawn(async move {
-        if let Err(error) = update_slack_approval_decision(state, request, decision, reason).await {
+        if let Err(error) = update_channel_approval_decision(state, request, decision, reason).await
+        {
             tracing::warn!(
                 target: "tandem_server::approval_outbound",
                 %error,
-                "failed to update Slack approval card after gate decision"
+                "failed to update channel approval card after gate decision"
             );
         }
     });
 }
 
-async fn update_slack_approval_decision(
+async fn update_channel_approval_decision(
     state: AppState,
     request: tandem_types::ApprovalRequest,
     decision: String,
@@ -1922,29 +1923,7 @@ async fn update_slack_approval_decision(
     let Some(record) = message_map.get(&request.request_id).await else {
         return Ok(());
     };
-    if record.channel != "slack" {
-        return Ok(());
-    }
 
-    let effective = state.config.get_effective_value().await;
-    let Some(slack_value) = effective.pointer("/channels/slack").cloned() else {
-        return Ok(());
-    };
-    let cfg: crate::SlackConfigFile = serde_json::from_value(slack_value)?;
-    if cfg.bot_token.trim().is_empty() {
-        return Ok(());
-    }
-
-    let slack_config = tandem_channels::config::SlackConfig {
-        bot_token: cfg.bot_token,
-        channel_id: record.recipient.clone(),
-        allowed_users: crate::config::channels::normalize_allowed_users_or_wildcard(
-            cfg.allowed_users,
-        ),
-        mention_only: cfg.mention_only,
-        security_profile: cfg.security_profile,
-    };
-    let channel = tandem_channels::slack::SlackChannel::new(slack_config);
     let card = crate::app::notifiers::approval_request_to_card(&request, record.recipient.clone());
     let decided_by_display = format!("{} by Tandem operator", decision_label(&decision));
     let decision_summary = match reason.as_deref().filter(|value| !value.trim().is_empty()) {
@@ -1955,15 +1934,79 @@ async fn update_slack_approval_decision(
         ),
         None => format!("*{}.*", decision_label(&decision)),
     };
-    channel
-        .update_card_for_decision(
-            &card,
-            &record.message_id,
-            &decided_by_display,
-            &decision_summary,
-        )
-        .await
-        .map_err(|error| anyhow::anyhow!(error.to_string()))
+    let effective = state.config.get_effective_value().await;
+    match record.channel.as_str() {
+        "slack" => {
+            let Some(slack_value) = effective.pointer("/channels/slack").cloned() else {
+                return Ok(());
+            };
+            let cfg: crate::SlackConfigFile = serde_json::from_value(slack_value)?;
+            if cfg.bot_token.trim().is_empty() {
+                return Ok(());
+            }
+
+            let slack_config = tandem_channels::config::SlackConfig {
+                bot_token: cfg.bot_token,
+                channel_id: record.recipient.clone(),
+                allowed_users: crate::config::channels::normalize_allowed_users_or_wildcard(
+                    cfg.allowed_users,
+                ),
+                mention_only: cfg.mention_only,
+                security_profile: cfg.security_profile,
+            };
+            let channel = tandem_channels::slack::SlackChannel::new(slack_config);
+            channel
+                .update_card_for_decision(
+                    &card,
+                    &record.message_id,
+                    &decided_by_display,
+                    &decision_summary,
+                )
+                .await
+                .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        }
+        "discord" => {
+            let Some(discord_value) = effective.pointer("/channels/discord").cloned() else {
+                return Ok(());
+            };
+            let cfg: crate::DiscordConfigFile = serde_json::from_value(discord_value)?;
+            if cfg.bot_token.trim().is_empty() {
+                return Ok(());
+            }
+
+            let discord_config = tandem_channels::config::DiscordConfig {
+                bot_token: cfg.bot_token,
+                guild_id: cfg.guild_id,
+                allowed_users: crate::config::channels::normalize_allowed_users_or_wildcard(
+                    cfg.allowed_users,
+                ),
+                mention_only: cfg.mention_only,
+                security_profile: cfg.security_profile,
+            };
+            let channel = tandem_channels::discord::DiscordChannel::new(discord_config);
+            channel
+                .update_card_for_decision(
+                    &card,
+                    &record.message_id,
+                    discord_decision_outcome(&decision),
+                    &decided_by_display,
+                    &decision_summary,
+                )
+                .await
+                .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+fn discord_decision_outcome(decision: &str) -> tandem_channels::discord_blocks::DecisionOutcome {
+    match decision {
+        "approve" => tandem_channels::discord_blocks::DecisionOutcome::Approved,
+        "rework" => tandem_channels::discord_blocks::DecisionOutcome::Reworked,
+        "cancel" => tandem_channels::discord_blocks::DecisionOutcome::Cancelled,
+        _ => tandem_channels::discord_blocks::DecisionOutcome::Cancelled,
+    }
 }
 
 fn decision_label(decision: &str) -> &'static str {

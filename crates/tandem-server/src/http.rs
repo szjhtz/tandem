@@ -605,6 +605,49 @@ async fn run_approval_outbound(state: AppState) {
             }
         }
     }
+    if let Some(discord_value) = channels.get("discord") {
+        match serde_json::from_value::<DiscordConfigFile>(discord_value.clone()) {
+            Ok(cfg)
+                if !cfg.bot_token.trim().is_empty()
+                    && cfg
+                        .approval_channel_id
+                        .as_deref()
+                        .map(|value| !value.trim().is_empty())
+                        .unwrap_or(false) =>
+            {
+                let recipient = cfg.approval_channel_id.unwrap_or_default();
+                let discord_config = tandem_channels::config::DiscordConfig {
+                    bot_token: cfg.bot_token,
+                    guild_id: cfg.guild_id,
+                    allowed_users: crate::config::channels::normalize_allowed_users_or_wildcard(
+                        cfg.allowed_users,
+                    ),
+                    mention_only: cfg.mention_only,
+                    security_profile: cfg.security_profile,
+                };
+                notifiers.push(Arc::new(
+                    crate::app::notifiers::discord::from_config_with_message_map(
+                        discord_config,
+                        recipient,
+                        message_map.clone(),
+                    ),
+                ));
+            }
+            Ok(_) => {
+                tracing::warn!(
+                    target: "tandem_server::approval_outbound",
+                    "Discord approval notifier disabled because bot_token or approval_channel_id is empty"
+                );
+            }
+            Err(error) => {
+                tracing::warn!(
+                    target: "tandem_server::approval_outbound",
+                    %error,
+                    "Discord approval notifier disabled because config could not be parsed"
+                );
+            }
+        }
+    }
 
     if notifiers.is_empty() {
         tracing::info!(
