@@ -42,6 +42,8 @@ What ships now:
 
 - **Slack approval card lifecycle updates**: The server records delivered approval message handles in `approval_message_map.json` and best-effort edits Slack approval cards after approve, rework, or cancel decisions so stale buttons disappear and operators see the final decision inline.
 
+- **Shared automation gate state helpers**: Automation V2 gate pause and decision mutations now route through shared state helpers. The executor uses `pause_automation_run_for_gate` when an approval node blocks downstream work, and the gate-decision HTTP handler uses `apply_automation_gate_decision` for approve/rework/cancel state transitions, preserving the existing race-safe one-winner behavior.
+
 - **Per-step approval override controls**: Workflow edit prompts now let operators keep default approval, set conditional auto-approval metadata, or skip approval for an individual step with confirmation. The saved node metadata drives the compiler's existing approval-skip hook and clears stale injected gates on skipped steps.
 
 - **Telegram approval rework completion**: Telegram approval cards now prefer persisted opaque callback IDs so long run/node identifiers do not rely on unsafe truncation. Rework button taps send a force-reply prompt, capture the operator's next valid reply for that chat/user, and dispatch it as a `rework` gate decision with feedback.
