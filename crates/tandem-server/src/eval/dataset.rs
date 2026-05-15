@@ -2,7 +2,6 @@
 ///
 /// This module defines the YAML/JSON structure for evaluation test cases,
 /// allowing evaluation datasets to be version-controlled and tracked in the codebase.
-
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -226,8 +225,8 @@ mod tests {
 
     #[test]
     fn test_add_test_case() {
-        let dataset = EvalDataset::new("test", "1.0")
-            .add_test_case(EvalTestCase::new("test1", "Test 1"));
+        let dataset =
+            EvalDataset::new("test", "1.0").add_test_case(EvalTestCase::new("test1", "Test 1"));
 
         assert_eq!(dataset.test_cases.len(), 1);
         assert_eq!(dataset.test_cases[0].id, "test1");
@@ -299,7 +298,10 @@ mod tests {
         let tc = EvalTestCase::new("test1", "Test 1");
         assert_eq!(tc.priority, 2);
         assert!(tc.enabled);
-        assert_eq!(tc.expected_output.artifact_status, ArtifactStatus::Completed);
+        assert_eq!(
+            tc.expected_output.artifact_status,
+            ArtifactStatus::Completed
+        );
     }
 
     #[test]

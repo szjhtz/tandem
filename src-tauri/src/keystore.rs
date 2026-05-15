@@ -258,7 +258,7 @@ mod tests {
 
     #[test]
     fn test_validate_api_key() {
-        assert!(validate_api_key("sk-1234567890abcdef").is_ok());
+        assert!(validate_api_key("sk-valid-ci-fixture-abcdef").is_ok());
         assert!(validate_api_key("").is_err());
         assert!(validate_api_key("short").is_err());
     }

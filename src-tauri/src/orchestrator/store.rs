@@ -562,8 +562,9 @@ fn atomic_write(path: &Path, content: &str) -> Result<()> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&temp_path, fs::Permissions::from_mode(0o600))
-            .map_err(|e| TandemError::IoError(format!("Failed to set temp file permissions: {}", e)))?;
+        fs::set_permissions(&temp_path, fs::Permissions::from_mode(0o600)).map_err(|e| {
+            TandemError::IoError(format!("Failed to set temp file permissions: {}", e))
+        })?;
     }
 
     fs::rename(&temp_path, path)

@@ -6,7 +6,6 @@
 /// In future iterations, this will integrate with the full Tandem engine to execute real
 /// automation runs. For now, it provides the framework structure and simulation mode for
 /// CI/CD integration testing.
-
 use std::path::Path;
 
 use crate::eval::dataset::{ArtifactStatus, EvalDataset, EvalTestCase};
@@ -59,8 +58,7 @@ impl EvalRunner {
         let content = std::fs::read_to_string(path)
             .map_err(|e| format!("Failed to read dataset file: {}", e))?;
 
-        serde_yaml::from_str(&content)
-            .map_err(|e| format!("Failed to parse YAML dataset: {}", e))
+        serde_yaml::from_str(&content).map_err(|e| format!("Failed to parse YAML dataset: {}", e))
     }
 
     /// Execute a complete dataset and return aggregated metrics
@@ -155,10 +153,7 @@ impl EvalRunner {
                 Some(AIFailureMode::ArtifactValidationFailed {
                     validator_class: "contract".to_string(),
                 }),
-                Some(format!(
-                    "Test {} failed in simulation",
-                    test_case.id
-                )),
+                Some(format!("Test {} failed in simulation", test_case.id)),
             )
         } else {
             (None, None)
@@ -192,8 +187,7 @@ impl EvalRunner {
         let json = serde_json::to_string_pretty(metrics)
             .map_err(|e| format!("Failed to serialize metrics: {}", e))?;
 
-        std::fs::write(path, json)
-            .map_err(|e| format!("Failed to write results file: {}", e))?;
+        std::fs::write(path, json).map_err(|e| format!("Failed to write results file: {}", e))?;
 
         Ok(())
     }

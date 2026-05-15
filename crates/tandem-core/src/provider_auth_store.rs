@@ -96,11 +96,12 @@ fn resolve_codex_cli_home() -> PathBuf {
         if path.is_absolute() {
             // Allow absolute paths only if they appear to be user directories
             let path_str = path.to_string_lossy().to_lowercase();
-            if path_str.starts_with("/etc") ||
-               path_str.starts_with("/sys") ||
-               path_str.starts_with("/proc") ||
-               path_str.starts_with("/root") ||
-               path_str.starts_with("/boot") {
+            if path_str.starts_with("/etc")
+                || path_str.starts_with("/sys")
+                || path_str.starts_with("/proc")
+                || path_str.starts_with("/root")
+                || path_str.starts_with("/boot")
+            {
                 tracing::warn!(
                     target: "tandem_core::provider_auth_store",
                     "rejecting CODEX_HOME pointing to system directory"
@@ -425,6 +426,9 @@ fn decode_codex_jwt_claims(token: &str) -> Option<Value> {
     let header_b64 = parts.next()?;
     let payload = parts.next()?;
     let signature = parts.next()?;
+    if signature.trim().is_empty() {
+        return None; // Token has an empty signature segment
+    }
 
     // Validate token has all three required parts (header.payload.signature)
     if parts.next().is_some() {

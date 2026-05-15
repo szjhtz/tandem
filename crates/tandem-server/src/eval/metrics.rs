@@ -2,7 +2,6 @@
 ///
 /// This module computes aggregated metrics from evaluation runs,
 /// enabling regression detection and quality tracking over time.
-
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -193,13 +192,8 @@ impl EvalMetrics {
 
         // Average repair iterations
         if !self.test_results.is_empty() {
-            let total_repairs: u32 = self
-                .test_results
-                .iter()
-                .map(|r| r.repair_iterations)
-                .sum();
-            self.avg_repair_iterations =
-                total_repairs as f64 / self.test_results.len() as f64;
+            let total_repairs: u32 = self.test_results.iter().map(|r| r.repair_iterations).sum();
+            self.avg_repair_iterations = total_repairs as f64 / self.test_results.len() as f64;
 
             self.avg_cost_per_test = self.total_cost_usd / self.test_results.len() as f64;
         }
@@ -242,19 +236,13 @@ impl EvalMetrics {
             self.failed_tests,
             self.skipped_tests
         ));
-        output.push_str(&format!(
-            "Pass Rate: {:.1}%\n",
-            self.pass_rate * 100.0
-        ));
+        output.push_str(&format!("Pass Rate: {:.1}%\n", self.pass_rate * 100.0));
         output.push_str(&format!(
             "Avg Repair Iterations: {:.2}\n",
             self.avg_repair_iterations
         ));
         output.push_str(&format!("Total Cost: ${:.2}\n", self.total_cost_usd));
-        output.push_str(&format!(
-            "Avg Cost/Test: ${:.4}\n",
-            self.avg_cost_per_test
-        ));
+        output.push_str(&format!("Avg Cost/Test: ${:.4}\n", self.avg_cost_per_test));
 
         if !self.failure_modes.is_empty() {
             output.push_str("\nFailure Modes:\n");
@@ -360,8 +348,13 @@ mod tests {
         metrics.add_result(create_test_result("test1", false));
         metrics.add_result(create_test_result("test2", false));
 
-        assert!(metrics.failure_modes.contains_key("ArtifactValidationFailed"));
-        assert_eq!(metrics.failure_modes.get("ArtifactValidationFailed"), Some(&2));
+        assert!(metrics
+            .failure_modes
+            .contains_key("ArtifactValidationFailed"));
+        assert_eq!(
+            metrics.failure_modes.get("ArtifactValidationFailed"),
+            Some(&2)
+        );
     }
 
     #[test]

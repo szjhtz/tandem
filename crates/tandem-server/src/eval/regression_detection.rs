@@ -6,7 +6,6 @@
 ///
 /// Used by `.github/workflows/eval-regression-gate.yml` to fail PRs when
 /// pass_rate drops or cost increases beyond acceptable thresholds.
-
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -74,8 +73,7 @@ impl EvalBaseline {
     pub fn load_from_file(path: &Path) -> Result<Self, String> {
         let content = std::fs::read_to_string(path)
             .map_err(|e| format!("Failed to read baseline file: {}", e))?;
-        serde_json::from_str(&content)
-            .map_err(|e| format!("Failed to parse baseline JSON: {}", e))
+        serde_json::from_str(&content).map_err(|e| format!("Failed to parse baseline JSON: {}", e))
     }
 
     /// Save the baseline to a JSON file
@@ -86,8 +84,7 @@ impl EvalBaseline {
             std::fs::create_dir_all(parent)
                 .map_err(|e| format!("Failed to create baseline directory: {}", e))?;
         }
-        std::fs::write(path, content)
-            .map_err(|e| format!("Failed to write baseline file: {}", e))
+        std::fs::write(path, content).map_err(|e| format!("Failed to write baseline file: {}", e))
     }
 }
 
@@ -186,8 +183,7 @@ impl RegressionReport {
             std::fs::create_dir_all(parent)
                 .map_err(|e| format!("Failed to create report directory: {}", e))?;
         }
-        std::fs::write(path, content)
-            .map_err(|e| format!("Failed to write report file: {}", e))
+        std::fs::write(path, content).map_err(|e| format!("Failed to write report file: {}", e))
     }
 
     /// Format a human-readable summary of the report
@@ -230,7 +226,9 @@ impl RegressionReport {
         }
 
         if self.has_regressions {
-            out.push_str("\nACTION REQUIRED: One or more metrics exceeded the critical threshold.\n");
+            out.push_str(
+                "\nACTION REQUIRED: One or more metrics exceeded the critical threshold.\n",
+            );
             out.push_str("Review the changes that caused these regressions before merging.\n");
         }
 
@@ -251,7 +249,9 @@ pub fn detect_regressions(
     checks.push(check_repair_iterations(current, baseline, thresholds));
     checks.push(check_provider_failure_rate(current, baseline, thresholds));
 
-    let has_regressions = checks.iter().any(|c| c.status == RegressionStatus::Regression);
+    let has_regressions = checks
+        .iter()
+        .any(|c| c.status == RegressionStatus::Regression);
     let has_warnings = checks.iter().any(|c| c.status == RegressionStatus::Warning);
 
     let now = std::time::SystemTime::now()
@@ -296,10 +296,7 @@ fn check_pass_rate(
     } else if drop >= thresholds.pass_rate_drop_warning {
         (
             RegressionStatus::Warning,
-            format!(
-                "Pass rate dropped {:.1} percentage points",
-                drop * 100.0
-            ),
+            format!("Pass rate dropped {:.1} percentage points", drop * 100.0),
             thresholds.pass_rate_drop_warning,
         )
     } else {
@@ -394,33 +391,33 @@ fn check_repair_iterations(
         0.0
     };
 
-    let (status, message, threshold) =
-        if increase_ratio >= thresholds.repair_iter_increase_critical {
-            (
-                RegressionStatus::Regression,
-                format!(
-                    "Avg repair iterations increased {:.1}% (>={:.1}% threshold)",
-                    increase_ratio * 100.0,
-                    thresholds.repair_iter_increase_critical * 100.0
-                ),
-                thresholds.repair_iter_increase_critical,
-            )
-        } else if increase_ratio >= thresholds.repair_iter_increase_warning {
-            (
-                RegressionStatus::Warning,
-                format!(
-                    "Avg repair iterations increased {:.1}%",
-                    increase_ratio * 100.0
-                ),
-                thresholds.repair_iter_increase_warning,
-            )
-        } else {
-            (
-                RegressionStatus::Pass,
-                "Repair iterations within acceptable range".to_string(),
-                thresholds.repair_iter_increase_warning,
-            )
-        };
+    let (status, message, threshold) = if increase_ratio >= thresholds.repair_iter_increase_critical
+    {
+        (
+            RegressionStatus::Regression,
+            format!(
+                "Avg repair iterations increased {:.1}% (>={:.1}% threshold)",
+                increase_ratio * 100.0,
+                thresholds.repair_iter_increase_critical * 100.0
+            ),
+            thresholds.repair_iter_increase_critical,
+        )
+    } else if increase_ratio >= thresholds.repair_iter_increase_warning {
+        (
+            RegressionStatus::Warning,
+            format!(
+                "Avg repair iterations increased {:.1}%",
+                increase_ratio * 100.0
+            ),
+            thresholds.repair_iter_increase_warning,
+        )
+    } else {
+        (
+            RegressionStatus::Pass,
+            "Repair iterations within acceptable range".to_string(),
+            thresholds.repair_iter_increase_warning,
+        )
+    };
 
     RegressionCheck {
         metric_name: "avg_repair_iterations".to_string(),
@@ -490,7 +487,12 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
-    fn make_metrics(pass_rate: f64, avg_cost: f64, avg_repair: f64, provider_fail: f64) -> EvalMetrics {
+    fn make_metrics(
+        pass_rate: f64,
+        avg_cost: f64,
+        avg_repair: f64,
+        provider_fail: f64,
+    ) -> EvalMetrics {
         let mut m = EvalMetrics::new("test_dataset", "1.0");
         m.pass_rate = pass_rate;
         m.avg_cost_per_test = avg_cost;
@@ -499,7 +501,12 @@ mod tests {
         m
     }
 
-    fn make_baseline(pass_rate: f64, avg_cost: f64, avg_repair: f64, provider_fail: f64) -> EvalBaseline {
+    fn make_baseline(
+        pass_rate: f64,
+        avg_cost: f64,
+        avg_repair: f64,
+        provider_fail: f64,
+    ) -> EvalBaseline {
         EvalBaseline {
             dataset_name: "test_dataset".to_string(),
             dataset_version: "1.0".to_string(),
@@ -551,7 +558,9 @@ mod tests {
         assert!(report.has_regressions);
         assert!(report.should_fail_ci());
 
-        let pass_rate_check = report.checks.iter()
+        let pass_rate_check = report
+            .checks
+            .iter()
             .find(|c| c.metric_name == "pass_rate")
             .expect("pass_rate check should exist");
         assert_eq!(pass_rate_check.status, RegressionStatus::Regression);
@@ -568,7 +577,9 @@ mod tests {
         assert!(!report.has_regressions);
         assert!(report.has_warnings);
 
-        let check = report.checks.iter()
+        let check = report
+            .checks
+            .iter()
             .find(|c| c.metric_name == "pass_rate")
             .expect("pass_rate check should exist");
         assert_eq!(check.status, RegressionStatus::Warning);
@@ -584,7 +595,9 @@ mod tests {
         let report = detect_regressions(&current, &baseline, &thresholds);
         assert!(report.has_regressions);
 
-        let check = report.checks.iter()
+        let check = report
+            .checks
+            .iter()
             .find(|c| c.metric_name == "avg_cost_per_test")
             .expect("cost check should exist");
         assert_eq!(check.status, RegressionStatus::Regression);
@@ -612,7 +625,9 @@ mod tests {
         let report = detect_regressions(&current, &baseline, &thresholds);
         assert!(report.has_regressions);
 
-        let check = report.checks.iter()
+        let check = report
+            .checks
+            .iter()
             .find(|c| c.metric_name == "avg_repair_iterations")
             .expect("repair check should exist");
         assert_eq!(check.status, RegressionStatus::Regression);
@@ -628,7 +643,9 @@ mod tests {
         let report = detect_regressions(&current, &baseline, &thresholds);
         assert!(report.has_regressions);
 
-        let check = report.checks.iter()
+        let check = report
+            .checks
+            .iter()
             .find(|c| c.metric_name == "provider_failure_rate")
             .expect("provider failure check should exist");
         assert_eq!(check.status, RegressionStatus::Regression);

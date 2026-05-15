@@ -9,10 +9,10 @@ pub mod benchmarking;
 pub mod browser;
 pub mod bug_monitor;
 pub mod bug_monitor_github;
-pub mod failures;
 pub mod capability_resolver;
 pub mod config;
 pub mod eval;
+pub mod failures;
 pub mod http;
 pub mod mcp_catalog;
 pub mod mcp_catalog_generated;
@@ -51,8 +51,8 @@ pub use eval::dataset::{
     ArtifactStatus, EvalDataset, EvalExpectedOutput, EvalTestCase, MetricTolerance,
 };
 pub use failures::{
-    categorize_failure, classify_error_text, should_retry, AIFailureMode, FailureContext,
-    FailureCategoryKind,
+    categorize_failure, classify_error_text, should_retry, AIFailureMode, FailureCategoryKind,
+    FailureContext,
 };
 pub use http::*;
 pub use memory::types::*;

@@ -2,7 +2,6 @@
 ///
 /// This module provides structured categorization of AI system failures across Tandem,
 /// enabling systematic failure analysis, regression detection, and compliance auditing.
-
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
@@ -21,7 +20,7 @@ pub enum FailureCategoryKind {
 }
 
 /// Structured enumeration of AI failure modes
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "failure_mode", content = "details")]
 pub enum AIFailureMode {
     // ===== Output Validation Failures =====
@@ -30,7 +29,10 @@ pub enum AIFailureMode {
     /// Contract violation (expected/observed mismatch)
     ContractViolation { expected: String, observed: String },
     /// Required citations missing from artifact
-    CitationMissing { required_count: u32, found_count: u32 },
+    CitationMissing {
+        required_count: u32,
+        found_count: u32,
+    },
     /// Web sources or references missing
     WebSourcesMissing,
     /// File path validation failed
@@ -42,11 +44,17 @@ pub enum AIFailureMode {
     /// Provider request timed out
     ProviderTimeout { timeout_ms: u64, provider: String },
     /// Rate limit exceeded
-    ProviderRateLimit { provider: String, retry_after_secs: Option<u64> },
+    ProviderRateLimit {
+        provider: String,
+        retry_after_secs: Option<u64>,
+    },
     /// Model not found or unavailable
     ProviderModelNotFound { model: String, provider: String },
     /// Provider returned error
-    ProviderError { provider: String, error_code: String },
+    ProviderError {
+        provider: String,
+        error_code: String,
+    },
     /// Provider stream decode failure
     ProviderStreamFailure { provider: String, error: String },
     /// Fallback provider exhausted
@@ -286,6 +294,7 @@ pub fn categorize_failure(failure: &AIFailureMode) -> FailureCategoryKind {
         | AIFailureMode::ProviderStreamFailure { .. }
         | AIFailureMode::CitationMissing { .. }
         | AIFailureMode::WebSourcesMissing
+        | AIFailureMode::DataCorruption { .. }
         | AIFailureMode::SourceAccessDenied { .. }
         | AIFailureMode::SessionTimeout { .. }
         | AIFailureMode::ConfigurationError { .. } => FailureCategoryKind::Medium,
@@ -313,19 +322,13 @@ mod tests {
     #[test]
     fn test_classify_provider_timeout() {
         let failure = classify_error_text("Request timed out after 30s", None);
-        assert!(matches!(
-            failure,
-            AIFailureMode::ProviderTimeout { .. }
-        ));
+        assert!(matches!(failure, AIFailureMode::ProviderTimeout { .. }));
     }
 
     #[test]
     fn test_classify_rate_limit() {
         let failure = classify_error_text("Rate limit exceeded", None);
-        assert!(matches!(
-            failure,
-            AIFailureMode::ProviderRateLimit { .. }
-        ));
+        assert!(matches!(failure, AIFailureMode::ProviderRateLimit { .. }));
     }
 
     #[test]
@@ -372,7 +375,10 @@ mod tests {
             user_id: "user1".to_string(),
             resource: "automation1".to_string(),
         };
-        assert_eq!(categorize_failure(&auth_failure), FailureCategoryKind::Critical);
+        assert_eq!(
+            categorize_failure(&auth_failure),
+            FailureCategoryKind::Critical
+        );
     }
 
     #[test]

@@ -6,7 +6,6 @@
 ///   cargo run --bin eval-runner -- --dataset eval_datasets/critical_path.yaml --output /tmp/results.json
 ///   cargo run --bin eval-runner -- --dataset eval_datasets/critical_path.yaml --simulation
 ///   cargo run --bin eval-runner -- --help
-
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -262,15 +261,11 @@ async fn main() -> ExitCode {
     if metrics.failed_tests > 0 {
         eprintln!(
             "\n❌ {} of {} tests failed",
-            metrics.failed_tests,
-            metrics.total_tests
+            metrics.failed_tests, metrics.total_tests
         );
         ExitCode::from(1)
     } else {
-        println!(
-            "\n✅ All {} tests passed",
-            metrics.passed_tests
-        );
+        println!("\n✅ All {} tests passed", metrics.passed_tests);
         ExitCode::SUCCESS
     }
 }
