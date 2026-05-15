@@ -128,16 +128,20 @@ jobs:
               body: comment
             });
 
-      - name: Update baseline on main branch push
+      - name: Report baseline drift on main branch push
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'
         run: |
           mkdir -p eval_baselines
-          cp /tmp/eval_results.json eval_baselines/main_branch.json
-          git config user.name "Tandem CI"
-          git config user.email "ci@tandem.local"
-          git add eval_baselines/main_branch.json
-          git diff --cached --quiet || git commit -m "Update eval baseline from main branch"
-          git push origin main || echo "No changes to commit"
+          if [ -f "eval_baselines/main_branch.json" ] && cmp -s /tmp/eval_results.json eval_baselines/main_branch.json; then
+            echo "Evaluation baseline is current."
+            exit 0
+          fi
+
+          echo "::notice::Evaluation baseline differs from this run. Download the eval-results artifact and update eval_baselines/main_branch.json in a normal reviewed commit if this change is intentional."
+          echo "## Evaluation Baseline Drift" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "This run produced evaluation results that differ from \`eval_baselines/main_branch.json\`." >> $GITHUB_STEP_SUMMARY
+          echo "CI no longer commits directly to \`main\`; update the baseline in a regular commit when the new results are intentional." >> $GITHUB_STEP_SUMMARY
 
       - name: Fail if regression detected
         if: steps.regression-check.outcome == 'failure'
