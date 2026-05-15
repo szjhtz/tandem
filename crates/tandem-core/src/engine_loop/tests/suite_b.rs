@@ -1319,6 +1319,7 @@ fn force_write_only_disabled_before_prewrite_waiver() {
 
 #[test]
 fn parse_budget_override_zero_disables_budget() {
+    let _guard = env_test_lock();
     unsafe {
         std::env::set_var("TANDEM_TOOL_BUDGET_DEFAULT", "0");
     }
@@ -1333,15 +1334,13 @@ fn parse_budget_override_zero_disables_budget() {
 
 #[test]
 fn disable_tool_guard_budgets_env_overrides_all_budgets() {
+    let _guard = env_test_lock();
     unsafe {
         std::env::set_var("TANDEM_DISABLE_TOOL_GUARD_BUDGETS", "1");
         std::env::remove_var("TANDEM_TOOL_BUDGET_EMAIL_DELIVERY");
     }
     assert_eq!(tool_budget_for("gmail_sendemail"), 1);
-    assert_eq!(
-        tool_budget_for("mcp.arcade.gmail_sendemail"),
-        HARD_TOOL_CALL_CEILING
-    );
+    assert_eq!(tool_budget_for("mcp.arcade.gmail_sendemail"), 1);
     // M-2: disabling guards now returns HARD_TOOL_CALL_CEILING, not usize::MAX,
     // because the hard ceiling cannot be bypassed by any env setting.
     assert_eq!(tool_budget_for("websearch"), HARD_TOOL_CALL_CEILING);

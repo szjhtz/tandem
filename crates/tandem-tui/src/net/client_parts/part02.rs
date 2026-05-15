@@ -130,6 +130,7 @@ impl EngineClient {
             workspace_root: std::env::current_dir()
                 .ok()
                 .and_then(|p| normalize_workspace_path(&p)),
+            pinned_workspace_id: None,
             project_id: None,
             model: None,
             provider: None,

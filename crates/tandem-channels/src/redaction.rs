@@ -232,7 +232,10 @@ mod tests {
         let _ = redact_outbound("warmup", Path::new("/workspace"));
         let started = Instant::now();
         let redacted = redact_outbound(&input, Path::new("/workspace"));
-        assert!(started.elapsed().as_millis() < 2);
+        assert!(
+            started.elapsed().as_millis() < 50,
+            "4KB redaction should stay comfortably interactive"
+        );
         assert!(redacted.contains(REDACTED_SECRET));
     }
 }

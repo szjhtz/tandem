@@ -859,10 +859,28 @@ mod tests {
 
     fn make_jwt(payload: serde_json::Value) -> String {
         let header = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .encode(r#"{"alg":"RS256","typ":"JWT"}"#);
+        let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .encode(serde_json::to_string(&payload).expect("payload json"));
+        format!("{header}.{payload}.signature")
+    }
+
+    fn make_unsigned_jwt(payload: serde_json::Value) -> String {
+        let header = base64::engine::general_purpose::URL_SAFE_NO_PAD
             .encode(r#"{"alg":"none","typ":"JWT"}"#);
         let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD
             .encode(serde_json::to_string(&payload).expect("payload json"));
         format!("{header}.{payload}.signature")
+    }
+
+    #[test]
+    fn decode_codex_jwt_claims_rejects_none_algorithm() {
+        let jwt = make_unsigned_jwt(serde_json::json!({
+            "exp": 2_000_000_000,
+            "sub": "acct_unsigned"
+        }));
+
+        assert!(decode_codex_jwt_claims(&jwt).is_none());
     }
 
     #[test]

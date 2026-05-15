@@ -56,6 +56,7 @@ This release ships the complete AI Evaluation Framework (Phases 1-5): a producti
 ### Quality Gate Features
 
 The regression-detection workflow is designed to be **low-friction and CI-friendly**:
+
 - Default thresholds are conservative but tunable per team/metric
 - Simulation mode means evaluations complete in seconds with zero API cost
 - Pass/Warning/Regression statuses provide clear go/no-go signals for CI gates
@@ -65,6 +66,7 @@ The regression-detection workflow is designed to be **low-friction and CI-friend
 ### EU AI Act Article 50 Compliance
 
 This framework explicitly supports Article 50 transparency obligations for hosted Tandem services:
+
 - ✅ **Documented AI system**: The framework demonstrates how AI components are systematically tested
 - ✅ **Quality assurance**: Automated gates and metrics prove ongoing quality practices
 - ✅ **Failure categorization**: 30+ failure types enable post-mortem root-cause analysis
@@ -78,33 +80,33 @@ Users and auditors can request detailed evaluation metrics, regression reports, 
 
 ### Security
 
-- **Authorization fix for approval gates**: Slack, Discord, and Telegram interaction handlers now verify that clicking users are in the configured `allowed_users` allowlist before processing approval/rework/cancel decisions. The fix applies `resolve_channel_user(ChannelKind)` at each handler entry point and rejects unauthorized users with `403 Forbidden`. Previously, any user in the platform workspace/server/group could click approval buttons and decide gates regardless of allowlist configuration.
+- **Authorization fix for approval gates**: Slack, Discord, and Telegram approval interactions now fail closed unless the acting user resolves through the configured channel allowlist before approval, rework, or cancel decisions are processed.
 
-- **TOCTOU race condition fix in automation run cache**: `update_automation_v2_run()` now records a timestamp before dropping the per-run mutation lock to load state from disk. After re-acquiring the lock, it validates that the in-memory entry wasn't modified during the load window (via `updated_at_ms > check_time_ms`). If stale, the loaded copy is skipped and the concurrent update wins, preventing lost gate decisions or duplicate task execution when two operators approve the same gate simultaneously.
+- **TOCTOU race condition fix in automation run cache**: Automation run state reloads now detect concurrent in-memory updates before accepting disk-loaded state, preventing stale cache loads from overwriting gate decisions or duplicating execution.
 
-- **Path traversal protection for automation identifiers**: Added `sanitize_path_id()` to replace unsafe characters in automation IDs and run IDs with underscores (safe set: alphanumeric + hyphen + underscore), and `validate_path_within_root()` to verify constructed paths stay within their base directory via canonicalization. Applied to `automation_v2_definition_shard_path()` and `automation_v2_run_history_shard_path()` to prevent attacks like `../../../etc/passwd`.
+- **Path traversal protection for automation identifiers**: Automation definition and run-history paths now sanitize identifier-derived filenames and verify resolved paths stay inside their intended state roots.
 
-- **Dedup TTL for webhook replay prevention**: Discord and Slack interaction dedup rings now expire entries after 5 minutes, matching platform retry behavior (typically seconds-to-minutes). Updated `DedupRing` to track insertion timestamp and reject duplicates only if the key exists and the TTL window is still active, preventing stale entries from being replayed after ring eviction.
+- **Dedup TTL for webhook replay prevention**: Discord and Slack interaction deduplication now uses a bounded retry window, reducing stale replay risk while preserving normal platform retry handling.
 
-- **File permission validation on startup**: Added `check_file_permissions()` (Unix-only) that logs warnings if state files are world-readable or world/group-writable. Checks run on load of sensitive files: `bug_monitor_config`, `bug_monitor_log_watcher_state`, and `bug_monitor_intake_keys`. Does not fail startup but alerts operators to restrict permissions to mode 0600 (owner read/write only).
+- **File permission validation on startup**: Startup now warns when sensitive state files have overly broad Unix permissions so operators can tighten local storage access.
 
-- **Empty run_id/node_id validation in Discord modal parsing**: Fixed critical gap where malformed modal custom_id (e.g., `tdm-modal:rework::`) would extract empty run_id/node_id and pass them to dispatch_decision. Now validates both are non-empty after parsing the `{run_id}:{node_id}` format, rejecting malformed requests with `400 Bad Request`.
+- **Discord modal identifier validation**: Discord rework modal submissions now reject malformed or incomplete identifiers before any gate decision is dispatched.
 
-- **Telegram dedup TTL implementation**: Applied timestamp-based deduplication with 5-minute expiration to Telegram, closing a replay window that existed because update_ids are small integers that can be reused. Previously only capacity-based eviction allowed stale entries to be replayed days later if the dedup ring was cleared or the service restarted.
+- **Telegram dedup TTL implementation**: Telegram approval callbacks now use the same retry-window deduplication model as Discord and Slack, reducing stale callback replay risk.
 
-- **User ID extraction: reject instead of default**: All three channel handlers now validate that user identification is present (Discord/Telegram from payload, Slack from extracted action), rejecting with `400 Bad Request` instead of defaulting to "unknown". Prevents accidental authorization of malformed requests and improves audit trail accuracy.
+- **User ID extraction: reject instead of default**: Channel approval handlers now reject malformed requests without a resolvable acting user instead of assigning a placeholder identity.
 
-- **Reason field size validation**: Discord modal rework reason now capped at 4000 characters, matching the UI modal enforcement. Prevents storage exhaustion attacks via oversized reasons submitted via direct API.
+- **Reason field size validation**: Discord rework feedback is now bounded server-side before being stored with gate decisions.
 
-- **Error message information disclosure prevention**: Authorization rejection messages changed from `"user {user_id} not in allowed_users"` to `"user not in allowed_users"`, eliminating user enumeration attacks while keeping full user_id in audit logs for operator investigation.
+- **Error message information disclosure prevention**: Public channel rejection messages now use generic denial text while retaining detailed audit logs for operators.
 
-- **JWT structure and algorithm validation**: `decode_codex_jwt_claims()` now validates token structure (header.payload.signature with exactly 3 parts), rejects algorithm-substitution attacks by detecting and blocking `alg: "none"` tokens, validates header claims are present, and validates signature format.
+- **JWT structure and algorithm validation**: Codex identity token parsing now validates token shape, header presence, allowed algorithm behavior, and signature encoding before processing claims.
 
-- **JSON merge recursion depth limit**: Added `MAX_JSON_DEPTH` constant (64 levels) to prevent DoS attacks via deeply nested JSON merge operations in provider config handling. The `merge_json_with_depth()` function logs a warning and returns early when recursion exceeds the limit, preventing stack exhaustion.
+- **JSON merge recursion depth limit**: Provider configuration merging now enforces a maximum nesting depth to avoid stack exhaustion on deeply nested input.
 
-- **CODEX_HOME path traversal protection**: Environment variable `CODEX_HOME` is now validated to reject paths containing `..`, paths starting with `-`, and absolute paths targeting system directories (`/etc`, `/sys`, `/proc`, `/root`, `/boot`). Invalid paths safely fall back to `~/.codex` with warning log.
+- **CODEX_HOME path validation**: Codex CLI home resolution now rejects unsafe or system-sensitive paths and falls back to the default home directory with a warning.
 
-- **JWT token expiration validation**: Tokens are now rejected if they lack the `exp` claim, instead of defaulting to 50-minute expiration. Timestamp validation detects unreasonable values (e.g., year 3000+) and rejects negative timestamps, preventing integer overflow during time arithmetic.
+- **JWT token expiration validation**: Codex identity resolution now rejects tokens without valid expiration claims and bounds-checks expiration timestamps before time arithmetic.
 
 - **Approval card delivery fan-out**: Slack, Discord, and Telegram channel adapters now support native interactive card sends. Approval requests can render as Block Kit messages, Discord embeds with components, or Telegram inline-keyboard messages instead of plain text fallbacks.
 
