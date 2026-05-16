@@ -25,6 +25,7 @@ What ships now:
 - Denied protected fintech actions emit runtime events and protected audit records.
 - `/audit/stream` maps fintech protected-action denials into admin-readable audit rows.
 - Mission runtime projection ignores `metadata.approval.skip_approval` for fintech strict nodes, so UI/planner metadata cannot suppress injected approval gates for fintech strict work.
+- Protected fintech tool denials now fail closed with explicit call-site approval/policy verifier status in the denial reason and protected audit payload.
 
 ### Evidence, Citations, And Audit Packages
 

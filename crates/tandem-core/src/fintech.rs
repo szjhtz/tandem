@@ -217,7 +217,7 @@ pub fn fintech_strict_tool_decision(tool_name: &str) -> FintechToolPolicyDecisio
             allowed: false,
             classification: FintechToolPolicyClassification::RequiresApproval(category),
             reason: Some(format!(
-                "fintech strict mode requires protected approval for `{}` before tool `{}` can execute",
+                "fintech strict mode denies protected `{}` tool `{}` because call-site approval/policy verification is not available yet",
                 category.as_str(),
                 canonical_tool_name(tool_name)
             )),

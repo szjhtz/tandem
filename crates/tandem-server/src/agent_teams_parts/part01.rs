@@ -382,6 +382,11 @@ async fn evaluate_fintech_strict_tool_deny(
         "message_id": message_id,
         "tool": tool,
         "policy": payload,
+        "approval_verification": {
+            "status": "unavailable",
+            "effect": "fail_closed",
+            "reason": "call-site protected-action approval/policy verification is not implemented"
+        },
     });
     let _ = crate::audit::append_protected_audit_event(
         state,
@@ -394,7 +399,7 @@ async fn evaluate_fintech_strict_tool_deny(
 
     Some(match decision.classification {
         FintechToolPolicyClassification::RequiresApproval(category) => format!(
-            "{} Approval gate required before executing protected fintech action `{}`.",
+            "{} Runtime denied protected fintech action `{}` fail-closed; approval gates are not treated as authorization until a matching approval/policy record can be verified at the tool call.",
             reason,
             category.as_str()
         ),
@@ -2143,6 +2148,16 @@ mod fintech_policy_tests {
             .as_deref()
             .unwrap_or_default()
             .contains("money_movement"));
+        assert!(decision
+            .reason
+            .as_deref()
+            .unwrap_or_default()
+            .contains("fail-closed"));
+        assert!(decision
+            .reason
+            .as_deref()
+            .unwrap_or_default()
+            .contains("approval gates are not treated as authorization"));
     }
 
     #[tokio::test]
