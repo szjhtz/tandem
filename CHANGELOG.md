@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Protected fintech action classifier and runtime gate**: The runtime now classifies account actions, customer communications, regulatory filings, system-of-record updates, credit decisions, money movement, and evidence publication as protected fintech actions. Fintech strict automations block protected actions and unknown external mutation tools until an approval path is used.
 - **Connector proof and compliance artifact validation helpers**: Added core helpers for extracting connector proof from successful source retrieval tool records, treating discovery/listing as insufficient evidence, and validating compliance/risk brief artifacts for required fields, citations, limitations, approval state, and audit IDs.
 - **Fintech audit evidence assembly**: Added an internal audit package shape and an Automation V2 helper that assembles run, tenant, actor, tool ledger, artifact, approval, and policy-decision evidence for compliance review.
+- **Persisted fintech audit package artifact**: Added an internal helper that writes assembled fintech audit packages into the linked context-run artifact store for compliance-review handoff.
 - **Fintech compliance/risk eval dataset**: Added proof-sprint eval fixtures for unsupported claim rejection, connector proof-of-use, protected-action bypass attempts, cross-tenant source denial, and incomplete evidence limitations.
 
 ### Changed

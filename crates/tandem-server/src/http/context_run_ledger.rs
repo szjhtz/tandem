@@ -44,6 +44,28 @@ pub(super) fn fintech_audit_package_for_automation_v2_run(
     fintech_audit_package_for_automation_v2_run_records(run, &records)
 }
 
+pub(super) async fn persist_fintech_audit_package_for_automation_v2_run(
+    state: &AppState,
+    run: &crate::automation_v2::types::AutomationV2RunRecord,
+) -> anyhow::Result<Value> {
+    let package = fintech_audit_package_for_automation_v2_run(state, run);
+    let context_run_id = super::context_runs::automation_v2_context_run_id(&run.run_id);
+    let relative_path = "artifacts/fintech.audit_package.json";
+    let path = super::context_runs::context_run_dir(state, &context_run_id).join(relative_path);
+    if let Some(parent) = path.parent() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
+    tokio::fs::write(&path, serde_json::to_vec_pretty(&package)?).await?;
+    Ok(json!({
+        "context_run_id": context_run_id,
+        "artifact_id": "fintech-audit-package",
+        "artifact_type": "fintech_audit_package",
+        "relative_path": relative_path,
+        "path": path.to_string_lossy().to_string(),
+        "package": package,
+    }))
+}
+
 fn fintech_audit_package_for_automation_v2_run_records(
     run: &crate::automation_v2::types::AutomationV2RunRecord,
     records: &[ContextRunLedgerEventView],
@@ -382,6 +404,28 @@ mod tests {
         assert_eq!(
             package["policy_decisions"][0]["tool"].as_str(),
             Some("mcp.bank.release_funds")
+        );
+    }
+
+    #[tokio::test]
+    async fn persists_fintech_audit_package_to_context_run_artifact() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let mut state = AppState::new_starting("test".to_string(), true);
+        state.shared_resources_path = root.path().join("system").join("shared.json");
+        let run = fintech_audit_fixture_run();
+
+        let receipt = persist_fintech_audit_package_for_automation_v2_run(&state, &run)
+            .await
+            .expect("persist package");
+        let path = receipt["path"].as_str().expect("path");
+        let raw = std::fs::read_to_string(path).expect("audit package file");
+        let persisted: Value = serde_json::from_str(&raw).expect("package json");
+
+        assert_eq!(receipt["artifact_id"], "fintech-audit-package");
+        assert_eq!(persisted["run_id"], "automation-v2-run-fintech");
+        assert_eq!(
+            persisted["artifacts"][0]["node_id"].as_str(),
+            Some("draft_compliance_brief")
         );
     }
 }
