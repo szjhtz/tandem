@@ -32,6 +32,7 @@ What ships now:
 - Existing context-run ledger summaries now include `fintech_connector_proof` derived from successful source retrieval tool records.
 - Compliance/risk brief validation checks required fields, citations, limitations, reviewer status, approval state, and audit IDs.
 - Explicitly marked fintech brief workflow nodes persist connector proof and validation results in artifact validation metadata, and reject citations that cannot be mapped to connector proof.
+- Workflow plans that explicitly ask for fintech compliance/risk brief artifacts now materialize with `fintech_strict` runtime metadata and artifact markers by default; generic finance workflows are left alone.
 - An internal audit package helper can assemble run, tenant, actor, tool calls, connector proof, artifacts, approvals, and policy decisions from Automation V2 run state.
 
 ### Boundaries
