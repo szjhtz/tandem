@@ -2398,6 +2398,7 @@ pub(super) async fn automations_v2_run_repair(
 
 async fn automation_v2_reset_task_subtree(
     state: &AppState,
+    tenant_context: &TenantContext,
     run_id: &str,
     node_id: &str,
     reason: String,
@@ -2412,15 +2413,9 @@ async fn automation_v2_reset_task_subtree(
     (StatusCode, Json<Value>),
 > {
     let Some(current) = state.get_automation_v2_run(run_id).await else {
-        return Err((
-            StatusCode::NOT_FOUND,
-            Json(json!({
-                "error":"Run not found",
-                "code":"AUTOMATION_V2_RUN_NOT_FOUND",
-                "runID": run_id
-            })),
-        ));
+        return Err(automation_v2_run_not_found(run_id));
     };
+    ensure_automation_v2_run_tenant(tenant_context, &current)?;
     if matches!(
         current.status,
         AutomationRunStatus::Running | AutomationRunStatus::Queued | AutomationRunStatus::Pausing

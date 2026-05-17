@@ -1,18 +1,13 @@
 async fn automation_v2_task_reset_preview(
     state: &AppState,
+    tenant_context: &TenantContext,
     run_id: &str,
     node_id: &str,
 ) -> Result<AutomationV2TaskResetPreview, (StatusCode, Json<Value>)> {
     let Some(current) = state.get_automation_v2_run(run_id).await else {
-        return Err((
-            StatusCode::NOT_FOUND,
-            Json(json!({
-                "error":"Run not found",
-                "code":"AUTOMATION_V2_RUN_NOT_FOUND",
-                "runID": run_id
-            })),
-        ));
+        return Err(automation_v2_run_not_found(run_id));
     };
+    ensure_automation_v2_run_tenant(tenant_context, &current)?;
     let Some(automation) = state
         .get_automation_v2(&current.automation_id)
         .await
@@ -66,19 +61,14 @@ async fn automation_v2_task_reset_preview(
 
 async fn load_automation_v2_backlog_task(
     state: &AppState,
+    tenant_context: &TenantContext,
     run_id: &str,
     task_id: &str,
 ) -> Result<crate::http::context_types::ContextBlackboardTask, (StatusCode, Json<Value>)> {
     let Some(run) = state.get_automation_v2_run(run_id).await else {
-        return Err((
-            StatusCode::NOT_FOUND,
-            Json(json!({
-                "error":"Run not found",
-                "code":"AUTOMATION_V2_RUN_NOT_FOUND",
-                "runID": run_id
-            })),
-        ));
+        return Err(automation_v2_run_not_found(run_id));
     };
+    ensure_automation_v2_run_tenant(tenant_context, &run)?;
     let context_run_id = super::context_runs::automation_v2_context_run_id(&run.run_id);
     let blackboard = super::context_runs::load_projected_context_blackboard(state, &context_run_id);
     let Some(task) = blackboard.tasks.into_iter().find(|task| task.id == task_id) else {
@@ -125,6 +115,7 @@ fn automation_v2_backlog_claim_agent(
 
 pub(super) async fn automations_v2_run_task_reset_preview(
     State(state): State<AppState>,
+    Extension(tenant_context): Extension<TenantContext>,
     Path((run_id, node_id)): Path<(String, String)>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     let node_id = node_id.trim().to_string();
@@ -137,7 +128,8 @@ pub(super) async fn automations_v2_run_task_reset_preview(
             })),
         ));
     }
-    let preview = automation_v2_task_reset_preview(&state, &run_id, &node_id).await?;
+    let preview =
+        automation_v2_task_reset_preview(&state, &tenant_context, &run_id, &node_id).await?;
     let context_run_id = super::context_runs::automation_v2_context_run_id(&run_id);
     Ok(Json(json!({
         "ok": true,
@@ -149,6 +141,7 @@ pub(super) async fn automations_v2_run_task_reset_preview(
 
 pub(super) async fn automations_v2_run_task_continue(
     State(state): State<AppState>,
+    Extension(tenant_context): Extension<TenantContext>,
     Path((run_id, node_id)): Path<(String, String)>,
     Json(input): Json<AutomationV2RunTaskActionInput>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
@@ -163,15 +156,9 @@ pub(super) async fn automations_v2_run_task_continue(
         ));
     }
     let Some(current) = state.get_automation_v2_run(&run_id).await else {
-        return Err((
-            StatusCode::NOT_FOUND,
-            Json(json!({
-                "error":"Run not found",
-                "code":"AUTOMATION_V2_RUN_NOT_FOUND",
-                "runID": run_id
-            })),
-        ));
+        return Err(automation_v2_run_not_found(&run_id));
     };
+    ensure_automation_v2_run_tenant(&tenant_context, &current)?;
     if matches!(
         current.status,
         AutomationRunStatus::Running | AutomationRunStatus::Queued | AutomationRunStatus::Pausing
@@ -314,6 +301,7 @@ pub(super) async fn automations_v2_run_task_continue(
 
 pub(super) async fn automations_v2_run_task_retry(
     State(state): State<AppState>,
+    Extension(tenant_context): Extension<TenantContext>,
     Path((run_id, node_id)): Path<(String, String)>,
     Json(input): Json<AutomationV2RunTaskActionInput>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
@@ -331,9 +319,15 @@ pub(super) async fn automations_v2_run_task_retry(
         input.reason,
         &format!("retried task `{}` and reset affected subtree", node_id),
     );
-    let (automation, updated, cleared_outputs, reset_nodes) =
-        automation_v2_reset_task_subtree(&state, &run_id, &node_id, reason, "run_task_retried")
-            .await?;
+    let (automation, updated, cleared_outputs, reset_nodes) = automation_v2_reset_task_subtree(
+        &state,
+        &tenant_context,
+        &run_id,
+        &node_id,
+        reason,
+        "run_task_retried",
+    )
+    .await?;
     let _ =
         super::context_runs::sync_automation_v2_run_blackboard(&state, &automation, &updated).await;
     let context_run_id = super::context_runs::automation_v2_context_run_id(&run_id);
@@ -344,6 +338,7 @@ pub(super) async fn automations_v2_run_task_retry(
 
 pub(super) async fn automations_v2_run_task_requeue(
     State(state): State<AppState>,
+    Extension(tenant_context): Extension<TenantContext>,
     Path((run_id, node_id)): Path<(String, String)>,
     Json(input): Json<AutomationV2RunTaskActionInput>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
@@ -361,9 +356,15 @@ pub(super) async fn automations_v2_run_task_requeue(
         input.reason,
         &format!("requeued task `{}` and reset affected subtree", node_id),
     );
-    let (automation, updated, cleared_outputs, reset_nodes) =
-        automation_v2_reset_task_subtree(&state, &run_id, &node_id, reason, "run_task_requeued")
-            .await?;
+    let (automation, updated, cleared_outputs, reset_nodes) = automation_v2_reset_task_subtree(
+        &state,
+        &tenant_context,
+        &run_id,
+        &node_id,
+        reason,
+        "run_task_requeued",
+    )
+    .await?;
     let _ =
         super::context_runs::sync_automation_v2_run_blackboard(&state, &automation, &updated).await;
     let context_run_id = super::context_runs::automation_v2_context_run_id(&run_id);
@@ -374,6 +375,7 @@ pub(super) async fn automations_v2_run_task_requeue(
 
 pub(super) async fn automations_v2_run_backlog_task_claim(
     State(state): State<AppState>,
+    Extension(tenant_context): Extension<TenantContext>,
     Path((run_id, task_id)): Path<(String, String)>,
     Json(input): Json<AutomationV2BacklogClaimInput>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
@@ -387,7 +389,7 @@ pub(super) async fn automations_v2_run_backlog_task_claim(
             })),
         ));
     }
-    let task = load_automation_v2_backlog_task(&state, &run_id, &task_id).await?;
+    let task = load_automation_v2_backlog_task(&state, &tenant_context, &run_id, &task_id).await?;
     let agent_id = automation_v2_backlog_claim_agent(&task, input.agent_id);
     let context_run_id = super::context_runs::automation_v2_context_run_id(&run_id);
     let command_id = Some(format!(
@@ -440,6 +442,7 @@ pub(super) async fn automations_v2_run_backlog_task_claim(
 
 pub(super) async fn automations_v2_run_backlog_task_requeue(
     State(state): State<AppState>,
+    Extension(tenant_context): Extension<TenantContext>,
     Path((run_id, task_id)): Path<(String, String)>,
     Json(input): Json<AutomationV2RunTaskActionInput>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
@@ -453,7 +456,7 @@ pub(super) async fn automations_v2_run_backlog_task_requeue(
             })),
         ));
     }
-    let task = load_automation_v2_backlog_task(&state, &run_id, &task_id).await?;
+    let task = load_automation_v2_backlog_task(&state, &tenant_context, &run_id, &task_id).await?;
     let context_run_id = super::context_runs::automation_v2_context_run_id(&run_id);
     let reason = reason_or_default(
         input.reason,
@@ -502,6 +505,7 @@ pub(super) async fn automations_v2_run_backlog_task_requeue(
 
 pub(super) async fn automations_v2_events(
     State(state): State<AppState>,
+    Extension(tenant_context): Extension<TenantContext>,
     Query(query): Query<AutomationEventsQuery>,
 ) -> Sse<impl Stream<Item = Result<Event, std::convert::Infallible>>> {
     let ready = tokio_stream::once(Ok(Event::default().data(
@@ -515,6 +519,9 @@ pub(super) async fn automations_v2_events(
     let rx = state.event_bus.subscribe();
     let live = BroadcastStream::new(rx).filter_map(move |msg| match msg {
         Ok(event) => {
+            if !super::global::event_visible_to_tenant(&event, &tenant_context) {
+                return None;
+            }
             if !event.event_type.starts_with("automation.v2.") {
                 return None;
             }
@@ -557,6 +564,7 @@ pub(super) async fn automations_v2_events(
 /// in-progress runs (e.g. while reviewing an experimental Guided/YOLO output).
 pub(super) async fn automations_v2_run_task_disposition(
     State(state): State<AppState>,
+    Extension(tenant_context): Extension<TenantContext>,
     Path((run_id, node_id)): Path<(String, String)>,
     Json(input): Json<AutomationV2RunTaskDispositionInput>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
@@ -585,15 +593,9 @@ pub(super) async fn automations_v2_run_task_disposition(
     };
 
     let Some(current) = state.get_automation_v2_run(&run_id).await else {
-        return Err((
-            StatusCode::NOT_FOUND,
-            Json(json!({
-                "error":"Run not found",
-                "code":"AUTOMATION_V2_RUN_NOT_FOUND",
-                "runID": run_id
-            })),
-        ));
+        return Err(automation_v2_run_not_found(&run_id));
     };
+    ensure_automation_v2_run_tenant(&tenant_context, &current)?;
     if !current.checkpoint.node_outputs.contains_key(&node_id) {
         return Err((
             StatusCode::NOT_FOUND,

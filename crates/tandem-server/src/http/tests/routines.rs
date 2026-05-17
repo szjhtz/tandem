@@ -1272,6 +1272,41 @@ async fn tenant_a_cannot_access_tenant_b_automation_v2_routes() {
     for (method, uri, body) in [
         ("GET", format!("/automations/v2/runs/{run_id}"), None),
         (
+            "GET",
+            format!("/automations/v2/runs/{run_id}/tasks/node-1/reset_preview"),
+            None,
+        ),
+        (
+            "POST",
+            format!("/automations/v2/runs/{run_id}/tasks/node-1/retry"),
+            Some(json!({"reason": "cross tenant"})),
+        ),
+        (
+            "POST",
+            format!("/automations/v2/runs/{run_id}/tasks/node-1/requeue"),
+            Some(json!({"reason": "cross tenant"})),
+        ),
+        (
+            "POST",
+            format!("/automations/v2/runs/{run_id}/tasks/node-1/continue"),
+            Some(json!({"reason": "cross tenant"})),
+        ),
+        (
+            "PATCH",
+            format!("/automations/v2/runs/{run_id}/tasks/node-1/disposition"),
+            Some(json!({"disposition": "accepted"})),
+        ),
+        (
+            "POST",
+            format!("/automations/v2/runs/{run_id}/backlog/tasks/backlog-1/claim"),
+            Some(json!({"agent_id": "agent-a"})),
+        ),
+        (
+            "POST",
+            format!("/automations/v2/runs/{run_id}/backlog/tasks/backlog-1/requeue"),
+            Some(json!({"reason": "cross tenant"})),
+        ),
+        (
             "POST",
             format!("/automations/v2/runs/{run_id}/pause"),
             Some(json!({"reason": "cross tenant"})),
