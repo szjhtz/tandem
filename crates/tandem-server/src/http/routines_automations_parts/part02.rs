@@ -24,6 +24,44 @@ fn merge_automation_capabilities_metadata(
     }
 }
 
+fn automation_v2_not_found(id: &str) -> (StatusCode, Json<Value>) {
+    (
+        StatusCode::NOT_FOUND,
+        Json(json!({
+            "error": "Automation not found",
+            "code": "AUTOMATION_V2_NOT_FOUND",
+            "automationID": id,
+        })),
+    )
+}
+
+fn automation_v2_run_not_found(run_id: &str) -> (StatusCode, Json<Value>) {
+    (
+        StatusCode::NOT_FOUND,
+        Json(json!({
+            "error": "Run not found",
+            "code": "AUTOMATION_V2_RUN_NOT_FOUND",
+            "runID": run_id,
+        })),
+    )
+}
+
+fn ensure_automation_v2_tenant(
+    request_tenant: &TenantContext,
+    automation: &AutomationV2Spec,
+) -> Result<(), (StatusCode, Json<Value>)> {
+    super::ensure_same_tenant(request_tenant, &automation.tenant_context())
+        .map_err(|_| automation_v2_not_found(&automation.automation_id))
+}
+
+fn ensure_automation_v2_run_tenant(
+    request_tenant: &TenantContext,
+    run: &crate::automation_v2::types::AutomationV2RunRecord,
+) -> Result<(), (StatusCode, Json<Value>)> {
+    super::ensure_same_tenant(request_tenant, &run.tenant_context)
+        .map_err(|_| automation_v2_run_not_found(&run.run_id))
+}
+
 pub(super) async fn automations_patch(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -722,7 +760,7 @@ pub(super) async fn automations_v2_create(
         .can_create_automation_for_actor(&provenance.creator, &provenance, &declared_capabilities)
         .await
         .map_err(super::governance::governance_error_response)?;
-    let automation = AutomationV2Spec {
+    let mut automation = AutomationV2Spec {
         automation_id: input
             .automation_id
             .unwrap_or_else(|| format!("automation-v2-{}", Uuid::new_v4())),
@@ -762,6 +800,7 @@ pub(super) async fn automations_v2_create(
         watch_conditions: input.watch_conditions.unwrap_or_default(),
         handoff_config: input.handoff_config,
     };
+    automation.set_tenant_context(&tenant_context);
     validate_shared_context_pack_bindings(
         &state,
         automation.workspace_root.as_deref(),
@@ -798,8 +837,16 @@ pub(super) async fn automations_v2_create(
     Ok(Json(json!({ "automation": stored })))
 }
 
-pub(super) async fn automations_v2_list(State(state): State<AppState>) -> Json<Value> {
-    let rows = state.list_automations_v2().await;
+pub(super) async fn automations_v2_list(
+    State(state): State<AppState>,
+    Extension(tenant_context): Extension<TenantContext>,
+) -> Json<Value> {
+    let rows = state
+        .list_automations_v2()
+        .await
+        .into_iter()
+        .filter(|automation| super::tenant_matches(&tenant_context, &automation.tenant_context()))
+        .collect::<Vec<_>>();
     Json(json!({
         "automations": rows,
         "count": rows.len(),
@@ -808,16 +855,13 @@ pub(super) async fn automations_v2_list(State(state): State<AppState>) -> Json<V
 
 pub(super) async fn automations_v2_get(
     State(state): State<AppState>,
+    Extension(tenant_context): Extension<TenantContext>,
     Path(id): Path<String>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     let Some(automation) = state.get_automation_v2(&id).await else {
-        return Err((
-            StatusCode::NOT_FOUND,
-            Json(
-                json!({"error":"Automation not found", "code":"AUTOMATION_V2_NOT_FOUND", "automationID": id}),
-            ),
-        ));
+        return Err(automation_v2_not_found(&id));
     };
+    ensure_automation_v2_tenant(&tenant_context, &automation)?;
     Ok(Json(json!({ "automation": automation })))
 }
 
@@ -830,13 +874,9 @@ pub(super) async fn automations_v2_patch(
     Json(input): Json<AutomationV2PatchInput>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     let Some(mut automation) = state.get_automation_v2(&id).await else {
-        return Err((
-            StatusCode::NOT_FOUND,
-            Json(
-                json!({"error":"Automation not found", "code":"AUTOMATION_V2_NOT_FOUND", "automationID": id}),
-            ),
-        ));
+        return Err(automation_v2_not_found(&id));
     };
+    ensure_automation_v2_tenant(&tenant_context, &automation)?;
     let actor =
         super::governance::resolve_governance_actor(&headers, &tenant_context, &request_principal);
     let governance = state
@@ -894,6 +934,7 @@ pub(super) async fn automations_v2_patch(
         input.metadata.or_else(|| current_metadata),
         input.capabilities,
     )?;
+    automation.set_tenant_context(&tenant_context);
     if let Some(scope_policy) = input.scope_policy {
         automation.scope_policy = Some(scope_policy);
     }
@@ -974,13 +1015,9 @@ pub(super) async fn automations_v2_delete(
     Path(id): Path<String>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     let Some(automation) = state.get_automation_v2(&id).await else {
-        return Err((
-            StatusCode::NOT_FOUND,
-            Json(
-                json!({"error":"Automation not found", "code":"AUTOMATION_V2_NOT_FOUND", "automationID": id}),
-            ),
-        ));
+        return Err(automation_v2_not_found(&id));
     };
+    ensure_automation_v2_tenant(&tenant_context, &automation)?;
     let actor =
         super::governance::resolve_governance_actor(&headers, &tenant_context, &request_principal);
     let _ = state
@@ -1030,13 +1067,9 @@ pub(super) async fn automations_v2_run_now(
     Json(input): Json<AutomationV2RunNowInput>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     let Some(automation) = state.get_automation_v2(&id).await else {
-        return Err((
-            StatusCode::NOT_FOUND,
-            Json(
-                json!({"error":"Automation not found", "code":"AUTOMATION_V2_NOT_FOUND", "automationID": id}),
-            ),
-        ));
+        return Err(automation_v2_not_found(&id));
     };
+    ensure_automation_v2_tenant(&tenant_context, &automation)?;
     let actor =
         super::governance::resolve_governance_actor(&headers, &tenant_context, &request_principal);
     let _ = state
@@ -1137,13 +1170,9 @@ pub(super) async fn automations_v2_pause(
     Json(input): Json<RoutineRunDecisionInput>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     let Some(mut automation) = state.get_automation_v2(&id).await else {
-        return Err((
-            StatusCode::NOT_FOUND,
-            Json(
-                json!({"error":"Automation not found", "code":"AUTOMATION_V2_NOT_FOUND", "automationID": id}),
-            ),
-        ));
+        return Err(automation_v2_not_found(&id));
     };
+    ensure_automation_v2_tenant(&tenant_context, &automation)?;
     let actor =
         super::governance::resolve_governance_actor(&headers, &tenant_context, &request_principal);
     let _ = state
@@ -1222,13 +1251,9 @@ pub(super) async fn automations_v2_resume(
     Path(id): Path<String>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     let Some(mut automation) = state.get_automation_v2(&id).await else {
-        return Err((
-            StatusCode::NOT_FOUND,
-            Json(
-                json!({"error":"Automation not found", "code":"AUTOMATION_V2_NOT_FOUND", "automationID": id}),
-            ),
-        ));
+        return Err(automation_v2_not_found(&id));
     };
+    ensure_automation_v2_tenant(&tenant_context, &automation)?;
     let actor =
         super::governance::resolve_governance_actor(&headers, &tenant_context, &request_principal);
     let _ = state
@@ -1275,18 +1300,15 @@ pub(super) async fn automations_v2_resume(
 /// ```
 pub(super) async fn automations_v2_handoffs(
     State(state): State<AppState>,
+    Extension(tenant_context): Extension<TenantContext>,
     Path(id): Path<String>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     use crate::automation_v2::types::HandoffArtifact;
 
     let Some(automation) = state.get_automation_v2(&id).await else {
-        return Err((
-            StatusCode::NOT_FOUND,
-            Json(
-                json!({"error":"Automation not found","code":"AUTOMATION_V2_NOT_FOUND","automationID": id}),
-            ),
-        ));
+        return Err(automation_v2_not_found(&id));
     };
+    ensure_automation_v2_tenant(&tenant_context, &automation)?;
 
     let workspace_root = match automation.workspace_root.as_deref() {
         Some(root) if !root.is_empty() => root.to_string(),
@@ -1362,31 +1384,41 @@ pub(super) async fn automations_v2_handoffs(
 
 pub(super) async fn automations_v2_runs(
     State(state): State<AppState>,
+    Extension(tenant_context): Extension<TenantContext>,
     Path(id): Path<String>,
     Query(query): Query<RoutineRunsQuery>,
-) -> Json<Value> {
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let Some(automation) = state.get_automation_v2(&id).await else {
+        return Err(automation_v2_not_found(&id));
+    };
+    ensure_automation_v2_tenant(&tenant_context, &automation)?;
     let limit = query.limit.unwrap_or(50);
     let rows = state.list_automation_v2_runs(Some(&id), limit).await;
-    if let Some(automation) = state.get_automation_v2(&id).await {
-        for run in &rows {
-            let _ =
-                super::context_runs::sync_automation_v2_run_blackboard(&state, &automation, run)
-                    .await;
-        }
+    for run in &rows {
+        let _ =
+            super::context_runs::sync_automation_v2_run_blackboard(&state, &automation, run).await;
     }
     let mut runs = Vec::with_capacity(rows.len());
     for run in &rows {
         runs.push(automation_v2_run_with_context_links(&state, run).await);
     }
-    Json(json!({ "automationID": id, "runs": runs, "count": rows.len() }))
+    Ok(Json(
+        json!({ "automationID": id, "runs": runs, "count": rows.len() }),
+    ))
 }
 
 pub(super) async fn automations_v2_runs_all(
     State(state): State<AppState>,
+    Extension(tenant_context): Extension<TenantContext>,
     Query(query): Query<RoutineRunsQuery>,
 ) -> Json<Value> {
     let limit = query.limit.unwrap_or(50).clamp(1, 200);
-    let rows = state.list_automation_v2_runs(None, limit).await;
+    let rows = state
+        .list_automation_v2_runs(None, limit)
+        .await
+        .into_iter()
+        .filter(|run| super::tenant_matches(&tenant_context, &run.tenant_context))
+        .collect::<Vec<_>>();
     for run in &rows {
         if let Some(automation) = state.get_automation_v2(&run.automation_id).await {
             let _ =
@@ -1403,16 +1435,13 @@ pub(super) async fn automations_v2_runs_all(
 
 pub(super) async fn automations_v2_run_get(
     State(state): State<AppState>,
+    Extension(tenant_context): Extension<TenantContext>,
     Path(run_id): Path<String>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     let Some(run) = state.get_automation_v2_run(&run_id).await else {
-        return Err((
-            StatusCode::NOT_FOUND,
-            Json(
-                json!({"error":"Run not found", "code":"AUTOMATION_V2_RUN_NOT_FOUND", "runID": run_id}),
-            ),
-        ));
+        return Err(automation_v2_run_not_found(&run_id));
     };
+    ensure_automation_v2_run_tenant(&tenant_context, &run)?;
     if let Some(automation) = state.get_automation_v2(&run.automation_id).await {
         let _ =
             super::context_runs::sync_automation_v2_run_blackboard(&state, &automation, &run).await;
@@ -1427,17 +1456,14 @@ pub(super) async fn automations_v2_run_get(
 
 pub(super) async fn automations_v2_run_pause(
     State(state): State<AppState>,
+    Extension(tenant_context): Extension<TenantContext>,
     Path(run_id): Path<String>,
     Json(input): Json<RoutineRunDecisionInput>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     let Some(current) = state.get_automation_v2_run(&run_id).await else {
-        return Err((
-            StatusCode::NOT_FOUND,
-            Json(
-                json!({"error":"Run not found", "code":"AUTOMATION_V2_RUN_NOT_FOUND", "runID": run_id}),
-            ),
-        ));
+        return Err(automation_v2_run_not_found(&run_id));
     };
+    ensure_automation_v2_run_tenant(&tenant_context, &current)?;
     if !matches!(
         current.status,
         AutomationRunStatus::Running | AutomationRunStatus::Queued
@@ -1493,17 +1519,14 @@ pub(super) async fn automations_v2_run_pause(
 
 pub(super) async fn automations_v2_run_resume(
     State(state): State<AppState>,
+    Extension(tenant_context): Extension<TenantContext>,
     Path(run_id): Path<String>,
     Json(input): Json<RoutineRunDecisionInput>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     let Some(current) = state.get_automation_v2_run(&run_id).await else {
-        return Err((
-            StatusCode::NOT_FOUND,
-            Json(
-                json!({"error":"Run not found", "code":"AUTOMATION_V2_RUN_NOT_FOUND", "runID": run_id}),
-            ),
-        ));
+        return Err(automation_v2_run_not_found(&run_id));
     };
+    ensure_automation_v2_run_tenant(&tenant_context, &current)?;
     if current.status != AutomationRunStatus::Paused {
         return Err((
             StatusCode::CONFLICT,
@@ -1543,17 +1566,14 @@ pub(super) async fn automations_v2_run_resume(
 
 pub(super) async fn automations_v2_run_cancel(
     State(state): State<AppState>,
+    Extension(tenant_context): Extension<TenantContext>,
     Path(run_id): Path<String>,
     Json(input): Json<RoutineRunDecisionInput>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     let Some(current) = state.get_automation_v2_run(&run_id).await else {
-        return Err((
-            StatusCode::NOT_FOUND,
-            Json(
-                json!({"error":"Run not found", "code":"AUTOMATION_V2_RUN_NOT_FOUND", "runID": run_id}),
-            ),
-        ));
+        return Err(automation_v2_run_not_found(&run_id));
     };
+    ensure_automation_v2_run_tenant(&tenant_context, &current)?;
     if matches!(
         current.status,
         AutomationRunStatus::Cancelled
@@ -1609,17 +1629,14 @@ pub(super) async fn automations_v2_run_cancel(
 
 pub(crate) async fn automations_v2_run_gate_decide(
     State(state): State<AppState>,
+    Extension(tenant_context): Extension<TenantContext>,
     Path(run_id): Path<String>,
     Json(input): Json<AutomationV2GateDecisionInput>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     let Some(current) = state.get_automation_v2_run(&run_id).await else {
-        return Err((
-            StatusCode::NOT_FOUND,
-            Json(
-                json!({"error":"Run not found", "code":"AUTOMATION_V2_RUN_NOT_FOUND", "runID": run_id}),
-            ),
-        ));
+        return Err(automation_v2_run_not_found(&run_id));
     };
+    ensure_automation_v2_run_tenant(&tenant_context, &current)?;
     if current.status != AutomationRunStatus::AwaitingApproval {
         // Race UX: when a second surface tries to decide a gate that has just
         // been resolved by another surface (Slack click + control-panel click,
@@ -1787,6 +1804,7 @@ pub(crate) async fn automations_v2_run_gate_decide(
             "reason": reason.clone(),
             "executed_as": "approval_gate",
             "timestamp": crate::now_ms(),
+            "tenantContext": current.tenant_context.clone(),
         }),
     ));
     spawn_channel_approval_decision_update(
@@ -2002,17 +2020,14 @@ fn decision_label(decision: &str) -> &'static str {
 
 pub(super) async fn automations_v2_run_recover(
     State(state): State<AppState>,
+    Extension(tenant_context): Extension<TenantContext>,
     Path(run_id): Path<String>,
     Json(input): Json<RoutineRunDecisionInput>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     let Some(current) = state.get_automation_v2_run(&run_id).await else {
-        return Err((
-            StatusCode::NOT_FOUND,
-            Json(
-                json!({"error":"Run not found", "code":"AUTOMATION_V2_RUN_NOT_FOUND", "runID": run_id}),
-            ),
-        ));
+        return Err(automation_v2_run_not_found(&run_id));
     };
+    ensure_automation_v2_run_tenant(&tenant_context, &current)?;
     let blocked_node_ids = automation_v2_blocked_node_ids(&current);
     let blocked_run_is_recoverable = matches!(current.status, AutomationRunStatus::Blocked)
         || (matches!(current.status, AutomationRunStatus::Completed)
@@ -2162,6 +2177,7 @@ pub(super) async fn automations_v2_run_recover(
 
 pub(super) async fn automations_v2_run_repair(
     State(state): State<AppState>,
+    Extension(tenant_context): Extension<TenantContext>,
     Path(run_id): Path<String>,
     Json(input): Json<AutomationV2RunRepairInput>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
@@ -2175,13 +2191,9 @@ pub(super) async fn automations_v2_run_repair(
         ));
     }
     let Some(current) = state.get_automation_v2_run(&run_id).await else {
-        return Err((
-            StatusCode::NOT_FOUND,
-            Json(
-                json!({"error":"Run not found", "code":"AUTOMATION_V2_RUN_NOT_FOUND", "runID": run_id}),
-            ),
-        ));
+        return Err(automation_v2_run_not_found(&run_id));
     };
+    ensure_automation_v2_run_tenant(&tenant_context, &current)?;
     if matches!(
         current.status,
         AutomationRunStatus::Running | AutomationRunStatus::Queued | AutomationRunStatus::Pausing

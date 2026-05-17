@@ -235,8 +235,14 @@ pub(crate) async fn slack_interactions(
         reason: None,
     };
 
+    let tenant_context = state
+        .get_automation_v2_run(&run_id)
+        .await
+        .map(|run| run.tenant_context)
+        .unwrap_or_else(tandem_types::TenantContext::local_implicit);
     let result = crate::http::routines_automations::automations_v2_run_gate_decide(
         State(state),
+        axum::extract::Extension(tenant_context),
         axum::extract::Path(run_id.clone()),
         Json(input),
     )

@@ -299,8 +299,13 @@ pub(super) async fn global_storage_files(
     })))
 }
 
+pub(super) fn event_visible_to_tenant(event: &EngineEvent, request_tenant: &TenantContext) -> bool {
+    tenant_matches(request_tenant, &event_tenant_context(event))
+}
+
 fn sse_stream(
     state: AppState,
+    request_tenant: TenantContext,
     filter: EventFilterQuery,
 ) -> impl tokio_stream::Stream<Item = Result<axum::response::sse::Event, std::convert::Infallible>>
 {
@@ -322,6 +327,9 @@ fn sse_stream(
     let live = BroadcastStream::new(rx).filter_map(move |msg| match msg {
         Ok(event) => {
             if !event_matches_filter(&event, &filter) {
+                return None;
+            }
+            if !event_visible_to_tenant(&event, &request_tenant) {
                 return None;
             }
             let normalized = if let Some(run_id) = filter.run_id.as_deref() {
@@ -353,11 +361,12 @@ fn sse_stream(
 
 pub(super) async fn events(
     State(state): State<AppState>,
+    Extension(tenant_context): Extension<TenantContext>,
     Query(filter): Query<EventFilterQuery>,
 ) -> axum::response::Sse<
     impl tokio_stream::Stream<Item = Result<axum::response::sse::Event, std::convert::Infallible>>,
 > {
-    axum::response::Sse::new(sse_stream(state, filter))
+    axum::response::Sse::new(sse_stream(state, tenant_context, filter))
         .keep_alive(axum::response::sse::KeepAlive::new().interval(Duration::from_secs(10)))
 }
 

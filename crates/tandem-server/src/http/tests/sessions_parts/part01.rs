@@ -169,6 +169,79 @@ struct StaticKbTool {
     output: String,
 }
 
+fn tenant_request(
+    method: &str,
+    uri: impl Into<String>,
+    org_id: &str,
+    workspace_id: &str,
+    actor_id: &str,
+    body: Option<Value>,
+) -> Request<Body> {
+    let mut builder = Request::builder()
+        .method(method)
+        .uri(uri.into())
+        .header("x-tandem-org-id", org_id)
+        .header("x-tandem-workspace-id", workspace_id)
+        .header("x-tandem-actor-id", actor_id);
+    let body = match body {
+        Some(value) => {
+            builder = builder.header("content-type", "application/json");
+            Body::from(value.to_string())
+        }
+        None => Body::empty(),
+    };
+    builder.body(body).expect("tenant request")
+}
+
+async fn create_tenant_session(
+    app: axum::Router,
+    org_id: &str,
+    workspace_id: &str,
+    actor_id: &str,
+    title: &str,
+) -> Value {
+    let req = tenant_request(
+        "POST",
+        "/session",
+        org_id,
+        workspace_id,
+        actor_id,
+        Some(json!({
+            "title": title,
+            "directory": "."
+        })),
+    );
+    let resp = app.oneshot(req).await.expect("create response");
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .expect("create body");
+    serde_json::from_slice(&body).expect("created session")
+}
+
+async fn tenant_status(
+    app: axum::Router,
+    method: &str,
+    uri: impl Into<String>,
+    org_id: &str,
+    workspace_id: &str,
+    actor_id: &str,
+    body: Option<Value>,
+) -> StatusCode {
+    let resp = app
+        .oneshot(tenant_request(
+            method,
+            uri,
+            org_id,
+            workspace_id,
+            actor_id,
+            body,
+        ))
+        .await
+        .expect("tenant response");
+    resp.status()
+}
+
 #[async_trait]
 impl tandem_tools::Tool for StaticKbTool {
     fn schema(&self) -> ToolSchema {
@@ -288,6 +361,208 @@ async fn run_prompt_sync_messages_with_allowlist(
         .await
         .expect("response body");
     serde_json::from_slice::<Vec<Value>>(&body).expect("prompt_sync messages")
+}
+
+#[tokio::test]
+async fn tenant_a_cannot_access_tenant_b_session_routes() {
+    let state = test_state().await;
+    let app = app_router(state.clone());
+    let session_a = create_tenant_session(
+        app.clone(),
+        "org-a",
+        "workspace-a",
+        "user-a",
+        "tenant a session",
+    )
+    .await;
+    let session_b = create_tenant_session(
+        app.clone(),
+        "org-b",
+        "workspace-b",
+        "user-b",
+        "tenant b session",
+    )
+    .await;
+    let session_a_id = session_a["id"].as_str().expect("session a id").to_string();
+    let session_b_id = session_b["id"].as_str().expect("session b id").to_string();
+
+    state
+        .storage
+        .append_message(
+            &session_b_id,
+            Message::new(
+                MessageRole::User,
+                vec![MessagePart::Text {
+                    text: "tenant b secret".to_string(),
+                }],
+            ),
+        )
+        .await
+        .expect("append tenant b message");
+
+    let list_resp = app
+        .clone()
+        .oneshot(tenant_request(
+            "GET",
+            "/session?scope=global&page_size=50",
+            "org-a",
+            "workspace-a",
+            "user-a",
+            None,
+        ))
+        .await
+        .expect("list response");
+    assert_eq!(list_resp.status(), StatusCode::OK);
+    let list_body = to_bytes(list_resp.into_body(), usize::MAX)
+        .await
+        .expect("list body");
+    let listed: Vec<Value> = serde_json::from_slice(&list_body).expect("session list");
+    let listed_ids = listed
+        .iter()
+        .filter_map(|session| session.get("id").and_then(Value::as_str))
+        .collect::<Vec<_>>();
+    assert!(listed_ids.contains(&session_a_id.as_str()));
+    assert!(!listed_ids.contains(&session_b_id.as_str()));
+
+    let status_resp = app
+        .clone()
+        .oneshot(tenant_request(
+            "GET",
+            "/session/status",
+            "org-a",
+            "workspace-a",
+            "user-a",
+            None,
+        ))
+        .await
+        .expect("status response");
+    assert_eq!(status_resp.status(), StatusCode::OK);
+    let status_body = to_bytes(status_resp.into_body(), usize::MAX)
+        .await
+        .expect("status body");
+    let status_payload: Value = serde_json::from_slice(&status_body).expect("status json");
+    assert!(status_payload.get(&session_a_id).is_some());
+    assert!(status_payload.get(&session_b_id).is_none());
+
+    for (method, uri, body) in [
+        ("GET", format!("/session/{session_b_id}"), None),
+        ("GET", format!("/session/{session_b_id}/message"), None),
+        ("GET", format!("/session/{session_b_id}/todo"), None),
+        ("GET", format!("/session/{session_b_id}/run"), None),
+        ("GET", format!("/session/{session_b_id}/diff"), None),
+        ("GET", format!("/session/{session_b_id}/children"), None),
+        (
+            "POST",
+            format!("/session/{session_b_id}/message"),
+            Some(json!({"parts":[{"type":"text","text":"nope"}]})),
+        ),
+        (
+            "POST",
+            format!("/session/{session_b_id}/prompt_async"),
+            Some(json!({"parts":[{"type":"text","text":"nope"}]})),
+        ),
+        (
+            "POST",
+            format!("/session/{session_b_id}/prompt_sync"),
+            Some(json!({"parts":[{"type":"text","text":"nope"}]})),
+        ),
+        (
+            "POST",
+            format!("/session/{session_b_id}/attach"),
+            Some(json!({"target_workspace":"/tmp/tenant-a"})),
+        ),
+        (
+            "POST",
+            format!("/session/{session_b_id}/workspace/override"),
+            Some(json!({"ttl_seconds":60})),
+        ),
+        (
+            "PATCH",
+            format!("/session/{session_b_id}"),
+            Some(json!({"title":"stolen"})),
+        ),
+        ("POST", format!("/session/{session_b_id}/abort"), None),
+        (
+            "POST",
+            format!("/session/{session_b_id}/run/run-b/cancel"),
+            None,
+        ),
+        ("POST", format!("/session/{session_b_id}/fork"), None),
+        ("POST", format!("/session/{session_b_id}/revert"), None),
+        ("POST", format!("/session/{session_b_id}/unrevert"), None),
+        ("POST", format!("/session/{session_b_id}/share"), None),
+        ("DELETE", format!("/session/{session_b_id}/share"), None),
+        ("POST", format!("/session/{session_b_id}/summarize"), None),
+        ("DELETE", format!("/session/{session_b_id}"), None),
+    ] {
+        let status = tenant_status(
+            app.clone(),
+            method,
+            uri,
+            "org-a",
+            "workspace-a",
+            "user-a",
+            body,
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::NOT_FOUND,
+            "{method} should be tenant-hidden"
+        );
+    }
+
+    let tenant_b_session = state
+        .storage
+        .get_session(&session_b_id)
+        .await
+        .expect("tenant b session still exists");
+    assert_eq!(tenant_b_session.title, "tenant b session");
+    assert_eq!(tenant_b_session.messages.len(), 1);
+}
+
+#[tokio::test]
+async fn tenant_event_stream_filters_other_tenant_events() {
+    let tenant_a = TenantContext::explicit_user_workspace(
+        "org-a",
+        "workspace-a",
+        Some("deployment-a".to_string()),
+        "user-a",
+    );
+
+    let tenant_b_event = EngineEvent::new(
+        "session.updated",
+        json!({
+            "sessionID": "session-b",
+            "tenantContext": TenantContext::explicit_user_workspace(
+                "org-b",
+                "workspace-b",
+                Some("deployment-b".to_string()),
+                "user-b",
+            )
+        }),
+    );
+    let tenant_a_event = EngineEvent::new(
+        "session.updated",
+        json!({
+            "sessionID": "session-a",
+            "tenantContext": TenantContext::explicit_user_workspace(
+                "org-a",
+                "workspace-a",
+                Some("deployment-a".to_string()),
+                "user-a",
+            )
+        }),
+    );
+
+    assert!(!super::super::global::event_visible_to_tenant(
+        &tenant_b_event,
+        &tenant_a
+    ));
+    assert!(super::super::global::event_visible_to_tenant(
+        &tenant_a_event,
+        &tenant_a
+    ));
 }
 
 #[tokio::test]

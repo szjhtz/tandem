@@ -1,5 +1,62 @@
 use super::*;
 
+fn tenant_request(
+    method: &str,
+    uri: impl Into<String>,
+    org_id: &str,
+    workspace_id: &str,
+    actor_id: &str,
+    body: Option<Value>,
+) -> Request<Body> {
+    let mut builder = Request::builder()
+        .method(method)
+        .uri(uri.into())
+        .header("x-tandem-org-id", org_id)
+        .header("x-tandem-workspace-id", workspace_id)
+        .header("x-tandem-actor-id", actor_id);
+    let body = match body {
+        Some(value) => {
+            builder = builder.header("content-type", "application/json");
+            Body::from(value.to_string())
+        }
+        None => Body::empty(),
+    };
+    builder.body(body).expect("tenant request")
+}
+
+fn automation_v2_create_payload(automation_id: &str, name: &str) -> Value {
+    json!({
+        "automation_id": automation_id,
+        "name": name,
+        "status": "active",
+        "schedule": {
+            "type": "manual",
+            "timezone": "UTC",
+            "misfire_policy": { "type": "skip" }
+        },
+        "agents": [
+            {
+                "agent_id": "agent-a",
+                "display_name": "Agent A",
+                "skills": [],
+                "tool_policy": { "allowlist": ["read"], "denylist": [] },
+                "mcp_policy": { "allowed_servers": [] }
+            }
+        ],
+        "flow": {
+            "nodes": [
+                {
+                    "node_id": "node-1",
+                    "agent_id": "agent-a",
+                    "objective": "Check tenant routing",
+                    "depends_on": []
+                }
+            ]
+        },
+        "execution": { "max_parallel_agents": 1 }
+    })
+}
+
 #[tokio::test]
 async fn routines_create_run_now_and_history_roundtrip() {
     let state = test_state().await;
@@ -1052,6 +1109,217 @@ async fn automations_create_and_run_now_roundtrip() {
             .and_then(|v| v.as_str()),
         Some("orchestrated")
     );
+}
+
+#[tokio::test]
+async fn tenant_a_cannot_access_tenant_b_automation_v2_routes() {
+    let state = test_state().await;
+    let app = app_router(state.clone());
+
+    for (automation_id, name, org, workspace, actor) in [
+        (
+            "tenant-a-auto",
+            "Tenant A Automation",
+            "org-a",
+            "workspace-a",
+            "user-a",
+        ),
+        (
+            "tenant-b-auto",
+            "Tenant B Automation",
+            "org-b",
+            "workspace-b",
+            "user-b",
+        ),
+    ] {
+        let create_resp = app
+            .clone()
+            .oneshot(tenant_request(
+                "POST",
+                "/automations/v2",
+                org,
+                workspace,
+                actor,
+                Some(automation_v2_create_payload(automation_id, name)),
+            ))
+            .await
+            .expect("automation create response");
+        assert_eq!(create_resp.status(), StatusCode::OK);
+    }
+
+    let list_resp = app
+        .clone()
+        .oneshot(tenant_request(
+            "GET",
+            "/automations/v2",
+            "org-a",
+            "workspace-a",
+            "user-a",
+            None,
+        ))
+        .await
+        .expect("automation list response");
+    assert_eq!(list_resp.status(), StatusCode::OK);
+    let list_body = to_bytes(list_resp.into_body(), usize::MAX)
+        .await
+        .expect("list body");
+    let list_payload: Value = serde_json::from_slice(&list_body).expect("list json");
+    let automation_ids = list_payload
+        .get("automations")
+        .and_then(Value::as_array)
+        .expect("automations array")
+        .iter()
+        .filter_map(|row| row.get("automation_id").and_then(Value::as_str))
+        .collect::<Vec<_>>();
+    assert!(automation_ids.contains(&"tenant-a-auto"));
+    assert!(!automation_ids.contains(&"tenant-b-auto"));
+
+    for (method, uri, body) in [
+        ("GET", "/automations/v2/tenant-b-auto", None),
+        (
+            "PATCH",
+            "/automations/v2/tenant-b-auto",
+            Some(json!({"name": "cross-tenant rename"})),
+        ),
+        ("DELETE", "/automations/v2/tenant-b-auto", None),
+        (
+            "POST",
+            "/automations/v2/tenant-b-auto/run_now",
+            Some(json!({})),
+        ),
+        (
+            "POST",
+            "/automations/v2/tenant-b-auto/pause",
+            Some(json!({"reason": "cross tenant"})),
+        ),
+        ("POST", "/automations/v2/tenant-b-auto/resume", None),
+        ("GET", "/automations/v2/tenant-b-auto/handoffs", None),
+        ("GET", "/automations/v2/tenant-b-auto/runs", None),
+    ] {
+        let resp = app
+            .clone()
+            .oneshot(tenant_request(
+                method,
+                uri,
+                "org-a",
+                "workspace-a",
+                "user-a",
+                body,
+            ))
+            .await
+            .expect("cross-tenant automation response");
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND, "{method} {uri}");
+    }
+
+    let run_now_resp = app
+        .clone()
+        .oneshot(tenant_request(
+            "POST",
+            "/automations/v2/tenant-b-auto/run_now",
+            "org-b",
+            "workspace-b",
+            "user-b",
+            Some(json!({})),
+        ))
+        .await
+        .expect("tenant b run_now response");
+    assert_eq!(run_now_resp.status(), StatusCode::OK);
+    let run_now_body = to_bytes(run_now_resp.into_body(), usize::MAX)
+        .await
+        .expect("run_now body");
+    let run_now_payload: Value = serde_json::from_slice(&run_now_body).expect("run_now json");
+    let run_id = run_now_payload
+        .get("run")
+        .and_then(|run| run.get("run_id"))
+        .and_then(Value::as_str)
+        .expect("run id")
+        .to_string();
+    assert_eq!(
+        run_now_payload
+            .get("run")
+            .and_then(|run| run.get("tenant_context"))
+            .and_then(|tenant| tenant.get("org_id"))
+            .and_then(Value::as_str),
+        Some("org-b")
+    );
+
+    let runs_all_resp = app
+        .clone()
+        .oneshot(tenant_request(
+            "GET",
+            "/automations/v2/runs?limit=10",
+            "org-a",
+            "workspace-a",
+            "user-a",
+            None,
+        ))
+        .await
+        .expect("runs all response");
+    assert_eq!(runs_all_resp.status(), StatusCode::OK);
+    let runs_all_body = to_bytes(runs_all_resp.into_body(), usize::MAX)
+        .await
+        .expect("runs all body");
+    let runs_all_payload: Value = serde_json::from_slice(&runs_all_body).expect("runs all json");
+    let visible_run_ids = runs_all_payload
+        .get("runs")
+        .and_then(Value::as_array)
+        .expect("runs array")
+        .iter()
+        .filter_map(|row| row.get("run_id").and_then(Value::as_str))
+        .collect::<Vec<_>>();
+    assert!(!visible_run_ids.contains(&run_id.as_str()));
+
+    for (method, uri, body) in [
+        ("GET", format!("/automations/v2/runs/{run_id}"), None),
+        (
+            "POST",
+            format!("/automations/v2/runs/{run_id}/pause"),
+            Some(json!({"reason": "cross tenant"})),
+        ),
+        (
+            "POST",
+            format!("/automations/v2/runs/{run_id}/resume"),
+            Some(json!({"reason": "cross tenant"})),
+        ),
+        (
+            "POST",
+            format!("/automations/v2/runs/{run_id}/cancel"),
+            Some(json!({"reason": "cross tenant"})),
+        ),
+        (
+            "POST",
+            format!("/automations/v2/runs/{run_id}/gate"),
+            Some(json!({"decision": "approve"})),
+        ),
+    ] {
+        let resp = app
+            .clone()
+            .oneshot(tenant_request(
+                method,
+                uri,
+                "org-a",
+                "workspace-a",
+                "user-a",
+                body,
+            ))
+            .await
+            .expect("cross-tenant run response");
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND, "{method}");
+    }
+
+    let tenant_b_get_resp = app
+        .clone()
+        .oneshot(tenant_request(
+            "GET",
+            format!("/automations/v2/runs/{run_id}"),
+            "org-b",
+            "workspace-b",
+            "user-b",
+            None,
+        ))
+        .await
+        .expect("tenant b run get response");
+    assert_eq!(tenant_b_get_resp.status(), StatusCode::OK);
 }
 
 #[tokio::test]

@@ -718,6 +718,22 @@ async fn run_approval_outbound(state: AppState) {
 fn app_router(state: AppState) -> Router {
     router::build_router(state)
 }
+
+fn tenant_matches(a: &TenantContext, b: &TenantContext) -> bool {
+    a.org_id == b.org_id && a.workspace_id == b.workspace_id && a.deployment_id == b.deployment_id
+}
+
+fn ensure_same_tenant(
+    request_tenant: &TenantContext,
+    resource_tenant: &TenantContext,
+) -> Result<(), StatusCode> {
+    if tenant_matches(request_tenant, resource_tenant) {
+        Ok(())
+    } else {
+        Err(StatusCode::NOT_FOUND)
+    }
+}
+
 fn load_run_events_jsonl(path: &FsPath, since_seq: Option<u64>, tail: Option<usize>) -> Vec<Value> {
     let content = match std::fs::read_to_string(path) {
         Ok(value) => value,

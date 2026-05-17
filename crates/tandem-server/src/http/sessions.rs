@@ -510,6 +510,7 @@ pub(super) fn parse_permission_rule_input(
 
 pub(super) async fn list_sessions(
     State(state): State<AppState>,
+    Extension(tenant_context): Extension<TenantContext>,
     headers: HeaderMap,
     Query(query): Query<ListSessionsQuery>,
 ) -> Json<Vec<WireSession>> {
@@ -552,6 +553,7 @@ pub(super) async fn list_sessions(
             }
         }
     };
+    sessions.retain(|session| tenant_matches(&tenant_context, &session.tenant_context));
     let total_after_scope = sessions.len();
     sessions.sort_by(|a, b| b.time.updated.cmp(&a.time.updated));
 
@@ -614,9 +616,16 @@ pub(super) async fn list_sessions(
 
 pub(super) async fn attach_session(
     State(state): State<AppState>,
+    Extension(tenant_context): Extension<TenantContext>,
     Path(id): Path<String>,
     Json(input): Json<AttachSessionInput>,
 ) -> Result<Json<WireSession>, StatusCode> {
+    let session = state
+        .storage
+        .get_session(&id)
+        .await
+        .ok_or(StatusCode::NOT_FOUND)?;
+    ensure_same_tenant(&tenant_context, &session.tenant_context)?;
     let reason = input
         .reason_tag
         .unwrap_or_else(|| "manual_attach".to_string());
@@ -643,6 +652,7 @@ pub(super) async fn attach_session(
 
 pub(super) async fn grant_workspace_override(
     State(state): State<AppState>,
+    Extension(tenant_context): Extension<TenantContext>,
     Path(id): Path<String>,
     Json(input): Json<WorkspaceOverrideInput>,
 ) -> Result<Json<Value>, StatusCode> {
@@ -651,6 +661,7 @@ pub(super) async fn grant_workspace_override(
         .get_session(&id)
         .await
         .ok_or(StatusCode::NOT_FOUND)?;
+    ensure_same_tenant(&tenant_context, &session.tenant_context)?;
     let ttl = input.ttl_seconds.unwrap_or(900).clamp(30, 86_400);
     let expires_at = state
         .engine_loop
@@ -675,18 +686,17 @@ pub(super) async fn grant_workspace_override(
 
 pub(super) async fn get_session(
     State(state): State<AppState>,
+    Extension(tenant_context): Extension<TenantContext>,
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<Json<WireSession>, StatusCode> {
     let request_id = request_id_from_headers(&headers);
     let started = Instant::now();
-    let result = state
-        .storage
-        .get_session(&id)
-        .await
-        .map(session_with_effective_source_kind)
-        .map(|session| Json(session.into()))
-        .ok_or(StatusCode::NOT_FOUND);
+    let result = match state.storage.get_session(&id).await {
+        Some(session) => ensure_same_tenant(&tenant_context, &session.tenant_context)
+            .map(|_| Json(session_with_effective_source_kind(session).into())),
+        None => Err(StatusCode::NOT_FOUND),
+    };
     let elapsed_ms = started.elapsed().as_millis();
     let status = if result.is_ok() { "ok" } else { "not_found" };
     tracing::info!(
@@ -709,8 +719,15 @@ pub(super) async fn get_session(
 
 pub(super) async fn delete_session(
     State(state): State<AppState>,
+    Extension(tenant_context): Extension<TenantContext>,
     Path(id): Path<String>,
 ) -> Result<Json<Value>, StatusCode> {
+    let session = state
+        .storage
+        .get_session(&id)
+        .await
+        .ok_or(StatusCode::NOT_FOUND)?;
+    ensure_same_tenant(&tenant_context, &session.tenant_context)?;
     let deleted = state
         .storage
         .delete_session(&id)
@@ -721,6 +738,7 @@ pub(super) async fn delete_session(
 
 pub(super) async fn session_messages(
     State(state): State<AppState>,
+    Extension(tenant_context): Extension<TenantContext>,
     Path(id): Path<String>,
 ) -> Result<Json<Value>, StatusCode> {
     let session = state
@@ -728,6 +746,7 @@ pub(super) async fn session_messages(
         .get_session(&id)
         .await
         .ok_or(StatusCode::NOT_FOUND)?;
+    ensure_same_tenant(&tenant_context, &session.tenant_context)?;
     let messages = session
         .messages
         .iter()
@@ -738,6 +757,7 @@ pub(super) async fn session_messages(
 
 pub(super) async fn prompt_async(
     State(state): State<AppState>,
+    Extension(tenant_context): Extension<TenantContext>,
     Path(id): Path<String>,
     Query(query): Query<PromptAsyncQuery>,
     headers: HeaderMap,
@@ -748,6 +768,7 @@ pub(super) async fn prompt_async(
         .get_session(&id)
         .await
         .ok_or(StatusCode::NOT_FOUND)?;
+    ensure_same_tenant(&tenant_context, &session.tenant_context)?;
     let session_id = id.clone();
     let correlation_id = headers
         .get("x-tandem-correlation-id")
@@ -849,6 +870,7 @@ pub(super) async fn prompt_async(
 
 pub(super) async fn prompt_sync(
     State(state): State<AppState>,
+    Extension(request_tenant_context): Extension<TenantContext>,
     Path(id): Path<String>,
     headers: HeaderMap,
     Json(req): Json<SendMessageRequest>,
@@ -858,6 +880,7 @@ pub(super) async fn prompt_sync(
         .get_session(&id)
         .await
         .ok_or(StatusCode::NOT_FOUND)?;
+    ensure_same_tenant(&request_tenant_context, &session.tenant_context)?;
     if session.source_kind.as_deref() == Some("channel") {
         if let Some(key) =
             channel_rate_limit_key_from_session_metadata(session.source_metadata.as_ref())
@@ -1668,11 +1691,15 @@ pub(super) async fn append_message_only(
 
 pub(super) async fn session_todos(
     State(state): State<AppState>,
+    Extension(tenant_context): Extension<TenantContext>,
     Path(id): Path<String>,
 ) -> Result<Json<Value>, StatusCode> {
-    if state.storage.get_session(&id).await.is_none() {
-        return Err(StatusCode::NOT_FOUND);
-    }
+    let session = state
+        .storage
+        .get_session(&id)
+        .await
+        .ok_or(StatusCode::NOT_FOUND)?;
+    ensure_same_tenant(&tenant_context, &session.tenant_context)?;
     let todos = state
         .storage
         .get_todos(&id)
@@ -1683,13 +1710,19 @@ pub(super) async fn session_todos(
     Ok(Json(json!(todos)))
 }
 
-pub(super) async fn session_status_handler(State(state): State<AppState>) -> Json<Value> {
+pub(super) async fn session_status_handler(
+    State(state): State<AppState>,
+    Extension(tenant_context): Extension<TenantContext>,
+) -> Json<Value> {
     let sessions = state
         .storage
         .list_sessions_scoped(tandem_core::SessionListScope::Global)
         .await;
     let mut map = serde_json::Map::new();
     for s in sessions {
+        if !tenant_matches(&tenant_context, &s.tenant_context) {
+            continue;
+        }
         let mut status = json!({"type":"idle"});
         if let Some(meta) = state.storage.session_status(&s.id).await {
             status["meta"] = meta;
@@ -1701,6 +1734,7 @@ pub(super) async fn session_status_handler(State(state): State<AppState>) -> Jso
 
 pub(super) async fn update_session(
     State(state): State<AppState>,
+    Extension(tenant_context): Extension<TenantContext>,
     Path(id): Path<String>,
     Json(input): Json<UpdateSessionInput>,
 ) -> Result<Json<Value>, StatusCode> {
@@ -1709,6 +1743,7 @@ pub(super) async fn update_session(
         .get_session(&id)
         .await
         .ok_or(StatusCode::NOT_FOUND)?;
+    ensure_same_tenant(&tenant_context, &session.tenant_context)?;
     if let Some(title) = input.title {
         session.title = title;
     }
@@ -1731,9 +1766,17 @@ pub(super) async fn update_session(
 
 pub(super) async fn post_session_message_append(
     State(state): State<AppState>,
+    Extension(tenant_context): Extension<TenantContext>,
     Path(id): Path<String>,
     Json(req): Json<SendMessageRequest>,
 ) -> Result<Response, (StatusCode, String)> {
+    let session = state
+        .storage
+        .get_session(&id)
+        .await
+        .ok_or((StatusCode::NOT_FOUND, "session not found".to_string()))?;
+    ensure_same_tenant(&tenant_context, &session.tenant_context)
+        .map_err(|status| (status, "session not found".to_string()))?;
     let wire = append_message_only(&state, &id, req)
         .await
         .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err))?;
@@ -1742,6 +1785,7 @@ pub(super) async fn post_session_message_append(
 
 pub(super) async fn get_active_run(
     State(state): State<AppState>,
+    Extension(tenant_context): Extension<TenantContext>,
     Path(id): Path<String>,
 ) -> Result<Json<Value>, StatusCode> {
     let session = state
@@ -1749,6 +1793,7 @@ pub(super) async fn get_active_run(
         .get_session(&id)
         .await
         .ok_or(StatusCode::NOT_FOUND)?;
+    ensure_same_tenant(&tenant_context, &session.tenant_context)?;
     let linked_context_run_id =
         super::context_runs::ensure_session_context_run(&state, &session).await?;
     let active = state.run_registry.get(&id).await;
@@ -1764,8 +1809,15 @@ pub(super) async fn get_active_run(
 
 pub(super) async fn abort_session(
     State(state): State<AppState>,
+    Extension(tenant_context): Extension<TenantContext>,
     Path(id): Path<String>,
-) -> Json<Value> {
+) -> Result<Json<Value>, StatusCode> {
+    let session = state
+        .storage
+        .get_session(&id)
+        .await
+        .ok_or(StatusCode::NOT_FOUND)?;
+    ensure_same_tenant(&tenant_context, &session.tenant_context)?;
     let cancelled = state.cancellations.cancel(&id).await;
     let cancelled_run = state.run_registry.finish_active(&id).await;
     let closed_browser_sessions = state.close_browser_sessions_for_owner(&id).await;
@@ -1784,17 +1836,24 @@ pub(super) async fn abort_session(
             );
         }
     }
-    Json(json!({
+    Ok(Json(json!({
         "ok": true,
         "cancelled": cancelled || cancelled_run.is_some(),
         "closedBrowserSessions": closed_browser_sessions,
-    }))
+    })))
 }
 
 pub(super) async fn cancel_run_by_id(
     State(state): State<AppState>,
+    Extension(tenant_context): Extension<TenantContext>,
     Path((id, run_id)): Path<(String, String)>,
-) -> Json<Value> {
+) -> Result<Json<Value>, StatusCode> {
+    let session = state
+        .storage
+        .get_session(&id)
+        .await
+        .ok_or(StatusCode::NOT_FOUND)?;
+    ensure_same_tenant(&tenant_context, &session.tenant_context)?;
     let active = state.run_registry.get(&id).await;
     if let Some(active_run) = active {
         if active_run.run_id == run_id {
@@ -1814,20 +1873,27 @@ pub(super) async fn cancel_run_by_id(
                     }),
                 );
             }
-            return Json(json!({
+            return Ok(Json(json!({
                 "ok": true,
                 "cancelled": true,
                 "closedBrowserSessions": closed_browser_sessions,
-            }));
+            })));
         }
     }
-    Json(json!({"ok": true, "cancelled": false}))
+    Ok(Json(json!({"ok": true, "cancelled": false})))
 }
 
 pub(super) async fn fork_session(
     State(state): State<AppState>,
+    Extension(tenant_context): Extension<TenantContext>,
     Path(id): Path<String>,
 ) -> Result<Json<Value>, StatusCode> {
+    let session = state
+        .storage
+        .get_session(&id)
+        .await
+        .ok_or(StatusCode::NOT_FOUND)?;
+    ensure_same_tenant(&tenant_context, &session.tenant_context)?;
     let child = state
         .storage
         .fork_session(&id)
@@ -1839,8 +1905,15 @@ pub(super) async fn fork_session(
 
 pub(super) async fn revert_session(
     State(state): State<AppState>,
+    Extension(tenant_context): Extension<TenantContext>,
     Path(id): Path<String>,
 ) -> Result<Json<Value>, StatusCode> {
+    let session = state
+        .storage
+        .get_session(&id)
+        .await
+        .ok_or(StatusCode::NOT_FOUND)?;
+    ensure_same_tenant(&tenant_context, &session.tenant_context)?;
     let ok = state
         .storage
         .revert_session(&id)
@@ -1851,8 +1924,15 @@ pub(super) async fn revert_session(
 
 pub(super) async fn unrevert_session(
     State(state): State<AppState>,
+    Extension(tenant_context): Extension<TenantContext>,
     Path(id): Path<String>,
 ) -> Result<Json<Value>, StatusCode> {
+    let session = state
+        .storage
+        .get_session(&id)
+        .await
+        .ok_or(StatusCode::NOT_FOUND)?;
+    ensure_same_tenant(&tenant_context, &session.tenant_context)?;
     let ok = state
         .storage
         .unrevert_session(&id)
@@ -1863,8 +1943,15 @@ pub(super) async fn unrevert_session(
 
 pub(super) async fn share_session(
     State(state): State<AppState>,
+    Extension(tenant_context): Extension<TenantContext>,
     Path(id): Path<String>,
 ) -> Result<Json<Value>, StatusCode> {
+    let session = state
+        .storage
+        .get_session(&id)
+        .await
+        .ok_or(StatusCode::NOT_FOUND)?;
+    ensure_same_tenant(&tenant_context, &session.tenant_context)?;
     let share_id = state
         .storage
         .set_shared(&id, true)
@@ -1875,8 +1962,15 @@ pub(super) async fn share_session(
 
 pub(super) async fn unshare_session(
     State(state): State<AppState>,
+    Extension(tenant_context): Extension<TenantContext>,
     Path(id): Path<String>,
 ) -> Result<Json<Value>, StatusCode> {
+    let session = state
+        .storage
+        .get_session(&id)
+        .await
+        .ok_or(StatusCode::NOT_FOUND)?;
+    ensure_same_tenant(&tenant_context, &session.tenant_context)?;
     let _ = state
         .storage
         .set_shared(&id, false)
@@ -1887,6 +1981,7 @@ pub(super) async fn unshare_session(
 
 pub(super) async fn summarize_session(
     State(state): State<AppState>,
+    Extension(tenant_context): Extension<TenantContext>,
     Path(id): Path<String>,
 ) -> Result<Json<Value>, StatusCode> {
     let session = state
@@ -1894,6 +1989,7 @@ pub(super) async fn summarize_session(
         .get_session(&id)
         .await
         .ok_or(StatusCode::NOT_FOUND)?;
+    ensure_same_tenant(&tenant_context, &session.tenant_context)?;
     let total_messages = session.messages.len();
     let mut text_parts = Vec::new();
     for message in session.messages.iter().rev().take(4) {
@@ -1921,17 +2017,31 @@ pub(super) async fn summarize_session(
 
 pub(super) async fn session_diff(
     State(state): State<AppState>,
+    Extension(tenant_context): Extension<TenantContext>,
     Path(id): Path<String>,
 ) -> Result<Json<Value>, StatusCode> {
+    let session = state
+        .storage
+        .get_session(&id)
+        .await
+        .ok_or(StatusCode::NOT_FOUND)?;
+    ensure_same_tenant(&tenant_context, &session.tenant_context)?;
     let diff = state.storage.session_diff(&id).await;
     Ok(Json(json!(diff.unwrap_or_else(|| json!({})))))
 }
 
 pub(super) async fn session_children(
     State(state): State<AppState>,
+    Extension(tenant_context): Extension<TenantContext>,
     Path(id): Path<String>,
-) -> Json<Value> {
-    Json(json!(state.storage.children(&id).await))
+) -> Result<Json<Value>, StatusCode> {
+    let session = state
+        .storage
+        .get_session(&id)
+        .await
+        .ok_or(StatusCode::NOT_FOUND)?;
+    ensure_same_tenant(&tenant_context, &session.tenant_context)?;
+    Ok(Json(json!(state.storage.children(&id).await)))
 }
 
 pub(super) async fn init_session() -> Json<Value> {

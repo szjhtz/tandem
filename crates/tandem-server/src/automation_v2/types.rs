@@ -13,6 +13,8 @@ use tandem_types::TenantContext;
 
 use crate::routines::types::RoutineMisfirePolicy;
 
+pub const AUTOMATION_TENANT_CONTEXT_METADATA_KEY: &str = "tenant_context";
+
 pub type AutomationV2Schedule =
     tandem_workflows::plan_package::AutomationV2Schedule<RoutineMisfirePolicy>;
 pub use tandem_workflows::plan_package::AutomationV2ScheduleType;
@@ -790,6 +792,35 @@ pub struct AutomationV2Spec {
 }
 
 impl AutomationV2Spec {
+    pub fn tenant_context(&self) -> TenantContext {
+        self.metadata
+            .as_ref()
+            .and_then(|metadata| metadata.get(AUTOMATION_TENANT_CONTEXT_METADATA_KEY))
+            .cloned()
+            .and_then(|value| serde_json::from_value(value).ok())
+            .unwrap_or_else(TenantContext::local_implicit)
+    }
+
+    pub fn set_tenant_context(&mut self, tenant_context: &TenantContext) {
+        let tenant_value = serde_json::to_value(tenant_context).unwrap_or(Value::Null);
+        match self.metadata.as_mut() {
+            Some(Value::Object(map)) => {
+                map.insert(
+                    AUTOMATION_TENANT_CONTEXT_METADATA_KEY.to_string(),
+                    tenant_value,
+                );
+            }
+            Some(_) | None => {
+                let mut map = serde_json::Map::new();
+                map.insert(
+                    AUTOMATION_TENANT_CONTEXT_METADATA_KEY.to_string(),
+                    tenant_value,
+                );
+                self.metadata = Some(Value::Object(map));
+            }
+        }
+    }
+
     /// Returns the effective handoff config, using defaults if none is set.
     pub fn effective_handoff_config(&self) -> AutomationHandoffConfig {
         self.handoff_config.clone().unwrap_or_default()

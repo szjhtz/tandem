@@ -1146,7 +1146,7 @@ impl AppState {
         let run = AutomationV2RunRecord {
             run_id: format!("automation-v2-run-{}", uuid::Uuid::new_v4()),
             automation_id: automation.automation_id.clone(),
-            tenant_context: TenantContext::local_implicit(),
+            tenant_context: automation.tenant_context(),
             trigger_type: trigger_type.to_string(),
             status: AutomationRunStatus::Queued,
             created_at_ms: now,
@@ -1235,7 +1235,7 @@ impl AppState {
         let run = AutomationV2RunRecord {
             run_id: format!("automation-v2-run-{}", uuid::Uuid::new_v4()),
             automation_id: automation.automation_id.clone(),
-            tenant_context: TenantContext::local_implicit(),
+            tenant_context: automation.tenant_context(),
             trigger_type: format!("{trigger_type}_dry_run"),
             status: AutomationRunStatus::Completed,
             created_at_ms: now,
