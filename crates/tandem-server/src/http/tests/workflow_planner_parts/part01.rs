@@ -1121,6 +1121,9 @@ async fn workflow_plan_apply_persists_automation_v2_with_planner_metadata() {
     let apply_req = Request::builder()
         .method("POST")
         .uri("/workflow-plans/apply")
+        .header("x-tandem-org-id", "org-a")
+        .header("x-tandem-workspace-id", "workspace-a")
+        .header("x-tandem-actor-id", "user-a")
         .header("content-type", "application/json")
         .body(Body::from(
             json!({
@@ -1150,6 +1153,10 @@ async fn workflow_plan_apply_persists_automation_v2_with_planner_metadata() {
         .get_automation_v2(automation_id)
         .await
         .expect("stored automation");
+    let tenant = stored.tenant_context();
+    assert_eq!(tenant.org_id, "org-a");
+    assert_eq!(tenant.workspace_id, "workspace-a");
+    assert_eq!(tenant.actor_id.as_deref(), Some("user-a"));
     assert_eq!(stored.creator_id, "control-panel");
     assert_eq!(
         stored.workspace_root.as_deref(),
@@ -1236,6 +1243,9 @@ async fn workflow_plan_apply_persists_automation_v2_with_planner_metadata() {
     let dry_run_req = Request::builder()
         .method("POST")
         .uri(format!("/automations/v2/{automation_id}/run_now"))
+        .header("x-tandem-org-id", "org-a")
+        .header("x-tandem-workspace-id", "workspace-a")
+        .header("x-tandem-actor-id", "user-a")
         .header("content-type", "application/json")
         .body(Body::from(json!({"dry_run": true}).to_string()))
         .expect("dry run request");

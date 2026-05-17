@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use axum::{
-    extract::{Path, Query, State},
+    extract::{Extension, Path, Query, State},
     http::StatusCode,
     Json,
 };
@@ -328,6 +328,7 @@ pub(super) async fn channel_automation_drafts_answer(
 
 pub(super) async fn channel_automation_drafts_confirm(
     State(state): State<AppState>,
+    Extension(tenant_context): Extension<tandem_types::TenantContext>,
     Path(draft_id): Path<String>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     let now = crate::now_ms();
@@ -343,7 +344,8 @@ pub(super) async fn channel_automation_drafts_confirm(
             })),
         ));
     }
-    let automation = build_channel_automation(&draft, now);
+    let mut automation = build_channel_automation(&draft, now);
+    automation.set_tenant_context(&tenant_context);
     let stored = state.put_automation_v2(automation).await.map_err(|error| {
         (
             StatusCode::BAD_REQUEST,

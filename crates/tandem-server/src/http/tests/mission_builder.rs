@@ -284,6 +284,9 @@ async fn mission_builder_apply_persists_draft_automation() {
             Request::builder()
                 .method("POST")
                 .uri("/mission-builder/apply")
+                .header("x-tandem-org-id", "org-a")
+                .header("x-tandem-workspace-id", "workspace-a")
+                .header("x-tandem-actor-id", "user-a")
                 .header("content-type", "application/json")
                 .body(Body::from(
                     json!({
@@ -308,6 +311,10 @@ async fn mission_builder_apply_persists_draft_automation() {
         .get_automation_v2(automation_id)
         .await
         .expect("stored");
+    let tenant = stored.tenant_context();
+    assert_eq!(tenant.org_id, "org-a");
+    assert_eq!(tenant.workspace_id, "workspace-a");
+    assert_eq!(tenant.actor_id.as_deref(), Some("user-a"));
     assert_eq!(stored.status, crate::AutomationV2Status::Draft);
     assert_eq!(
         stored

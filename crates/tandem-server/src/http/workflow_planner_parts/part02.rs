@@ -1142,6 +1142,7 @@ pub(super) async fn workflow_planner_session_reset(
 
 pub(super) async fn workflow_plan_apply(
     State(state): State<AppState>,
+    Extension(tenant_context): Extension<tandem_types::TenantContext>,
     Json(input): Json<WorkflowPlanApplyRequest>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     let plan_id = input
@@ -1318,6 +1319,7 @@ pub(super) async fn workflow_plan_apply(
             "planner_diagnostics": planner_diagnostics,
         }));
     }
+    automation.set_tenant_context(&tenant_context);
     let stored = state.put_automation_v2(automation).await.map_err(|error| {
         (
             StatusCode::BAD_REQUEST,

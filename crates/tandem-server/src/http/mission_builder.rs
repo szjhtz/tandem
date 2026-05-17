@@ -1,4 +1,4 @@
-use axum::extract::State;
+use axum::extract::{Extension, State};
 use axum::http::StatusCode;
 use axum::Json;
 use serde::Deserialize;
@@ -103,6 +103,7 @@ pub(super) async fn mission_builder_generate_draft(
 
 pub(super) async fn mission_builder_apply(
     State(state): State<AppState>,
+    Extension(tenant_context): Extension<tandem_types::TenantContext>,
     Json(input): Json<MissionBuilderApplyRequest>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     let creator_id = input
@@ -110,7 +111,8 @@ pub(super) async fn mission_builder_apply(
         .as_deref()
         .unwrap_or("mission_builder")
         .to_string();
-    let preview = compile_blueprint_preview(input.blueprint, input.schedule, &creator_id)?;
+    let mut preview = compile_blueprint_preview(input.blueprint, input.schedule, &creator_id)?;
+    preview.automation.set_tenant_context(&tenant_context);
     let stored = state
         .put_automation_v2(preview.automation.clone())
         .await

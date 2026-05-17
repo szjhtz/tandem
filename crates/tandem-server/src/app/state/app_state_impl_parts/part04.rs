@@ -195,7 +195,7 @@ impl AppState {
         let run = AutomationV2RunRecord {
             run_id: format!("automation-v2-run-{}", uuid::Uuid::new_v4()),
             automation_id: automation.automation_id.clone(),
-            tenant_context: TenantContext::local_implicit(),
+            tenant_context: automation.tenant_context(),
             trigger_type: "watch_condition".to_string(),
             status: AutomationRunStatus::Queued,
             created_at_ms: now,

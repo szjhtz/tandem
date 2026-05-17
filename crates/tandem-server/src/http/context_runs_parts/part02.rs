@@ -1604,7 +1604,7 @@ pub(crate) async fn sync_automation_v2_run_blackboard(
         let context_run = ContextRunState {
             run_id: run_id.clone(),
             run_type: "automation_v2".to_string(),
-            tenant_context: TenantContext::local_implicit(),
+            tenant_context: run.tenant_context.clone(),
             source_client: Some("automation_v2_scheduler".to_string()),
             model_provider: None,
             model_id: None,

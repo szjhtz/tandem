@@ -1,4 +1,5 @@
 use super::*;
+use tandem_types::TenantContext;
 
 fn tenant_request(
     method: &str,
@@ -55,6 +56,15 @@ fn automation_v2_create_payload(automation_id: &str, name: &str) -> Value {
         },
         "execution": { "max_parallel_agents": 1 }
     })
+}
+
+fn explicit_tenant(org_id: &str, workspace_id: &str, actor_id: &str) -> TenantContext {
+    TenantContext::explicit_user_workspace(
+        org_id.to_string(),
+        workspace_id.to_string(),
+        Some(actor_id.to_string()),
+        "test-suite".to_string(),
+    )
 }
 
 #[tokio::test]
@@ -1365,6 +1375,93 @@ async fn tenant_a_cannot_access_tenant_b_automation_v2_routes() {
         .await
         .expect("tenant b run get response");
     assert_eq!(tenant_b_get_resp.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn automation_v2_payload_cannot_override_request_tenant() {
+    let state = test_state().await;
+    let app = app_router(state.clone());
+    let mut payload = automation_v2_create_payload("tenant-override-auto", "Tenant Override");
+    payload["metadata"] = json!({
+        "tenant_context": explicit_tenant("org-b", "workspace-b", "user-b")
+    });
+
+    let create_resp = app
+        .clone()
+        .oneshot(tenant_request(
+            "POST",
+            "/automations/v2",
+            "org-a",
+            "workspace-a",
+            "user-a",
+            Some(payload),
+        ))
+        .await
+        .expect("automation create response");
+    assert_eq!(create_resp.status(), StatusCode::OK);
+    let stored = state
+        .get_automation_v2("tenant-override-auto")
+        .await
+        .expect("stored automation");
+    let tenant = stored.tenant_context();
+    assert_eq!(tenant.org_id, "org-a");
+    assert_eq!(tenant.workspace_id, "workspace-a");
+    assert_eq!(tenant.actor_id.as_deref(), Some("user-a"));
+}
+
+#[tokio::test]
+async fn automation_v2_background_runs_preserve_stored_tenant_context() {
+    let state = test_state().await;
+    let app = app_router(state.clone());
+    let create_resp = app
+        .oneshot(tenant_request(
+            "POST",
+            "/automations/v2",
+            "org-b",
+            "workspace-b",
+            "user-b",
+            Some(automation_v2_create_payload(
+                "tenant-b-background-auto",
+                "Tenant B Background",
+            )),
+        ))
+        .await
+        .expect("automation create response");
+    assert_eq!(create_resp.status(), StatusCode::OK);
+    let automation = state
+        .get_automation_v2("tenant-b-background-auto")
+        .await
+        .expect("stored automation");
+
+    let scheduled = state
+        .create_automation_v2_run(&automation, "scheduled")
+        .await
+        .expect("scheduled run");
+    assert_eq!(scheduled.tenant_context.org_id, "org-b");
+    let context_run_id = crate::http::context_runs::automation_v2_context_run_id(&scheduled.run_id);
+    let context_run = crate::http::context_runs::load_context_run_state(&state, &context_run_id)
+        .await
+        .expect("scheduled context run");
+    assert_eq!(context_run.tenant_context.org_id, "org-b");
+
+    let claimed = state
+        .claim_specific_automation_v2_run(&scheduled.run_id)
+        .await
+        .expect("claim scheduled run without request context");
+    assert_eq!(claimed.tenant_context.org_id, "org-b");
+
+    let watch = state
+        .create_automation_v2_watch_run(&automation, "watch matched".to_string(), None)
+        .await
+        .expect("watch run");
+    assert_eq!(watch.tenant_context.org_id, "org-b");
+    let watch_context_run_id =
+        crate::http::context_runs::automation_v2_context_run_id(&watch.run_id);
+    let watch_context_run =
+        crate::http::context_runs::load_context_run_state(&state, &watch_context_run_id)
+            .await
+            .expect("watch context run");
+    assert_eq!(watch_context_run.tenant_context.org_id, "org-b");
 }
 
 #[tokio::test]
