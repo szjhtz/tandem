@@ -773,8 +773,32 @@ impl MemoryManager {
         session_id: Option<&str>,
         token_budget: Option<i64>,
     ) -> MemoryResult<MemoryContext> {
+        self.retrieve_context_for_tenant(
+            query,
+            project_id,
+            session_id,
+            &MemoryTenantScope::local(),
+            token_budget,
+        )
+        .await
+    }
+
+    pub async fn retrieve_context_for_tenant(
+        &self,
+        query: &str,
+        project_id: Option<&str>,
+        session_id: Option<&str>,
+        tenant_scope: &MemoryTenantScope,
+        token_budget: Option<i64>,
+    ) -> MemoryResult<MemoryContext> {
         let (context, _) = self
-            .retrieve_context_with_meta(query, project_id, session_id, token_budget)
+            .retrieve_context_with_meta_for_tenant(
+                query,
+                project_id,
+                session_id,
+                tenant_scope,
+                token_budget,
+            )
             .await?;
         Ok(context)
     }
@@ -787,6 +811,24 @@ impl MemoryManager {
         session_id: Option<&str>,
         token_budget: Option<i64>,
     ) -> MemoryResult<(MemoryContext, MemoryRetrievalMeta)> {
+        self.retrieve_context_with_meta_for_tenant(
+            query,
+            project_id,
+            session_id,
+            &MemoryTenantScope::local(),
+            token_budget,
+        )
+        .await
+    }
+
+    pub async fn retrieve_context_with_meta_for_tenant(
+        &self,
+        query: &str,
+        project_id: Option<&str>,
+        session_id: Option<&str>,
+        tenant_scope: &MemoryTenantScope,
+        token_budget: Option<i64>,
+    ) -> MemoryResult<(MemoryContext, MemoryRetrievalMeta)> {
         let config = if let Some(pid) = project_id {
             self.db.get_or_create_config(pid).await?
         } else {
@@ -797,14 +839,23 @@ impl MemoryManager {
 
         // Get recent session chunks
         let current_session = if let Some(sid) = session_id {
-            self.db.get_session_chunks(sid).await?
+            self.db
+                .get_session_chunks_for_tenant(sid, tenant_scope)
+                .await?
         } else {
             Vec::new()
         };
 
         // Search for relevant history
         let search_results = self
-            .search(query, None, project_id, session_id, Some(retrieval_limit))
+            .search_for_tenant(
+                query,
+                None,
+                project_id,
+                session_id,
+                tenant_scope,
+                Some(retrieval_limit),
+            )
             .await?;
 
         let mut score_min: Option<f64> = None;

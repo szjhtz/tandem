@@ -66,6 +66,8 @@ and MCP credential boundaries, and vector-backed memory partitioning.
 - Added denial tests for identical vector content, shared source hashes,
   cross-tenant vector search, cross-tenant vector deletes, tenant-scoped memory
   stats, project vector stats, manual clear, and old-session cleanup.
+- Memory manager context retrieval now has tenant-aware APIs that scope recent
+  session chunks and vector search before prompt context is assembled.
 - Existing local memory rows default to `local/local` during migration.
 
 ### Automation V2 MCP Diagnostics

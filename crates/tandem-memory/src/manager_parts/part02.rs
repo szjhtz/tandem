@@ -1,6 +1,7 @@
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::DEFAULT_EMBEDDING_DIMENSION;
     use tandem_orchestrator::{
         KnowledgeBinding, KnowledgePreflightRequest, KnowledgeReuseDecision, KnowledgeReuseMode,
         KnowledgeScope, KnowledgeTrustLevel,
@@ -209,6 +210,78 @@ mod tests {
         );
         assert!(meta.score_min.is_some());
         assert!(meta.score_max.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_retrieve_context_with_meta_is_tenant_scoped() {
+        let (manager, _temp) = setup_test_manager().await;
+        let tenant_a = MemoryTenantScope {
+            org_id: "org-a".to_string(),
+            workspace_id: "workspace-a".to_string(),
+            deployment_id: Some("deployment-1".to_string()),
+        };
+        let tenant_b = MemoryTenantScope {
+            org_id: "org-b".to_string(),
+            workspace_id: "workspace-b".to_string(),
+            deployment_id: Some("deployment-1".to_string()),
+        };
+        let mut embedding = vec![0.0f32; DEFAULT_EMBEDDING_DIMENSION];
+        embedding[0] = 1.0;
+
+        let tenant_a_chunk = MemoryChunk {
+            id: "tenant-a-context".to_string(),
+            content: "tenant a current session context".to_string(),
+            tier: MemoryTier::Session,
+            session_id: Some("shared-session".to_string()),
+            project_id: Some("shared-project".to_string()),
+            source: "assistant_response".to_string(),
+            source_path: None,
+            source_mtime: None,
+            source_size: None,
+            source_hash: None,
+            tenant_scope: tenant_a.clone(),
+            created_at: chrono::Utc::now(),
+            token_count: 5,
+            metadata: None,
+        };
+        let tenant_b_chunk = MemoryChunk {
+            id: "tenant-b-context".to_string(),
+            content: "tenant b current session context must not leak".to_string(),
+            tenant_scope: tenant_b,
+            ..tenant_a_chunk.clone()
+        };
+
+        manager
+            .db()
+            .store_chunk(&tenant_a_chunk, &embedding)
+            .await
+            .unwrap();
+        manager
+            .db()
+            .store_chunk(&tenant_b_chunk, &embedding)
+            .await
+            .unwrap();
+
+        let result = manager
+            .retrieve_context_with_meta_for_tenant(
+                "current session context",
+                Some("shared-project"),
+                Some("shared-session"),
+                &tenant_a,
+                None,
+            )
+            .await;
+        let (context, _meta) = match result {
+            Ok(value) => value,
+            Err(err) if is_embeddings_disabled(&err) => return,
+            Err(err) => panic!("retrieve_context_with_meta_for_tenant failed: {err}"),
+        };
+
+        assert_eq!(context.current_session.len(), 1);
+        assert_eq!(context.current_session[0].id, "tenant-a-context");
+        assert!(!context
+            .format_for_injection()
+            .contains("tenant b current session context"));
     }
 
     #[tokio::test]

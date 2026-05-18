@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Runtime resource tenant denial coverage**: Added denial-driven tests for sessions, event streams, context-run internals, Automation V2 runs/gates, legacy workflow routes, provider credentials, MCP secrets, and memory surfaces.
 - **Tenant-partitioned vector memory**: Added tenant scope to vector-backed memory chunks and regression tests proving tenant A cannot retrieve, suppress, delete, or dedupe against tenant B vector memory, including identical content/source-hash cases.
 - **Tenant-scoped memory stats and cleanup helpers**: Added tenant-aware memory stats, project vector stats, manual clear, and old-session cleanup helpers with tests proving cross-tenant rows are not counted or deleted.
+- **Tenant-scoped memory context retrieval**: Added tenant-aware manager retrieval APIs and coverage proving current-session context injection does not mix same-session chunks across tenants.
 
 ### Changed
 
@@ -23,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Session, context-run, and automation route isolation**: Hosted tenant checks now hide cross-tenant session/context-run/automation resources with empty results or not-found behavior instead of exposing resource existence.
 - **Provider and MCP secret isolation**: Provider credentials and store-backed MCP secrets now carry tenant scope through request and execution paths so hosted explicit tenants cannot resolve or execute with another tenant's credentials.
 - **Memory route and DB isolation**: Governed memory search/list/read/update/delete/promote/demote paths now use tenant-aware DB methods, while sqlite-vec top-k ranking filters by tenant before calculating the returned candidates.
+- **Memory manager retrieval isolation**: Context retrieval now has tenant-aware wrappers for recent session chunks and vector search, preserving existing local retrieval through local/default wrappers.
 
 ### Fixed
 
