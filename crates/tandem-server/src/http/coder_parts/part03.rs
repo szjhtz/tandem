@@ -257,6 +257,7 @@ async fn dispatch_issue_fix_task(
             .await?;
             let response = coder_issue_fix_validation_report_create(
                 State(state),
+                axum::extract::Extension(run.tenant_context.clone()),
                 Path(updated_record.coder_run_id.clone()),
                 Json(CoderIssueFixValidationReportCreateInput {
                     summary: fix_plan
@@ -361,6 +362,7 @@ async fn dispatch_issue_fix_task(
             .await;
             let response = coder_issue_fix_summary_create(
                 State(state),
+                axum::extract::Extension(run.tenant_context.clone()),
                 Path(record.coder_run_id.clone()),
                 Json(CoderIssueFixSummaryCreateInput {
                     summary: fix_plan
@@ -541,6 +543,7 @@ async fn dispatch_pr_review_task(
             let parsed_review = parse_pr_review_from_worker_payload(&worker_payload);
             let response = coder_pr_review_evidence_create(
                 State(state),
+                axum::extract::Extension(run.tenant_context.clone()),
                 Path(record.coder_run_id.clone()),
                 Json(CoderPrReviewEvidenceCreateInput {
                     verdict: parsed_review
@@ -640,6 +643,7 @@ async fn dispatch_pr_review_task(
                 .map(parse_pr_review_from_worker_payload);
             let response = coder_pr_review_summary_create(
                 State(state),
+                axum::extract::Extension(run.tenant_context.clone()),
                 Path(record.coder_run_id.clone()),
                 Json(CoderPrReviewSummaryCreateInput {
                     verdict: parsed_review
@@ -841,6 +845,7 @@ async fn dispatch_merge_recommendation_task(
             let parsed_merge = parse_merge_recommendation_from_worker_payload(&worker_payload);
             let response = coder_merge_readiness_report_create(
                 State(state),
+                axum::extract::Extension(run.tenant_context.clone()),
                 Path(record.coder_run_id.clone()),
                 Json(CoderMergeReadinessReportCreateInput {
                     recommendation: parsed_merge
@@ -925,6 +930,7 @@ async fn dispatch_merge_recommendation_task(
                 .map(parse_merge_recommendation_from_worker_payload);
             let response = coder_merge_recommendation_summary_create(
                 State(state),
+                axum::extract::Extension(run.tenant_context.clone()),
                 Path(record.coder_run_id.clone()),
                 Json(CoderMergeRecommendationSummaryCreateInput {
                     recommendation: parsed_merge

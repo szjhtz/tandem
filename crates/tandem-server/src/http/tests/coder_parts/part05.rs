@@ -1857,6 +1857,160 @@ async fn coder_run_approve_and_cancel_project_context_run_controls() {
 
 #[tokio::test]
 #[serial_test::serial]
+async fn coder_control_and_artifact_mutations_are_tenant_scoped() {
+    let state = test_state().await;
+    state
+        .capability_resolver
+        .refresh_builtin_bindings()
+        .await
+        .expect("refresh builtin bindings");
+    let app = app_router(state.clone());
+
+    let create_req = Request::builder()
+        .method("POST")
+        .uri("/coder/runs")
+        .header("content-type", "application/json")
+        .header("x-tandem-org-id", "org-a")
+        .header("x-tandem-workspace-id", "workspace-a")
+        .header("x-tandem-actor-id", "user-a")
+        .body(Body::from(
+            json!({
+                "coder_run_id": "coder-run-tenant-controls",
+                "workflow_mode": "issue_triage",
+                "repo_binding": {
+                    "project_id": "proj-engine",
+                    "workspace_id": "ws-tandem",
+                    "workspace_root": "/tmp/tandem-repo",
+                    "repo_slug": "user123/tandem"
+                },
+                "github_ref": {
+                    "kind": "issue",
+                    "number": 16
+                }
+            })
+            .to_string(),
+        ))
+        .expect("create request");
+    let create_resp = app
+        .clone()
+        .oneshot(create_req)
+        .await
+        .expect("create response");
+    assert_eq!(create_resp.status(), StatusCode::OK);
+    let create_body = to_bytes(create_resp.into_body(), usize::MAX)
+        .await
+        .expect("create body");
+    let create_payload: Value = serde_json::from_slice(&create_body).expect("create json");
+    let linked_context_run_id = create_payload
+        .get("coder_run")
+        .and_then(|row| row.get("linked_context_run_id"))
+        .and_then(Value::as_str)
+        .expect("linked context run")
+        .to_string();
+
+    let plan_req = Request::builder()
+        .method("POST")
+        .uri(format!("/context/runs/{linked_context_run_id}/events"))
+        .header("content-type", "application/json")
+        .header("x-tandem-org-id", "org-a")
+        .header("x-tandem-workspace-id", "workspace-a")
+        .header("x-tandem-actor-id", "user-a")
+        .body(Body::from(
+            json!({
+                "type": "planning_started",
+                "status": "awaiting_approval",
+                "payload": {}
+            })
+            .to_string(),
+        ))
+        .expect("plan request");
+    let plan_resp = app.clone().oneshot(plan_req).await.expect("plan response");
+    assert_eq!(plan_resp.status(), StatusCode::OK);
+
+    for (method, uri, body) in [
+        (
+            "POST",
+            "/coder/runs/coder-run-tenant-controls/approve",
+            json!({"reason": "cross-tenant approve"}),
+        ),
+        (
+            "POST",
+            "/coder/runs/coder-run-tenant-controls/cancel",
+            json!({"reason": "cross-tenant cancel"}),
+        ),
+        (
+            "POST",
+            "/coder/runs/coder-run-tenant-controls/execute-next",
+            json!({}),
+        ),
+        (
+            "POST",
+            "/coder/runs/coder-run-tenant-controls/triage-summary",
+            json!({"summary": "cross-tenant artifact write"}),
+        ),
+    ] {
+        let req = Request::builder()
+            .method(method)
+            .uri(uri)
+            .header("content-type", "application/json")
+            .header("x-tandem-org-id", "org-b")
+            .header("x-tandem-workspace-id", "workspace-b")
+            .header("x-tandem-actor-id", "user-b")
+            .body(Body::from(body.to_string()))
+            .expect("tenant b mutation request");
+        let resp = app
+            .clone()
+            .oneshot(req)
+            .await
+            .expect("tenant b mutation response");
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND, "{method} {uri}");
+    }
+
+    let candidates_req = Request::builder()
+        .method("GET")
+        .uri("/coder/runs/coder-run-tenant-controls/memory-candidates")
+        .header("x-tandem-org-id", "org-b")
+        .header("x-tandem-workspace-id", "workspace-b")
+        .header("x-tandem-actor-id", "user-b")
+        .body(Body::empty())
+        .expect("tenant b candidates request");
+    let candidates_resp = app
+        .clone()
+        .oneshot(candidates_req)
+        .await
+        .expect("tenant b candidates response");
+    assert_eq!(candidates_resp.status(), StatusCode::NOT_FOUND);
+
+    let tenant_a_get_req = Request::builder()
+        .method("GET")
+        .uri("/coder/runs/coder-run-tenant-controls")
+        .header("x-tandem-org-id", "org-a")
+        .header("x-tandem-workspace-id", "workspace-a")
+        .header("x-tandem-actor-id", "user-a")
+        .body(Body::empty())
+        .expect("tenant a get request");
+    let tenant_a_get_resp = app
+        .clone()
+        .oneshot(tenant_a_get_req)
+        .await
+        .expect("tenant a get response");
+    assert_eq!(tenant_a_get_resp.status(), StatusCode::OK);
+    let tenant_a_get_body = to_bytes(tenant_a_get_resp.into_body(), usize::MAX)
+        .await
+        .expect("tenant a get body");
+    let tenant_a_payload: Value =
+        serde_json::from_slice(&tenant_a_get_body).expect("tenant a get json");
+    assert_eq!(
+        tenant_a_payload
+            .get("run")
+            .and_then(|row| row.get("status"))
+            .and_then(Value::as_str),
+        Some("awaiting_approval")
+    );
+}
+
+#[tokio::test]
+#[serial_test::serial]
 async fn coder_issue_triage_run_replay_matches_persisted_state_and_checkpoint() {
     let state = test_state().await;
     state

@@ -1357,6 +1357,7 @@ async fn dispatch_issue_triage_task(
             let parsed_triage = parse_issue_triage_from_worker_payload(&worker_payload);
             let response = coder_triage_inspection_report_create(
                 State(state),
+                axum::extract::Extension(run.tenant_context.clone()),
                 Path(record.coder_run_id.clone()),
                 Json(CoderTriageInspectionReportCreateInput {
                     summary: parsed_triage
@@ -1422,6 +1423,7 @@ async fn dispatch_issue_triage_task(
                 .map(parse_issue_triage_from_worker_payload);
             let response = coder_triage_reproduction_report_create(
                 State(state),
+                axum::extract::Extension(run.tenant_context.clone()),
                 Path(record.coder_run_id.clone()),
                 Json(CoderTriageReproductionReportCreateInput {
                     summary: parsed_triage
@@ -1515,6 +1517,7 @@ async fn dispatch_issue_triage_task(
                 .map(parse_issue_triage_from_worker_payload);
             let response = coder_triage_summary_create(
                 State(state),
+                axum::extract::Extension(run.tenant_context.clone()),
                 Path(record.coder_run_id.clone()),
                 Json(CoderTriageSummaryCreateInput {
                     summary: parsed_triage

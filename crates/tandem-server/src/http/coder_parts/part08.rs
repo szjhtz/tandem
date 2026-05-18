@@ -1,9 +1,12 @@
 pub(super) async fn coder_issue_fix_summary_create(
     State(state): State<AppState>,
+    axum::extract::Extension(tenant_context): axum::extract::Extension<tandem_types::TenantContext>,
     Path(id): Path<String>,
     Json(input): Json<CoderIssueFixSummaryCreateInput>,
 ) -> Result<Json<Value>, StatusCode> {
-    let mut record = load_coder_run_record(&state, &id).await?;
+    let (record, _run) =
+        load_coder_run_with_context_for_tenant(&state, &id, &tenant_context).await?;
+    let mut record = record;
     if !matches!(record.workflow_mode, CoderWorkflowMode::IssueFix) {
         return Err(StatusCode::BAD_REQUEST);
     }
@@ -214,10 +217,13 @@ pub(super) async fn coder_issue_fix_summary_create(
 
 pub(super) async fn coder_issue_fix_validation_report_create(
     State(state): State<AppState>,
+    axum::extract::Extension(tenant_context): axum::extract::Extension<tandem_types::TenantContext>,
     Path(id): Path<String>,
     Json(input): Json<CoderIssueFixValidationReportCreateInput>,
 ) -> Result<Json<Value>, StatusCode> {
-    let mut record = load_coder_run_record(&state, &id).await?;
+    let (record, _run) =
+        load_coder_run_with_context_for_tenant(&state, &id, &tenant_context).await?;
+    let mut record = record;
     if !matches!(record.workflow_mode, CoderWorkflowMode::IssueFix) {
         return Err(StatusCode::BAD_REQUEST);
     }
@@ -264,10 +270,13 @@ pub(super) async fn coder_issue_fix_validation_report_create(
 
 pub(super) async fn coder_merge_recommendation_summary_create(
     State(state): State<AppState>,
+    axum::extract::Extension(tenant_context): axum::extract::Extension<tandem_types::TenantContext>,
     Path(id): Path<String>,
     Json(input): Json<CoderMergeRecommendationSummaryCreateInput>,
 ) -> Result<Json<Value>, StatusCode> {
-    let mut record = load_coder_run_record(&state, &id).await?;
+    let (record, _run) =
+        load_coder_run_with_context_for_tenant(&state, &id, &tenant_context).await?;
+    let mut record = record;
     if !matches!(record.workflow_mode, CoderWorkflowMode::MergeRecommendation) {
         return Err(StatusCode::BAD_REQUEST);
     }
@@ -564,10 +573,13 @@ async fn write_merge_readiness_artifact(
 
 pub(super) async fn coder_merge_readiness_report_create(
     State(state): State<AppState>,
+    axum::extract::Extension(tenant_context): axum::extract::Extension<tandem_types::TenantContext>,
     Path(id): Path<String>,
     Json(input): Json<CoderMergeReadinessReportCreateInput>,
 ) -> Result<Json<Value>, StatusCode> {
-    let mut record = load_coder_run_record(&state, &id).await?;
+    let (record, _run) =
+        load_coder_run_with_context_for_tenant(&state, &id, &tenant_context).await?;
+    let mut record = record;
     if !matches!(record.workflow_mode, CoderWorkflowMode::MergeRecommendation) {
         return Err(StatusCode::BAD_REQUEST);
     }

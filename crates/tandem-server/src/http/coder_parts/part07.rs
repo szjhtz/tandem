@@ -249,10 +249,13 @@ async fn execute_coder_run_step(
 
 pub(super) async fn coder_run_execute_next(
     State(state): State<AppState>,
+    axum::extract::Extension(tenant_context): axum::extract::Extension<tandem_types::TenantContext>,
     Path(id): Path<String>,
     Json(input): Json<CoderRunExecuteNextInput>,
 ) -> Result<Json<Value>, StatusCode> {
-    let mut record = load_coder_run_record(&state, &id).await?;
+    let (record, _run) =
+        load_coder_run_with_context_for_tenant(&state, &id, &tenant_context).await?;
+    let mut record = record;
     if let Some(blocked) = coder_execution_policy_block(&state, &record).await? {
         emit_coder_execution_policy_block(&state, &record, &blocked).await?;
         let run = load_context_run_state(&state, &record.linked_context_run_id).await?;
@@ -275,10 +278,13 @@ pub(super) async fn coder_run_execute_next(
 
 pub(super) async fn coder_run_execute_all(
     State(state): State<AppState>,
+    axum::extract::Extension(tenant_context): axum::extract::Extension<tandem_types::TenantContext>,
     Path(id): Path<String>,
     Json(input): Json<CoderRunExecuteAllInput>,
 ) -> Result<Json<Value>, StatusCode> {
-    let mut record = load_coder_run_record(&state, &id).await?;
+    let (record, _run) =
+        load_coder_run_with_context_for_tenant(&state, &id, &tenant_context).await?;
+    let mut record = record;
     if let Some(blocked) = coder_execution_policy_block(&state, &record).await? {
         emit_coder_execution_policy_block(&state, &record, &blocked).await?;
         let run = load_context_run_state(&state, &record.linked_context_run_id).await?;
@@ -389,7 +395,7 @@ async fn coder_run_transition(
     let _ = crate::audit::append_protected_audit_event(
         state,
         event_type,
-        &tandem_types::TenantContext::local_implicit(),
+        &run.tenant_context,
         None,
         json!({
             "coderRunID": record.coder_run_id,
@@ -412,11 +418,13 @@ async fn coder_run_transition(
 
 pub(super) async fn coder_run_approve(
     State(state): State<AppState>,
+    axum::extract::Extension(tenant_context): axum::extract::Extension<tandem_types::TenantContext>,
     Path(id): Path<String>,
     Json(input): Json<CoderRunControlInput>,
 ) -> Result<Json<Value>, StatusCode> {
-    let mut record = load_coder_run_record(&state, &id).await?;
-    let run = load_context_run_state(&state, &record.linked_context_run_id).await?;
+    let (record, run) =
+        load_coder_run_with_context_for_tenant(&state, &id, &tenant_context).await?;
+    let mut record = record;
     if !matches!(run.status, ContextRunStatus::AwaitingApproval) {
         return Ok(Json(json!({
             "ok": false,
@@ -611,10 +619,12 @@ pub(super) async fn coder_run_approve(
 
 pub(super) async fn coder_run_cancel(
     State(state): State<AppState>,
+    axum::extract::Extension(tenant_context): axum::extract::Extension<tandem_types::TenantContext>,
     Path(id): Path<String>,
     Json(input): Json<CoderRunControlInput>,
 ) -> Result<Json<Value>, StatusCode> {
-    let record = load_coder_run_record(&state, &id).await?;
+    let (record, _run) =
+        load_coder_run_with_context_for_tenant(&state, &id, &tenant_context).await?;
     let why = input
         .reason
         .unwrap_or_else(|| "run cancelled by operator".to_string());
@@ -647,10 +657,12 @@ pub(super) async fn coder_run_artifacts(
 
 pub(super) async fn coder_memory_hits_get(
     State(state): State<AppState>,
+    axum::extract::Extension(tenant_context): axum::extract::Extension<tandem_types::TenantContext>,
     Path(id): Path<String>,
     Query(query): Query<CoderMemoryHitsQuery>,
 ) -> Result<Json<Value>, StatusCode> {
-    let record = load_coder_run_record(&state, &id).await?;
+    let (record, _run) =
+        load_coder_run_with_context_for_tenant(&state, &id, &tenant_context).await?;
     let search_query = query
         .q
         .as_deref()
@@ -674,9 +686,11 @@ pub(super) async fn coder_memory_hits_get(
 
 pub(super) async fn coder_memory_candidate_list(
     State(state): State<AppState>,
+    axum::extract::Extension(tenant_context): axum::extract::Extension<tandem_types::TenantContext>,
     Path(id): Path<String>,
 ) -> Result<Json<Value>, StatusCode> {
-    let record = load_coder_run_record(&state, &id).await?;
+    let (record, _run) =
+        load_coder_run_with_context_for_tenant(&state, &id, &tenant_context).await?;
     let candidates = list_repo_memory_candidates(
         &state,
         &record.repo_binding.repo_slug,
@@ -692,10 +706,12 @@ pub(super) async fn coder_memory_candidate_list(
 
 pub(super) async fn coder_memory_candidate_create(
     State(state): State<AppState>,
+    axum::extract::Extension(tenant_context): axum::extract::Extension<tandem_types::TenantContext>,
     Path(id): Path<String>,
     Json(input): Json<CoderMemoryCandidateCreateInput>,
 ) -> Result<Json<Value>, StatusCode> {
-    let record = load_coder_run_record(&state, &id).await?;
+    let (record, _run) =
+        load_coder_run_with_context_for_tenant(&state, &id, &tenant_context).await?;
     if !matches!(record.workflow_mode, CoderWorkflowMode::IssueTriage) {
         return Err(StatusCode::BAD_REQUEST);
     }
@@ -717,10 +733,12 @@ pub(super) async fn coder_memory_candidate_create(
 
 pub(super) async fn coder_memory_candidate_promote(
     State(state): State<AppState>,
+    axum::extract::Extension(tenant_context): axum::extract::Extension<tandem_types::TenantContext>,
     Path((id, candidate_id)): Path<(String, String)>,
     Json(input): Json<CoderMemoryCandidatePromoteInput>,
 ) -> Result<Json<Value>, StatusCode> {
-    let record = load_coder_run_record(&state, &id).await?;
+    let (record, run) =
+        load_coder_run_with_context_for_tenant(&state, &id, &tenant_context).await?;
     let candidate_payload =
         load_coder_memory_candidate_payload(&state, &record, &candidate_id).await?;
     let kind: CoderMemoryCandidateKind = serde_json::from_value(
@@ -747,7 +765,7 @@ pub(super) async fn coder_memory_candidate_promote(
         "context_run:{}/coder_memory/{}.json",
         record.linked_context_run_id, candidate_id
     )];
-    let tenant_context = tandem_types::TenantContext::local_implicit();
+    let tenant_context = run.tenant_context.clone();
     let put_response = super::skills_memory::memory_put_impl(
         &state,
         &tenant_context,
@@ -885,10 +903,13 @@ pub(super) async fn coder_memory_candidate_promote(
 
 pub(super) async fn coder_triage_summary_create(
     State(state): State<AppState>,
+    axum::extract::Extension(tenant_context): axum::extract::Extension<tandem_types::TenantContext>,
     Path(id): Path<String>,
     Json(input): Json<CoderTriageSummaryCreateInput>,
 ) -> Result<Json<Value>, StatusCode> {
-    let mut record = load_coder_run_record(&state, &id).await?;
+    let (record, _run) =
+        load_coder_run_with_context_for_tenant(&state, &id, &tenant_context).await?;
+    let mut record = record;
     if !matches!(record.workflow_mode, CoderWorkflowMode::IssueTriage) {
         return Err(StatusCode::BAD_REQUEST);
     }
@@ -1104,10 +1125,13 @@ pub(super) async fn coder_triage_summary_create(
 
 pub(super) async fn coder_triage_reproduction_report_create(
     State(state): State<AppState>,
+    axum::extract::Extension(tenant_context): axum::extract::Extension<tandem_types::TenantContext>,
     Path(id): Path<String>,
     Json(input): Json<CoderTriageReproductionReportCreateInput>,
 ) -> Result<Json<Value>, StatusCode> {
-    let mut record = load_coder_run_record(&state, &id).await?;
+    let (record, _run) =
+        load_coder_run_with_context_for_tenant(&state, &id, &tenant_context).await?;
+    let mut record = record;
     if !matches!(record.workflow_mode, CoderWorkflowMode::IssueTriage) {
         return Err(StatusCode::BAD_REQUEST);
     }
@@ -1488,10 +1512,13 @@ mod tests {
 
 pub(super) async fn coder_triage_inspection_report_create(
     State(state): State<AppState>,
+    axum::extract::Extension(tenant_context): axum::extract::Extension<tandem_types::TenantContext>,
     Path(id): Path<String>,
     Json(input): Json<CoderTriageInspectionReportCreateInput>,
 ) -> Result<Json<Value>, StatusCode> {
-    let mut record = load_coder_run_record(&state, &id).await?;
+    let (record, _run) =
+        load_coder_run_with_context_for_tenant(&state, &id, &tenant_context).await?;
+    let mut record = record;
     if !matches!(record.workflow_mode, CoderWorkflowMode::IssueTriage) {
         return Err(StatusCode::BAD_REQUEST);
     }
@@ -1554,10 +1581,13 @@ pub(super) async fn coder_triage_inspection_report_create(
 
 pub(super) async fn coder_pr_review_summary_create(
     State(state): State<AppState>,
+    axum::extract::Extension(tenant_context): axum::extract::Extension<tandem_types::TenantContext>,
     Path(id): Path<String>,
     Json(input): Json<CoderPrReviewSummaryCreateInput>,
 ) -> Result<Json<Value>, StatusCode> {
-    let mut record = load_coder_run_record(&state, &id).await?;
+    let (record, _run) =
+        load_coder_run_with_context_for_tenant(&state, &id, &tenant_context).await?;
+    let mut record = record;
     if !matches!(record.workflow_mode, CoderWorkflowMode::PrReview) {
         return Err(StatusCode::BAD_REQUEST);
     }
@@ -1857,10 +1887,13 @@ async fn write_pr_review_evidence_artifact(
 
 pub(super) async fn coder_pr_review_evidence_create(
     State(state): State<AppState>,
+    axum::extract::Extension(tenant_context): axum::extract::Extension<tandem_types::TenantContext>,
     Path(id): Path<String>,
     Json(input): Json<CoderPrReviewEvidenceCreateInput>,
 ) -> Result<Json<Value>, StatusCode> {
-    let mut record = load_coder_run_record(&state, &id).await?;
+    let (record, _run) =
+        load_coder_run_with_context_for_tenant(&state, &id, &tenant_context).await?;
+    let mut record = record;
     if !matches!(record.workflow_mode, CoderWorkflowMode::PrReview) {
         return Err(StatusCode::BAD_REQUEST);
     }

@@ -45,8 +45,11 @@ coder artifact tenant boundary.
   cannot become a bypass around Automation V2 isolation.
 - Coder-created context runs now inherit the request tenant, and coder
   status/list/get/artifact reads are filtered through the linked context run
-  tenant. Added denial coverage proving tenant B cannot list, get, or read
-  artifacts from tenant A's coder run.
+  tenant.
+- Coder control and artifact-writing routes now require the caller to match the
+  owning context run tenant before approving, cancelling, executing, writing
+  artifacts, or listing memory candidates. Added denial coverage proving tenant
+  B cannot mutate or inspect tenant A's coder run through those routes.
 
 ### Provider And MCP Secrets
 
