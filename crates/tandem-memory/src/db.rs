@@ -1543,6 +1543,156 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_config_crud_is_tenant_scoped() {
+        let (db, _temp) = setup_test_db().await;
+        let tenant_a = tenant_scope("org-a", "workspace-a");
+        let tenant_b = tenant_scope("org-b", "workspace-b");
+
+        let config_a = MemoryConfig {
+            max_chunks: 111,
+            session_retention_days: 7,
+            ..Default::default()
+        };
+        let config_b = MemoryConfig {
+            max_chunks: 222,
+            session_retention_days: 14,
+            ..Default::default()
+        };
+        db.update_config_for_tenant("shared-project", &config_a, &tenant_a)
+            .await
+            .unwrap();
+        db.update_config_for_tenant("shared-project", &config_b, &tenant_b)
+            .await
+            .unwrap();
+
+        let loaded_a = db
+            .get_or_create_config_for_tenant("shared-project", &tenant_a)
+            .await
+            .unwrap();
+        let loaded_b = db
+            .get_or_create_config_for_tenant("shared-project", &tenant_b)
+            .await
+            .unwrap();
+
+        assert_eq!(loaded_a.max_chunks, 111);
+        assert_eq!(loaded_a.session_retention_days, 7);
+        assert_eq!(loaded_b.max_chunks, 222);
+        assert_eq!(loaded_b.session_retention_days, 14);
+    }
+
+    #[tokio::test]
+    async fn test_prune_old_session_chunks_is_tenant_scoped() {
+        let (db, _temp) = setup_test_db().await;
+        let tenant_a = tenant_scope("org-a", "workspace-a");
+        let tenant_b = tenant_scope("org-b", "workspace-b");
+        let old = Utc::now() - chrono::Duration::days(10);
+
+        let mut chunk_a = test_vector_chunk(
+            "tenant-a-old-session-prune",
+            MemoryTier::Session,
+            tenant_a.clone(),
+            "old tenant a session chunk",
+            None,
+        );
+        chunk_a.created_at = old;
+        let mut chunk_b = test_vector_chunk(
+            "tenant-b-old-session-prune",
+            MemoryTier::Session,
+            tenant_b.clone(),
+            "old tenant b session chunk",
+            None,
+        );
+        chunk_b.created_at = old;
+
+        db.store_chunk(&chunk_a, &embedding(0.2, 0.8))
+            .await
+            .unwrap();
+        db.store_chunk(&chunk_b, &embedding(0.2, 0.8))
+            .await
+            .unwrap();
+
+        let deleted = db
+            .prune_old_session_chunks_for_tenant(1, &tenant_a)
+            .await
+            .unwrap();
+        assert_eq!(deleted, 1);
+        assert!(db
+            .get_session_chunks_for_tenant("shared-session", &tenant_a)
+            .await
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            db.get_session_chunks_for_tenant("shared-session", &tenant_b)
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn test_run_hygiene_reads_tenant_scoped_global_config() {
+        let (db, _temp) = setup_test_db().await;
+        let tenant_a = tenant_scope("org-a", "workspace-a");
+        let tenant_b = tenant_scope("org-b", "workspace-b");
+        let old = Utc::now() - chrono::Duration::days(10);
+
+        let config_a = MemoryConfig {
+            session_retention_days: 1,
+            ..Default::default()
+        };
+        let config_b = MemoryConfig {
+            session_retention_days: 0,
+            ..Default::default()
+        };
+        db.update_config_for_tenant("__global__", &config_a, &tenant_a)
+            .await
+            .unwrap();
+        db.update_config_for_tenant("__global__", &config_b, &tenant_b)
+            .await
+            .unwrap();
+
+        let mut chunk_a = test_vector_chunk(
+            "tenant-a-hygiene",
+            MemoryTier::Session,
+            tenant_a.clone(),
+            "tenant a old hygiene chunk",
+            None,
+        );
+        chunk_a.created_at = old;
+        let mut chunk_b = test_vector_chunk(
+            "tenant-b-hygiene",
+            MemoryTier::Session,
+            tenant_b.clone(),
+            "tenant b old hygiene chunk",
+            None,
+        );
+        chunk_b.created_at = old;
+
+        db.store_chunk(&chunk_a, &embedding(0.3, 0.7))
+            .await
+            .unwrap();
+        db.store_chunk(&chunk_b, &embedding(0.3, 0.7))
+            .await
+            .unwrap();
+
+        let deleted = db.run_hygiene_for_tenant(0, &tenant_a).await.unwrap();
+        assert_eq!(deleted, 1);
+        assert!(db
+            .get_session_chunks_for_tenant("shared-session", &tenant_a)
+            .await
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            db.get_session_chunks_for_tenant("shared-session", &tenant_b)
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+
+    #[tokio::test]
     async fn test_global_memory_put_search_and_dedup() {
         let (db, _temp) = setup_test_db().await;
         let now = chrono::Utc::now().timestamp_millis() as u64;

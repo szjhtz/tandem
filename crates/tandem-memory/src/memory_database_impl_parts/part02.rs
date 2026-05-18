@@ -1119,6 +1119,15 @@ impl MemoryDatabase {
     /// Returns the number of chunk rows deleted.
     /// If `retention_days` is 0 hygiene is disabled and this returns Ok(0).
     pub async fn prune_old_session_chunks(&self, retention_days: u32) -> MemoryResult<u64> {
+        self.prune_old_session_chunks_for_tenant(retention_days, &MemoryTenantScope::local())
+            .await
+    }
+
+    pub async fn prune_old_session_chunks_for_tenant(
+        &self,
+        retention_days: u32,
+        tenant_scope: &MemoryTenantScope,
+    ) -> MemoryResult<u64> {
         if retention_days == 0 {
             return Ok(0);
         }
@@ -1133,14 +1142,32 @@ impl MemoryDatabase {
         conn.execute(
             "DELETE FROM session_memory_vectors
              WHERE chunk_id IN (
-                 SELECT id FROM session_memory_chunks WHERE created_at < ?1
+                 SELECT id FROM session_memory_chunks
+                 WHERE created_at < ?1
+                   AND tenant_org_id = ?2
+                   AND tenant_workspace_id = ?3
+                   AND IFNULL(tenant_deployment_id, '') = IFNULL(?4, '')
              )",
-            params![cutoff],
+            params![
+                cutoff,
+                tenant_scope.org_id.as_str(),
+                tenant_scope.workspace_id.as_str(),
+                tenant_scope.deployment_id.as_deref()
+            ],
         )?;
 
         let deleted = conn.execute(
-            "DELETE FROM session_memory_chunks WHERE created_at < ?1",
-            params![cutoff],
+            "DELETE FROM session_memory_chunks
+             WHERE created_at < ?1
+               AND tenant_org_id = ?2
+               AND tenant_workspace_id = ?3
+               AND IFNULL(tenant_deployment_id, '') = IFNULL(?4, '')",
+            params![
+                cutoff,
+                tenant_scope.org_id.as_str(),
+                tenant_scope.workspace_id.as_str(),
+                tenant_scope.deployment_id.as_deref()
+            ],
         )?;
 
         if deleted > 0 {
@@ -1161,6 +1188,15 @@ impl MemoryDatabase {
     /// Returns `Ok(chunks_deleted)`. This method is intentionally best-effort —
     /// callers should log errors and continue.
     pub async fn run_hygiene(&self, env_override_days: u32) -> MemoryResult<u64> {
+        self.run_hygiene_for_tenant(env_override_days, &MemoryTenantScope::local())
+            .await
+    }
+
+    pub async fn run_hygiene_for_tenant(
+        &self,
+        env_override_days: u32,
+        tenant_scope: &MemoryTenantScope,
+    ) -> MemoryResult<u64> {
         // Prefer the env override, fall back to the DB config for the null project.
         let retention_days = if env_override_days > 0 {
             env_override_days
@@ -1170,8 +1206,16 @@ impl MemoryDatabase {
             let days: Option<i64> = conn
                 .query_row(
                     "SELECT session_retention_days FROM memory_config
-                     WHERE project_id = '__global__' LIMIT 1",
-                    [],
+                     WHERE project_id = '__global__'
+                       AND tenant_org_id = ?1
+                       AND tenant_workspace_id = ?2
+                       AND IFNULL(tenant_deployment_id, '') = IFNULL(?3, '')
+                     LIMIT 1",
+                    params![
+                        tenant_scope.org_id.as_str(),
+                        tenant_scope.workspace_id.as_str(),
+                        tenant_scope.deployment_id.as_deref()
+                    ],
                     |row| row.get(0),
                 )
                 .ok();
@@ -1179,7 +1223,8 @@ impl MemoryDatabase {
             days.unwrap_or(30) as u32
         };
 
-        self.prune_old_session_chunks(retention_days).await
+        self.prune_old_session_chunks_for_tenant(retention_days, tenant_scope)
+            .await
     }
 
     pub async fn put_global_memory_record(

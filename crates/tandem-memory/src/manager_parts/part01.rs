@@ -104,7 +104,9 @@ impl MemoryManager {
         }
 
         let config = if let Some(ref pid) = request.project_id {
-            self.db.get_or_create_config(pid).await?
+            self.db
+                .get_or_create_config_for_tenant(pid, &request.tenant_scope)
+                .await?
         } else {
             MemoryConfig::default()
         };
@@ -830,7 +832,9 @@ impl MemoryManager {
         token_budget: Option<i64>,
     ) -> MemoryResult<(MemoryContext, MemoryRetrievalMeta)> {
         let config = if let Some(pid) = project_id {
-            self.db.get_or_create_config(pid).await?
+            self.db
+                .get_or_create_config_for_tenant(pid, tenant_scope)
+                .await?
         } else {
             MemoryConfig::default()
         };
@@ -1047,9 +1051,30 @@ impl MemoryManager {
         self.db.get_or_create_config(project_id).await
     }
 
+    pub async fn get_config_for_tenant(
+        &self,
+        project_id: &str,
+        tenant_scope: &MemoryTenantScope,
+    ) -> MemoryResult<MemoryConfig> {
+        self.db
+            .get_or_create_config_for_tenant(project_id, tenant_scope)
+            .await
+    }
+
     /// Update memory configuration for a project
     pub async fn set_config(&self, project_id: &str, config: &MemoryConfig) -> MemoryResult<()> {
         self.db.update_config(project_id, config).await
+    }
+
+    pub async fn set_config_for_tenant(
+        &self,
+        project_id: &str,
+        config: &MemoryConfig,
+        tenant_scope: &MemoryTenantScope,
+    ) -> MemoryResult<()> {
+        self.db
+            .update_config_for_tenant(project_id, config, tenant_scope)
+            .await
     }
 
     pub async fn resolve_uri(&self, uri: &str) -> MemoryResult<Option<MemoryNode>> {
@@ -1213,7 +1238,10 @@ impl MemoryManager {
 
         if let Some(pid) = project_id {
             // Get config for this project
-            let config = self.db.get_or_create_config(pid).await?;
+            let config = self
+                .db
+                .get_or_create_config_for_tenant(pid, tenant_scope)
+                .await?;
 
             if config.auto_cleanup {
                 // Clean up old session memory
@@ -1264,7 +1292,10 @@ impl MemoryManager {
     ) -> MemoryResult<()> {
         if let Some(pid) = project_id {
             let stats = self.db.get_stats_for_tenant(tenant_scope).await?;
-            let config = self.db.get_or_create_config(pid).await?;
+            let config = self
+                .db
+                .get_or_create_config_for_tenant(pid, tenant_scope)
+                .await?;
 
             // Check if we're over the chunk limit
             if stats.project_chunks > config.max_chunks {

@@ -26,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Provider and MCP secret isolation**: Provider credentials and store-backed MCP secrets now carry tenant scope through request and execution paths so hosted explicit tenants cannot resolve or execute with another tenant's credentials.
 - **Memory route and DB isolation**: Governed memory search/list/read/update/delete/promote/demote paths now use tenant-aware DB methods, while sqlite-vec top-k ranking filters by tenant before calculating the returned candidates.
 - **Memory manager retrieval isolation**: Context retrieval now has tenant-aware wrappers for recent session chunks and vector search, preserving existing local retrieval through local/default wrappers.
+- **Memory config and hygiene isolation**: Memory config rows and old-session hygiene now use tenant-aware project/global config and pruning paths so same project ids cannot overwrite or clean another tenant's memory policy/state.
 
 ### Fixed
 

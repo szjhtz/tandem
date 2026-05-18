@@ -497,6 +497,48 @@ impl MemoryDatabase {
             )",
             [],
         )?;
+        let memory_config_cols: HashSet<String> = {
+            let mut stmt = conn.prepare("PRAGMA table_info(memory_config)")?;
+            let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
+            rows.collect::<Result<HashSet<_>, _>>()?
+        };
+        if !memory_config_cols.contains("tenant_org_id") {
+            conn.execute(
+                "CREATE TABLE memory_config_new (
+                    tenant_org_id TEXT NOT NULL DEFAULT 'local',
+                    tenant_workspace_id TEXT NOT NULL DEFAULT 'local',
+                    tenant_deployment_id TEXT NOT NULL DEFAULT '',
+                    project_id TEXT NOT NULL,
+                    max_chunks INTEGER NOT NULL DEFAULT 10000,
+                    chunk_size INTEGER NOT NULL DEFAULT 512,
+                    retrieval_k INTEGER NOT NULL DEFAULT 5,
+                    auto_cleanup INTEGER NOT NULL DEFAULT 1,
+                    session_retention_days INTEGER NOT NULL DEFAULT 30,
+                    token_budget INTEGER NOT NULL DEFAULT 5000,
+                    chunk_overlap INTEGER NOT NULL DEFAULT 64,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY(tenant_org_id, tenant_workspace_id, tenant_deployment_id, project_id)
+                )",
+                [],
+            )?;
+            conn.execute(
+                "INSERT OR REPLACE INTO memory_config_new
+                 (tenant_org_id, tenant_workspace_id, tenant_deployment_id, project_id,
+                  max_chunks, chunk_size, retrieval_k, auto_cleanup, session_retention_days,
+                  token_budget, chunk_overlap, updated_at)
+                 SELECT 'local', 'local', '', project_id, max_chunks, chunk_size, retrieval_k,
+                        auto_cleanup, session_retention_days, token_budget, chunk_overlap, updated_at
+                 FROM memory_config",
+                [],
+            )?;
+            conn.execute("DROP TABLE memory_config", [])?;
+            conn.execute("ALTER TABLE memory_config_new RENAME TO memory_config", [])?;
+        }
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_memory_config_tenant_project
+                ON memory_config(tenant_org_id, tenant_workspace_id, tenant_deployment_id, project_id)",
+            [],
+        )?;
 
         // Cleanup log table
         conn.execute(
@@ -2003,14 +2045,33 @@ impl MemoryDatabase {
 
     /// Get or create memory config for a project
     pub async fn get_or_create_config(&self, project_id: &str) -> MemoryResult<MemoryConfig> {
+        self.get_or_create_config_for_tenant(project_id, &MemoryTenantScope::local())
+            .await
+    }
+
+    /// Get or create memory config for a project in a tenant scope.
+    pub async fn get_or_create_config_for_tenant(
+        &self,
+        project_id: &str,
+        tenant_scope: &MemoryTenantScope,
+    ) -> MemoryResult<MemoryConfig> {
         let conn = self.conn.lock().await;
 
         let result: Option<MemoryConfig> = conn
             .query_row(
                 "SELECT max_chunks, chunk_size, retrieval_k, auto_cleanup, 
                         session_retention_days, token_budget, chunk_overlap
-                 FROM memory_config WHERE project_id = ?1",
-                params![project_id],
+                 FROM memory_config
+                 WHERE project_id = ?1
+                   AND tenant_org_id = ?2
+                   AND tenant_workspace_id = ?3
+                   AND IFNULL(tenant_deployment_id, '') = IFNULL(?4, '')",
+                params![
+                    project_id,
+                    tenant_scope.org_id.as_str(),
+                    tenant_scope.workspace_id.as_str(),
+                    tenant_scope.deployment_id.as_deref()
+                ],
                 |row| {
                     Ok(MemoryConfig {
                         max_chunks: row.get(0)?,
@@ -2033,11 +2094,15 @@ impl MemoryDatabase {
                 let updated_at = Utc::now().to_rfc3339();
 
                 conn.execute(
-                    "INSERT INTO memory_config 
-                     (project_id, max_chunks, chunk_size, retrieval_k, auto_cleanup, 
+                    "INSERT INTO memory_config
+                     (tenant_org_id, tenant_workspace_id, tenant_deployment_id,
+                      project_id, max_chunks, chunk_size, retrieval_k, auto_cleanup,
                       session_retention_days, token_budget, chunk_overlap, updated_at)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
                     params![
+                        tenant_scope.org_id.as_str(),
+                        tenant_scope.workspace_id.as_str(),
+                        tenant_scope.deployment_id.as_deref().unwrap_or(""),
                         project_id,
                         config.max_chunks,
                         config.chunk_size,
@@ -2057,16 +2122,41 @@ impl MemoryDatabase {
 
     /// Update memory config for a project
     pub async fn update_config(&self, project_id: &str, config: &MemoryConfig) -> MemoryResult<()> {
+        self.update_config_for_tenant(project_id, config, &MemoryTenantScope::local())
+            .await
+    }
+
+    /// Update memory config for a project in a tenant scope.
+    pub async fn update_config_for_tenant(
+        &self,
+        project_id: &str,
+        config: &MemoryConfig,
+        tenant_scope: &MemoryTenantScope,
+    ) -> MemoryResult<()> {
         let conn = self.conn.lock().await;
 
         let updated_at = Utc::now().to_rfc3339();
 
         conn.execute(
-            "INSERT OR REPLACE INTO memory_config 
-             (project_id, max_chunks, chunk_size, retrieval_k, auto_cleanup, 
+            "INSERT INTO memory_config
+             (tenant_org_id, tenant_workspace_id, tenant_deployment_id,
+              project_id, max_chunks, chunk_size, retrieval_k, auto_cleanup,
               session_retention_days, token_budget, chunk_overlap, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+             ON CONFLICT(tenant_org_id, tenant_workspace_id, tenant_deployment_id, project_id)
+             DO UPDATE SET
+                max_chunks = excluded.max_chunks,
+                chunk_size = excluded.chunk_size,
+                retrieval_k = excluded.retrieval_k,
+                auto_cleanup = excluded.auto_cleanup,
+                session_retention_days = excluded.session_retention_days,
+                token_budget = excluded.token_budget,
+                chunk_overlap = excluded.chunk_overlap,
+                updated_at = excluded.updated_at",
             params![
+                tenant_scope.org_id.as_str(),
+                tenant_scope.workspace_id.as_str(),
+                tenant_scope.deployment_id.as_deref().unwrap_or(""),
                 project_id,
                 config.max_chunks,
                 config.chunk_size,

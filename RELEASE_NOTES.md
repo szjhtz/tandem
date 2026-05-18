@@ -73,6 +73,9 @@ and MCP credential boundaries, and vector-backed memory partitioning.
   sync-delete cleanup, project file-index stats, and project file-index clear.
 - Added denial tests proving same project/path imports, identical file chunks,
   index deletes, stats, and clears do not cross tenant boundaries.
+- Memory project/global config rows and old-session hygiene now use tenant
+  scope, with tests proving same project ids cannot overwrite retention policy
+  or prune another tenant's session memory.
 - Existing local memory rows default to `local/local` during migration.
 
 ### Automation V2 MCP Diagnostics
