@@ -297,12 +297,30 @@ fn validation_requires_declared_concrete_mcp_tools() {
     );
 
     assert!(accepted.is_none());
-    assert_eq!(validation["validation_outcome"], "blocked");
+    assert_eq!(validation["validation_outcome"], "needs_repair");
     assert!(validation["unmet_requirements"]
         .as_array()
         .expect("unmet array")
         .iter()
         .any(|value| value.as_str() == Some("mcp_required_tool_missing")));
+    assert_eq!(
+        validation["missing_required_mcp_tools"],
+        json!([
+            "mcp.githubcopilot.get_me",
+            "mcp.githubcopilot.search_repositories"
+        ])
+    );
+    assert!(validation["semantic_block_reason"]
+        .as_str()
+        .expect("semantic block reason")
+        .contains("mcp.githubcopilot.get_me"));
+    assert!(validation["required_next_tool_actions"]
+        .as_array()
+        .expect("required next actions")
+        .iter()
+        .any(|value| value
+            .as_str()
+            .is_some_and(|text| text.contains("mcp.githubcopilot.search_repositories"))));
 
     let _ = std::fs::remove_dir_all(&workspace_root);
 }

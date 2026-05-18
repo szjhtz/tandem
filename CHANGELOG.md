@@ -24,6 +24,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Provider and MCP secret isolation**: Provider credentials and store-backed MCP secrets now carry tenant scope through request and execution paths so hosted explicit tenants cannot resolve or execute with another tenant's credentials.
 - **Memory route and DB isolation**: Governed memory search/list/read/update/delete/promote/demote paths now use tenant-aware DB methods, while sqlite-vec top-k ranking filters by tenant before calculating the returned candidates.
 
+### Fixed
+
+- **Automation V2 MCP required-tool diagnostics**: Required MCP tool validation now records the exact missing `required_tool_calls`, includes them in repair guidance, and reports MCP string errors such as `MCP error -32602` as failed tool results instead of successful connector calls.
+- **Automation blocker visibility**: Automation debugger blocker panels now include checkpoint lifecycle events, so `node_repair_requested`, `workflow_state_changed`, and `run_paused` reasons surface directly when node outputs or top-level run fields omit the actionable blocker.
+
 ### Notes
 
 - Local/default single-tenant behavior remains unchanged.

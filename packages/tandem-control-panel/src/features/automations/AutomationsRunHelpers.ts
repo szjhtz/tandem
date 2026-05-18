@@ -6,6 +6,7 @@ import {
   workflowDerivedRunStatus,
   workflowEventBlockers,
   workflowFirstPendingTaskId,
+  workflowLifecycleHistory,
   workflowLatestLifecycleTaskId,
   workflowNodeOutputEntries,
   workflowNodeOutputText,
@@ -686,7 +687,11 @@ export function buildRunBlockers(run: any, sessionEvents: any[], runEvents: any[
     }
   }
 
-  workflowEventBlockers([...sessionEvents, ...runEvents]).forEach((blocker) => {
+  const lifecycleEvents = workflowLifecycleHistory(run).map((event: any) => ({
+    event,
+    at: Number(event?.recorded_at_ms || event?.recordedAtMs || 0),
+  }));
+  workflowEventBlockers([...sessionEvents, ...runEvents, ...lifecycleEvents]).forEach((blocker) => {
     push(blocker.key, blocker.title, blocker.reason, blocker.source, blocker.at);
   });
 

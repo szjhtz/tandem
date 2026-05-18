@@ -124,6 +124,7 @@ pub(crate) fn validate_automation_artifact_output_with_context(
     };
     let mut semantic_block_reason = None::<String>;
     let mut unmet_requirements = Vec::<String>::new();
+    let mut missing_required_concrete_mcp_tools = Vec::<String>::new();
     let mut read_only_source_mutations = Vec::<Value>::new();
     if let Some(snapshot) = read_only_source_snapshot {
         read_only_source_mutations = read_only_source_snapshot_mutations(workspace_root, snapshot);
@@ -554,18 +555,22 @@ pub(crate) fn validate_automation_artifact_output_with_context(
         );
         required_concrete_mcp_tools.sort();
         required_concrete_mcp_tools.dedup();
-        let missing_required_concrete_mcp_tool =
-            required_concrete_mcp_tools.iter().any(|required| {
-                !tool_telemetry
-                    .get("executed_tools")
-                    .and_then(Value::as_array)
-                    .is_some_and(|tools| {
-                        tools.iter().filter_map(Value::as_str).any(|tool_name| {
-                            tandem_core::tool_name_matches_policy(required, tool_name)
-                        })
-                    })
-            });
-        if missing_required_concrete_mcp_tool {
+        let executed_tool_values = tool_telemetry
+            .get("executed_tools")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        missing_required_concrete_mcp_tools = required_concrete_mcp_tools
+            .iter()
+            .filter(|required| {
+                !executed_tool_values
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .any(|tool_name| tandem_core::tool_name_matches_policy(required, tool_name))
+            })
+            .cloned()
+            .collect();
+        if !missing_required_concrete_mcp_tools.is_empty() {
             unmet_requirements.push("mcp_required_tool_missing".to_string());
         }
         let prewrite_requirements =
@@ -1596,6 +1601,16 @@ pub(crate) fn validate_automation_artifact_output_with_context(
     warning_requirements.sort();
     warning_requirements.dedup();
     semantic_block_reason = semantic_block_reason_for_requirements(&unmet_requirements);
+    if unmet_requirements
+        .iter()
+        .any(|requirement| requirement == "mcp_required_tool_missing")
+        && !missing_required_concrete_mcp_tools.is_empty()
+    {
+        let missing_tools = missing_required_concrete_mcp_tools.join(", ");
+        semantic_block_reason = Some(format!(
+            "required MCP tool calls were not completed in this attempt: {missing_tools}"
+        ));
+    }
     let missing_required_workspace_files = validation_basis
         .get("must_write_file_statuses")
         .and_then(Value::as_array)
@@ -1946,6 +1961,18 @@ pub(crate) fn validate_automation_artifact_output_with_context(
         required_next_tool_actions.sort();
         required_next_tool_actions.dedup();
     }
+    if !missing_required_concrete_mcp_tools.is_empty() {
+        let missing_tools = missing_required_concrete_mcp_tools
+            .iter()
+            .map(|tool| format!("`{tool}`"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        required_next_tool_actions.push(format!(
+            "Call the required MCP tool(s) {missing_tools} in this same attempt before writing the run artifact."
+        ));
+        required_next_tool_actions.sort();
+        required_next_tool_actions.dedup();
+    }
 
     let metadata = json!({
         "accepted_artifact_path": accepted_output.as_ref().map(|(path, _)| path.clone()),
@@ -2020,6 +2047,7 @@ pub(crate) fn validate_automation_artifact_output_with_context(
         "validation_basis": validation_basis,
         "blocking_classification": blocking_classification,
         "required_next_tool_actions": required_next_tool_actions,
+        "missing_required_mcp_tools": missing_required_concrete_mcp_tools,
         "unmet_requirements": unmet_requirements,
         "warning_requirements": warning_requirements.clone(),
         "warning_count": warning_requirements.len(),

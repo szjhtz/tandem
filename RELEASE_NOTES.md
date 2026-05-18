@@ -68,6 +68,19 @@ and MCP credential boundaries, and vector-backed memory partitioning.
   stats, project vector stats, manual clear, and old-session cleanup.
 - Existing local memory rows default to `local/local` during migration.
 
+### Automation V2 MCP Diagnostics
+
+- Required MCP tool validation now reports the exact missing tool ids in
+  `missing_required_mcp_tools` and in `required_next_tool_actions`, making
+  repair prompts specific instead of saying only that required MCP calls were
+  incomplete.
+- MCP connector results that return string errors such as `MCP error -32602`
+  are now treated as failed tool results, so invalid connector arguments do not
+  satisfy required-tool validation.
+- Automation blocker panels now read checkpoint lifecycle history in addition
+  to node outputs and event streams, surfacing node repair and run pause
+  reasons that were previously hidden behind generic blocked status.
+
 ### Compatibility
 
 - Local/default single-tenant behavior remains unchanged.

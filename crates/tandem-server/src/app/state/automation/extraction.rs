@@ -129,6 +129,8 @@ pub(crate) fn automation_tool_result_failure_reason(result: Option<&Value>) -> O
                 }
                 let lowered = trimmed.to_ascii_lowercase();
                 if lowered.contains("apiresponseerror")
+                    || lowered.starts_with("mcp error ")
+                    || lowered.contains("mcp error -")
                     || (lowered.contains("validation_error") && lowered.contains("\"status\":400"))
                     || lowered.contains("request failed (500)")
                     || lowered.contains("request failed (400)")
@@ -501,6 +503,18 @@ mod tests {
             .expect("connector API errors should not count as successful tool results");
 
         assert!(reason.contains("Invalid select value"));
+    }
+
+    #[test]
+    fn detects_mcp_error_string_result() {
+        let result = json!(
+            "MCP error -32602: Input validation error: Invalid arguments for tool notion-search"
+        );
+
+        let reason = automation_tool_result_failure_reason(Some(&result))
+            .expect("MCP error strings should not count as successful tool results");
+
+        assert!(reason.contains("MCP error -32602"));
     }
 
     #[test]

@@ -562,6 +562,30 @@ export function workflowEventBlockers(
     if (type === "session.error" || type === "run.failed" || type === "routine.run.failed") {
       push(`event-${type}`, "Execution failure", reason || type, "session", at);
     }
+    if (
+      type === "node_repair_requested" ||
+      (type === "workflow_state_changed" &&
+        String(payload?.metadata?.status || payload?.status || "")
+          .trim()
+          .toLowerCase() === "needs_repair")
+    ) {
+      const nodeId = workflowEventNodeId(payload);
+      const classification = String(
+        payload?.metadata?.blocking_classification || payload?.blocking_classification || ""
+      ).trim();
+      push(
+        `repair-${nodeId || type}-${at || blockers.length}`,
+        nodeId ? `Node needs repair: ${nodeId}` : "Node needs repair",
+        [reason || type, classification ? `classification: ${classification}` : ""]
+          .filter(Boolean)
+          .join("\n"),
+        nodeId || "workflow",
+        at
+      );
+    }
+    if (type === "run_paused" && reason) {
+      push(`run-paused-${at || blockers.length}`, "Run paused", reason, "run", at);
+    }
     if (reason.toLowerCase().includes("no further tool calls")) {
       push("tool-mode", "Tool policy blocked progress", reason, "policy", at);
     }
