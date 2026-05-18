@@ -1255,7 +1255,9 @@ pub(super) async fn memory_promote_impl(
         .get_global_memory(&request.source_memory_id)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let Some(source) = source else {
+    let Some(source) =
+        source.filter(|record| memory_record_visible_to_tenant(record, tenant_context))
+    else {
         let scrub_report = ScrubReport {
             status: ScrubStatus::Blocked,
             redactions: 0,
@@ -1567,6 +1569,7 @@ pub(super) async fn memory_search(
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .into_iter()
+        .filter(|hit| memory_record_visible_to_tenant(&hit.record, &tenant_context))
         .filter(|hit| allow_private_results || hit.record.visibility.eq_ignore_ascii_case("shared"))
         .collect::<Vec<_>>()
     };
@@ -1701,7 +1704,9 @@ pub(super) async fn memory_demote(
         .get_global_memory(&input.id)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let Some(record) = record else {
+    let Some(record) =
+        record.filter(|record| memory_record_visible_to_tenant(record, &tenant_context))
+    else {
         emit_missing_memory_demote_audit(
             &state,
             &tenant_context,

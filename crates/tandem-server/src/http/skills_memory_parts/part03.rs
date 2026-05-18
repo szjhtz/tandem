@@ -333,6 +333,7 @@ pub(super) async fn memory_list(
         .await
         .unwrap_or_default()
         .into_iter()
+        .filter(|row| memory_record_visible_to_tenant(row, &tenant_context))
         .map(|row| {
             json!({
                 "id": row.id,
@@ -379,7 +380,9 @@ pub(super) async fn memory_delete(
         .get_global_memory(&id)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let Some(record) = record else {
+    let Some(record) =
+        record.filter(|record| memory_record_visible_to_tenant(record, &tenant_context))
+    else {
         emit_missing_memory_delete_audit(&state, &tenant_context, &id, "memory not found").await?;
         return Err(StatusCode::NOT_FOUND);
     };

@@ -266,6 +266,23 @@ fn record_tenant_context(record: &GlobalMemoryRecord) -> TenantContext {
         .unwrap_or_default()
 }
 
+fn memory_partition_matches_request_tenant(
+    tenant_context: &TenantContext,
+    partition: &tandem_memory::MemoryPartition,
+) -> bool {
+    tenant_context.is_local_implicit()
+        || (tenant_context.org_id == partition.org_id
+            && tenant_context.workspace_id == partition.workspace_id)
+}
+
+fn memory_record_visible_to_tenant(
+    record: &GlobalMemoryRecord,
+    tenant_context: &TenantContext,
+) -> bool {
+    let record_tenant = record_tenant_context(record);
+    super::tenant_matches(tenant_context, &record_tenant)
+}
+
 pub(super) fn skills_service() -> SkillService {
     SkillService::for_workspace(std::env::current_dir().ok())
 }
@@ -1739,6 +1756,17 @@ async fn validate_memory_put_capability_with_guardrail(
             return Err(status);
         }
     };
+    if !memory_partition_matches_request_tenant(tenant_context, &request.partition) {
+        emit_blocked_memory_put_guardrail(
+            state,
+            tenant_context,
+            request,
+            cap.subject.clone(),
+            "partition tenant mismatch",
+        )
+        .await?;
+        return Err(StatusCode::FORBIDDEN);
+    }
     Ok(cap)
 }
 
@@ -1760,6 +1788,17 @@ async fn validate_memory_promote_capability_with_guardrail(
             return Err(status);
         }
     };
+    if !memory_partition_matches_request_tenant(tenant_context, &request.partition) {
+        emit_blocked_memory_promote_guardrail(
+            state,
+            tenant_context,
+            request,
+            cap.subject.clone(),
+            "partition tenant mismatch",
+        )
+        .await?;
+        return Err(StatusCode::FORBIDDEN);
+    }
     Ok(cap)
 }
 
@@ -1796,6 +1835,24 @@ async fn validate_memory_search_capability_with_guardrail(
             .await;
         }
     };
+    if !memory_partition_matches_request_tenant(tenant_context, &request.partition) {
+        let requested_scopes = if request.read_scopes.is_empty() {
+            cap.memory.read_tiers.clone()
+        } else {
+            request.read_scopes.clone()
+        };
+        return emit_blocked_memory_search_guardrail(
+            StatusCode::FORBIDDEN,
+            "partition tenant mismatch",
+            cap.subject.clone(),
+            state,
+            tenant_context,
+            request,
+            &requested_scopes,
+            &request.partition.key(),
+        )
+        .await;
+    }
     Ok(cap)
 }
 
