@@ -275,14 +275,6 @@ fn memory_partition_matches_request_tenant(
             && tenant_context.workspace_id == partition.workspace_id)
 }
 
-fn memory_record_visible_to_tenant(
-    record: &GlobalMemoryRecord,
-    tenant_context: &TenantContext,
-) -> bool {
-    let record_tenant = record_tenant_context(record);
-    super::tenant_matches(tenant_context, &record_tenant)
-}
-
 pub(super) fn skills_service() -> SkillService {
     SkillService::for_workspace(std::env::current_dir().ok())
 }
@@ -1392,7 +1384,10 @@ impl GovernedDistillationWriter {
             )
         })?;
         let existing = db
-            .list_global_memory(
+            .list_global_memory_for_tenant(
+                &self.tenant_context.org_id,
+                &self.tenant_context.workspace_id,
+                self.tenant_context.deployment_id.as_deref(),
                 &self.subject,
                 None,
                 Some(&self.partition.project_id),
@@ -1435,8 +1430,11 @@ impl GovernedDistillationWriter {
                 object.insert("last_distilled_at_ms".to_string(), json!(crate::now_ms()));
             }
             let _ = db
-                .update_global_memory_context(
+                .update_global_memory_context_for_tenant(
                     &existing.id,
+                    &self.tenant_context.org_id,
+                    &self.tenant_context.workspace_id,
+                    self.tenant_context.deployment_id.as_deref(),
                     &existing.visibility,
                     existing.demoted,
                     Some(&next_metadata),

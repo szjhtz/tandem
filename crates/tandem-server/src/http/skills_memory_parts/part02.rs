@@ -1252,12 +1252,15 @@ pub(super) async fn memory_promote_impl(
         .await
         .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
     let source = db
-        .get_global_memory(&request.source_memory_id)
+        .get_global_memory_for_tenant(
+            &request.source_memory_id,
+            &tenant_context.org_id,
+            &tenant_context.workspace_id,
+            tenant_context.deployment_id.as_deref(),
+        )
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let Some(source) =
-        source.filter(|record| memory_record_visible_to_tenant(record, tenant_context))
-    else {
+    let Some(source) = source else {
         let scrub_report = ScrubReport {
             status: ScrubStatus::Blocked,
             redactions: 0,
@@ -1428,8 +1431,11 @@ pub(super) async fn memory_promote_impl(
             Some(&next_provenance),
         ))
     );
-    db.update_global_memory_context(
+    db.update_global_memory_context_for_tenant(
         &new_id,
+        &tenant_context.org_id,
+        &tenant_context.workspace_id,
+        tenant_context.deployment_id.as_deref(),
         "shared",
         false,
         next_metadata.as_ref(),
@@ -1558,7 +1564,10 @@ pub(super) async fn memory_search(
         let db = open_global_memory_db()
             .await
             .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
-        db.search_global_memory(
+        db.search_global_memory_for_tenant(
+            &tenant_context.org_id,
+            &tenant_context.workspace_id,
+            tenant_context.deployment_id.as_deref(),
             &capability.subject,
             &request.query,
             limit,
@@ -1569,7 +1578,6 @@ pub(super) async fn memory_search(
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .into_iter()
-        .filter(|hit| memory_record_visible_to_tenant(&hit.record, &tenant_context))
         .filter(|hit| allow_private_results || hit.record.visibility.eq_ignore_ascii_case("shared"))
         .collect::<Vec<_>>()
     };
@@ -1701,12 +1709,15 @@ pub(super) async fn memory_demote(
         .await
         .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
     let record = db
-        .get_global_memory(&input.id)
+        .get_global_memory_for_tenant(
+            &input.id,
+            &tenant_context.org_id,
+            &tenant_context.workspace_id,
+            tenant_context.deployment_id.as_deref(),
+        )
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let Some(record) =
-        record.filter(|record| memory_record_visible_to_tenant(record, &tenant_context))
-    else {
+    let Some(record) = record else {
         emit_missing_memory_demote_audit(
             &state,
             &tenant_context,
@@ -1718,7 +1729,14 @@ pub(super) async fn memory_demote(
         return Err(StatusCode::NOT_FOUND);
     };
     let changed = db
-        .set_global_memory_visibility(&input.id, "private", true)
+        .set_global_memory_visibility_for_tenant(
+            &input.id,
+            &tenant_context.org_id,
+            &tenant_context.workspace_id,
+            tenant_context.deployment_id.as_deref(),
+            "private",
+            true,
+        )
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     if !changed {

@@ -460,6 +460,9 @@ impl MemoryDatabase {
         conn.execute(
             "CREATE TABLE IF NOT EXISTS memory_records (
                 id TEXT PRIMARY KEY,
+                tenant_org_id TEXT NOT NULL DEFAULT 'local',
+                tenant_workspace_id TEXT NOT NULL DEFAULT 'local',
+                tenant_deployment_id TEXT,
                 user_id TEXT NOT NULL,
                 source_type TEXT NOT NULL,
                 content TEXT NOT NULL,
@@ -484,14 +487,50 @@ impl MemoryDatabase {
             )",
             [],
         )?;
+        let memory_record_cols: HashSet<String> = {
+            let mut stmt = conn.prepare("PRAGMA table_info(memory_records)")?;
+            let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
+            rows.collect::<Result<HashSet<_>, _>>()?
+        };
+        if !memory_record_cols.contains("tenant_org_id") {
+            conn.execute(
+                "ALTER TABLE memory_records ADD COLUMN tenant_org_id TEXT NOT NULL DEFAULT 'local'",
+                [],
+            )?;
+        }
+        if !memory_record_cols.contains("tenant_workspace_id") {
+            conn.execute(
+                "ALTER TABLE memory_records ADD COLUMN tenant_workspace_id TEXT NOT NULL DEFAULT 'local'",
+                [],
+            )?;
+        }
+        if !memory_record_cols.contains("tenant_deployment_id") {
+            conn.execute(
+                "ALTER TABLE memory_records ADD COLUMN tenant_deployment_id TEXT",
+                [],
+            )?;
+        }
+        conn.execute(
+            "UPDATE memory_records
+             SET tenant_org_id = 'local'
+             WHERE tenant_org_id IS NULL OR tenant_org_id = ''",
+            [],
+        )?;
+        conn.execute(
+            "UPDATE memory_records
+             SET tenant_workspace_id = 'local'
+             WHERE tenant_workspace_id IS NULL OR tenant_workspace_id = ''",
+            [],
+        )?;
+        conn.execute("DROP INDEX IF EXISTS idx_memory_records_dedup", [])?;
         conn.execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_memory_records_dedup
-                ON memory_records(user_id, source_type, content_hash, run_id, IFNULL(session_id, ''), IFNULL(message_id, ''), IFNULL(tool_name, ''))",
+                ON memory_records(tenant_org_id, tenant_workspace_id, IFNULL(tenant_deployment_id, ''), user_id, source_type, content_hash, run_id, IFNULL(session_id, ''), IFNULL(message_id, ''), IFNULL(tool_name, ''))",
             [],
         )?;
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_memory_records_user_created
-                ON memory_records(user_id, created_at_ms DESC)",
+                ON memory_records(tenant_org_id, tenant_workspace_id, IFNULL(tenant_deployment_id, ''), user_id, created_at_ms DESC)",
             [],
         )?;
         conn.execute(

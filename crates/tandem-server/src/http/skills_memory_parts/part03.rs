@@ -322,7 +322,10 @@ pub(super) async fn memory_list(
         (None, None) => "default".to_string(),
     };
     let page = if let Some(db) = open_global_memory_db().await {
-        db.list_global_memory(
+        db.list_global_memory_for_tenant(
+            &tenant_context.org_id,
+            &tenant_context.workspace_id,
+            tenant_context.deployment_id.as_deref(),
             &user_id,
             Some(&q),
             query.project_id.as_deref(),
@@ -333,7 +336,6 @@ pub(super) async fn memory_list(
         .await
         .unwrap_or_default()
         .into_iter()
-        .filter(|row| memory_record_visible_to_tenant(row, &tenant_context))
         .map(|row| {
             json!({
                 "id": row.id,
@@ -377,12 +379,15 @@ pub(super) async fn memory_delete(
         .await
         .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
     let record = db
-        .get_global_memory(&id)
+        .get_global_memory_for_tenant(
+            &id,
+            &tenant_context.org_id,
+            &tenant_context.workspace_id,
+            tenant_context.deployment_id.as_deref(),
+        )
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let Some(record) =
-        record.filter(|record| memory_record_visible_to_tenant(record, &tenant_context))
-    else {
+    let Some(record) = record else {
         emit_missing_memory_delete_audit(&state, &tenant_context, &id, "memory not found").await?;
         return Err(StatusCode::NOT_FOUND);
     };
@@ -403,7 +408,12 @@ pub(super) async fn memory_delete(
         return Err(StatusCode::NOT_FOUND);
     }
     let deleted = db
-        .delete_global_memory(&id)
+        .delete_global_memory_for_tenant(
+            &id,
+            &tenant_context.org_id,
+            &tenant_context.workspace_id,
+            tenant_context.deployment_id.as_deref(),
+        )
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     if !deleted {

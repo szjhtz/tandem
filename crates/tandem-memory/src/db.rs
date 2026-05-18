@@ -110,6 +110,38 @@ fn require_scope_id<'a>(tier: MemoryTier, scope: Option<&'a str>) -> MemoryResul
         })
 }
 
+const LOCAL_TENANT_ORG_ID: &str = "local";
+const LOCAL_TENANT_WORKSPACE_ID: &str = "local";
+
+fn global_memory_record_tenant_scope(
+    record: &GlobalMemoryRecord,
+) -> (String, String, Option<String>) {
+    record
+        .provenance
+        .as_ref()
+        .and_then(|value| value.get("tenant_context"))
+        .and_then(memory_tenant_scope_from_value)
+        .unwrap_or_else(|| {
+            (
+                LOCAL_TENANT_ORG_ID.to_string(),
+                LOCAL_TENANT_WORKSPACE_ID.to_string(),
+                None,
+            )
+        })
+}
+
+fn memory_tenant_scope_from_value(
+    value: &serde_json::Value,
+) -> Option<(String, String, Option<String>)> {
+    let org_id = value.get("org_id")?.as_str()?.to_string();
+    let workspace_id = value.get("workspace_id")?.as_str()?.to_string();
+    let deployment_id = value
+        .get("deployment_id")
+        .and_then(|value| value.as_str())
+        .map(ToString::to_string);
+    Some((org_id, workspace_id, deployment_id))
+}
+
 fn row_to_global_record(row: &Row) -> Result<GlobalMemoryRecord, rusqlite::Error> {
     let metadata_str: Option<String> = row.get(12)?;
     let provenance_str: Option<String> = row.get(13)?;
@@ -704,6 +736,102 @@ mod tests {
             .unwrap();
         assert!(!hits.is_empty());
         assert_eq!(hits[0].record.id, "gm-1");
+    }
+
+    #[tokio::test]
+    async fn test_global_memory_tenant_filtered_fts_list_get_and_delete() {
+        let (db, _temp) = setup_test_db().await;
+        let now = chrono::Utc::now().timestamp_millis() as u64;
+        let tenant_a = GlobalMemoryRecord {
+            id: "gm-tenant-a".to_string(),
+            user_id: "same-user".to_string(),
+            source_type: "note".to_string(),
+            content: "shared tenant phrase".to_string(),
+            content_hash: "same-hash".to_string(),
+            run_id: "same-run".to_string(),
+            session_id: Some("same-session".to_string()),
+            message_id: Some("same-message".to_string()),
+            tool_name: None,
+            project_tag: Some("same-project".to_string()),
+            channel_tag: None,
+            host_tag: None,
+            metadata: None,
+            provenance: Some(serde_json::json!({
+                "tenant_context": {
+                    "org_id": "org-a",
+                    "workspace_id": "workspace-a",
+                    "source": "explicit"
+                }
+            })),
+            redaction_status: "passed".to_string(),
+            redaction_count: 0,
+            visibility: "private".to_string(),
+            demoted: false,
+            score_boost: 0.0,
+            created_at_ms: now,
+            updated_at_ms: now,
+            expires_at_ms: None,
+        };
+        let mut tenant_b = tenant_a.clone();
+        tenant_b.id = "gm-tenant-b".to_string();
+        tenant_b.provenance = Some(serde_json::json!({
+            "tenant_context": {
+                "org_id": "org-b",
+                "workspace_id": "workspace-b",
+                "source": "explicit"
+            }
+        }));
+
+        assert!(db.put_global_memory_record(&tenant_a).await.unwrap().stored);
+        assert!(db.put_global_memory_record(&tenant_b).await.unwrap().stored);
+
+        let hits_a = db
+            .search_global_memory_for_tenant(
+                "org-a",
+                "workspace-a",
+                None,
+                "same-user",
+                "shared tenant phrase",
+                10,
+                Some("same-project"),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(hits_a.len(), 1);
+        assert_eq!(hits_a[0].record.id, "gm-tenant-a");
+
+        let rows_b = db
+            .list_global_memory_for_tenant(
+                "org-b",
+                "workspace-b",
+                None,
+                "same-user",
+                Some("shared tenant"),
+                Some("same-project"),
+                None,
+                10,
+                0,
+            )
+            .await
+            .unwrap();
+        assert_eq!(rows_b.len(), 1);
+        assert_eq!(rows_b[0].id, "gm-tenant-b");
+
+        assert!(db
+            .get_global_memory_for_tenant("gm-tenant-b", "org-a", "workspace-a", None)
+            .await
+            .unwrap()
+            .is_none());
+        assert!(!db
+            .delete_global_memory_for_tenant("gm-tenant-b", "org-a", "workspace-a", None)
+            .await
+            .unwrap());
+        assert!(db
+            .delete_global_memory_for_tenant("gm-tenant-b", "org-b", "workspace-b", None)
+            .await
+            .unwrap());
     }
 
     #[tokio::test]

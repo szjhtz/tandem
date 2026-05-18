@@ -575,19 +575,27 @@ impl MemoryDatabase {
         record: &GlobalMemoryRecord,
     ) -> MemoryResult<GlobalMemoryWriteResult> {
         let conn = self.conn.lock().await;
+        let (tenant_org_id, tenant_workspace_id, tenant_deployment_id) =
+            global_memory_record_tenant_scope(record);
 
         let existing: Option<String> = conn
             .query_row(
                 "SELECT id FROM memory_records
-                 WHERE user_id = ?1
-                   AND source_type = ?2
-                   AND content_hash = ?3
-                   AND run_id = ?4
-                   AND IFNULL(session_id, '') = IFNULL(?5, '')
-                   AND IFNULL(message_id, '') = IFNULL(?6, '')
-                   AND IFNULL(tool_name, '') = IFNULL(?7, '')
+                 WHERE tenant_org_id = ?1
+                   AND tenant_workspace_id = ?2
+                   AND IFNULL(tenant_deployment_id, '') = IFNULL(?3, '')
+                   AND user_id = ?4
+                   AND source_type = ?5
+                   AND content_hash = ?6
+                   AND run_id = ?7
+                   AND IFNULL(session_id, '') = IFNULL(?8, '')
+                   AND IFNULL(message_id, '') = IFNULL(?9, '')
+                   AND IFNULL(tool_name, '') = IFNULL(?10, '')
                  LIMIT 1",
                 params![
+                    tenant_org_id,
+                    tenant_workspace_id,
+                    tenant_deployment_id,
                     record.user_id,
                     record.source_type,
                     record.content_hash,
@@ -620,16 +628,21 @@ impl MemoryDatabase {
             .unwrap_or_default();
         conn.execute(
             "INSERT INTO memory_records(
-                id, user_id, source_type, content, content_hash, run_id, session_id, message_id, tool_name,
+                id, tenant_org_id, tenant_workspace_id, tenant_deployment_id,
+                user_id, source_type, content, content_hash, run_id, session_id, message_id, tool_name,
                 project_tag, channel_tag, host_tag, metadata, provenance, redaction_status, redaction_count,
                 visibility, demoted, score_boost, created_at_ms, updated_at_ms, expires_at_ms
             ) VALUES (
-                ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9,
-                ?10, ?11, ?12, ?13, ?14, ?15, ?16,
-                ?17, ?18, ?19, ?20, ?21, ?22
+                ?1, ?2, ?3, ?4,
+                ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12,
+                ?13, ?14, ?15, ?16, ?17, ?18, ?19,
+                ?20, ?21, ?22, ?23, ?24, ?25
             )",
             params![
                 record.id,
+                tenant_org_id,
+                tenant_workspace_id,
+                tenant_deployment_id,
                 record.user_id,
                 record.source_type,
                 record.content,
@@ -659,6 +672,128 @@ impl MemoryDatabase {
             stored: true,
             deduped: false,
         })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn search_global_memory_for_tenant(
+        &self,
+        tenant_org_id: &str,
+        tenant_workspace_id: &str,
+        tenant_deployment_id: Option<&str>,
+        user_id: &str,
+        query: &str,
+        limit: i64,
+        project_tag: Option<&str>,
+        channel_tag: Option<&str>,
+        host_tag: Option<&str>,
+    ) -> MemoryResult<Vec<GlobalMemorySearchHit>> {
+        let conn = self.conn.lock().await;
+        let now_ms = chrono::Utc::now().timestamp_millis();
+        let mut hits = Vec::new();
+
+        let fts_query = build_fts_query(query);
+        let search_limit = limit.clamp(1, 100);
+        let maybe_rows = conn.prepare(
+            "SELECT
+                m.id, m.user_id, m.source_type, m.content, m.content_hash, m.run_id, m.session_id, m.message_id,
+                m.tool_name, m.project_tag, m.channel_tag, m.host_tag, m.metadata, m.provenance,
+                m.redaction_status, m.redaction_count, m.visibility, m.demoted, m.score_boost,
+                m.created_at_ms, m.updated_at_ms, m.expires_at_ms,
+                bm25(memory_records_fts) AS rank
+             FROM memory_records_fts
+             JOIN memory_records m ON m.id = memory_records_fts.id
+             WHERE memory_records_fts MATCH ?1
+               AND m.tenant_org_id = ?2
+               AND m.tenant_workspace_id = ?3
+               AND IFNULL(m.tenant_deployment_id, '') = IFNULL(?4, '')
+               AND m.user_id = ?5
+               AND m.demoted = 0
+               AND (m.expires_at_ms IS NULL OR m.expires_at_ms > ?6)
+               AND (?7 IS NULL OR m.project_tag = ?7)
+               AND (?8 IS NULL OR m.channel_tag = ?8)
+               AND (?9 IS NULL OR m.host_tag = ?9)
+             ORDER BY rank ASC
+             LIMIT ?10"
+        );
+
+        if let Ok(mut stmt) = maybe_rows {
+            let rows = stmt.query_map(
+                params![
+                    fts_query,
+                    tenant_org_id,
+                    tenant_workspace_id,
+                    tenant_deployment_id,
+                    user_id,
+                    now_ms,
+                    project_tag,
+                    channel_tag,
+                    host_tag,
+                    search_limit
+                ],
+                |row| {
+                    let record = row_to_global_record(row)?;
+                    let rank = row.get::<_, f64>(22)?;
+                    let score = 1.0 / (1.0 + rank.max(0.0));
+                    Ok(GlobalMemorySearchHit { record, score })
+                },
+            )?;
+            for row in rows {
+                hits.push(row?);
+            }
+        }
+
+        if !hits.is_empty() {
+            return Ok(hits);
+        }
+
+        let like = format!("%{}%", query.trim());
+        let mut stmt = conn.prepare(
+            "SELECT
+                id, user_id, source_type, content, content_hash, run_id, session_id, message_id,
+                tool_name, project_tag, channel_tag, host_tag, metadata, provenance,
+                redaction_status, redaction_count, visibility, demoted, score_boost,
+                created_at_ms, updated_at_ms, expires_at_ms
+             FROM memory_records
+             WHERE tenant_org_id = ?1
+               AND tenant_workspace_id = ?2
+               AND IFNULL(tenant_deployment_id, '') = IFNULL(?3, '')
+               AND user_id = ?4
+               AND demoted = 0
+               AND (expires_at_ms IS NULL OR expires_at_ms > ?5)
+               AND (?6 IS NULL OR project_tag = ?6)
+               AND (?7 IS NULL OR channel_tag = ?7)
+               AND (?8 IS NULL OR host_tag = ?8)
+               AND (?9 = '' OR content LIKE ?10)
+             ORDER BY created_at_ms DESC
+             LIMIT ?11",
+        )?;
+        let rows = stmt.query_map(
+            params![
+                tenant_org_id,
+                tenant_workspace_id,
+                tenant_deployment_id,
+                user_id,
+                now_ms,
+                project_tag,
+                channel_tag,
+                host_tag,
+                query.trim(),
+                like,
+                search_limit
+            ],
+            |row| {
+                let record = row_to_global_record(row)?;
+                Ok(GlobalMemorySearchHit {
+                    record,
+                    score: 0.25,
+                })
+            },
+        )?;
+        for row in rows {
+            hits.push(row?);
+        }
+
+        Ok(hits)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -813,6 +948,60 @@ impl MemoryDatabase {
         Ok(out)
     }
 
+    pub async fn list_global_memory_for_tenant(
+        &self,
+        tenant_org_id: &str,
+        tenant_workspace_id: &str,
+        tenant_deployment_id: Option<&str>,
+        user_id: &str,
+        q: Option<&str>,
+        project_tag: Option<&str>,
+        channel_tag: Option<&str>,
+        limit: i64,
+        offset: i64,
+    ) -> MemoryResult<Vec<GlobalMemoryRecord>> {
+        let conn = self.conn.lock().await;
+        let query = q.unwrap_or("").trim();
+        let like = format!("%{}%", query);
+        let mut stmt = conn.prepare(
+            "SELECT
+                id, user_id, source_type, content, content_hash, run_id, session_id, message_id,
+                tool_name, project_tag, channel_tag, host_tag, metadata, provenance,
+                redaction_status, redaction_count, visibility, demoted, score_boost,
+                created_at_ms, updated_at_ms, expires_at_ms
+             FROM memory_records
+             WHERE tenant_org_id = ?1
+               AND tenant_workspace_id = ?2
+               AND IFNULL(tenant_deployment_id, '') = IFNULL(?3, '')
+               AND user_id = ?4
+               AND (?5 = '' OR content LIKE ?6 OR source_type LIKE ?6 OR run_id LIKE ?6)
+               AND (?7 IS NULL OR project_tag = ?7)
+               AND (?8 IS NULL OR channel_tag = ?8)
+             ORDER BY created_at_ms DESC
+             LIMIT ?9 OFFSET ?10",
+        )?;
+        let rows = stmt.query_map(
+            params![
+                tenant_org_id,
+                tenant_workspace_id,
+                tenant_deployment_id,
+                user_id,
+                query,
+                like,
+                project_tag,
+                channel_tag,
+                limit.clamp(1, 1000),
+                offset.max(0)
+            ],
+            row_to_global_record,
+        )?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
+    }
+
     pub async fn set_global_memory_visibility(
         &self,
         id: &str,
@@ -826,6 +1015,37 @@ impl MemoryDatabase {
              SET visibility = ?2, demoted = ?3, updated_at_ms = ?4
              WHERE id = ?1",
             params![id, visibility, if demoted { 1i64 } else { 0i64 }, now_ms],
+        )?;
+        Ok(changed > 0)
+    }
+
+    pub async fn set_global_memory_visibility_for_tenant(
+        &self,
+        id: &str,
+        tenant_org_id: &str,
+        tenant_workspace_id: &str,
+        tenant_deployment_id: Option<&str>,
+        visibility: &str,
+        demoted: bool,
+    ) -> MemoryResult<bool> {
+        let conn = self.conn.lock().await;
+        let now_ms = chrono::Utc::now().timestamp_millis();
+        let changed = conn.execute(
+            "UPDATE memory_records
+             SET visibility = ?5, demoted = ?6, updated_at_ms = ?7
+             WHERE id = ?1
+               AND tenant_org_id = ?2
+               AND tenant_workspace_id = ?3
+               AND IFNULL(tenant_deployment_id, '') = IFNULL(?4, '')",
+            params![
+                id,
+                tenant_org_id,
+                tenant_workspace_id,
+                tenant_deployment_id,
+                visibility,
+                if demoted { 1i64 } else { 0i64 },
+                now_ms,
+            ],
         )?;
         Ok(changed > 0)
     }
@@ -858,6 +1078,44 @@ impl MemoryDatabase {
         Ok(changed > 0)
     }
 
+    #[allow(clippy::too_many_arguments)]
+    pub async fn update_global_memory_context_for_tenant(
+        &self,
+        id: &str,
+        tenant_org_id: &str,
+        tenant_workspace_id: &str,
+        tenant_deployment_id: Option<&str>,
+        visibility: &str,
+        demoted: bool,
+        metadata: Option<&serde_json::Value>,
+        provenance: Option<&serde_json::Value>,
+    ) -> MemoryResult<bool> {
+        let conn = self.conn.lock().await;
+        let now_ms = chrono::Utc::now().timestamp_millis();
+        let metadata = metadata.map(ToString::to_string).unwrap_or_default();
+        let provenance = provenance.map(ToString::to_string).unwrap_or_default();
+        let changed = conn.execute(
+            "UPDATE memory_records
+             SET visibility = ?5, demoted = ?6, metadata = ?7, provenance = ?8, updated_at_ms = ?9
+             WHERE id = ?1
+               AND tenant_org_id = ?2
+               AND tenant_workspace_id = ?3
+               AND IFNULL(tenant_deployment_id, '') = IFNULL(?4, '')",
+            params![
+                id,
+                tenant_org_id,
+                tenant_workspace_id,
+                tenant_deployment_id,
+                visibility,
+                if demoted { 1i64 } else { 0i64 },
+                metadata,
+                provenance,
+                now_ms,
+            ],
+        )?;
+        Ok(changed > 0)
+    }
+
     pub async fn get_global_memory(&self, id: &str) -> MemoryResult<Option<GlobalMemoryRecord>> {
         let conn = self.conn.lock().await;
         let mut stmt = conn.prepare(
@@ -876,9 +1134,58 @@ impl MemoryDatabase {
         Ok(record)
     }
 
+    pub async fn get_global_memory_for_tenant(
+        &self,
+        id: &str,
+        tenant_org_id: &str,
+        tenant_workspace_id: &str,
+        tenant_deployment_id: Option<&str>,
+    ) -> MemoryResult<Option<GlobalMemoryRecord>> {
+        let conn = self.conn.lock().await;
+        let mut stmt = conn.prepare(
+            "SELECT
+                id, user_id, source_type, content, content_hash, run_id, session_id, message_id,
+                tool_name, project_tag, channel_tag, host_tag, metadata, provenance,
+                redaction_status, redaction_count, visibility, demoted, score_boost,
+                created_at_ms, updated_at_ms, expires_at_ms
+             FROM memory_records
+             WHERE id = ?1
+               AND tenant_org_id = ?2
+               AND tenant_workspace_id = ?3
+               AND IFNULL(tenant_deployment_id, '') = IFNULL(?4, '')
+             LIMIT 1",
+        )?;
+        let record = stmt
+            .query_row(
+                params![id, tenant_org_id, tenant_workspace_id, tenant_deployment_id],
+                row_to_global_record,
+            )
+            .optional()?;
+        Ok(record)
+    }
+
     pub async fn delete_global_memory(&self, id: &str) -> MemoryResult<bool> {
         let conn = self.conn.lock().await;
         let changed = conn.execute("DELETE FROM memory_records WHERE id = ?1", params![id])?;
+        Ok(changed > 0)
+    }
+
+    pub async fn delete_global_memory_for_tenant(
+        &self,
+        id: &str,
+        tenant_org_id: &str,
+        tenant_workspace_id: &str,
+        tenant_deployment_id: Option<&str>,
+    ) -> MemoryResult<bool> {
+        let conn = self.conn.lock().await;
+        let changed = conn.execute(
+            "DELETE FROM memory_records
+             WHERE id = ?1
+               AND tenant_org_id = ?2
+               AND tenant_workspace_id = ?3
+               AND IFNULL(tenant_deployment_id, '') = IFNULL(?4, '')",
+            params![id, tenant_org_id, tenant_workspace_id, tenant_deployment_id],
+        )?;
         Ok(changed > 0)
     }
 }
