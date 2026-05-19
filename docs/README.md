@@ -14,8 +14,9 @@ For end-user onboarding journeys (install, first run, desktop/CLI paths), use:
 
 - [Design System](./DESIGN_SYSTEM.md) - Detailed style/system notes.
 - [EU AI Act Readiness](./EU_AI_ACT_COMPLIANCE.md) - CISO-facing control mapping, current Tandem coverage, and roadmap gaps.
+- [Compliance Starter Pack](./compliance/README.md) - Public EU AI Act starter docs for deployers, CISOs, and compliance teams.
 - [Engine Protocol Matrix](./ENGINE_PROTOCOL_MATRIX.md) - Wire contracts and status.
-- [Engine Context-Driving Runtime](./ENGINE_CONTEXT_DRIVING_RUNTIME.md) - Engine source-of-truth runtime for long-running context, replay, and guardrails.
+- [AI Runtime Infrastructure](./AI_RUNTIME_INFRASTRUCTURE.md) - Engine source-of-truth runtime for long-running context, replay, and guardrails.
 - [MCP Improvements](./MCP_IMPROVEMENTS.md) - Connector tools, MCP discovery, and allowlist design.
 - [GitHub Projects via MCP](./MCP_IMPROVEMENTS.md#implementation-note-github-projects-via-mcp) - Tandem auto-registers the official GitHub MCP server when a PAT is available, so GitHub Projects work without manual `mcp add`.
 - [Workflow Automation Runtime](./WORKFLOW_RUNTIME.md) - How Tandem's workflow runtime produces verifiable, trustworthy artifacts across multi-stage AI pipelines.

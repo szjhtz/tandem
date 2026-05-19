@@ -1,0 +1,38 @@
+# EU AI Act Control Mapping
+
+This document maps selected EU AI Act requirements to Tandem's current support, deployer responsibilities, and planned Tandem work. It is a starter control map, not a legal determination or complete conformity assessment.
+
+## Summary
+
+Tandem is strongest today as governed runtime infrastructure: it records durable runs, scopes tools, pauses work at approval gates, captures artifacts and validation state, and can fail closed for protected financial actions when matching approval evidence is missing.
+
+The main remaining work is to convert these runtime primitives into more complete compliance operations: tamper-evident logs, immutable exports, systematic Article 50 labels, richer deployer instructions, enterprise identity/RBAC, formal assurance metrics, and deployment-specific documentation.
+
+## Mapping
+
+| AI Act area                                      | Current support                                                                                                                                                                                                                                                       | User/deployer responsibility                                                                                                                                                                                          | Planned Tandem work                                                                                                                                                    |
+| ------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Article 11 - Technical documentation             | Public docs describe runtime architecture, workflow execution, logging, enterprise readiness, and AI quality practices. Source-available modules expose tenant context, approval gates, protected audit envelopes, tool policy, and fintech strict-mode enforcement.  | Prepare deployment-specific technical documentation, intended purpose, data flows, model/provider inventory, instructions for use, and limitations. Validate that the actual use case matches documented assumptions. | Provide Annex IV templates, system cards, architecture diagrams, model/provider inventory guidance, and clearer responsibility mapping.                                |
+| Article 12 - Record-keeping                      | Tandem stores durable run state, automation attempt receipts, protected audit envelopes, approval history, artifact validation metadata, and selected admin audit stream events.                                                                                      | Configure retention and access controls. Preserve logs under the deployer's control where required. Decide which records contain personal data and align retention with GDPR and sector rules.                        | Add hash-chained logs, immutable/WORM storage integrations, SIEM export, log completeness checks, and audit export manifests.                                          |
+| Article 14 - Human oversight                     | Automation V2 can pause runs on approval gates. Operators can approve, rework, or cancel. Protected fintech actions can require matching tenant-scoped approval receipts at tool execution time.                                                                      | Assign qualified human reviewers. Define approval policies, escalation paths, dual-control needs, and protected actions. Train operators to review AI-generated outputs critically.                                   | Add role-based approval assignment, dual-control policies, operator guidance, stronger enterprise policy enforcement, and improved oversight UI.                       |
+| Article 15 - Accuracy, robustness, cybersecurity | Tandem separates model reasoning from execution authority. Runtime policy can scope tools, enforce tenant context, block read-only source mutation, and deny protected actions. Workflows include artifact contracts, validation metadata, repair loops, and QA docs. | Define acceptable accuracy and robustness thresholds for each workflow. Monitor failures, overrides, and incidents. Validate connected systems and data sources.                                                      | Publish workflow-class metrics, add adversarial and prompt-injection regression suites, expand protected tool tests, and document threat models and incident runbooks. |
+| Article 26 - Deployer obligations                | Tandem provides runtime evidence that can help deployers monitor operation, inspect approvals, review artifacts, and preserve execution records.                                                                                                                      | Use Tandem according to instructions, monitor operation, keep required logs, assign oversight, report incidents where required, and suspend unsafe workflows.                                                         | Add deployer-facing instructions, retention configuration guidance, incident workflow templates, and audit packet exports.                                             |
+| Article 50 - Transparency                        | Tandem has runtime provenance for generated plans, artifacts, and AI-assisted outputs.                                                                                                                                                                                | Disclose AI interaction and AI-generated content to affected users where required. Review generated content before external use.                                                                                      | Add visible `AI-Generated` badges across desktop and web surfaces, accessible tooltip text, and provenance metadata in exports where practical.                        |
+
+## Evidence Paths
+
+- Readiness overview: [../EU_AI_ACT_COMPLIANCE.md](../EU_AI_ACT_COMPLIANCE.md)
+- Runtime architecture: [../AI_RUNTIME_INFRASTRUCTURE.md](../AI_RUNTIME_INFRASTRUCTURE.md)
+- Enterprise readiness: [../ENTERPRISE_READINESS.md](../ENTERPRISE_READINESS.md)
+- Workflow runtime: [../WORKFLOW_RUNTIME.md](../WORKFLOW_RUNTIME.md)
+- Logging schema: [../LOGGING_SCHEMA.md](../LOGGING_SCHEMA.md)
+- AI quality assurance: [../user/AI_QUALITY_ASSURANCE.md](../user/AI_QUALITY_ASSURANCE.md)
+
+## Deployment Review Checklist
+
+- Identify whether the workflow materially influences decisions about natural persons.
+- Identify all protected actions and make them approval-gated or blocked by default.
+- Decide log retention, export, and access controls before production use.
+- Document the human oversight process and reviewer qualifications.
+- Label generated or AI-assisted content in user-facing workflows.
+- Record limitations, residual risks, and deployer-owned controls.

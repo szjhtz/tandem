@@ -37,7 +37,7 @@ Tandem introduces **Spec-Driven Agentic Engineering**. We treat autonomous execu
 
 `Intent -> Plan Bundle -> Scoped Execution -> Approvals -> Artifacts -> Audit Trail`
 
-**-> [AI runtime infrastructure](docs/AI_RUNTIME_INFRASTRUCTURE.md) | [Enterprise readiness](docs/ENTERPRISE_READINESS.md) | [Proof walkthrough](docs/ENTERPRISE_PROOF_WALKTHROUGH.md) | [Connect an agent via MCP](https://tandem.ac/docs-mcp)**
+**-> [AI runtime infrastructure](docs/AI_RUNTIME_INFRASTRUCTURE.md) | [Enterprise readiness](docs/ENTERPRISE_READINESS.md) | [EU AI Act readiness](docs/EU_AI_ACT_COMPLIANCE.md) | [Compliance starter pack](docs/compliance/README.md) | [Connect an agent via MCP](https://tandem.ac/docs-mcp)**
 
 ## Why Platform Teams Care
 
@@ -48,6 +48,10 @@ Tandem is designed for teams that need to run AI work under real operational con
 - **Replayable runs:** Durable run journals, checkpoints, blackboards, and artifacts make failures debuggable instead of buried in a chat transcript.
 - **Auditable actions:** Approval decisions, policy denials, provider secret changes, MCP activity, and tool ledger events can be written as protected audit records.
 - **Self-hostable runtime:** The engine can run locally or headlessly, with a public/private enterprise split planned around a sidecar rather than a closed fork.
+
+## Compliance and AI Act readiness
+
+Tandem helps teams operate AI workflows with human oversight, scoped tools, durable execution evidence, and protected-action controls. For regulated or security-sensitive deployments, start with the [EU AI Act readiness brief](docs/EU_AI_ACT_COMPLIANCE.md), then use the [Compliance Starter Pack](docs/compliance/README.md) for control mapping, Article 50 transparency guidance, deployer instructions, an Annex IV documentation template, and a limitations/responsibility matrix.
 
 ## 30-second quickstart
 
