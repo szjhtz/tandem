@@ -266,14 +266,20 @@ fn approval_artifact_preview_section(node_id: &str, value: &Value) -> Option<Str
             .unwrap_or(!rows.is_empty());
         let _ = writeln!(
             section,
-            "- Proposed Notion rows: **{}**{}",
+            "- Proposed contact rows: **{}**{}",
             rows.len(),
             if has_rows {
                 ""
             } else {
-                " (writer should no-op)"
+                " (contact writer should no-op)"
             }
         );
+        if !has_rows {
+            let _ = writeln!(
+                section,
+                "- Company Research Status updates are still expected for every selected company."
+            );
+        }
         append_contact_rows_preview(&mut section, rows);
         return Some(section);
     }
@@ -322,6 +328,20 @@ fn approval_artifact_preview_section(node_id: &str, value: &Value) -> Option<Str
         if !company_names.is_empty() {
             let _ = writeln!(section, "- Companies checked: {company_names}");
         }
+        if candidate_count == 0 {
+            let status_notes = companies
+                .iter()
+                .filter_map(company_status_preview)
+                .take(8)
+                .collect::<Vec<_>>();
+            if !status_notes.is_empty() {
+                let _ = writeln!(
+                    section,
+                    "- Company Research Status outcomes to record: {}",
+                    status_notes.join("; ")
+                );
+            }
+        }
         return Some(section);
     }
 
@@ -344,7 +364,7 @@ fn approval_artifact_preview_section(node_id: &str, value: &Value) -> Option<Str
 
 fn append_contact_rows_preview(section: &mut String, rows: &[Value]) {
     if rows.is_empty() {
-        let _ = writeln!(section, "- No rows are ready to write.");
+        let _ = writeln!(section, "- No contact rows are ready to write.");
         return;
     }
 
@@ -367,6 +387,39 @@ fn append_contact_rows_preview(section: &mut String, rows: &[Value]) {
     if rows.len() > 10 {
         let _ = writeln!(section, "\n_Showing 10 of {} proposed rows._", rows.len());
     }
+}
+
+fn company_status_preview(company: &Value) -> Option<String> {
+    let name = company.get("company").and_then(Value::as_str)?.trim();
+    if name.is_empty() {
+        return None;
+    }
+    let status = match company
+        .get("domain_resolution_status")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+    {
+        "not_found" | "ambiguous" => "no_domain",
+        "tool_failed" => "retry_later",
+        _ => {
+            let candidate_count = company
+                .get("candidate_count")
+                .and_then(Value::as_u64)
+                .unwrap_or_else(|| array_len(company, "candidates") as u64);
+            let hunter_checked = company
+                .get("hunter_checked")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            if hunter_checked && candidate_count == 0 {
+                "no_hunter_results"
+            } else if candidate_count == 0 {
+                "no_relevant_contacts"
+            } else {
+                "contacts_found"
+            }
+        }
+    };
+    Some(format!("{name} -> {status}"))
 }
 
 fn first_string<'a>(value: &'a Value, keys: &[&str]) -> &'a str {

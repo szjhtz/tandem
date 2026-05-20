@@ -111,7 +111,7 @@ async fn approvals_pending_endpoint_surfaces_automation_v2_awaiting_gate() {
         .and_then(Value::as_str)
         .expect("approval preview markdown");
     assert!(
-        preview.contains("Proposed Notion rows: **1**"),
+        preview.contains("Proposed contact rows: **1**"),
         "preview should summarize proposed writes: {preview}"
     );
     assert!(
@@ -148,6 +148,137 @@ async fn approvals_pending_endpoint_surfaces_automation_v2_awaiting_gate() {
 
     let count = payload.get("count").and_then(Value::as_u64).unwrap_or(0);
     assert!(count >= 1);
+    let _ = std::fs::remove_dir_all(workspace_root);
+}
+
+#[tokio::test]
+async fn approvals_pending_endpoint_surfaces_zero_contact_company_status_work() {
+    let state = test_state().await;
+    let app = app_router(state.clone());
+    let automation = create_test_automation_v2(&state, "auto-v2-zero-contact-approval").await;
+    let run = state
+        .create_automation_v2_run(&automation, "manual")
+        .await
+        .expect("run");
+    let workspace_root = std::env::temp_dir().join(format!(
+        "tandem-zero-contact-approval-{}",
+        uuid::Uuid::new_v4()
+    ));
+    let artifact_dir = workspace_root
+        .join(".tandem")
+        .join("runs")
+        .join(&run.run_id)
+        .join("artifacts");
+    std::fs::create_dir_all(&artifact_dir).expect("artifact dir");
+    std::fs::write(
+        artifact_dir.join("discover-contact-candidates.json"),
+        serde_json::json!({
+            "schema_version": "1",
+            "has_candidates": false,
+            "candidates_by_company": [
+                {
+                    "company": "Pirkka-cola (Kesko)",
+                    "domain": "k-ryhma.fi",
+                    "domain_resolution_status": "resolved",
+                    "hunter_checked": true,
+                    "candidate_count": 0,
+                    "candidates": []
+                },
+                {
+                    "company": "Coinmotion",
+                    "domain": null,
+                    "domain_resolution_status": "not_found",
+                    "hunter_checked": false,
+                    "candidate_count": 0,
+                    "candidates": []
+                }
+            ]
+        })
+        .to_string(),
+    )
+    .expect("write discovery artifact");
+    std::fs::write(
+        artifact_dir.join("enrich-and-verify-contacts.json"),
+        serde_json::json!({
+            "schema_version": "1",
+            "has_rows_to_write": false,
+            "ready_to_write": [],
+            "duplicates_or_skipped": []
+        })
+        .to_string(),
+    )
+    .expect("write enrichment artifact");
+
+    state
+        .update_automation_v2_run(&run.run_id, |row| {
+            row.status = crate::AutomationRunStatus::AwaitingApproval;
+            if let Some(snapshot) = row.automation_snapshot.as_mut() {
+                snapshot.workspace_root = Some(workspace_root.to_string_lossy().to_string());
+            }
+            row.checkpoint.awaiting_gate = Some(crate::AutomationPendingGate {
+                node_id: "write-contacts-to-notion".to_string(),
+                title: "Write contacts to Notion".to_string(),
+                instructions: Some("approve company status writes".to_string()),
+                decisions: vec!["approve".to_string(), "cancel".to_string()],
+                rework_targets: vec!["enrich-and-verify-contacts".to_string()],
+                requested_at_ms: crate::now_ms(),
+                upstream_node_ids: vec![
+                    "discover-contact-candidates".to_string(),
+                    "enrich-and-verify-contacts".to_string(),
+                ],
+                metadata: None,
+            });
+        })
+        .await
+        .expect("updated run");
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/approvals/pending")
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(resp.status(), 200);
+
+    let body = to_bytes(resp.into_body(), 1_000_000)
+        .await
+        .expect("body bytes");
+    let payload: Value = serde_json::from_slice(&body).expect("json body");
+    let approvals = payload
+        .get("approvals")
+        .and_then(Value::as_array)
+        .expect("approvals array");
+    let approval = approvals
+        .iter()
+        .find(|approval| {
+            approval.get("run_id").and_then(Value::as_str) == Some(run.run_id.as_str())
+        })
+        .expect("created approval should be listed");
+    let preview = approval
+        .get("action_preview_markdown")
+        .and_then(Value::as_str)
+        .expect("approval preview markdown");
+    assert!(
+        preview.contains("Proposed contact rows: **0**"),
+        "preview should show zero contact rows: {preview}"
+    );
+    assert!(
+        preview.contains("Company Research Status updates are still expected"),
+        "preview should say company status writes still happen: {preview}"
+    );
+    assert!(
+        preview.contains("Pirkka-cola (Kesko) -> no_hunter_results"),
+        "preview should include terminal zero-contact status: {preview}"
+    );
+    assert!(
+        preview.contains("Coinmotion -> no_domain"),
+        "preview should include no-domain status: {preview}"
+    );
+
     let _ = std::fs::remove_dir_all(workspace_root);
 }
 
