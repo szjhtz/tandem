@@ -682,6 +682,165 @@ impl VerifiedTenantContext {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DataBoundary {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub allowed_data_classes: Vec<DataClass>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub denied_data_classes: Vec<DataClass>,
+}
+
+impl DataBoundary {
+    pub fn unrestricted() -> Self {
+        Self {
+            allowed_data_classes: Vec::new(),
+            denied_data_classes: Vec::new(),
+        }
+    }
+
+    pub fn allow(data_classes: Vec<DataClass>) -> Self {
+        Self {
+            allowed_data_classes: data_classes,
+            denied_data_classes: Vec::new(),
+        }
+    }
+
+    pub fn allows(&self, data_class: DataClass) -> bool {
+        if self.denied_data_classes.contains(&data_class) {
+            return false;
+        }
+        self.allowed_data_classes.is_empty() || self.allowed_data_classes.contains(&data_class)
+    }
+}
+
+impl Default for DataBoundary {
+    fn default() -> Self {
+        Self::unrestricted()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AssertionMetadata {
+    pub issuer: String,
+    pub audience: String,
+    pub issued_at_ms: u64,
+    pub expires_at_ms: u64,
+    pub assertion_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub purpose: Option<String>,
+}
+
+impl AssertionMetadata {
+    pub fn new(
+        issuer: impl Into<String>,
+        audience: impl Into<String>,
+        issued_at_ms: u64,
+        expires_at_ms: u64,
+        assertion_id: impl Into<String>,
+    ) -> Self {
+        Self {
+            issuer: issuer.into(),
+            audience: audience.into(),
+            issued_at_ms,
+            expires_at_ms,
+            assertion_id: assertion_id.into(),
+            key_id: None,
+            purpose: None,
+        }
+    }
+
+    pub fn with_key_id(mut self, key_id: impl Into<String>) -> Self {
+        self.key_id = Some(key_id.into());
+        self
+    }
+
+    pub fn with_purpose(mut self, purpose: impl Into<String>) -> Self {
+        self.purpose = Some(purpose.into());
+        self
+    }
+
+    pub fn is_expired_at(&self, now_ms: u64) -> bool {
+        self.expires_at_ms <= now_ms
+    }
+}
+
+impl From<&VerifiedTenantContext> for AssertionMetadata {
+    fn from(context: &VerifiedTenantContext) -> Self {
+        Self {
+            issuer: context.issuer.clone(),
+            audience: context.audience.clone(),
+            issued_at_ms: context.issued_at_ms,
+            expires_at_ms: context.expires_at_ms,
+            assertion_id: context.assertion_id.clone(),
+            key_id: None,
+            purpose: Some("context_assertion".to_string()),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StrictTenantContext {
+    pub tenant_context: TenantContext,
+    pub principal: PrincipalRef,
+    pub authority_chain: AuthorityChain,
+    pub resource_scope: ResourceScope,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub grants: Vec<ScopedGrant>,
+    #[serde(default)]
+    pub data_boundary: DataBoundary,
+    pub assertion: AssertionMetadata,
+}
+
+impl StrictTenantContext {
+    pub fn new(
+        tenant_context: TenantContext,
+        principal: PrincipalRef,
+        authority_chain: AuthorityChain,
+        resource_scope: ResourceScope,
+        assertion: AssertionMetadata,
+    ) -> Self {
+        Self {
+            tenant_context,
+            principal,
+            authority_chain,
+            resource_scope,
+            grants: Vec::new(),
+            data_boundary: DataBoundary::default(),
+            assertion,
+        }
+    }
+
+    pub fn with_grants(mut self, grants: Vec<ScopedGrant>) -> Self {
+        self.grants = grants;
+        self
+    }
+
+    pub fn with_data_boundary(mut self, data_boundary: DataBoundary) -> Self {
+        self.data_boundary = data_boundary;
+        self
+    }
+
+    pub fn is_expired_at(&self, now_ms: u64) -> bool {
+        self.assertion.is_expired_at(now_ms)
+    }
+
+    pub fn allows_data_class(&self, data_class: DataClass) -> bool {
+        self.data_boundary.allows(data_class)
+            && self
+                .grants
+                .iter()
+                .any(|grant| grant.allows_data_class(data_class))
+    }
+
+    pub fn has_permission(&self, permission: AccessPermission) -> bool {
+        self.grants
+            .iter()
+            .any(|grant| grant.has_permission(permission))
+    }
+}
+
 impl From<LocalImplicitTenant> for TenantContext {
     fn from(_: LocalImplicitTenant) -> Self {
         Self::local_implicit()
@@ -1219,5 +1378,134 @@ mod tests {
         assert_eq!(encoded["principal"]["kind"], "external_delegate");
         assert_eq!(encoded["grant_source"], "delegation");
         assert_eq!(encoded["delegation_id"], "delegation-123");
+    }
+
+    #[test]
+    fn assertion_metadata_derives_from_verified_tenant_context() {
+        let tenant = TenantContext::explicit_user_workspace(
+            "org-a",
+            "workspace-a",
+            Some("deployment-a".to_string()),
+            "user-a",
+        );
+        let principal = RequestPrincipal::authenticated_user("user-a", "tandem-web");
+        let verified = VerifiedTenantContext {
+            tenant_context: tenant,
+            human_actor: HumanActor::tandem_user("user-a"),
+            authority_chain: AuthorityChain::from_request(principal),
+            issuer: "tandem-web".to_string(),
+            audience: "tandem-runtime".to_string(),
+            issued_at_ms: 1_000,
+            expires_at_ms: 2_000,
+            assertion_id: "assertion-123".to_string(),
+        };
+
+        let metadata = AssertionMetadata::from(&verified);
+
+        assert_eq!(metadata.issuer, "tandem-web");
+        assert_eq!(metadata.audience, "tandem-runtime");
+        assert_eq!(metadata.assertion_id, "assertion-123");
+        assert_eq!(metadata.purpose.as_deref(), Some("context_assertion"));
+        assert!(!metadata.is_expired_at(1_999));
+        assert!(metadata.is_expired_at(2_000));
+    }
+
+    #[test]
+    fn data_boundary_denies_explicitly_blocked_classes() {
+        let boundary = DataBoundary {
+            allowed_data_classes: vec![DataClass::Internal, DataClass::Executive],
+            denied_data_classes: vec![DataClass::Executive],
+        };
+
+        assert!(boundary.allows(DataClass::Internal));
+        assert!(!boundary.allows(DataClass::Executive));
+        assert!(!boundary.allows(DataClass::FinancialRecord));
+    }
+
+    #[test]
+    fn strict_tenant_context_round_trips_project_scoped_agent_projection() {
+        let tenant_context = TenantContext::explicit_user_workspace(
+            "acme",
+            "engineering",
+            Some("deployment-prod".to_string()),
+            "user-eng",
+        );
+        let request_principal = RequestPrincipal::authenticated_user("user-eng", "tandem-web");
+        let authority_chain = AuthorityChain::from_request(request_principal);
+        let agent =
+            PrincipalRef::agent_worker("agent-platform-fix").with_tenant_actor_id("user-eng");
+        let project = ResourceRef::new("acme", "engineering", ResourceKind::Project, "platform");
+        let repository =
+            ResourceRef::new("acme", "engineering", ResourceKind::Repository, "tandem")
+                .with_project_id("platform")
+                .with_path_prefix("crates/tandem-enterprise-contract/");
+        let resource_scope = ResourceScope {
+            root: project,
+            allowed_resources: vec![repository.clone()],
+            denied_resources: vec![ResourceRef::new(
+                "acme",
+                "engineering",
+                ResourceKind::Directory,
+                "restricted",
+            )
+            .with_project_id("platform")
+            .with_path_prefix("crates/tandem-enterprise-contract/restricted/")],
+            max_depth: Some(5),
+        };
+        let grant = ScopedGrant::new(
+            "grant-agent-platform-edit",
+            agent.clone(),
+            repository,
+            GrantSource::Delegation,
+        )
+        .with_permissions(vec![
+            AccessPermission::View,
+            AccessPermission::Read,
+            AccessPermission::Edit,
+        ])
+        .with_data_classes(vec![DataClass::SourceCode, DataClass::Internal])
+        .with_delegation_id("delegation-platform-fix")
+        .with_expires_at_ms(2_000);
+        let context = StrictTenantContext::new(
+            tenant_context,
+            agent,
+            authority_chain,
+            resource_scope,
+            AssertionMetadata::new(
+                "tandem-web",
+                "tandem-runtime",
+                1_000,
+                2_000,
+                "assertion-platform-fix",
+            )
+            .with_key_id("deployment-prod-ctx-2026-05-01")
+            .with_purpose("context_assertion"),
+        )
+        .with_grants(vec![grant])
+        .with_data_boundary(DataBoundary::allow(vec![
+            DataClass::SourceCode,
+            DataClass::Internal,
+        ]));
+
+        assert!(context.has_permission(AccessPermission::Edit));
+        assert!(!context.has_permission(AccessPermission::Execute));
+        assert!(context.allows_data_class(DataClass::SourceCode));
+        assert!(!context.allows_data_class(DataClass::Executive));
+        assert!(!context.is_expired_at(1_999));
+        assert!(context.is_expired_at(2_000));
+
+        let decoded: StrictTenantContext = serde_json::from_value(
+            serde_json::to_value(&context).expect("serialize strict context"),
+        )
+        .expect("deserialize strict context");
+        assert_eq!(decoded, context);
+        assert_eq!(
+            decoded.grants[0].delegation_id.as_deref(),
+            Some("delegation-platform-fix")
+        );
+        assert_eq!(
+            decoded.assertion.key_id.as_deref(),
+            Some("deployment-prod-ctx-2026-05-01")
+        );
     }
 }

@@ -28,11 +28,15 @@ and resource grants.
   assignment, group membership, department membership, inherited grants,
   explicit executive/global grants, delegated projections, or break-glass
   authority.
+- Added `StrictTenantContext`, `DataBoundary`, and `AssertionMetadata` as the
+  additive strict context object for hosted/enterprise projections over tenant
+  context, principals, authority chains, resource scopes, grants, data-class
+  boundaries, and signed assertion metadata.
 - Re-exported the new contract vocabulary through `tandem-types`.
 - Added contract tests covering Finance department data access, Engineering
   repository path scopes, cross-functional group access, CEO org-wide executive
-  grants, MCP tool resource targets, and expiring delegated vendor-agent
-  access.
+  grants, MCP tool resource targets, expiring delegated vendor-agent access,
+  data-boundary denials, and project-scoped agent projections.
 
 ### Hosted Runtime Ingress
 
