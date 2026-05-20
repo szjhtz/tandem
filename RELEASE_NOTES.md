@@ -47,9 +47,6 @@ and resource grants.
   bind a public key to the `context_assertion` purpose, org/deployment,
   allowed audiences, allowed resource-scope prefixes, activation windows, and
   active status while preserving legacy string and delimited key formats.
-- Added an enterprise signing-key rotation runbook covering purpose-specific
-  overlap, rollback, emergency revocation, verifier deployment, and validation
-  checks.
 - Re-exported the new contract vocabulary through `tandem-types`.
 - Added contract tests covering Finance department data access, Engineering
   repository path scopes, cross-functional group access, CEO org-wide executive
