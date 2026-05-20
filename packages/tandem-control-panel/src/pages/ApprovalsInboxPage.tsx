@@ -124,6 +124,17 @@ function decisionLabel(decision: DecisionKind): string {
   }
 }
 
+function decisionPastTenseLabel(decision: DecisionKind): string {
+  switch (decision) {
+    case "approve":
+      return "Approved";
+    case "rework":
+      return "Sent back for rework";
+    case "cancel":
+      return "Rejected";
+  }
+}
+
 export function ApprovalsInboxPage({ toast }: AppPageProps) {
   const queryClient = useQueryClient();
   const [reasonByRequest, setReasonByRequest] = useState<Record<string, string>>({});
@@ -151,7 +162,9 @@ export function ApprovalsInboxPage({ toast }: AppPageProps) {
       if (result.ok) {
         toast(
           "ok",
-          `${decisionLabel(vars.decision)}d gate ${vars.request.workflow_name || vars.request.run_id}`
+          `${decisionPastTenseLabel(vars.decision)} gate ${
+            vars.request.workflow_name || vars.request.run_id
+          }`
         );
       } else {
         toast("warn", `Already decided by ${result.alreadyDecidedBy || "another operator"}.`);

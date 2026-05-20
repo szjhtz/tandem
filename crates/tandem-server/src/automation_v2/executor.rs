@@ -811,10 +811,26 @@ fn relax_yolo_non_safety_blocker_output(
 /// node that is marked as a triage gate found no work.
 ///
 /// The triage node signals this by having `metadata.triage_gate == true` in
-/// the automation spec, and outputting `{"content": {"has_work": false}}`.
+/// the automation spec, and outputting `has_work:false` either directly in
+/// `content` or in the structured artifact handoff under
+/// `content.structured_handoff`.
 /// When skipped, downstream nodes are also unconditionally skipped via the
 /// same check (`should_skip_due_to_triage_gate` is called for every pending
 /// node each loop iteration after the triage output lands).
+fn triage_output_has_work(output: &serde_json::Value) -> Option<bool> {
+    output
+        .get("content")
+        .and_then(|content| {
+            content.get("has_work").or_else(|| {
+                content
+                    .get("structured_handoff")
+                    .and_then(|handoff| handoff.get("has_work"))
+            })
+        })
+        .and_then(serde_json::Value::as_bool)
+        .or_else(|| output.get("has_work").and_then(serde_json::Value::as_bool))
+}
+
 fn should_skip_due_to_triage_gate(
     node: &crate::automation_v2::types::AutomationFlowNode,
     node_outputs: &std::collections::HashMap<String, serde_json::Value>,
@@ -845,9 +861,7 @@ fn should_skip_due_to_triage_gate(
         }
         let has_work = node_outputs
             .get(dep_id)
-            .and_then(|o| o.get("content"))
-            .and_then(|c| c.get("has_work"))
-            .and_then(serde_json::Value::as_bool)
+            .and_then(triage_output_has_work)
             .unwrap_or(true); // default: proceed (don't skip) if field is absent
         if !has_work {
             return true;

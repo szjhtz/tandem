@@ -126,6 +126,60 @@ fn test_node(
     }
 }
 
+fn test_triage_node(node_id: &str) -> crate::automation_v2::types::AutomationFlowNode {
+    let mut node = test_node(node_id, Vec::new());
+    node.metadata = Some(json!({ "triage_gate": true }));
+    node
+}
+
+#[test]
+fn triage_gate_skips_dependency_with_direct_has_work_false() {
+    let triage = test_triage_node("select");
+    let writer = test_node("write", vec!["select"]);
+    let outputs = std::collections::HashMap::from([(
+        "select".to_string(),
+        json!({ "content": { "has_work": false } }),
+    )]);
+
+    assert!(should_skip_due_to_triage_gate(
+        &writer,
+        &outputs,
+        &[triage, writer.clone()]
+    ));
+}
+
+#[test]
+fn triage_gate_skips_dependency_with_structured_handoff_has_work_false() {
+    let triage = test_triage_node("select");
+    let writer = test_node("write", vec!["select"]);
+    let outputs = std::collections::HashMap::from([(
+        "select".to_string(),
+        json!({ "content": { "structured_handoff": { "has_work": false } } }),
+    )]);
+
+    assert!(should_skip_due_to_triage_gate(
+        &writer,
+        &outputs,
+        &[triage, writer.clone()]
+    ));
+}
+
+#[test]
+fn triage_gate_does_not_skip_when_has_work_is_true() {
+    let triage = test_triage_node("select");
+    let writer = test_node("write", vec!["select"]);
+    let outputs = std::collections::HashMap::from([(
+        "select".to_string(),
+        json!({ "content": { "structured_handoff": { "has_work": true } } }),
+    )]);
+
+    assert!(!should_skip_due_to_triage_gate(
+        &writer,
+        &outputs,
+        &[triage, writer.clone()]
+    ));
+}
+
 #[test]
 fn approval_rejection_rollback_prefers_derived_review_dependency() {
     let mut automation = test_automation();
