@@ -149,7 +149,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   impact endpoint and control-panel view for revoke/rotate response handling.
   Admins can inspect affected source bindings, source objects, ingestion jobs,
   quarantines, compromise-window timing, cache-invalidation need, and
-  recommended response actions for a connector.
+  recommended response actions for a connector. The compromise window now uses
+  source-object lifecycle timestamps as well as ingestion and quarantine audit
+  records.
 
 ### Documentation
 

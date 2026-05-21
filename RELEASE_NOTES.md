@@ -142,7 +142,9 @@ production connector ingestion flows remain follow-up implementation phases.
 - Connector revoke/rotate response handling now has an admin-visible impact
   summary. The runtime and hidden Enterprise admin page can report affected
   bindings, source objects, ingestion jobs, quarantines, compromise window, and
-  recommended response actions for a connector.
+  recommended response actions for a connector. Compromise-window timing includes
+  source-object lifecycle timestamps so uploaded/indexed content bounds the
+  audit window.
 - Ingestion gating helpers model the required fail-closed behavior for paused,
   revoked, or quarantined connectors, disabled bindings, and review-only
   ingestion policy.

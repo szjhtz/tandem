@@ -1317,18 +1317,33 @@ async fn build_connector_impact(
         .collect();
     affected_quarantines.sort_by(|left, right| right.created_at_ms.cmp(&left.created_at_ms));
 
-    let started = affected_ingestion_jobs
+    let started = affected_source_objects
         .iter()
-        .filter_map(|job| job.started_at_ms)
+        .map(|source_object| source_object.first_seen_at_ms)
+        .chain(
+            affected_ingestion_jobs
+                .iter()
+                .filter_map(|job| job.started_at_ms),
+        )
         .chain(
             affected_quarantines
                 .iter()
                 .map(|quarantine| quarantine.created_at_ms),
         )
         .min();
-    let finished = affected_ingestion_jobs
+    let finished = affected_source_objects
         .iter()
-        .filter_map(|job| job.finished_at_ms.or(job.started_at_ms))
+        .map(|source_object| source_object.last_seen_at_ms)
+        .chain(
+            affected_source_objects
+                .iter()
+                .filter_map(|source_object| source_object.tombstoned_at_ms),
+        )
+        .chain(
+            affected_ingestion_jobs
+                .iter()
+                .filter_map(|job| job.finished_at_ms.or(job.started_at_ms)),
+        )
         .chain(affected_quarantines.iter().map(|quarantine| {
             quarantine
                 .reviewed_at_ms

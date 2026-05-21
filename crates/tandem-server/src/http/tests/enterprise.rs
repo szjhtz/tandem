@@ -644,8 +644,8 @@ async fn enterprise_connector_impact_summarizes_revoke_rotate_scope() {
         data_class: "financial_record".to_string(),
         content_hash: Some("content-impact".to_string()),
         source_hash: Some("source-impact".to_string()),
-        first_seen_at_ms: 1_000,
-        last_seen_at_ms: 1_000,
+        first_seen_at_ms: 500,
+        last_seen_at_ms: 2_500,
         tombstoned_at_ms: None,
         metadata: None,
     })
@@ -736,7 +736,13 @@ async fn enterprise_connector_impact_summarizes_revoke_rotate_scope() {
         payload
             .get("compromise_window_started_at_ms")
             .and_then(Value::as_u64),
-        Some(1_000)
+        Some(500)
+    );
+    assert_eq!(
+        payload
+            .get("compromise_window_finished_at_ms")
+            .and_then(Value::as_u64),
+        Some(2_500)
     );
     assert!(payload
         .get("recommended_actions")
