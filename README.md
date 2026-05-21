@@ -348,10 +348,6 @@ async with TandemClient(base_url="http://localhost:39731", token="...") as clien
             print(event.properties.get("delta", ""), end="", flush=True)
 ```
 
-<div align="center">
-  <img src=".github/assets/app.png" alt="Tandem AI Workspace" width="90%">
-</div>
-
 ## Provider setup
 
 Configure providers in **Settings**.

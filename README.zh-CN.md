@@ -99,10 +99,6 @@ async with TandemClient(base_url="http://localhost:39731", token="...") as clien
 
 **→ [下载桌面版](https://tandem.ac/) · [通过 MCP 连接你的 agent](https://tandem.ac/docs-mcp) · [阅读文档](https://docs.tandem.ac/)**
 
-<div align="center">
-  <img src=".github/assets/app.png" alt="Tandem AI Workspace" width="90%">
-</div>
-
 灵感来自早期 AI 协作研究预览，但 Tandem 是开源且与模型提供商无绑定的。
 
 ## 为什么选择 Tandem？
