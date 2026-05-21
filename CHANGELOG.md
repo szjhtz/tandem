@@ -50,6 +50,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   filtering for source-bound chunks so bound enterprise memory is hidden by
   default and can only participate in vector ranking when an explicit strict
   tenant projection grants `Read` on the bound `ResourceRef` and `DataClass`.
+- **Enterprise governed-memory source-binding guard**: Extended the same
+  resource/data-class enforcement to governed global memory search so records
+  carrying source-binding metadata are hidden unless the signed strict tenant
+  projection grants `Read` on that bound resource and data class.
 
 ### Documentation
 

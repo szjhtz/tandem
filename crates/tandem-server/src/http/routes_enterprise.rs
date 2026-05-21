@@ -556,6 +556,7 @@ mod tests {
             human_actor: HumanActor::tandem_user("user-a"),
             authority_chain: AuthorityChain::from_request(request_principal),
             roles: roles.into_iter().map(ToOwned::to_owned).collect(),
+            strict_projection: None,
             issuer: "tandem-web".to_string(),
             audience: "tandem-runtime".to_string(),
             issued_at_ms: 1_000,

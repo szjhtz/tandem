@@ -757,6 +757,104 @@ async fn memory_search_returns_empty_when_all_requested_scopes_are_blocked() {
 }
 
 #[tokio::test]
+async fn memory_search_hides_source_bound_records_without_strict_grant() {
+    let state = test_state().await;
+    let app = app_router(state.clone());
+    let capability = memory_capability(
+        "source-bound-global-run",
+        "default",
+        "org-1",
+        "ws-1",
+        "proj-1",
+    );
+
+    let put_req = Request::builder()
+        .method("POST")
+        .uri("/memory/put")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "run_id": "source-bound-global-run",
+                "partition": {
+                    "org_id": "org-1",
+                    "workspace_id": "ws-1",
+                    "project_id": "proj-1",
+                    "tier": "session"
+                },
+                "kind": "fact",
+                "content": "payroll restricted governed memory must stay hidden",
+                "classification": "restricted",
+                "metadata": {
+                    "enterprise_source_binding": {
+                        "binding_id": "binding-hr-finance",
+                        "connector_id": "manual-upload",
+                        "resource_ref": {
+                            "organization_id": "org-1",
+                            "workspace_id": "ws-1",
+                            "resource_kind": "document_collection",
+                            "resource_id": "hr-payroll"
+                        },
+                        "data_class": "financial_record",
+                        "source_object_id": "source-object-hr-payroll",
+                        "native_object_id": "/imports/hr/payroll.md",
+                        "content_hash": "hash-hr-payroll"
+                    }
+                },
+                "capability": capability
+            })
+            .to_string(),
+        ))
+        .expect("source-bound put request");
+    let put_resp = app
+        .clone()
+        .oneshot(put_req)
+        .await
+        .expect("source-bound put response");
+    assert_eq!(put_resp.status(), StatusCode::OK);
+
+    let search_req = Request::builder()
+        .method("POST")
+        .uri("/memory/search")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "run_id": "source-bound-global-run",
+                "query": "payroll restricted governed memory",
+                "read_scopes": ["session"],
+                "partition": {
+                    "org_id": "org-1",
+                    "workspace_id": "ws-1",
+                    "project_id": "proj-1",
+                    "tier": "session"
+                },
+                "capability": capability,
+                "limit": 10
+            })
+            .to_string(),
+        ))
+        .expect("source-bound search request");
+    let search_resp = app
+        .clone()
+        .oneshot(search_req)
+        .await
+        .expect("source-bound search response");
+    assert_eq!(search_resp.status(), StatusCode::OK);
+    let search_body = to_bytes(search_resp.into_body(), usize::MAX)
+        .await
+        .expect("source-bound search body");
+    let search_payload: Value =
+        serde_json::from_slice(&search_body).expect("source-bound search json");
+    assert_eq!(
+        search_payload
+            .get("results")
+            .and_then(Value::as_array)
+            .map(Vec::len),
+        Some(0),
+        "source-bound governed/global memory must be hidden without a strict read grant"
+    );
+}
+
+#[tokio::test]
 async fn memory_search_rejects_expired_capability_and_emits_blocked_audit() {
     let state = test_state().await;
     let app = app_router(state.clone());

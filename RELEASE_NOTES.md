@@ -56,6 +56,10 @@ production connector ingestion flows remain follow-up implementation phases.
   with enterprise source-binding metadata are hidden unless the caller supplies
   a strict tenant access projection with a matching `Read` grant for the bound
   `ResourceRef` and `DataClass`.
+- Governed/global memory search now applies the same source-binding guard.
+  Records with enterprise source-binding metadata are filtered out unless the
+  verified tenant assertion carries a strict projection with matching
+  resource/data-class read authority.
 - Ingestion gating helpers model the required fail-closed behavior for paused,
   revoked, or quarantined connectors, disabled bindings, and review-only
   ingestion policy.

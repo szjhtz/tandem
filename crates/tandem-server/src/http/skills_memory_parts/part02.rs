@@ -1586,6 +1586,7 @@ pub(super) async fn memory_promote_impl(
 pub(super) async fn memory_search(
     State(state): State<AppState>,
     Extension(tenant_context): Extension<TenantContext>,
+    verified_tenant_context: Option<Extension<VerifiedTenantContext>>,
     Json(input): Json<MemorySearchInput>,
 ) -> Result<Json<MemorySearchResponse>, StatusCode> {
     let request = input.request;
@@ -1614,6 +1615,10 @@ pub(super) async fn memory_search(
         .iter()
         .any(|scope| matches!(scope, tandem_memory::GovernedMemoryTier::Session));
     let limit = request.limit.unwrap_or(8).clamp(1, 100);
+    let source_access_filter = verified_tenant_context
+        .as_ref()
+        .and_then(|context| context.strict_projection.clone())
+        .map(|strict_context| MemoryAccessFilter::strict(strict_context, crate::now_ms()));
     let hits = if scopes_used.is_empty() {
         Vec::new()
     } else {
@@ -1635,6 +1640,12 @@ pub(super) async fn memory_search(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .into_iter()
         .filter(|hit| allow_private_results || hit.record.visibility.eq_ignore_ascii_case("shared"))
+        .filter(|hit| {
+            global_memory_record_visible_to_access_filter(
+                &hit.record,
+                source_access_filter.as_ref(),
+            )
+        })
         .collect::<Vec<_>>()
     };
     let results = hits
@@ -1754,6 +1765,18 @@ pub(super) async fn memory_search(
         blocked_scopes,
         audit_id,
     }))
+}
+
+fn global_memory_record_visible_to_access_filter(
+    record: &GlobalMemoryRecord,
+    access_filter: Option<&MemoryAccessFilter>,
+) -> bool {
+    let Some(target) = MemorySourceAccessTarget::from_metadata(record.metadata.as_ref()) else {
+        return true;
+    };
+    access_filter
+        .map(|filter| filter.allows_source_target(&target))
+        .unwrap_or(false)
 }
 
 pub(super) async fn memory_demote(

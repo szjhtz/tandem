@@ -858,6 +858,8 @@ pub struct VerifiedTenantContext {
     pub authority_chain: AuthorityChain,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub roles: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub strict_projection: Option<StrictTenantContext>,
     pub issuer: String,
     pub audience: String,
     pub issued_at_ms: u64,
@@ -992,11 +994,13 @@ impl From<&TenantContextAssertionClaims> for AssertionMetadata {
 
 impl From<TenantContextAssertionClaims> for VerifiedTenantContext {
     fn from(claims: TenantContextAssertionClaims) -> Self {
+        let strict_projection = claims.strict_projection();
         Self {
             tenant_context: claims.tenant_context,
             human_actor: claims.human_actor,
             authority_chain: claims.authority_chain,
             roles: claims.roles,
+            strict_projection,
             issuer: claims.issuer,
             audience: claims.audience,
             issued_at_ms: claims.issued_at_ms,
@@ -1898,6 +1902,7 @@ mod tests {
             human_actor: actor,
             authority_chain: AuthorityChain::from_request(principal),
             roles: vec!["owner".to_string()],
+            strict_projection: None,
             issuer: "tandem-web".to_string(),
             audience: "tandem-runtime".to_string(),
             issued_at_ms: 100,
@@ -2457,6 +2462,7 @@ mod tests {
             human_actor: HumanActor::tandem_user("user-a"),
             authority_chain: AuthorityChain::from_request(principal),
             roles: vec!["enterprise:admin".to_string()],
+            strict_projection: None,
             issuer: "tandem-web".to_string(),
             audience: "tandem-runtime".to_string(),
             issued_at_ms: 1_000,

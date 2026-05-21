@@ -113,6 +113,10 @@ impl MemoryAccessFilter {
         let Some(target) = MemorySourceAccessTarget::from_chunk(chunk) else {
             return true;
         };
+        self.allows_source_target(&target)
+    }
+
+    pub fn allows_source_target(&self, target: &MemorySourceAccessTarget) -> bool {
         self.strict_context
             .evaluate_access(
                 &target.resource_ref,
@@ -135,7 +139,11 @@ pub struct MemorySourceAccessTarget {
 
 impl MemorySourceAccessTarget {
     pub fn from_chunk(chunk: &MemoryChunk) -> Option<Self> {
-        let binding = chunk.metadata.as_ref()?.get("enterprise_source_binding")?;
+        Self::from_metadata(chunk.metadata.as_ref())
+    }
+
+    pub fn from_metadata(metadata: Option<&serde_json::Value>) -> Option<Self> {
+        let binding = metadata?.get("enterprise_source_binding")?;
         let resource_ref = serde_json::from_value(binding.get("resource_ref")?.clone()).ok()?;
         let data_class = serde_json::from_value(binding.get("data_class")?.clone()).ok()?;
         Some(Self {

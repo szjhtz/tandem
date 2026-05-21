@@ -6,9 +6,11 @@ use crate::{
 };
 use tandem_memory::import_files;
 use tandem_memory::types::{
-    MemoryImportFormat, MemoryImportProgress, MemoryImportRequest as TandemMemoryImportRequest,
-    MemoryImportSourceBinding, MemoryImportStats, MemoryTenantScope, MemoryTier,
+    MemoryAccessFilter, MemoryImportFormat, MemoryImportProgress,
+    MemoryImportRequest as TandemMemoryImportRequest, MemoryImportSourceBinding, MemoryImportStats,
+    MemorySourceAccessTarget, MemoryTenantScope, MemoryTier,
 };
+use tandem_types::VerifiedTenantContext;
 
 include!("skills_memory_parts/part01.rs");
 include!("skills_memory_parts/part02.rs");
