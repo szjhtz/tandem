@@ -163,6 +163,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   client for listing admin-labeled folder roots, downloading stored file bytes,
   and exporting Google Workspace files once a future secret resolver supplies a
   bearer token.
+- **Enterprise secret-ref resolver**: Added a runtime-only secret resolver
+  abstraction with an `env://...` bearer-token resolver for local Google Drive
+  testing. Resolved token values stay in memory and redact from debug output.
 
 ### Documentation
 
