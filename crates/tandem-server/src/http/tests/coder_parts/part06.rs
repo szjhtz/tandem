@@ -1924,3 +1924,109 @@ async fn coder_issue_triage_retrieves_governed_memory_hits() {
         .unwrap_or(false);
     assert!(has_governed_hit);
 }
+
+#[tokio::test]
+#[serial_test::serial]
+async fn coder_memory_hits_hide_source_bound_governed_metadata_without_strict_grant() {
+    let state = test_state().await;
+    state
+        .capability_resolver
+        .refresh_builtin_bindings()
+        .await
+        .expect("refresh builtin bindings");
+    let db = super::super::skills_memory::open_global_memory_db()
+        .await
+        .expect("global memory db");
+    db.put_global_memory_record(&GlobalMemoryRecord {
+        id: "memory-source-bound-governed".to_string(),
+        user_id: "desktop_developer_mode".to_string(),
+        source_type: "manual_upload".to_string(),
+        content: "source bound payroll citation metadata must not appear in coder memory hits"
+            .to_string(),
+        content_hash: String::new(),
+        run_id: "memory-source-bound-run".to_string(),
+        session_id: None,
+        message_id: None,
+        tool_name: None,
+        project_tag: Some("proj-engine".to_string()),
+        channel_tag: None,
+        host_tag: None,
+        metadata: Some(json!({
+            "enterprise_source_binding": {
+                "binding_id": "binding-hr-finance",
+                "connector_id": "manual-upload",
+                "resource_ref": {
+                    "organization_id": "local",
+                    "workspace_id": "default",
+                    "resource_kind": "document_collection",
+                    "resource_id": "hr-payroll"
+                },
+                "data_class": "financial_record",
+                "source_object_id": "source-object-hr-payroll",
+                "native_object_id": "/imports/hr/payroll.md",
+                "content_hash": "hash-hr-payroll"
+            }
+        })),
+        provenance: Some(json!({
+            "origin_event_type": "memory.put"
+        })),
+        redaction_status: "passed".to_string(),
+        redaction_count: 0,
+        visibility: "private".to_string(),
+        demoted: false,
+        score_boost: 0.0,
+        created_at_ms: crate::now_ms(),
+        updated_at_ms: crate::now_ms(),
+        expires_at_ms: None,
+    })
+    .await
+    .expect("seed source-bound governed memory");
+
+    let app = app_router(state.clone());
+    let create_req = Request::builder()
+        .method("POST")
+        .uri("/coder/runs")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "coder_run_id": "coder-run-source-bound-hits",
+                "workflow_mode": "issue_triage",
+                "repo_binding": {
+                    "project_id": "proj-engine",
+                    "workspace_id": "ws-tandem",
+                    "workspace_root": "/tmp/tandem-repo",
+                    "repo_slug": "user123/tandem"
+                },
+                "github_ref": {
+                    "kind": "issue",
+                    "number": 303
+                },
+                "source_client": "desktop_developer_mode"
+            })
+            .to_string(),
+        ))
+        .expect("create source-bound coder run request");
+    let create_resp = app
+        .clone()
+        .oneshot(create_req)
+        .await
+        .expect("create source-bound coder run response");
+    assert_eq!(create_resp.status(), StatusCode::OK);
+
+    let hits_req = Request::builder()
+        .method("GET")
+        .uri("/coder/runs/coder-run-source-bound-hits/memory-hits?q=payroll%20citation%20metadata")
+        .body(Body::empty())
+        .expect("source-bound hits request");
+    let hits_resp = app.clone().oneshot(hits_req).await.expect("hits response");
+    assert_eq!(hits_resp.status(), StatusCode::OK);
+    let hits_body = to_bytes(hits_resp.into_body(), usize::MAX)
+        .await
+        .expect("hits body");
+    let hits_payload: Value = serde_json::from_slice(&hits_body).expect("hits json");
+    let serialized = serde_json::to_string(&hits_payload).expect("hits payload string");
+    assert!(!serialized.contains("memory-source-bound-governed"));
+    assert!(!serialized.contains("source-object-hr-payroll"));
+    assert!(!serialized.contains("/imports/hr/payroll.md"));
+    assert!(!serialized.contains("binding-hr-finance"));
+}

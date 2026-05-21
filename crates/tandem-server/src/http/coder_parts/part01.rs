@@ -13,8 +13,9 @@ use std::collections::{BTreeSet, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::OnceLock;
 use tandem_memory::{
-    types::MemoryTier, GovernedMemoryTier, MemoryClassification, MemoryContentKind, MemoryManager,
-    MemoryPartition, MemoryPromoteRequest, MemoryPutRequest, PromotionReview,
+    types::{MemorySourceAccessTarget, MemoryTier},
+    GovernedMemoryTier, MemoryClassification, MemoryContentKind, MemoryManager, MemoryPartition,
+    MemoryPromoteRequest, MemoryPutRequest, PromotionReview,
 };
 use tandem_runtime::McpRemoteTool;
 
@@ -1746,6 +1747,9 @@ async fn list_governed_memory_hits(
             continue;
         };
         for hit in results {
+            if MemorySourceAccessTarget::from_metadata(hit.record.metadata.as_ref()).is_some() {
+                continue;
+            }
             if !seen_ids.insert(hit.record.id.clone()) {
                 continue;
             }

@@ -101,6 +101,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   filtering to governed memory list responses and added coverage proving list
   views cannot expose source-object IDs, native object paths, or binding IDs
   without a strict read grant.
+- **Coder memory-hit source-bound guard**: Coder governed-memory hit artifacts
+  now skip source-bound records unless a future strict grant path is plumbed,
+  preventing coder retrieval surfaces from exposing source-object metadata by
+  default.
 - **Hosted panel auth availability split**: Control-panel capabilities now
   distinguish managed hosted deployments from deployments with usable hosted
   auth exchange credentials, allowing disconnected local test deployments to

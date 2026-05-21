@@ -102,6 +102,9 @@ production connector ingestion flows remain follow-up implementation phases.
   before returning metadata, preventing list/citation browser surfaces from
   exposing source-object IDs, native object paths, or binding IDs without a
   strict read grant.
+- Coder governed-memory hit artifacts now fail closed for source-bound records,
+  with coverage proving coder memory-hit responses do not expose source-object
+  IDs, native object paths, or binding IDs without a strict read grant path.
 - Managed hosted detection now reports hosted auth availability separately, so
   disconnected local test deployments can still use the engine-token sign-in
   path while connected hosted servers keep Tandem hosted login enforcement.
