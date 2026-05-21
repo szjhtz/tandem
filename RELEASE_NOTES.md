@@ -37,9 +37,9 @@ OAuth, and production ingestion flows remain follow-up implementation phases.
   admin mutations can fail closed unless the Tandem-signed hosted context
   carries admin/owner/reconfigure authority.
 - Added a hidden-by-default Enterprise admin page in the control panel. It reads
-  the noop org-unit and source-binding endpoints, displays tenant/principal
-  context, and keeps the UI explicit that persistence and ingestion are not
-  configured yet.
+  the storage-backed org-unit and source-binding endpoints, displays
+  tenant/principal context, creates org units and source bindings, and can move
+  source bindings between enabled, disabled, and quarantined states.
 - Connector credential references carry only `SecretRef` metadata and default
   to read-only credentials. They intentionally do not model raw credential
   values.

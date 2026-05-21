@@ -37,6 +37,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   isolation, and `ResourceRef` tenant validation. This records which external
   source root may feed which Tandem resource/data class without enabling live
   OAuth or ingestion.
+- **Enterprise admin UI management**: Wired the hidden Enterprise admin page to
+  the storage-backed org-unit and source-binding routes with typed create
+  forms, readable governance rows, and source-binding enabled/disabled/
+  quarantined controls.
 
 ### Documentation
 
