@@ -78,6 +78,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   imports now fail closed unless a valid `source_binding_id` is supplied, while
   local/default imports can remain explicitly unbound. The control-panel import
   dialog also requires a source binding when opened from a hosted principal.
+- **Local manual source-binding projection**: Local/default manual memory
+  imports can opt into a generated `local_manual_upload` binding that stamps
+  source-object lifecycle records with an internal `document_collection`
+  resource scope, while leaving the empty/unbound legacy import path available.
 - **Enterprise connector lifecycle registry**: Added storage-backed connector
   instance admin endpoints for tenant-scoped create/list/update and lifecycle
   states (`active`, `paused`, `revoked`, `quarantined`). Source-bound memory

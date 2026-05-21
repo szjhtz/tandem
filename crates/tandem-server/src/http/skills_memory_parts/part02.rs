@@ -1199,6 +1199,15 @@ async fn resolve_memory_import_source_binding(
         }
         return Ok(None);
     };
+    if source_binding_id == DEFAULT_LOCAL_MANUAL_SOURCE_BINDING_ID
+        && !memory_import_requires_source_binding(
+            tenant_context,
+            request_principal,
+            verified_tenant_context,
+        )
+    {
+        return Ok(Some(default_local_manual_source_binding(tenant_context)));
+    }
     let registry = state.enterprise_source_bindings.read().await;
     let Some(binding) = registry.values().find(|binding| {
         binding.binding_id == source_binding_id && binding.tenant_matches(tenant_context)
@@ -1247,6 +1256,25 @@ async fn resolve_memory_import_source_binding(
             .unwrap_or_else(|| format!("{:?}", binding.data_class)),
         require_review: binding.ingestion_policy.require_review,
     }))
+}
+
+const DEFAULT_LOCAL_MANUAL_SOURCE_BINDING_ID: &str = "local_manual_upload";
+
+fn default_local_manual_source_binding(
+    tenant_context: &TenantContext,
+) -> MemoryImportSourceBinding {
+    MemoryImportSourceBinding {
+        binding_id: DEFAULT_LOCAL_MANUAL_SOURCE_BINDING_ID.to_string(),
+        connector_id: "manual_upload".to_string(),
+        resource_ref: json!({
+            "organization_id": tenant_context.org_id.clone(),
+            "workspace_id": tenant_context.workspace_id.clone(),
+            "resource_kind": "document_collection",
+            "resource_id": "local-manual-uploads",
+        }),
+        data_class: "internal".to_string(),
+        require_review: false,
+    }
 }
 
 async fn record_enterprise_ingestion_job(

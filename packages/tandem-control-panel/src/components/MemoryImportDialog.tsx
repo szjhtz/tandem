@@ -42,6 +42,8 @@ const STATS: Array<[keyof MemoryImportResponse, string]> = [
   ["errors", "Errors"],
 ];
 
+const LOCAL_MANUAL_SOURCE_BINDING_ID = "local_manual_upload";
+
 export function MemoryImportDialog({
   open,
   client,
@@ -249,6 +251,12 @@ export function MemoryImportDialog({
                   <option value="">
                     {sourceBindingRequired ? "Select a source binding" : "Local/default behavior"}
                   </option>
+                  {!sourceBindingRequired ? (
+                    <option value={LOCAL_MANUAL_SOURCE_BINDING_ID}>
+                      Generated local/manual binding - internal -
+                      document_collection/local-manual-uploads
+                    </option>
+                  ) : null}
                   {enabledBindings.map((binding) => (
                     <option key={binding.binding_id} value={binding.binding_id}>
                       {binding.source_root_label || binding.binding_id} - {binding.data_class} -{" "}
@@ -265,7 +273,7 @@ export function MemoryImportDialog({
                   <span className="tcp-subtle text-xs">
                     {sourceBindingRequired
                       ? "Hosted imports require a source binding so data is scoped before indexing."
-                      : "Leave unset to preserve the current local/manual import behavior."}
+                      : "Leave unset to preserve legacy local behavior, or choose the generated binding to track source objects."}
                   </span>
                 )}
               </label>

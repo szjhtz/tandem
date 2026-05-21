@@ -203,6 +203,72 @@ async fn memory_import_rejects_inactive_source_binding_connector() {
 }
 
 #[tokio::test]
+async fn memory_import_can_use_default_local_manual_source_binding_projection() {
+    let state = test_state().await;
+    let import_root = state
+        .memory_audit_path
+        .parent()
+        .unwrap()
+        .join("local-default-bound-docs");
+    tokio::fs::create_dir_all(&import_root)
+        .await
+        .expect("import root");
+    tokio::fs::write(
+        import_root.join("note.md"),
+        "local manual default binding import",
+    )
+    .await
+    .expect("import file");
+    let app = app_router(state);
+
+    let req = Request::builder()
+        .method("POST")
+        .uri("/memory/import")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "source": {"kind": "path", "path": import_root.display().to_string()},
+                "format": "directory",
+                "tier": "global",
+                "source_binding_id": "local_manual_upload",
+                "sync_deletes": false
+            })
+            .to_string(),
+        ))
+        .expect("import request");
+    let resp = app.oneshot(req).await.expect("response");
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = to_bytes(resp.into_body(), usize::MAX).await.expect("body");
+    let payload: Value = serde_json::from_slice(&body).expect("json");
+    assert_eq!(
+        payload.get("source_binding_id").and_then(Value::as_str),
+        Some("local_manual_upload")
+    );
+
+    let paths = tandem_core::resolve_shared_paths().expect("shared paths");
+    let db = tandem_memory::db::MemoryDatabase::new(&paths.memory_db_path)
+        .await
+        .expect("memory db");
+    let rows = db
+        .list_source_object_lifecycle_for_binding_for_tenant(
+            &tandem_memory::types::MemoryTenantScope::local(),
+            "local_manual_upload",
+        )
+        .await
+        .expect("source objects");
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].connector_id, "manual_upload");
+    assert_eq!(rows[0].data_class, "internal");
+    assert_eq!(
+        rows[0]
+            .resource_ref
+            .get("resource_id")
+            .and_then(Value::as_str),
+        Some("local-manual-uploads")
+    );
+}
+
+#[tokio::test]
 async fn memory_import_records_enterprise_ingestion_job_audit() {
     let state = test_state().await;
     let storage_path = state.enterprise_ingestion_jobs_path.clone();
