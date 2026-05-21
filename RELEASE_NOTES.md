@@ -87,6 +87,10 @@ production connector ingestion flows remain follow-up implementation phases.
 - The hidden Enterprise admin page can now create connector lifecycle records,
   list tenant-scoped connector status, and pause, revoke, quarantine, or
   reactivate connectors from the control panel.
+- Connector credential-reference admin endpoints now accept and rotate
+  `SecretRef` records without accepting raw credential values. Credential refs
+  are tenant-validated, can be source-bound to a resource, and are visible in
+  the hidden Enterprise admin page as metadata only.
 - Ingestion gating helpers model the required fail-closed behavior for paused,
   revoked, or quarantined connectors, disabled bindings, and review-only
   ingestion policy.

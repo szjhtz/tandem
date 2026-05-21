@@ -86,6 +86,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   control-panel page to create tenant-scoped connector records, list connector
   lifecycle status, and move connectors between active, paused, revoked, and
   quarantined states.
+- **Enterprise connector credential refs**: Added admin-gated connector
+  credential-reference attach and rotate endpoints that accept secret
+  references only, reject raw credential values, validate tenant/resource
+  scope, and return credential metadata without credential material. The hidden
+  Enterprise admin page can attach read-only/read-write/admin refs and rotate
+  existing refs.
 
 ### Documentation
 

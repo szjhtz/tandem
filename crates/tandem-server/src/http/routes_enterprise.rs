@@ -7,9 +7,10 @@ use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tandem_enterprise_contract::{
-    ConnectorInstance, ConnectorLifecycleState, DataClass, IngestionPolicy, OrganizationUnit,
-    OrganizationUnitKind, OrganizationUnitState, PrincipalRef, RequestPrincipal, ResourceRef,
-    SourceBinding, SourceBindingState, TenantContext, VerifiedTenantContext,
+    ConnectorCredentialClass, ConnectorCredentialRef, ConnectorInstance, ConnectorLifecycleState,
+    DataClass, IngestionPolicy, OrganizationUnit, OrganizationUnitKind, OrganizationUnitState,
+    PrincipalRef, RequestPrincipal, ResourceRef, SecretRef, SourceBinding, SourceBindingState,
+    TenantContext, VerifiedTenantContext,
 };
 use tandem_memory::db::MemoryDatabase;
 use tandem_memory::types::{
@@ -127,6 +128,29 @@ struct UpdateConnectorRequest {
 }
 
 #[derive(Debug, Deserialize)]
+struct CreateConnectorCredentialRefRequest {
+    credential_id: String,
+    #[serde(default)]
+    credential_class: ConnectorCredentialClass,
+    secret_ref: SecretRef,
+    #[serde(default)]
+    source_bound_resource: Option<ResourceRef>,
+    #[serde(default)]
+    expires_at_ms: Option<u64>,
+    #[serde(default)]
+    credential_value: Option<Value>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RotateConnectorCredentialRefRequest {
+    secret_ref: SecretRef,
+    #[serde(default)]
+    expires_at_ms: Option<u64>,
+    #[serde(default)]
+    credential_value: Option<Value>,
+}
+
+#[derive(Debug, Deserialize)]
 struct UpdateSourceBindingRequest {
     #[serde(default)]
     state: Option<SourceBindingState>,
@@ -161,6 +185,14 @@ pub(super) fn apply(router: Router<AppState>) -> Router<AppState> {
         .route(
             "/enterprise/connectors/{connector_id}",
             patch(update_connector),
+        )
+        .route(
+            "/enterprise/connectors/{connector_id}/credential-refs",
+            post(create_connector_credential_ref),
+        )
+        .route(
+            "/enterprise/connectors/{connector_id}/credential-refs/{credential_id}/rotate",
+            patch(rotate_connector_credential_ref),
         )
         .route(
             "/enterprise/source-bindings/{binding_id}",
@@ -461,6 +493,131 @@ async fn update_connector(
     Ok(Json(EnterpriseAdminResponseBase {
         message: "enterprise connector updated",
         ..storage_base(tenant_context, request_principal)
+    }))
+}
+
+async fn create_connector_credential_ref(
+    State(state): State<AppState>,
+    Path(connector_id): Path<String>,
+    Extension(tenant_context): Extension<TenantContext>,
+    Extension(request_principal): Extension<RequestPrincipal>,
+    verified_tenant_context: Option<Extension<VerifiedTenantContext>>,
+    Json(input): Json<CreateConnectorCredentialRefRequest>,
+) -> EnterpriseResult<EnterpriseConnectorsResponse> {
+    require_enterprise_admin(&request_principal, verified_tenant_context.as_deref())?;
+    reject_raw_credential_value(input.credential_value.as_ref())?;
+
+    let connector_id = validate_enterprise_id("connector_id", &connector_id)?;
+    let credential_id = validate_enterprise_id("credential_id", &input.credential_id)?;
+    let secret_ref = normalize_secret_ref_for_tenant(&input.secret_ref, &tenant_context)?;
+    if let Some(resource_ref) = input.source_bound_resource.as_ref() {
+        validate_resource_ref_matches_tenant(resource_ref, &tenant_context)?;
+    }
+
+    let updated_connector = {
+        let mut registry = state.enterprise_connectors.write().await;
+        let Some(connector) = registry.values_mut().find(|connector| {
+            connector.connector_id == connector_id && connector.tenant_matches(&tenant_context)
+        }) else {
+            return Err(not_found("ENTERPRISE_CONNECTOR_NOT_FOUND"));
+        };
+        if connector
+            .credential_refs
+            .iter()
+            .any(|credential| credential.credential_id == credential_id)
+        {
+            return Err(bad_request(
+                "ENTERPRISE_CONNECTOR_CREDENTIAL_ALREADY_EXISTS",
+            ));
+        }
+        let now = now_ms();
+        let mut credential_ref = ConnectorCredentialRef {
+            org_id: tenant_context.org_id.clone(),
+            workspace_id: tenant_context.workspace_id.clone(),
+            connector_id: connector.connector_id.clone(),
+            credential_id,
+            credential_class: input.credential_class,
+            secret_ref,
+            source_bound_resource: input.source_bound_resource,
+            created_at_ms: now,
+            rotated_at_ms: None,
+            expires_at_ms: input.expires_at_ms,
+        };
+        credential_ref
+            .validate_for_tenant(&tenant_context)
+            .map_err(|_| bad_request("ENTERPRISE_CONNECTOR_CREDENTIAL_TENANT_MISMATCH"))?;
+        connector.credential_refs.push(credential_ref);
+        connector.updated_at_ms = now;
+        let updated_connector = connector.clone();
+        persist_enterprise_connectors(&state.enterprise_connectors_path, &registry).await?;
+        updated_connector
+    };
+    emit_connector_invalidation_required(
+        &state,
+        &tenant_context,
+        &updated_connector.connector_id,
+        "connector_credential_ref_created",
+    );
+
+    Ok(Json(EnterpriseConnectorsResponse {
+        count: 1,
+        connectors: vec![updated_connector],
+        base: storage_base(tenant_context, request_principal),
+    }))
+}
+
+async fn rotate_connector_credential_ref(
+    State(state): State<AppState>,
+    Path((connector_id, credential_id)): Path<(String, String)>,
+    Extension(tenant_context): Extension<TenantContext>,
+    Extension(request_principal): Extension<RequestPrincipal>,
+    verified_tenant_context: Option<Extension<VerifiedTenantContext>>,
+    Json(input): Json<RotateConnectorCredentialRefRequest>,
+) -> EnterpriseResult<EnterpriseConnectorsResponse> {
+    require_enterprise_admin(&request_principal, verified_tenant_context.as_deref())?;
+    reject_raw_credential_value(input.credential_value.as_ref())?;
+
+    let connector_id = validate_enterprise_id("connector_id", &connector_id)?;
+    let credential_id = validate_enterprise_id("credential_id", &credential_id)?;
+    let secret_ref = normalize_secret_ref_for_tenant(&input.secret_ref, &tenant_context)?;
+
+    let updated_connector = {
+        let mut registry = state.enterprise_connectors.write().await;
+        let Some(connector) = registry.values_mut().find(|connector| {
+            connector.connector_id == connector_id && connector.tenant_matches(&tenant_context)
+        }) else {
+            return Err(not_found("ENTERPRISE_CONNECTOR_NOT_FOUND"));
+        };
+        let now = now_ms();
+        let Some(credential_ref) = connector
+            .credential_refs
+            .iter_mut()
+            .find(|credential| credential.credential_id == credential_id)
+        else {
+            return Err(not_found("ENTERPRISE_CONNECTOR_CREDENTIAL_NOT_FOUND"));
+        };
+        credential_ref.secret_ref = secret_ref;
+        credential_ref.rotated_at_ms = Some(now);
+        credential_ref.expires_at_ms = input.expires_at_ms;
+        credential_ref
+            .validate_for_tenant(&tenant_context)
+            .map_err(|_| bad_request("ENTERPRISE_CONNECTOR_CREDENTIAL_TENANT_MISMATCH"))?;
+        connector.updated_at_ms = now;
+        let updated_connector = connector.clone();
+        persist_enterprise_connectors(&state.enterprise_connectors_path, &registry).await?;
+        updated_connector
+    };
+    emit_connector_invalidation_required(
+        &state,
+        &tenant_context,
+        &updated_connector.connector_id,
+        "connector_credential_ref_rotated",
+    );
+
+    Ok(Json(EnterpriseConnectorsResponse {
+        count: 1,
+        connectors: vec![updated_connector],
+        base: storage_base(tenant_context, request_principal),
     }))
 }
 
@@ -912,6 +1069,39 @@ fn validate_resource_ref_matches_tenant(
     {
         return Err(bad_request(
             "ENTERPRISE_SOURCE_BINDING_RESOURCE_TENANT_MISMATCH",
+        ));
+    }
+    Ok(())
+}
+
+fn normalize_secret_ref_for_tenant(
+    secret_ref: &SecretRef,
+    tenant_context: &TenantContext,
+) -> Result<SecretRef, (StatusCode, Json<Value>)> {
+    if secret_ref.org_id != tenant_context.org_id
+        || secret_ref.workspace_id != tenant_context.workspace_id
+    {
+        return Err(bad_request(
+            "ENTERPRISE_CONNECTOR_CREDENTIAL_TENANT_MISMATCH",
+        ));
+    }
+    let provider = validate_enterprise_id("secret_provider", &secret_ref.provider)?;
+    let secret_id = validate_external_id("secret_id", &secret_ref.secret_id)?;
+    let name = normalized_optional_label(Some(secret_ref.name.clone()))
+        .ok_or_else(|| bad_request("ENTERPRISE_SECRET_NAME_INVALID"))?;
+    Ok(SecretRef {
+        org_id: tenant_context.org_id.clone(),
+        workspace_id: tenant_context.workspace_id.clone(),
+        provider,
+        secret_id,
+        name,
+    })
+}
+
+fn reject_raw_credential_value(value: Option<&Value>) -> Result<(), (StatusCode, Json<Value>)> {
+    if value.is_some() {
+        return Err(bad_request(
+            "ENTERPRISE_CONNECTOR_CREDENTIAL_VALUE_NOT_ALLOWED",
         ));
     }
     Ok(())

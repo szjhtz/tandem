@@ -265,6 +265,27 @@ fn connector_body(connector_id: &str, provider: &str) -> String {
     .to_string()
 }
 
+fn connector_credential_ref_body(credential_id: &str, secret_id: &str) -> String {
+    json!({
+        "credential_id": credential_id,
+        "credential_class": "read_only",
+        "secret_ref": {
+            "org_id": "acme",
+            "workspace_id": "finance",
+            "provider": "google_kms",
+            "secret_id": secret_id,
+            "name": "Finance Drive read-only secret"
+        },
+        "source_bound_resource": {
+            "organization_id": "acme",
+            "workspace_id": "finance",
+            "resource_kind": "document_collection",
+            "resource_id": "finance-drive"
+        }
+    })
+    .to_string()
+}
+
 #[tokio::test]
 async fn enterprise_connectors_create_and_update_persist_under_request_tenant() {
     let state = test_state().await;
@@ -363,6 +384,172 @@ async fn enterprise_connectors_create_and_update_persist_under_request_tenant() 
         .header("x-tandem-org-id", "other-co")
         .header("x-tandem-workspace-id", "finance")
         .body(Body::from(json!({"state": "active"}).to_string()))
+        .expect("request");
+    let resp = app.oneshot(req).await.expect("response");
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn enterprise_connector_credentials_are_secret_refs_and_rotate_by_tenant() {
+    let state = test_state().await;
+    let mut rx = state.event_bus.subscribe();
+    let app = app_router(state);
+
+    let req = Request::builder()
+        .method("POST")
+        .uri("/enterprise/connectors")
+        .header("content-type", "application/json")
+        .header("x-tandem-org-id", "acme")
+        .header("x-tandem-workspace-id", "finance")
+        .header("x-tandem-actor-id", "finance-admin")
+        .body(Body::from(connector_body("google_drive", "google_drive")))
+        .expect("request");
+    let resp = app.clone().oneshot(req).await.expect("response");
+    assert_eq!(resp.status(), StatusCode::OK);
+    let _ = next_event_of_type(&mut rx, "enterprise.connector.cache_invalidation_required").await;
+
+    let req = Request::builder()
+        .method("POST")
+        .uri("/enterprise/connectors/google_drive/credential-refs")
+        .header("content-type", "application/json")
+        .header("x-tandem-org-id", "acme")
+        .header("x-tandem-workspace-id", "finance")
+        .header("x-tandem-actor-id", "finance-admin")
+        .body(Body::from(
+            json!({
+                "credential_id": "readonly",
+                "credential_value": "raw-token-never-accepted",
+                "secret_ref": {
+                    "org_id": "acme",
+                    "workspace_id": "finance",
+                    "provider": "google_kms",
+                    "secret_id": "kms://finance/raw",
+                    "name": "Raw value attempt"
+                }
+            })
+            .to_string(),
+        ))
+        .expect("request");
+    let resp = app.clone().oneshot(req).await.expect("response");
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+    let req = Request::builder()
+        .method("POST")
+        .uri("/enterprise/connectors/google_drive/credential-refs")
+        .header("content-type", "application/json")
+        .header("x-tandem-org-id", "acme")
+        .header("x-tandem-workspace-id", "finance")
+        .header("x-tandem-actor-id", "finance-admin")
+        .body(Body::from(connector_credential_ref_body(
+            "readonly",
+            "kms://finance/readonly-v1",
+        )))
+        .expect("request");
+    let resp = app.clone().oneshot(req).await.expect("response");
+    assert_eq!(resp.status(), StatusCode::OK);
+    let create_event =
+        next_event_of_type(&mut rx, "enterprise.connector.cache_invalidation_required").await;
+    assert_eq!(
+        create_event
+            .properties
+            .get("reason")
+            .and_then(Value::as_str),
+        Some("connector_credential_ref_created")
+    );
+    let body = to_bytes(resp.into_body(), usize::MAX).await.expect("body");
+    let payload: Value = serde_json::from_slice(&body).expect("json");
+    let credential = payload
+        .get("connectors")
+        .and_then(Value::as_array)
+        .and_then(|connectors| connectors.first())
+        .and_then(|connector| connector.get("credential_refs"))
+        .and_then(Value::as_array)
+        .and_then(|credentials| credentials.first())
+        .expect("credential ref");
+    assert!(credential.get("credential_value").is_none());
+    assert_eq!(
+        credential.get("credential_class").and_then(Value::as_str),
+        Some("read_only")
+    );
+    assert_eq!(
+        credential
+            .get("secret_ref")
+            .and_then(|secret| secret.get("secret_id"))
+            .and_then(Value::as_str),
+        Some("kms://finance/readonly-v1")
+    );
+
+    let req = Request::builder()
+        .method("PATCH")
+        .uri("/enterprise/connectors/google_drive/credential-refs/readonly/rotate")
+        .header("content-type", "application/json")
+        .header("x-tandem-org-id", "acme")
+        .header("x-tandem-workspace-id", "finance")
+        .header("x-tandem-actor-id", "finance-admin")
+        .body(Body::from(
+            json!({
+                "secret_ref": {
+                    "org_id": "acme",
+                    "workspace_id": "finance",
+                    "provider": "google_kms",
+                    "secret_id": "kms://finance/readonly-v2",
+                    "name": "Finance Drive read-only secret v2"
+                }
+            })
+            .to_string(),
+        ))
+        .expect("request");
+    let resp = app.clone().oneshot(req).await.expect("response");
+    assert_eq!(resp.status(), StatusCode::OK);
+    let rotate_event =
+        next_event_of_type(&mut rx, "enterprise.connector.cache_invalidation_required").await;
+    assert_eq!(
+        rotate_event
+            .properties
+            .get("reason")
+            .and_then(Value::as_str),
+        Some("connector_credential_ref_rotated")
+    );
+    let body = to_bytes(resp.into_body(), usize::MAX).await.expect("body");
+    let payload: Value = serde_json::from_slice(&body).expect("json");
+    let credential = payload
+        .get("connectors")
+        .and_then(Value::as_array)
+        .and_then(|connectors| connectors.first())
+        .and_then(|connector| connector.get("credential_refs"))
+        .and_then(Value::as_array)
+        .and_then(|credentials| credentials.first())
+        .expect("credential ref");
+    assert_eq!(
+        credential
+            .get("secret_ref")
+            .and_then(|secret| secret.get("secret_id"))
+            .and_then(Value::as_str),
+        Some("kms://finance/readonly-v2")
+    );
+    assert!(credential
+        .get("rotated_at_ms")
+        .and_then(Value::as_u64)
+        .is_some());
+
+    let req = Request::builder()
+        .method("PATCH")
+        .uri("/enterprise/connectors/google_drive/credential-refs/readonly/rotate")
+        .header("content-type", "application/json")
+        .header("x-tandem-org-id", "other-co")
+        .header("x-tandem-workspace-id", "finance")
+        .body(Body::from(
+            json!({
+                "secret_ref": {
+                    "org_id": "other-co",
+                    "workspace_id": "finance",
+                    "provider": "google_kms",
+                    "secret_id": "kms://other/readonly-v3",
+                    "name": "Wrong tenant"
+                }
+            })
+            .to_string(),
+        ))
         .expect("request");
     let resp = app.oneshot(req).await.expect("response");
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);

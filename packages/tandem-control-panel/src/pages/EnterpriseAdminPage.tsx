@@ -11,6 +11,7 @@ import {
 } from "../ui/index.tsx";
 import {
   useCreateEnterpriseConnector,
+  useCreateEnterpriseConnectorCredentialRef,
   useCreateEnterpriseOrgUnit,
   useCreateEnterpriseSourceBinding,
   useDeleteEnterpriseSourceObject,
@@ -20,11 +21,14 @@ import {
   useEnterpriseSourceObjects,
   useReindexEnterpriseSourceObject,
   useRescopeEnterpriseSourceObject,
+  useRotateEnterpriseConnectorCredentialRef,
   useUpdateEnterpriseConnector,
   useUpdateEnterpriseSourceBinding,
+  type CreateEnterpriseConnectorCredentialRefInput,
   type CreateEnterpriseConnectorInput,
   type CreateEnterpriseOrganizationUnitInput,
   type CreateEnterpriseSourceBindingInput,
+  type RotateEnterpriseConnectorCredentialRefInput,
   type EnterpriseConnectorInstance,
   type EnterpriseNoopBase,
   type EnterpriseOrganizationUnit,
@@ -68,6 +72,7 @@ const DATA_CLASSES = [
 ];
 
 const CONNECTOR_STATES = ["active", "paused", "revoked", "quarantined"];
+const CREDENTIAL_CLASSES = ["read_only", "read_write", "admin"];
 
 function compactTenant(payload?: EnterpriseNoopBase | null) {
   const tenant = payload?.tenant_context;
@@ -225,6 +230,195 @@ function ConnectorForm({
           <button className="tcp-btn tcp-btn-primary" type="submit" disabled={busy}>
             <i data-lucide="plug"></i>
             {busy ? "Creating" : "Create connector"}
+          </button>
+        </div>
+      </form>
+    </PanelCard>
+  );
+}
+
+function ConnectorCredentialRefForm({
+  tenantPayload,
+  connectors,
+  onCreate,
+  onRotate,
+  busy,
+}: {
+  tenantPayload?: EnterpriseNoopBase | null;
+  connectors: EnterpriseConnectorInstance[];
+  onCreate: (input: CreateEnterpriseConnectorCredentialRefInput) => Promise<void>;
+  onRotate: (input: RotateEnterpriseConnectorCredentialRefInput) => Promise<void>;
+  busy: boolean;
+}) {
+  const orgId = tenantOrg(tenantPayload);
+  const workspaceId = tenantWorkspace(tenantPayload);
+  const [mode, setMode] = useState<"attach" | "rotate">("attach");
+  const [connectorId, setConnectorId] = useState("");
+  const [credentialId, setCredentialId] = useState("");
+  const [credentialClass, setCredentialClass] = useState("read_only");
+  const [secretProvider, setSecretProvider] = useState("google_kms");
+  const [secretId, setSecretId] = useState("");
+  const [secretName, setSecretName] = useState("");
+  const [resourceKind, setResourceKind] = useState("document_collection");
+  const [resourceId, setResourceId] = useState("");
+
+  const selectedConnectorId = connectorId || connectors[0]?.connector_id || "";
+  const resetAfterSubmit = () => {
+    setCredentialId("");
+    setSecretId("");
+    setSecretName("");
+    setResourceId("");
+  };
+
+  return (
+    <PanelCard title="Credential reference" subtitle="Secret-ref only">
+      <form
+        className="grid gap-3"
+        onSubmit={async (event) => {
+          event.preventDefault();
+          const secret_ref = {
+            org_id: orgId,
+            workspace_id: workspaceId,
+            provider: secretProvider.trim(),
+            secret_id: secretId.trim(),
+            name: secretName.trim(),
+          };
+          if (mode === "rotate") {
+            await onRotate({
+              connector_id: selectedConnectorId,
+              credential_id: credentialId.trim(),
+              secret_ref,
+            });
+          } else {
+            await onCreate({
+              connector_id: selectedConnectorId,
+              credential_id: credentialId.trim(),
+              credential_class: credentialClass,
+              secret_ref,
+              source_bound_resource: resourceId.trim()
+                ? {
+                    organization_id: orgId,
+                    workspace_id: workspaceId,
+                    resource_kind: resourceKind,
+                    resource_id: resourceId.trim(),
+                  }
+                : undefined,
+            });
+          }
+          resetAfterSubmit();
+        }}
+      >
+        <div className="grid gap-3 md:grid-cols-2">
+          <Field label="Mode">
+            <select
+              className="tcp-select"
+              value={mode}
+              onChange={(event) => setMode(event.currentTarget.value as "attach" | "rotate")}
+            >
+              <option value="attach">attach</option>
+              <option value="rotate">rotate</option>
+            </select>
+          </Field>
+          <Field label="Connector">
+            <select
+              className="tcp-select"
+              value={selectedConnectorId}
+              onChange={(event) => setConnectorId(event.currentTarget.value)}
+              required
+            >
+              {connectors.length ? (
+                connectors.map((connector) => (
+                  <option key={connector.connector_id} value={connector.connector_id}>
+                    {connector.display_name || connector.connector_id}
+                  </option>
+                ))
+              ) : (
+                <option value="">create connector first</option>
+              )}
+            </select>
+          </Field>
+          <Field label="Credential ID">
+            <input
+              className="tcp-input"
+              value={credentialId}
+              onInput={(event) => setCredentialId(event.currentTarget.value)}
+              placeholder="readonly"
+              required
+            />
+          </Field>
+          <Field label="Credential Class">
+            <select
+              className="tcp-select"
+              value={credentialClass}
+              onChange={(event) => setCredentialClass(event.currentTarget.value)}
+              disabled={mode === "rotate"}
+            >
+              {CREDENTIAL_CLASSES.map((option) => (
+                <option key={option} value={option}>
+                  {option}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Secret Provider">
+            <input
+              className="tcp-input"
+              value={secretProvider}
+              onInput={(event) => setSecretProvider(event.currentTarget.value)}
+              placeholder="google_kms"
+              required
+            />
+          </Field>
+          <Field label="Secret ID">
+            <input
+              className="tcp-input"
+              value={secretId}
+              onInput={(event) => setSecretId(event.currentTarget.value)}
+              placeholder="kms://finance/readonly-v2"
+              required
+            />
+          </Field>
+          <Field label="Secret Name">
+            <input
+              className="tcp-input"
+              value={secretName}
+              onInput={(event) => setSecretName(event.currentTarget.value)}
+              placeholder="Finance Drive read-only secret"
+              required
+            />
+          </Field>
+          <Field label="Bound Resource">
+            <input
+              className="tcp-input"
+              value={resourceId}
+              onInput={(event) => setResourceId(event.currentTarget.value)}
+              placeholder="optional resource id"
+              disabled={mode === "rotate"}
+            />
+          </Field>
+          <Field label="Resource Kind">
+            <select
+              className="tcp-select"
+              value={resourceKind}
+              onChange={(event) => setResourceKind(event.currentTarget.value)}
+              disabled={mode === "rotate" || !resourceId.trim()}
+            >
+              {RESOURCE_KINDS.map((option) => (
+                <option key={option} value={option}>
+                  {option}
+                </option>
+              ))}
+            </select>
+          </Field>
+        </div>
+        <div className="flex justify-end">
+          <button
+            className="tcp-btn tcp-btn-primary"
+            type="submit"
+            disabled={busy || !selectedConnectorId}
+          >
+            <i data-lucide={mode === "rotate" ? "rotate-cw" : "key-round"}></i>
+            {busy ? "Saving" : mode === "rotate" ? "Rotate ref" : "Attach ref"}
           </button>
         </div>
       </form>
@@ -635,6 +829,31 @@ function ConnectorsPanel({
                   <div>Created: {formatLifecycleTime(connector.created_at_ms)}</div>
                   <div>Updated: {formatLifecycleTime(connector.updated_at_ms)}</div>
                 </div>
+                {connector.credential_refs?.length ? (
+                  <div className="mt-3 grid gap-2">
+                    {connector.credential_refs.map((credential) => (
+                      <div
+                        key={credential.credential_id}
+                        className="rounded-md border border-white/8 bg-black/20 px-3 py-2 text-xs text-tcp-text-secondary"
+                      >
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <span className="font-medium text-tcp-text-primary">
+                            {credential.credential_id}
+                          </span>
+                          <Badge tone={credential.credential_class === "read_only" ? "ok" : "warn"}>
+                            {credential.credential_class || "read_only"}
+                          </Badge>
+                        </div>
+                        <div className="mt-1 break-all">
+                          {credential.secret_ref.provider} / {credential.secret_ref.secret_id}
+                        </div>
+                        <div className="mt-1">
+                          Rotated: {formatLifecycleTime(credential.rotated_at_ms)}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
                 <div className="mt-3 flex flex-wrap gap-2">
                   {CONNECTOR_STATES.map((nextState) => (
                     <button
@@ -967,8 +1186,10 @@ export function EnterpriseAdminPage({ navigate, toast }: AppPageProps) {
   const [selectedBindingId, setSelectedBindingId] = useState<string | null>(null);
   const createOrgUnit = useCreateEnterpriseOrgUnit();
   const createConnector = useCreateEnterpriseConnector();
+  const createConnectorCredentialRef = useCreateEnterpriseConnectorCredentialRef();
   const createSourceBinding = useCreateEnterpriseSourceBinding();
   const updateConnector = useUpdateEnterpriseConnector();
+  const rotateConnectorCredentialRef = useRotateEnterpriseConnectorCredentialRef();
   const updateSourceBinding = useUpdateEnterpriseSourceBinding();
   const sourceObjects = useEnterpriseSourceObjects(selectedBindingId);
   const reindexSourceObject = useReindexEnterpriseSourceObject();
@@ -1054,6 +1275,27 @@ export function EnterpriseAdminPage({ navigate, toast }: AppPageProps) {
                 toast("ok", "Connector created.");
               } catch (error) {
                 toast("err", errorText(error, "Connector could not be created."));
+              }
+            }}
+          />
+          <ConnectorCredentialRefForm
+            tenantPayload={payload}
+            connectors={connectorRows}
+            busy={createConnectorCredentialRef.isPending || rotateConnectorCredentialRef.isPending}
+            onCreate={async (input) => {
+              try {
+                await createConnectorCredentialRef.mutateAsync(input);
+                toast("ok", "Credential reference attached.");
+              } catch (error) {
+                toast("err", errorText(error, "Credential reference could not be attached."));
+              }
+            }}
+            onRotate={async (input) => {
+              try {
+                await rotateConnectorCredentialRef.mutateAsync(input);
+                toast("ok", "Credential reference rotated.");
+              } catch (error) {
+                toast("err", errorText(error, "Credential reference could not be rotated."));
               }
             }}
           />

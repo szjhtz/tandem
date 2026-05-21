@@ -44,6 +44,14 @@ export type EnterpriseResourceRef = {
   path_prefix?: string | null;
 };
 
+export type EnterpriseSecretRef = {
+  org_id: string;
+  workspace_id: string;
+  provider: string;
+  secret_id: string;
+  name: string;
+};
+
 export type EnterpriseIngestionPolicy = {
   allow_indexing?: boolean;
   allow_prompt_context?: boolean;
@@ -70,9 +78,22 @@ export type EnterpriseConnectorInstance = {
   provider: string;
   display_name?: string | null;
   state?: string;
-  credential_refs?: unknown[];
+  credential_refs?: EnterpriseConnectorCredentialRef[];
   created_at_ms?: number;
   updated_at_ms?: number;
+};
+
+export type EnterpriseConnectorCredentialRef = {
+  org_id: string;
+  workspace_id: string;
+  connector_id: string;
+  credential_id: string;
+  credential_class?: string;
+  secret_ref: EnterpriseSecretRef;
+  source_bound_resource?: EnterpriseResourceRef | null;
+  created_at_ms?: number;
+  rotated_at_ms?: number | null;
+  expires_at_ms?: number | null;
 };
 
 export type EnterpriseOrgUnitsResponse = EnterpriseNoopBase & {
@@ -157,6 +178,22 @@ export type UpdateEnterpriseConnectorInput = {
   connector_id: string;
   display_name?: string;
   state?: string;
+};
+
+export type CreateEnterpriseConnectorCredentialRefInput = {
+  connector_id: string;
+  credential_id: string;
+  credential_class?: string;
+  secret_ref: EnterpriseSecretRef;
+  source_bound_resource?: EnterpriseResourceRef;
+  expires_at_ms?: number;
+};
+
+export type RotateEnterpriseConnectorCredentialRefInput = {
+  connector_id: string;
+  credential_id: string;
+  secret_ref: EnterpriseSecretRef;
+  expires_at_ms?: number;
 };
 
 export type UpdateEnterpriseSourceBindingInput = {
@@ -279,6 +316,43 @@ export function useUpdateEnterpriseConnector() {
         method: "PATCH",
         body: JSON.stringify(input),
       }) as Promise<EnterpriseConnectorsResponse>,
+    onSuccess: () => {
+      invalidateConnectorQueries(queryClient);
+    },
+  });
+}
+
+export function useCreateEnterpriseConnectorCredentialRef() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ connector_id, ...input }: CreateEnterpriseConnectorCredentialRefInput) =>
+      api(`/api/engine/enterprise/connectors/${encodeURIComponent(connector_id)}/credential-refs`, {
+        method: "POST",
+        body: JSON.stringify(input),
+      }) as Promise<EnterpriseConnectorsResponse>,
+    onSuccess: () => {
+      invalidateConnectorQueries(queryClient);
+    },
+  });
+}
+
+export function useRotateEnterpriseConnectorCredentialRef() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      connector_id,
+      credential_id,
+      ...input
+    }: RotateEnterpriseConnectorCredentialRefInput) =>
+      api(
+        `/api/engine/enterprise/connectors/${encodeURIComponent(
+          connector_id
+        )}/credential-refs/${encodeURIComponent(credential_id)}/rotate`,
+        {
+          method: "PATCH",
+          body: JSON.stringify(input),
+        }
+      ) as Promise<EnterpriseConnectorsResponse>,
     onSuccess: () => {
       invalidateConnectorQueries(queryClient);
     },
