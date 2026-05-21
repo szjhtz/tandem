@@ -149,8 +149,10 @@ production connector ingestion flows remain follow-up implementation phases.
   connector credential changes now invalidate matching source-bound response
   cache entries when the response cache is present.
 - Google Drive is now exposed as the first constrained enterprise connector
-  provider with v1 read-only/source-bound credential policy guardrails; live
-  Drive ingestion remains disabled until the fetcher worker lands.
+  provider with v1 read-only/source-bound credential policy guardrails. The
+  runtime now includes a read-only Drive client for folder listing, stored-file
+  download, and Google Workspace export, but live Drive ingestion remains
+  disabled until the secret resolver and fetcher worker land.
 - Ingestion gating helpers model the required fail-closed behavior for paused,
   revoked, or quarantined connectors, disabled bindings, and review-only
   ingestion policy.

@@ -159,6 +159,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Enterprise Google Drive provider guardrails**: Added the first Google Drive
   provider descriptor and v1 policy guards requiring read-only, source-bound
   credentials before live Drive ingestion is enabled.
+- **Enterprise Google Drive read client**: Added a read-only Google Drive API
+  client for listing admin-labeled folder roots, downloading stored file bytes,
+  and exporting Google Workspace files once a future secret resolver supplies a
+  bearer token.
 
 ### Documentation
 

@@ -11,6 +11,7 @@ pub mod bug_monitor;
 pub mod bug_monitor_github;
 pub mod capability_resolver;
 pub mod config;
+pub mod enterprise_connectors;
 pub mod eval;
 pub mod failures;
 pub mod http;
