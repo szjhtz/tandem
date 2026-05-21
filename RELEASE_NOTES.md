@@ -91,6 +91,9 @@ production connector ingestion flows remain follow-up implementation phases.
 - Source-bound memory retrieval now has explicit tenant-isolation proof: tenant
   A cannot retrieve tenant B chunks even when the binding ID, native object
   path, and search phrase overlap.
+- Source-object re-scope now has explicit purge coverage: old indexed chunks
+  are deleted before lifecycle metadata moves to the new resource/data class,
+  preventing stale prompt context from surviving permission changes.
 - Managed hosted detection now reports hosted auth availability separately, so
   disconnected local test deployments can still use the engine-token sign-in
   path while connected hosted servers keep Tandem hosted login enforcement.

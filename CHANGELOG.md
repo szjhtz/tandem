@@ -89,6 +89,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   coverage proving tenant A cannot retrieve tenant B source-bound chunks even
   when both tenants share the same binding ID, native object path, and query
   phrase.
+- **Enterprise source-object re-scope purge proof**: Added admin lifecycle
+  coverage proving a source-object re-scope purges old indexed chunks before
+  updating lifecycle metadata, preventing stale resource grants from retrieving
+  old prompt context.
 - **Hosted panel auth availability split**: Control-panel capabilities now
   distinguish managed hosted deployments from deployments with usable hosted
   auth exchange credentials, allowing disconnected local test deployments to

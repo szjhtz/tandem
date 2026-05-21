@@ -1,6 +1,7 @@
 use super::*;
 use tandem_memory::types::{
-    MemoryTenantScope, MemoryTier, SourceObjectLifecycleRecord, SourceObjectLifecycleState,
+    MemoryChunk, MemoryTenantScope, MemoryTier, SourceObjectLifecycleRecord,
+    SourceObjectLifecycleState, DEFAULT_EMBEDDING_DIMENSION,
 };
 
 #[tokio::test]
@@ -1015,7 +1016,6 @@ async fn enterprise_source_object_lifecycle_actions_are_admin_gated_and_tenant_s
     })
     .await
     .expect("seed lifecycle");
-
     let req = Request::builder()
         .method("GET")
         .uri("/enterprise/source-bindings/finance-drive/source-objects")
@@ -1067,6 +1067,49 @@ async fn enterprise_source_object_lifecycle_actions_are_admin_gated_and_tenant_s
         Some("source_object_reindex_requested")
     );
 
+    db.store_chunk(
+        &MemoryChunk {
+            id: "chunk-finance-note".to_string(),
+            content: "finance note stale content must be purged on rescope".to_string(),
+            tier: MemoryTier::Global,
+            session_id: None,
+            project_id: None,
+            source: "file".to_string(),
+            source_path: Some("import-test/note.md".to_string()),
+            source_mtime: None,
+            source_size: Some(57),
+            source_hash: Some("source-1".to_string()),
+            tenant_scope: tenant_scope.clone(),
+            created_at: chrono::Utc::now(),
+            token_count: 8,
+            metadata: Some(json!({
+                "enterprise_source_binding": {
+                    "binding_id": "finance-drive",
+                    "connector_id": "manual-upload",
+                    "resource_ref": {
+                        "organization_id": "acme",
+                        "workspace_id": "finance",
+                        "resource_kind": "document_collection",
+                        "resource_id": "finance-drive"
+                    },
+                    "data_class": "financial_record",
+                    "source_object_id": "source-object-finance-note",
+                    "native_object_id": "import-test/note.md",
+                    "content_hash": "content-1"
+                }
+            })),
+        },
+        &vec![0.1; DEFAULT_EMBEDDING_DIMENSION],
+    )
+    .await
+    .expect("seed indexed chunk before rescope");
+    assert!(db
+        .get_global_chunks_for_tenant(&tenant_scope, 10)
+        .await
+        .expect("global chunks before rescope")
+        .iter()
+        .any(|chunk| chunk.id == "chunk-finance-note"));
+
     let req = Request::builder()
         .method("PATCH")
         .uri("/enterprise/source-bindings/finance-drive/source-objects/source-object-finance-note/scope")
@@ -1095,6 +1138,10 @@ async fn enterprise_source_object_lifecycle_actions_are_admin_gated_and_tenant_s
         Some("rescoped")
     );
     assert_eq!(
+        payload.get("chunks_deleted").and_then(Value::as_i64),
+        Some(1)
+    );
+    assert_eq!(
         payload
             .get("source_object")
             .and_then(|object| object.get("state"))
@@ -1119,6 +1166,17 @@ async fn enterprise_source_object_lifecycle_actions_are_admin_gated_and_tenant_s
             .get("reason")
             .and_then(Value::as_str),
         Some("source_object_rescoped")
+    );
+    assert!(
+        !db.get_global_chunks_for_tenant(&tenant_scope, 10)
+            .await
+            .expect("global chunks after rescope")
+            .iter()
+            .any(|chunk| chunk.id == "chunk-finance-note"
+                || chunk
+                    .content
+                    .contains("finance note stale content must be purged")),
+        "re-scope must purge old indexed chunks so stale resource grants cannot retrieve them"
     );
 
     let req = Request::builder()
