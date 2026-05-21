@@ -19,6 +19,20 @@ mod tests {
         (manager, temp_dir)
     }
 
+    async fn setup_deterministic_test_manager() -> (MemoryManager, TempDir) {
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("test_memory.db");
+        let manager = MemoryManager::new_with_embedding_service(
+            &db_path,
+            crate::embeddings::EmbeddingService::deterministic_for_tests(
+                DEFAULT_EMBEDDING_DIMENSION,
+            ),
+        )
+        .await
+        .unwrap();
+        (manager, temp_dir)
+    }
+
     #[tokio::test]
     async fn test_store_and_search() {
         let (manager, _temp) = setup_test_manager().await;
@@ -616,6 +630,126 @@ mod tests {
         assert!(!context
             .format_for_injection()
             .contains("tenant b current session context"));
+    }
+
+    #[tokio::test]
+    async fn retrieve_context_filters_source_bound_chunks_before_prompt_assembly() {
+        let (manager, _temp) = setup_deterministic_test_manager().await;
+        let tenant_scope = MemoryTenantScope {
+            org_id: "acme".to_string(),
+            workspace_id: "hq".to_string(),
+            deployment_id: Some("dep-1".to_string()),
+        };
+        let resource = tandem_enterprise_contract::ResourceRef::new(
+            "acme",
+            "hq",
+            tandem_enterprise_contract::ResourceKind::DocumentCollection,
+            "executive-briefs",
+        );
+        let source_bound_metadata = serde_json::json!({
+            "enterprise_source_binding": {
+                "binding_id": "binding-executive",
+                "connector_id": "manual-upload",
+                "resource_ref": resource,
+                "data_class": "executive",
+                "source_object_id": "source-object-executive",
+                "native_object_id": "executive/brief.md",
+                "content_hash": "hash-executive"
+            }
+        });
+        let embedding = crate::embeddings::EmbeddingService::deterministic_for_tests(
+            DEFAULT_EMBEDDING_DIMENSION,
+        )
+        .embed("executive acquisition")
+        .await
+        .unwrap();
+
+        let current_session_chunk = MemoryChunk {
+            id: "source-bound-current-session".to_string(),
+            content: "executive acquisition memo must not enter prompt without grant".to_string(),
+            tier: MemoryTier::Session,
+            session_id: Some("session-executive".to_string()),
+            project_id: Some("project-executive".to_string()),
+            source: "file".to_string(),
+            source_path: Some("executive/brief.md".to_string()),
+            source_mtime: None,
+            source_size: None,
+            source_hash: Some("hash-executive-current".to_string()),
+            tenant_scope: tenant_scope.clone(),
+            created_at: chrono::Utc::now(),
+            token_count: 9,
+            metadata: Some(source_bound_metadata.clone()),
+        };
+        let history_chunk = MemoryChunk {
+            id: "source-bound-history".to_string(),
+            content: "executive acquisition history must not enter prompt without grant"
+                .to_string(),
+            tier: MemoryTier::Global,
+            session_id: None,
+            project_id: None,
+            source: "file".to_string(),
+            source_path: Some("executive/history.md".to_string()),
+            source_mtime: None,
+            source_size: None,
+            source_hash: Some("hash-executive-history".to_string()),
+            tenant_scope: tenant_scope.clone(),
+            created_at: chrono::Utc::now(),
+            token_count: 9,
+            metadata: Some(source_bound_metadata),
+        };
+        manager
+            .db()
+            .store_chunk(&current_session_chunk, &embedding)
+            .await
+            .unwrap();
+        manager
+            .db()
+            .store_chunk(&history_chunk, &embedding)
+            .await
+            .unwrap();
+
+        let (unfiltered_context, unfiltered_meta) = manager
+            .retrieve_context_with_meta_for_tenant(
+                "executive acquisition",
+                Some("project-executive"),
+                Some("session-executive"),
+                &tenant_scope,
+                None,
+            )
+            .await
+            .expect("unfiltered context retrieval");
+        let unfiltered_prompt = unfiltered_context.format_for_injection();
+        assert_eq!(unfiltered_meta.chunks_total, 0);
+        assert!(!unfiltered_prompt.contains("executive acquisition"));
+
+        let filter = crate::types::MemoryAccessFilter::strict(
+            strict_context_for_resource(
+                &tenant_scope,
+                tandem_enterprise_contract::ResourceRef::new(
+                    "acme",
+                    "hq",
+                    tandem_enterprise_contract::ResourceKind::DocumentCollection,
+                    "executive-briefs",
+                ),
+                tandem_enterprise_contract::DataClass::Executive,
+            ),
+            chrono::Utc::now().timestamp_millis() as u64,
+        );
+        let (filtered_context, filtered_meta) = manager
+            .retrieve_context_with_meta_for_tenant_with_access_filter(
+                "executive acquisition",
+                Some("project-executive"),
+                Some("session-executive"),
+                &tenant_scope,
+                None,
+                Some(&filter),
+            )
+            .await
+            .expect("filtered context retrieval");
+        let filtered_prompt = filtered_context.format_for_injection();
+        assert!(filtered_meta.chunks_total >= 2);
+        assert!(filtered_prompt.contains("executive acquisition memo"));
+        assert!(filtered_prompt.contains("executive acquisition history"));
     }
 
     #[tokio::test]

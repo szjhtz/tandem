@@ -94,6 +94,10 @@ production connector ingestion flows remain follow-up implementation phases.
 - Source-object re-scope now has explicit purge coverage: old indexed chunks
   are deleted before lifecycle metadata moves to the new resource/data class,
   preventing stale prompt context from surviving permission changes.
+- Source-bound prompt-context assembly now has explicit regression coverage:
+  source-bound current-session and history chunks are excluded from assembled
+  prompt context unless a strict tenant projection grants read access to the
+  bound `ResourceRef` and `DataClass`.
 - Managed hosted detection now reports hosted auth availability separately, so
   disconnected local test deployments can still use the engine-token sign-in
   path while connected hosted servers keep Tandem hosted login enforcement.
