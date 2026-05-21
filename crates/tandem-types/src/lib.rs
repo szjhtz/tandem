@@ -8,13 +8,16 @@ pub mod tool;
 
 pub use tandem_enterprise_contract::{
     AccessDecision, AccessEffect, AccessPermission, AssertionMetadata, AuthorityChain,
-    AutomationPrincipal, DataBoundary, DataClass, EnterpriseBridge, EnterpriseBridgeState,
+    AutomationPrincipal, ConnectorCredentialClass, ConnectorCredentialRef, ConnectorInstance,
+    ConnectorLifecycleState, DataBoundary, DataClass, EnterpriseBridge, EnterpriseBridgeState,
     EnterpriseCapability, EnterpriseMode, EnterpriseStatus, ExecutionPrincipal, GrantEvaluation,
-    GrantSource, HeaderTenantContextResolver, HumanActor, LocalImplicitTenant,
-    NoopEnterpriseBridge, NoopRequestAuthorizationHook, PrincipalKind, PrincipalRef,
+    GrantSource, HeaderTenantContextResolver, HumanActor, IngestionJob, IngestionJobState,
+    IngestionPolicy, IngestionQuarantine, LocalImplicitTenant, NoopEnterpriseBridge,
+    NoopRequestAuthorizationHook, PrincipalKind, PrincipalRef, QuarantineDisposition,
     RequestAuthorizationHook, RequestPrincipal, ResourceKind, ResourcePathSegment, ResourceRef,
-    ResourceScope, RuntimeAuthMode, ScopedGrant, SecretRef, SecretRefError, SigningKeyPurpose,
-    StrictTenantContext, TenantContext, TenantContextAssertionClaims, TenantContextAssertionHeader,
+    ResourceScope, RuntimeAuthMode, ScopedGrant, ScopedMemoryChunkRef, SecretRef, SecretRefError,
+    SigningKeyPurpose, SourceBinding, SourceBindingState, SourceObject, StrictTenantContext,
+    TenantContext, TenantContextAssertionClaims, TenantContextAssertionHeader,
     TenantContextResolver, TenantSource, VerifiedTenantContext,
 };
 

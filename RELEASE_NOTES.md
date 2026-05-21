@@ -2,7 +2,40 @@
 
 This is the canonical release-notes file used by release tooling.
 
-## v0.5.9 (Unreleased)
+## v0.5.10 (Unreleased)
+
+Tandem 0.5.10 opens the enterprise connector source-binding workstream. The
+focus is safe ingestion governance for hosted and enterprise deployments:
+connector credentials as secret references, source bindings mapped to
+`ResourceRef` and `DataClass`, quarantine/revoke/rotate workflows,
+resource-scoped memory retrieval, and hosted authorization hardening around
+who may bind company data into Tandem.
+
+This unreleased line currently contains the contract and planning foundation
+only. Google Drive, Notion, GitHub, Slack, Gmail, live OAuth, and production
+ingestion flows remain follow-up implementation phases.
+
+### Enterprise Connector Source Binding
+
+- Added transport-safe enterprise contract types for connector instances,
+  connector lifecycle state, connector credential references, credential
+  classes, source binding state, ingestion policy, source objects, ingestion
+  jobs, ingestion quarantine, quarantine dispositions, and scoped memory chunk
+  references.
+- Connector credential references carry only `SecretRef` metadata and default
+  to read-only credentials. They intentionally do not model raw credential
+  values.
+- Source bindings map external source roots to Tandem `ResourceRef` and
+  `DataClass` values, giving manual upload and future external connectors a
+  common resource-scoped ingestion contract.
+- Ingestion gating helpers model the required fail-closed behavior for paused,
+  revoked, or quarantined connectors, disabled bindings, and review-only
+  ingestion policy.
+- Added the internal enterprise connector source-binding Kanban covering
+  rollout phases, mitigations, memory/retrieval implications, denial tests,
+  and open ownership decisions.
+
+## v0.5.9 (2026-05-21)
 
 Tandem 0.5.9 continues the hosted tenant-isolation work for Automation V2. The
 focus is denial-driven hardening for background and applied automation paths:

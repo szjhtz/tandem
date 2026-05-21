@@ -213,6 +213,10 @@ pub enum ResourceKind {
     AuditExport,
     McpServer,
     McpTool,
+    ConnectorInstance,
+    SourceBinding,
+    SourceObject,
+    IngestionJob,
     ExternalIntegrationAccount,
 }
 
@@ -1183,6 +1187,365 @@ impl core::fmt::Display for SecretRefError {
 }
 
 impl std::error::Error for SecretRefError {}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ConnectorLifecycleState {
+    #[default]
+    Active,
+    Paused,
+    Revoked,
+    Quarantined,
+}
+
+impl ConnectorLifecycleState {
+    pub fn allows_ingestion(self) -> bool {
+        matches!(self, Self::Active)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ConnectorCredentialClass {
+    #[default]
+    ReadOnly,
+    ReadWrite,
+    Admin,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConnectorCredentialRef {
+    pub org_id: String,
+    pub workspace_id: String,
+    pub connector_id: String,
+    pub credential_id: String,
+    #[serde(default)]
+    pub credential_class: ConnectorCredentialClass,
+    pub secret_ref: SecretRef,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_bound_resource: Option<ResourceRef>,
+    pub created_at_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rotated_at_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires_at_ms: Option<u64>,
+}
+
+impl ConnectorCredentialRef {
+    pub fn read_only(
+        org_id: impl Into<String>,
+        workspace_id: impl Into<String>,
+        connector_id: impl Into<String>,
+        credential_id: impl Into<String>,
+        secret_ref: SecretRef,
+        created_at_ms: u64,
+    ) -> Self {
+        Self {
+            org_id: org_id.into(),
+            workspace_id: workspace_id.into(),
+            connector_id: connector_id.into(),
+            credential_id: credential_id.into(),
+            credential_class: ConnectorCredentialClass::ReadOnly,
+            secret_ref,
+            source_bound_resource: None,
+            created_at_ms,
+            rotated_at_ms: None,
+            expires_at_ms: None,
+        }
+    }
+
+    pub fn with_source_bound_resource(mut self, resource: ResourceRef) -> Self {
+        self.source_bound_resource = Some(resource);
+        self
+    }
+
+    pub fn validate_for_tenant(&self, ctx: &TenantContext) -> Result<(), SecretRefError> {
+        if self.org_id != ctx.org_id {
+            return Err(SecretRefError::OrgMismatch);
+        }
+        if self.workspace_id != ctx.workspace_id {
+            return Err(SecretRefError::WorkspaceMismatch);
+        }
+        self.secret_ref.validate_for_tenant(ctx)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConnectorInstance {
+    pub connector_id: String,
+    pub tenant_context: TenantContext,
+    pub provider: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    #[serde(default)]
+    pub state: ConnectorLifecycleState,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub credential_refs: Vec<ConnectorCredentialRef>,
+    pub created_by: PrincipalRef,
+    pub created_at_ms: u64,
+    pub updated_at_ms: u64,
+}
+
+impl ConnectorInstance {
+    pub fn active(
+        connector_id: impl Into<String>,
+        tenant_context: TenantContext,
+        provider: impl Into<String>,
+        created_by: PrincipalRef,
+        now_ms: u64,
+    ) -> Self {
+        Self {
+            connector_id: connector_id.into(),
+            tenant_context,
+            provider: provider.into(),
+            display_name: None,
+            state: ConnectorLifecycleState::Active,
+            credential_refs: Vec::new(),
+            created_by,
+            created_at_ms: now_ms,
+            updated_at_ms: now_ms,
+        }
+    }
+
+    pub fn with_state(mut self, state: ConnectorLifecycleState, updated_at_ms: u64) -> Self {
+        self.state = state;
+        self.updated_at_ms = updated_at_ms;
+        self
+    }
+
+    pub fn with_credential_refs(mut self, credential_refs: Vec<ConnectorCredentialRef>) -> Self {
+        self.credential_refs = credential_refs;
+        self
+    }
+
+    pub fn tenant_matches(&self, tenant: &TenantContext) -> bool {
+        self.tenant_context.org_id == tenant.org_id
+            && self.tenant_context.workspace_id == tenant.workspace_id
+            && self.tenant_context.deployment_id == tenant.deployment_id
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum SourceBindingState {
+    #[default]
+    Enabled,
+    Disabled,
+    Quarantined,
+}
+
+impl SourceBindingState {
+    pub fn allows_ingestion(self) -> bool {
+        matches!(self, Self::Enabled)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IngestionPolicy {
+    #[serde(default = "default_true")]
+    pub allow_indexing: bool,
+    #[serde(default = "default_true")]
+    pub allow_prompt_context: bool,
+    #[serde(default)]
+    pub require_review: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_depth: Option<u32>,
+}
+
+impl Default for IngestionPolicy {
+    fn default() -> Self {
+        Self {
+            allow_indexing: true,
+            allow_prompt_context: true,
+            require_review: false,
+            max_depth: None,
+        }
+    }
+}
+
+fn default_true() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SourceBinding {
+    pub binding_id: String,
+    pub tenant_context: TenantContext,
+    pub connector_id: String,
+    pub source_type: String,
+    pub native_source_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_root_label: Option<String>,
+    pub resource_ref: ResourceRef,
+    pub data_class: DataClass,
+    #[serde(default)]
+    pub state: SourceBindingState,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub credential_ref_id: Option<String>,
+    #[serde(default)]
+    pub ingestion_policy: IngestionPolicy,
+    pub created_by: PrincipalRef,
+    pub created_at_ms: u64,
+    pub updated_at_ms: u64,
+}
+
+impl SourceBinding {
+    #[allow(clippy::too_many_arguments)]
+    pub fn enabled(
+        binding_id: impl Into<String>,
+        tenant_context: TenantContext,
+        connector_id: impl Into<String>,
+        source_type: impl Into<String>,
+        native_source_id: impl Into<String>,
+        resource_ref: ResourceRef,
+        data_class: DataClass,
+        created_by: PrincipalRef,
+        now_ms: u64,
+    ) -> Self {
+        Self {
+            binding_id: binding_id.into(),
+            tenant_context,
+            connector_id: connector_id.into(),
+            source_type: source_type.into(),
+            native_source_id: native_source_id.into(),
+            source_root_label: None,
+            resource_ref,
+            data_class,
+            state: SourceBindingState::Enabled,
+            credential_ref_id: None,
+            ingestion_policy: IngestionPolicy::default(),
+            created_by,
+            created_at_ms: now_ms,
+            updated_at_ms: now_ms,
+        }
+    }
+
+    pub fn with_state(mut self, state: SourceBindingState, updated_at_ms: u64) -> Self {
+        self.state = state;
+        self.updated_at_ms = updated_at_ms;
+        self
+    }
+
+    pub fn with_credential_ref_id(mut self, credential_ref_id: impl Into<String>) -> Self {
+        self.credential_ref_id = Some(credential_ref_id.into());
+        self
+    }
+
+    pub fn with_ingestion_policy(mut self, ingestion_policy: IngestionPolicy) -> Self {
+        self.ingestion_policy = ingestion_policy;
+        self
+    }
+
+    pub fn tenant_matches(&self, tenant: &TenantContext) -> bool {
+        self.tenant_context.org_id == tenant.org_id
+            && self.tenant_context.workspace_id == tenant.workspace_id
+            && self.tenant_context.deployment_id == tenant.deployment_id
+    }
+
+    pub fn can_ingest_with(&self, connector: &ConnectorInstance) -> bool {
+        self.connector_id == connector.connector_id
+            && connector.tenant_matches(&self.tenant_context)
+            && connector.state.allows_ingestion()
+            && self.state.allows_ingestion()
+            && self.ingestion_policy.allow_indexing
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SourceObject {
+    pub source_object_id: String,
+    pub tenant_context: TenantContext,
+    pub binding_id: String,
+    pub connector_id: String,
+    pub native_object_id: String,
+    pub resource_ref: ResourceRef,
+    pub data_class: DataClass,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_hash: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_source_object_id: Option<String>,
+}
+
+impl SourceObject {
+    pub fn dedupe_scope_key(&self) -> String {
+        format!(
+            "{}:{}:{}:{}:{}:{}",
+            self.tenant_context.org_id,
+            self.tenant_context.workspace_id,
+            self.resource_ref.resource_kind as u8,
+            self.resource_ref.resource_id,
+            self.binding_id,
+            self.native_object_id
+        )
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum IngestionJobState {
+    #[default]
+    Queued,
+    Running,
+    Completed,
+    Failed,
+    Skipped,
+    Quarantined,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IngestionJob {
+    pub job_id: String,
+    pub tenant_context: TenantContext,
+    pub connector_id: String,
+    pub binding_id: String,
+    #[serde(default)]
+    pub state: IngestionJobState,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub source_object_ids: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub started_at_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub finished_at_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quarantine_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum QuarantineDisposition {
+    Release,
+    Delete,
+    Reindex,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IngestionQuarantine {
+    pub quarantine_id: String,
+    pub tenant_context: TenantContext,
+    pub connector_id: String,
+    pub binding_id: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub source_object_ids: Vec<String>,
+    pub reason: String,
+    pub created_at_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reviewed_by: Option<PrincipalRef>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reviewed_at_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub disposition: Option<QuarantineDisposition>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScopedMemoryChunkRef {
+    pub chunk_id: String,
+    pub tenant_context: TenantContext,
+    pub source_object_id: String,
+    pub resource_ref: ResourceRef,
+    pub data_class: DataClass,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_hash: Option<String>,
+}
 
 pub trait TenantContextResolver: Send + Sync {
     fn resolve_tenant_context(
@@ -2161,6 +2524,211 @@ mod tests {
         assert_eq!(allowed.decision, AccessDecision::Allow);
         assert_eq!(denied.decision, AccessDecision::Deny);
         assert_eq!(denied.reason, "resource_explicitly_denied_by_scope");
+    }
+
+    #[test]
+    fn connector_credential_ref_defaults_to_read_only_secret_reference() {
+        let tenant = TenantContext::explicit_user_workspace(
+            "acme",
+            "finance",
+            Some("deployment-prod".to_string()),
+            "user-admin",
+        );
+        let credential = ConnectorCredentialRef::read_only(
+            "acme",
+            "finance",
+            "google-drive-finance",
+            "credential-readonly",
+            SecretRef {
+                org_id: "acme".to_string(),
+                workspace_id: "finance".to_string(),
+                provider: "google_kms".to_string(),
+                secret_id: "secret://connectors/google-drive-finance/read".to_string(),
+                name: "Google Drive read token".to_string(),
+            },
+            1_000,
+        )
+        .with_source_bound_resource(ResourceRef::new(
+            "acme",
+            "finance",
+            ResourceKind::SharedDrive,
+            "finance-drive",
+        ));
+
+        assert_eq!(
+            credential.credential_class,
+            ConnectorCredentialClass::ReadOnly
+        );
+        assert!(credential.validate_for_tenant(&tenant).is_ok());
+
+        let encoded = serde_json::to_value(&credential).expect("serialize credential ref");
+        assert_eq!(encoded["credential_class"], "read_only");
+        assert_eq!(
+            encoded["secret_ref"]["secret_id"],
+            credential.secret_ref.secret_id
+        );
+        assert!(encoded.get("credential_value").is_none());
+        assert!(encoded.get("access_token").is_none());
+        assert_eq!(
+            encoded["source_bound_resource"]["resource_kind"],
+            "shared_drive"
+        );
+
+        let wrong_tenant = TenantContext::explicit_user_workspace(
+            "acme",
+            "engineering",
+            Some("deployment-prod".to_string()),
+            "user-admin",
+        );
+        assert!(matches!(
+            credential.validate_for_tenant(&wrong_tenant),
+            Err(SecretRefError::WorkspaceMismatch)
+        ));
+    }
+
+    #[test]
+    fn source_binding_blocks_ingestion_when_connector_or_binding_is_not_active() {
+        let tenant = TenantContext::explicit_user_workspace(
+            "acme",
+            "finance",
+            Some("deployment-prod".to_string()),
+            "user-admin",
+        );
+        let admin = PrincipalRef::human_user("user-admin");
+        let connector = ConnectorInstance::active(
+            "google-drive-finance",
+            tenant.clone(),
+            "google_drive",
+            admin.clone(),
+            1_000,
+        );
+        let binding = SourceBinding::enabled(
+            "binding-finance-drive",
+            tenant.clone(),
+            "google-drive-finance",
+            "google_drive_shared_drive",
+            "drive-finance",
+            ResourceRef::new("acme", "finance", ResourceKind::DataStore, "finance-docs"),
+            DataClass::FinancialRecord,
+            admin,
+            1_000,
+        );
+
+        assert!(binding.can_ingest_with(&connector));
+
+        let paused_connector = connector
+            .clone()
+            .with_state(ConnectorLifecycleState::Paused, 1_100);
+        assert!(!binding.can_ingest_with(&paused_connector));
+
+        let revoked_connector = connector
+            .clone()
+            .with_state(ConnectorLifecycleState::Revoked, 1_200);
+        assert!(!binding.can_ingest_with(&revoked_connector));
+
+        let quarantined_connector = connector
+            .clone()
+            .with_state(ConnectorLifecycleState::Quarantined, 1_300);
+        assert!(!binding.can_ingest_with(&quarantined_connector));
+
+        let disabled_binding = binding
+            .clone()
+            .with_state(SourceBindingState::Disabled, 1_400);
+        assert!(!disabled_binding.can_ingest_with(&connector));
+
+        let review_only_binding = binding.with_ingestion_policy(IngestionPolicy {
+            allow_indexing: false,
+            allow_prompt_context: false,
+            require_review: true,
+            max_depth: Some(2),
+        });
+        assert!(!review_only_binding.can_ingest_with(&connector));
+    }
+
+    #[test]
+    fn source_objects_and_memory_chunks_carry_resource_and_data_class_scope() {
+        let tenant = TenantContext::explicit_user_workspace(
+            "acme",
+            "finance",
+            Some("deployment-prod".to_string()),
+            "user-admin",
+        );
+        let resource = ResourceRef::new("acme", "finance", ResourceKind::Document, "board-report")
+            .with_parent_path(vec![ResourcePathSegment::new(
+                ResourceKind::SharedDrive,
+                "finance-drive",
+            )]);
+        let object = SourceObject {
+            source_object_id: "source-object-1".to_string(),
+            tenant_context: tenant.clone(),
+            binding_id: "binding-finance-drive".to_string(),
+            connector_id: "google-drive-finance".to_string(),
+            native_object_id: "drive-file-123".to_string(),
+            resource_ref: resource.clone(),
+            data_class: DataClass::FinancialRecord,
+            source_hash: Some("sha256:abc".to_string()),
+            parent_source_object_id: None,
+        };
+        let chunk = ScopedMemoryChunkRef {
+            chunk_id: "chunk-1".to_string(),
+            tenant_context: tenant.clone(),
+            source_object_id: object.source_object_id.clone(),
+            resource_ref: resource,
+            data_class: object.data_class,
+            source_hash: object.source_hash.clone(),
+        };
+
+        assert!(object.dedupe_scope_key().contains("acme:finance"));
+        assert!(object.dedupe_scope_key().contains("binding-finance-drive"));
+        assert_eq!(chunk.tenant_context, tenant);
+        assert_eq!(chunk.source_object_id, "source-object-1");
+        assert_eq!(chunk.data_class, DataClass::FinancialRecord);
+
+        let encoded = serde_json::to_value(&chunk).expect("serialize memory chunk ref");
+        assert_eq!(encoded["source_object_id"], "source-object-1");
+        assert_eq!(encoded["resource_ref"]["resource_kind"], "document");
+        assert_eq!(encoded["data_class"], "financial_record");
+    }
+
+    #[test]
+    fn ingestion_quarantine_tracks_review_without_making_output_searchable() {
+        let tenant = TenantContext::explicit_user_workspace(
+            "acme",
+            "legal",
+            Some("deployment-prod".to_string()),
+            "user-legal",
+        );
+        let quarantine = IngestionQuarantine {
+            quarantine_id: "quarantine-1".to_string(),
+            tenant_context: tenant,
+            connector_id: "notion-legal".to_string(),
+            binding_id: "binding-legal-notion".to_string(),
+            source_object_ids: vec!["source-object-legal-1".to_string()],
+            reason: "high_risk_data_class_requires_review".to_string(),
+            created_at_ms: 1_000,
+            reviewed_by: Some(PrincipalRef::human_user("legal-admin")),
+            reviewed_at_ms: Some(1_500),
+            disposition: Some(QuarantineDisposition::Delete),
+        };
+        let job = IngestionJob {
+            job_id: "ingestion-job-1".to_string(),
+            tenant_context: quarantine.tenant_context.clone(),
+            connector_id: quarantine.connector_id.clone(),
+            binding_id: quarantine.binding_id.clone(),
+            state: IngestionJobState::Quarantined,
+            source_object_ids: quarantine.source_object_ids.clone(),
+            started_at_ms: Some(900),
+            finished_at_ms: Some(1_000),
+            quarantine_id: Some(quarantine.quarantine_id.clone()),
+        };
+
+        assert_eq!(job.state, IngestionJobState::Quarantined);
+        assert_eq!(job.quarantine_id.as_deref(), Some("quarantine-1"));
+        assert_eq!(quarantine.disposition, Some(QuarantineDisposition::Delete));
+
+        let encoded = serde_json::to_value(&quarantine).expect("serialize quarantine");
+        assert_eq!(encoded["disposition"], "delete");
+        assert_eq!(encoded["reason"], "high_risk_data_class_requires_review");
     }
 
     fn test_strict_context(

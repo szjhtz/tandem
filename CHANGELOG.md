@@ -5,7 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.5.9] - Unreleased
+## [0.5.10] - Unreleased
+
+### Added
+
+- **Enterprise connector source-binding contract foundation**: Added the first
+  transport-safe enterprise contract vocabulary for connector instances,
+  secret-reference-only connector credentials, source bindings, source objects,
+  ingestion jobs, ingestion quarantine, and scoped memory chunk references.
+  This starts the 0.5.10 connector-ingestion governance track without enabling
+  live external connector ingestion.
+
+### Documentation
+
+- **Enterprise connector source-binding Kanban**: Added the internal enterprise
+  board for connector credential handling, resource-scoped source bindings,
+  safe ingestion, quarantine, revoke/rotate flows, and retrieval isolation
+  acceptance tests.
+
+## [0.5.9] - 2026-05-21
 
 ### Added
 
