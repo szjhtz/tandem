@@ -314,7 +314,7 @@ flowchart TD
 
 ## Enterprise Path And Roadmap
 
-Tandem has a serious enterprise architecture path, but it should not be described as complete enterprise infrastructure yet.
+Tandem already includes the runtime foundations for governed AI work in hosted and self-managed environments. The next enterprise work is about hardening identity, policy, audit export, and administration around those foundations.
 
 Current foundation:
 
