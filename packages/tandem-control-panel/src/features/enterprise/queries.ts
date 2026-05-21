@@ -157,6 +157,18 @@ export type EnterpriseIngestionQuarantine = {
   disposition?: string | null;
 };
 
+export type EnterpriseConnectorImpactResponse = EnterpriseNoopBase & {
+  connector_id?: string;
+  affected_bindings?: EnterpriseSourceBinding[];
+  affected_source_objects?: EnterpriseSourceObjectLifecycle[];
+  affected_ingestion_jobs?: EnterpriseIngestionJob[];
+  affected_quarantines?: EnterpriseIngestionQuarantine[];
+  cache_invalidation_required?: boolean;
+  compromise_window_started_at_ms?: number | null;
+  compromise_window_finished_at_ms?: number | null;
+  recommended_actions?: string[];
+};
+
 export type EnterpriseSourceObjectsResponse = EnterpriseNoopBase & {
   source_objects?: EnterpriseSourceObjectLifecycle[];
   count?: number;
@@ -342,6 +354,19 @@ export function useEnterpriseIngestionQuarantines(bindingId?: string | null, ena
   });
 }
 
+export function useEnterpriseConnectorImpact(connectorId?: string | null, enabled = true) {
+  return useQuery({
+    queryKey: ["enterprise", "connector-impact", connectorId || ""],
+    queryFn: () =>
+      api(`/api/engine/enterprise/connectors/${encodeURIComponent(connectorId || "")}/impact`, {
+        method: "GET",
+      }) as Promise<EnterpriseConnectorImpactResponse>,
+    enabled: enabled && Boolean(connectorId),
+    staleTime: 15000,
+    retry: retryEnterpriseQuery,
+  });
+}
+
 export function useCreateEnterpriseOrgUnit() {
   const queryClient = useQueryClient();
   return useMutation({
@@ -358,6 +383,7 @@ export function useCreateEnterpriseOrgUnit() {
 
 function invalidateConnectorQueries(queryClient: QueryClient) {
   queryClient.invalidateQueries({ queryKey: ["enterprise", "connectors"] });
+  queryClient.invalidateQueries({ queryKey: ["enterprise", "connector-impact"] });
   queryClient.invalidateQueries({ queryKey: ["enterprise", "source-bindings"] });
   queryClient.invalidateQueries({ queryKey: ["enterprise", "source-objects"] });
 }

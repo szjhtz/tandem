@@ -99,6 +99,10 @@ production connector ingestion flows remain follow-up implementation phases.
   remove newly indexed chunks before they can be retrieved. Enterprise admins
   can review quarantines from the runtime or hidden admin page and mark a
   release, delete, or reindex disposition.
+- Connector revoke/rotate response handling now has an admin-visible impact
+  summary. The runtime and hidden Enterprise admin page can report affected
+  bindings, source objects, ingestion jobs, quarantines, compromise window, and
+  recommended response actions for a connector.
 - Ingestion gating helpers model the required fail-closed behavior for paused,
   revoked, or quarantined connectors, disabled bindings, and review-only
   ingestion policy.

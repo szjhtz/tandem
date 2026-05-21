@@ -6,7 +6,7 @@ use tandem_memory::types::{
 #[tokio::test]
 async fn enterprise_status_returns_public_safe_summary() {
     let state = test_state().await;
-    let app = app_router(state);
+    let app = app_router(state.clone());
     let req = Request::builder()
         .method("GET")
         .uri("/enterprise/status")
@@ -550,6 +550,182 @@ async fn enterprise_connector_credentials_are_secret_refs_and_rotate_by_tenant()
             })
             .to_string(),
         ))
+        .expect("request");
+    let resp = app.oneshot(req).await.expect("response");
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn enterprise_connector_impact_summarizes_revoke_rotate_scope() {
+    let state = test_state().await;
+    let app = app_router(state.clone());
+
+    let req = Request::builder()
+        .method("POST")
+        .uri("/enterprise/connectors")
+        .header("content-type", "application/json")
+        .header("x-tandem-org-id", "acme")
+        .header("x-tandem-workspace-id", "finance")
+        .header("x-tandem-actor-id", "finance-admin")
+        .body(Body::from(connector_body("google_drive", "google_drive")))
+        .expect("request");
+    let resp = app.clone().oneshot(req).await.expect("response");
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let req = Request::builder()
+        .method("POST")
+        .uri("/enterprise/source-bindings")
+        .header("content-type", "application/json")
+        .header("x-tandem-org-id", "acme")
+        .header("x-tandem-workspace-id", "finance")
+        .header("x-tandem-actor-id", "finance-admin")
+        .body(Body::from(source_binding_body(
+            "finance-drive",
+            "acme",
+            "finance",
+        )))
+        .expect("request");
+    let resp = app.clone().oneshot(req).await.expect("response");
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let tenant_scope = MemoryTenantScope {
+        org_id: "acme".to_string(),
+        workspace_id: "finance".to_string(),
+        deployment_id: None,
+    };
+    let paths = tandem_core::resolve_shared_paths().expect("shared paths");
+    let db = tandem_memory::db::MemoryDatabase::new(&paths.memory_db_path)
+        .await
+        .expect("memory db");
+    db.upsert_source_object_active_for_tenant(&SourceObjectLifecycleRecord {
+        source_object_id: "source-object-finance-impact".to_string(),
+        tenant_scope,
+        source_binding_id: "finance-drive".to_string(),
+        connector_id: "google_drive".to_string(),
+        state: SourceObjectLifecycleState::Active,
+        tier: MemoryTier::Global,
+        session_id: None,
+        project_id: None,
+        import_namespace: "impact-test".to_string(),
+        indexed_path: "impact-test/note.md".to_string(),
+        native_object_id: "impact-test/note.md".to_string(),
+        resource_ref: json!({
+            "organization_id": "acme",
+            "workspace_id": "finance",
+            "resource_kind": "document_collection",
+            "resource_id": "finance-drive"
+        }),
+        data_class: "financial_record".to_string(),
+        content_hash: Some("content-impact".to_string()),
+        source_hash: Some("source-impact".to_string()),
+        first_seen_at_ms: 1_000,
+        last_seen_at_ms: 1_000,
+        tombstoned_at_ms: None,
+        metadata: None,
+    })
+    .await
+    .expect("seed source object");
+
+    state.enterprise_ingestion_jobs.write().await.insert(
+        "acme::finance::local::job-impact".to_string(),
+        tandem_enterprise_contract::IngestionJob {
+            job_id: "job-impact".to_string(),
+            tenant_context: tandem_types::TenantContext::explicit("acme", "finance", None),
+            connector_id: "google_drive".to_string(),
+            binding_id: "finance-drive".to_string(),
+            state: tandem_enterprise_contract::IngestionJobState::Completed,
+            source_object_ids: vec!["source-object-finance-impact".to_string()],
+            started_at_ms: Some(1_000),
+            finished_at_ms: Some(2_000),
+            quarantine_id: None,
+        },
+    );
+    state.enterprise_ingestion_quarantines.write().await.insert(
+        "acme::finance::local::quarantine-impact".to_string(),
+        tandem_enterprise_contract::IngestionQuarantine {
+            quarantine_id: "quarantine-impact".to_string(),
+            tenant_context: tandem_types::TenantContext::explicit("acme", "finance", None),
+            connector_id: "google_drive".to_string(),
+            binding_id: "finance-drive".to_string(),
+            source_object_ids: vec!["source-object-finance-impact".to_string()],
+            reason: "impact test".to_string(),
+            created_at_ms: 1_500,
+            reviewed_by: None,
+            reviewed_at_ms: None,
+            disposition: None,
+        },
+    );
+
+    let req = Request::builder()
+        .method("GET")
+        .uri("/enterprise/connectors/google_drive/impact")
+        .header("x-tandem-org-id", "acme")
+        .header("x-tandem-workspace-id", "finance")
+        .header("x-tandem-request-source", "local_control_panel")
+        .body(Body::empty())
+        .expect("request");
+    let resp = app.clone().oneshot(req).await.expect("response");
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = to_bytes(resp.into_body(), usize::MAX).await.expect("body");
+    let payload: Value = serde_json::from_slice(&body).expect("json");
+    assert_eq!(
+        payload.get("connector_id").and_then(Value::as_str),
+        Some("google_drive")
+    );
+    assert_eq!(
+        payload
+            .get("affected_bindings")
+            .and_then(Value::as_array)
+            .map(Vec::len),
+        Some(1)
+    );
+    assert_eq!(
+        payload
+            .get("affected_source_objects")
+            .and_then(Value::as_array)
+            .map(Vec::len),
+        Some(1)
+    );
+    assert_eq!(
+        payload
+            .get("affected_ingestion_jobs")
+            .and_then(Value::as_array)
+            .map(Vec::len),
+        Some(1)
+    );
+    assert_eq!(
+        payload
+            .get("affected_quarantines")
+            .and_then(Value::as_array)
+            .map(Vec::len),
+        Some(1)
+    );
+    assert_eq!(
+        payload
+            .get("cache_invalidation_required")
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        payload
+            .get("compromise_window_started_at_ms")
+            .and_then(Value::as_u64),
+        Some(1_000)
+    );
+    assert!(payload
+        .get("recommended_actions")
+        .and_then(Value::as_array)
+        .is_some_and(|actions| actions
+            .iter()
+            .any(|action| action.as_str() == Some("rotate_connector_credential"))));
+
+    let req = Request::builder()
+        .method("GET")
+        .uri("/enterprise/connectors/google_drive/impact")
+        .header("x-tandem-org-id", "other-co")
+        .header("x-tandem-workspace-id", "finance")
+        .header("x-tandem-request-source", "local_control_panel")
+        .body(Body::empty())
         .expect("request");
     let resp = app.oneshot(req).await.expect("response");
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);

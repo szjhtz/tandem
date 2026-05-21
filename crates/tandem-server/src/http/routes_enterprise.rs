@@ -90,6 +90,21 @@ struct EnterpriseIngestionQuarantinesResponse {
     count: usize,
 }
 
+#[derive(Debug, Serialize)]
+struct EnterpriseConnectorImpactResponse {
+    #[serde(flatten)]
+    base: EnterpriseAdminResponseBase,
+    connector_id: String,
+    affected_bindings: Vec<SourceBinding>,
+    affected_source_objects: Vec<SourceObjectLifecycleRecord>,
+    affected_ingestion_jobs: Vec<IngestionJob>,
+    affected_quarantines: Vec<IngestionQuarantine>,
+    cache_invalidation_required: bool,
+    compromise_window_started_at_ms: Option<u64>,
+    compromise_window_finished_at_ms: Option<u64>,
+    recommended_actions: Vec<&'static str>,
+}
+
 #[derive(Debug, Deserialize)]
 struct ListIngestionJobsQuery {
     #[serde(default)]
@@ -215,6 +230,10 @@ pub(super) fn apply(router: Router<AppState>) -> Router<AppState> {
         .route(
             "/enterprise/connectors/{connector_id}",
             patch(update_connector),
+        )
+        .route(
+            "/enterprise/connectors/{connector_id}/impact",
+            get(get_connector_impact),
         )
         .route(
             "/enterprise/connectors/{connector_id}/credential-refs",
@@ -496,6 +515,32 @@ async fn list_ingestion_jobs(
         count: ingestion_jobs.len(),
         ingestion_jobs,
         base: storage_base(tenant_context, request_principal),
+    }))
+}
+
+async fn get_connector_impact(
+    State(state): State<AppState>,
+    Path(connector_id): Path<String>,
+    Extension(tenant_context): Extension<TenantContext>,
+    Extension(request_principal): Extension<RequestPrincipal>,
+    verified_tenant_context: Option<Extension<VerifiedTenantContext>>,
+) -> EnterpriseResult<EnterpriseConnectorImpactResponse> {
+    require_enterprise_admin(&request_principal, verified_tenant_context.as_deref())?;
+    let connector_id = validate_enterprise_id("connector_id", &connector_id)?;
+    ensure_connector_exists_for_tenant(&state, &tenant_context, &connector_id).await?;
+    let impact = build_connector_impact(&state, &tenant_context, &connector_id).await?;
+
+    Ok(Json(EnterpriseConnectorImpactResponse {
+        base: storage_base(tenant_context, request_principal),
+        connector_id,
+        affected_bindings: impact.affected_bindings,
+        affected_source_objects: impact.affected_source_objects,
+        affected_ingestion_jobs: impact.affected_ingestion_jobs,
+        affected_quarantines: impact.affected_quarantines,
+        cache_invalidation_required: impact.cache_invalidation_required,
+        compromise_window_started_at_ms: impact.compromise_window_started_at_ms,
+        compromise_window_finished_at_ms: impact.compromise_window_finished_at_ms,
+        recommended_actions: impact.recommended_actions,
     }))
 }
 
@@ -1127,6 +1172,137 @@ fn memory_tenant_scope(tenant_context: &TenantContext) -> MemoryTenantScope {
         workspace_id: tenant_context.workspace_id.clone(),
         deployment_id: tenant_context.deployment_id.clone(),
     }
+}
+
+struct ConnectorImpact {
+    affected_bindings: Vec<SourceBinding>,
+    affected_source_objects: Vec<SourceObjectLifecycleRecord>,
+    affected_ingestion_jobs: Vec<IngestionJob>,
+    affected_quarantines: Vec<IngestionQuarantine>,
+    cache_invalidation_required: bool,
+    compromise_window_started_at_ms: Option<u64>,
+    compromise_window_finished_at_ms: Option<u64>,
+    recommended_actions: Vec<&'static str>,
+}
+
+async fn ensure_connector_exists_for_tenant(
+    state: &AppState,
+    tenant_context: &TenantContext,
+    connector_id: &str,
+) -> Result<(), (StatusCode, Json<Value>)> {
+    let registry = state.enterprise_connectors.read().await;
+    if registry.values().any(|connector| {
+        connector.connector_id == connector_id && connector.tenant_matches(tenant_context)
+    }) {
+        Ok(())
+    } else {
+        Err(not_found("ENTERPRISE_CONNECTOR_NOT_FOUND"))
+    }
+}
+
+async fn build_connector_impact(
+    state: &AppState,
+    tenant_context: &TenantContext,
+    connector_id: &str,
+) -> Result<ConnectorImpact, (StatusCode, Json<Value>)> {
+    let mut affected_bindings: Vec<_> = state
+        .enterprise_source_bindings
+        .read()
+        .await
+        .values()
+        .filter(|binding| {
+            binding.connector_id == connector_id && binding.tenant_matches(tenant_context)
+        })
+        .cloned()
+        .collect();
+    affected_bindings.sort_by(|left, right| left.binding_id.cmp(&right.binding_id));
+
+    let tenant_scope = memory_tenant_scope(tenant_context);
+    let db = open_enterprise_memory_db().await?;
+    let mut affected_source_objects = Vec::new();
+    for binding in &affected_bindings {
+        let mut rows = db
+            .list_source_object_lifecycle_for_binding_for_tenant(&tenant_scope, &binding.binding_id)
+            .await
+            .map_err(|_| internal_error("ENTERPRISE_CONNECTOR_IMPACT_SOURCE_OBJECTS_FAILED"))?;
+        affected_source_objects.append(&mut rows);
+    }
+    affected_source_objects.sort_by(|left, right| {
+        left.source_binding_id
+            .cmp(&right.source_binding_id)
+            .then_with(|| left.source_object_id.cmp(&right.source_object_id))
+    });
+
+    let mut affected_ingestion_jobs: Vec<_> = state
+        .enterprise_ingestion_jobs
+        .read()
+        .await
+        .values()
+        .filter(|job| {
+            job.connector_id == connector_id && ingestion_job_tenant_matches(job, tenant_context)
+        })
+        .cloned()
+        .collect();
+    affected_ingestion_jobs.sort_by(|left, right| {
+        right
+            .started_at_ms
+            .unwrap_or_default()
+            .cmp(&left.started_at_ms.unwrap_or_default())
+    });
+
+    let mut affected_quarantines: Vec<_> = state
+        .enterprise_ingestion_quarantines
+        .read()
+        .await
+        .values()
+        .filter(|quarantine| {
+            quarantine.connector_id == connector_id
+                && ingestion_quarantine_tenant_matches(quarantine, tenant_context)
+        })
+        .cloned()
+        .collect();
+    affected_quarantines.sort_by(|left, right| right.created_at_ms.cmp(&left.created_at_ms));
+
+    let started = affected_ingestion_jobs
+        .iter()
+        .filter_map(|job| job.started_at_ms)
+        .chain(
+            affected_quarantines
+                .iter()
+                .map(|quarantine| quarantine.created_at_ms),
+        )
+        .min();
+    let finished = affected_ingestion_jobs
+        .iter()
+        .filter_map(|job| job.finished_at_ms.or(job.started_at_ms))
+        .chain(affected_quarantines.iter().map(|quarantine| {
+            quarantine
+                .reviewed_at_ms
+                .unwrap_or(quarantine.created_at_ms)
+        }))
+        .max();
+    let cache_invalidation_required = !affected_bindings.is_empty()
+        || !affected_source_objects.is_empty()
+        || !affected_ingestion_jobs.is_empty()
+        || !affected_quarantines.is_empty();
+
+    Ok(ConnectorImpact {
+        affected_bindings,
+        affected_source_objects,
+        affected_ingestion_jobs,
+        affected_quarantines,
+        cache_invalidation_required,
+        compromise_window_started_at_ms: started,
+        compromise_window_finished_at_ms: finished,
+        recommended_actions: vec![
+            "pause_or_revoke_connector",
+            "invalidate_response_cache",
+            "audit_compromise_window",
+            "review_quarantine_records",
+            "reindex_or_delete_affected_source_objects",
+            "rotate_connector_credential",
+        ],
+    })
 }
 
 fn serialize_data_class(data_class: DataClass) -> Result<String, (StatusCode, Json<Value>)> {

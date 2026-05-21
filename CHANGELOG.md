@@ -102,6 +102,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   marking source objects quarantined, recording `IngestionQuarantine` records,
   and exposing admin review dispositions for release, delete, or reindex in the
   runtime and hidden control-panel admin page.
+- **Enterprise connector impact response**: Added an admin-gated connector
+  impact endpoint and control-panel view for revoke/rotate response handling.
+  Admins can inspect affected source bindings, source objects, ingestion jobs,
+  quarantines, compromise-window timing, cache-invalidation need, and
+  recommended response actions for a connector.
 
 ### Documentation
 

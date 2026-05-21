@@ -15,6 +15,7 @@ import {
   useCreateEnterpriseOrgUnit,
   useCreateEnterpriseSourceBinding,
   useDeleteEnterpriseSourceObject,
+  useEnterpriseConnectorImpact,
   useEnterpriseConnectors,
   useEnterpriseIngestionJobs,
   useEnterpriseIngestionQuarantines,
@@ -33,6 +34,7 @@ import {
   type CreateEnterpriseSourceBindingInput,
   type RotateEnterpriseConnectorCredentialRefInput,
   type EnterpriseConnectorInstance,
+  type EnterpriseConnectorImpactResponse,
   type EnterpriseIngestionJob,
   type EnterpriseIngestionQuarantine,
   type EnterpriseNoopBase,
@@ -783,12 +785,16 @@ function ConnectorsPanel({
   loading,
   error,
   onSetState,
+  onSelectImpact,
+  selectedConnectorId,
   busyConnectorId,
 }: {
   rows: EnterpriseConnectorInstance[];
   loading: boolean;
   error: unknown;
   onSetState: (connectorId: string, state: string) => void;
+  onSelectImpact: (connectorId: string) => void;
+  selectedConnectorId?: string | null;
   busyConnectorId?: string | null;
 }) {
   return (
@@ -871,6 +877,15 @@ function ConnectorsPanel({
                       {nextState}
                     </button>
                   ))}
+                  <button
+                    className="tcp-btn"
+                    type="button"
+                    disabled={selectedConnectorId === connector.connector_id}
+                    onClick={() => onSelectImpact(connector.connector_id)}
+                  >
+                    <i data-lucide="radar"></i>
+                    Impact
+                  </button>
                 </div>
               </div>
             );
@@ -881,6 +896,106 @@ function ConnectorsPanel({
           title="No connectors"
           text="Create a connector lifecycle record before binding source data."
         />
+      )}
+    </PanelCard>
+  );
+}
+
+function ConnectorImpactPanel({
+  connectorId,
+  payload,
+  loading,
+  error,
+}: {
+  connectorId?: string | null;
+  payload?: EnterpriseConnectorImpactResponse | null;
+  loading: boolean;
+  error: unknown;
+}) {
+  const bindings = payload?.affected_bindings || [];
+  const objects = payload?.affected_source_objects || [];
+  const jobs = payload?.affected_ingestion_jobs || [];
+  const quarantines = payload?.affected_quarantines || [];
+  return (
+    <PanelCard
+      title="Connector impact"
+      subtitle={connectorId || "Select connector"}
+      actions={
+        <Badge tone={payload?.cache_invalidation_required ? "warn" : "ghost"}>
+          {payload?.cache_invalidation_required ? "invalidate" : "clear"}
+        </Badge>
+      }
+    >
+      {!connectorId ? (
+        <EmptyState title="No connector selected" text="Choose Impact on a connector row." />
+      ) : loading ? (
+        <LoadingState title="Loading" text="Computing affected enterprise scope" />
+      ) : error ? (
+        <EmptyState title="Unavailable" text={errorText(error, "Impact could not load.")} />
+      ) : (
+        <div className="grid gap-3">
+          <div className="grid gap-3 md:grid-cols-4">
+            <div className="rounded-lg border border-white/8 bg-black/20 p-3">
+              <div className="tcp-subtle text-xs uppercase tracking-[0.14em]">Bindings</div>
+              <div className="mt-1 text-lg font-semibold text-tcp-text-primary">
+                {bindings.length}
+              </div>
+            </div>
+            <div className="rounded-lg border border-white/8 bg-black/20 p-3">
+              <div className="tcp-subtle text-xs uppercase tracking-[0.14em]">Objects</div>
+              <div className="mt-1 text-lg font-semibold text-tcp-text-primary">
+                {objects.length}
+              </div>
+            </div>
+            <div className="rounded-lg border border-white/8 bg-black/20 p-3">
+              <div className="tcp-subtle text-xs uppercase tracking-[0.14em]">Jobs</div>
+              <div className="mt-1 text-lg font-semibold text-tcp-text-primary">{jobs.length}</div>
+            </div>
+            <div className="rounded-lg border border-white/8 bg-black/20 p-3">
+              <div className="tcp-subtle text-xs uppercase tracking-[0.14em]">Quarantine</div>
+              <div className="mt-1 text-lg font-semibold text-tcp-text-primary">
+                {quarantines.length}
+              </div>
+            </div>
+          </div>
+          <div className="grid gap-2 text-xs text-tcp-text-secondary md:grid-cols-2">
+            <div>Window start: {formatLifecycleTime(payload?.compromise_window_started_at_ms)}</div>
+            <div>Window end: {formatLifecycleTime(payload?.compromise_window_finished_at_ms)}</div>
+          </div>
+          {payload?.recommended_actions?.length ? (
+            <div className="flex flex-wrap gap-2">
+              {payload.recommended_actions.map((action) => (
+                <Badge key={action} tone="info">
+                  {action}
+                </Badge>
+              ))}
+            </div>
+          ) : null}
+          {bindings.length ? (
+            <div className="grid gap-2">
+              {bindings.map((binding) => (
+                <div
+                  key={binding.binding_id}
+                  className="rounded-lg border border-white/8 bg-black/20 p-3"
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <div className="font-medium text-tcp-text-primary">
+                        {binding.source_root_label || binding.binding_id}
+                      </div>
+                      <div className="tcp-subtle text-xs">
+                        {binding.resource_ref.resource_kind} / {binding.resource_ref.resource_id}
+                      </div>
+                    </div>
+                    <Badge tone={binding.state === "enabled" ? "ok" : "warn"}>
+                      {binding.state || "enabled"}
+                    </Badge>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : null}
+        </div>
       )}
     </PanelCard>
   );
@@ -1333,6 +1448,7 @@ export function EnterpriseAdminPage({ navigate, toast }: AppPageProps) {
   const connectors = useEnterpriseConnectors();
   const sourceBindings = useEnterpriseSourceBindings();
   const [selectedBindingId, setSelectedBindingId] = useState<string | null>(null);
+  const [selectedConnectorId, setSelectedConnectorId] = useState<string | null>(null);
   const createOrgUnit = useCreateEnterpriseOrgUnit();
   const createConnector = useCreateEnterpriseConnector();
   const createConnectorCredentialRef = useCreateEnterpriseConnectorCredentialRef();
@@ -1341,6 +1457,7 @@ export function EnterpriseAdminPage({ navigate, toast }: AppPageProps) {
   const rotateConnectorCredentialRef = useRotateEnterpriseConnectorCredentialRef();
   const updateSourceBinding = useUpdateEnterpriseSourceBinding();
   const sourceObjects = useEnterpriseSourceObjects(selectedBindingId);
+  const connectorImpact = useEnterpriseConnectorImpact(selectedConnectorId);
   const ingestionJobs = useEnterpriseIngestionJobs(selectedBindingId);
   const ingestionQuarantines = useEnterpriseIngestionQuarantines(selectedBindingId);
   const reindexSourceObject = useReindexEnterpriseSourceObject();
@@ -1382,6 +1499,9 @@ export function EnterpriseAdminPage({ navigate, toast }: AppPageProps) {
     orgUnits.refetch();
     connectors.refetch();
     sourceBindings.refetch();
+    if (selectedConnectorId) {
+      connectorImpact.refetch();
+    }
     if (selectedBindingId) {
       sourceObjects.refetch();
     }
@@ -1481,6 +1601,8 @@ export function EnterpriseAdminPage({ navigate, toast }: AppPageProps) {
             rows={connectorRows}
             loading={connectors.isLoading}
             error={connectors.error}
+            selectedConnectorId={selectedConnectorId}
+            onSelectImpact={setSelectedConnectorId}
             busyConnectorId={
               updateConnector.isPending ? updateConnector.variables?.connector_id || null : null
             }
@@ -1514,6 +1636,13 @@ export function EnterpriseAdminPage({ navigate, toast }: AppPageProps) {
             }}
           />
         </div>
+
+        <ConnectorImpactPanel
+          connectorId={selectedConnectorId}
+          payload={connectorImpact.data}
+          loading={connectorImpact.isLoading}
+          error={connectorImpact.error}
+        />
 
         <div className="grid gap-4 xl:grid-cols-2">
           <SourceObjectLifecyclePanel
