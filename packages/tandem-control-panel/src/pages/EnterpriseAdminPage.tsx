@@ -10,17 +10,22 @@ import {
   Toolbar,
 } from "../ui/index.tsx";
 import {
+  useCreateEnterpriseConnector,
   useCreateEnterpriseOrgUnit,
   useCreateEnterpriseSourceBinding,
   useDeleteEnterpriseSourceObject,
+  useEnterpriseConnectors,
   useEnterpriseOrgUnits,
   useEnterpriseSourceBindings,
   useEnterpriseSourceObjects,
   useReindexEnterpriseSourceObject,
   useRescopeEnterpriseSourceObject,
+  useUpdateEnterpriseConnector,
   useUpdateEnterpriseSourceBinding,
+  type CreateEnterpriseConnectorInput,
   type CreateEnterpriseOrganizationUnitInput,
   type CreateEnterpriseSourceBindingInput,
+  type EnterpriseConnectorInstance,
   type EnterpriseNoopBase,
   type EnterpriseOrganizationUnit,
   type EnterpriseSourceBinding,
@@ -62,6 +67,8 @@ const DATA_CLASSES = [
   "public",
 ];
 
+const CONNECTOR_STATES = ["active", "paused", "revoked", "quarantined"];
+
 function compactTenant(payload?: EnterpriseNoopBase | null) {
   const tenant = payload?.tenant_context;
   if (!tenant) return "tenant unavailable";
@@ -95,12 +102,14 @@ function errorText(error: unknown, fallback: string) {
 
 function GovernanceStatusStrip({
   orgUnitsPayload,
+  connectorsPayload,
   sourceBindingsPayload,
 }: {
   orgUnitsPayload?: EnterpriseNoopBase | null;
+  connectorsPayload?: EnterpriseNoopBase | null;
   sourceBindingsPayload?: EnterpriseNoopBase | null;
 }) {
-  const payload = orgUnitsPayload || sourceBindingsPayload;
+  const payload = orgUnitsPayload || connectorsPayload || sourceBindingsPayload;
   const isNoop = noopStatus(payload);
   return (
     <PanelCard>
@@ -140,6 +149,86 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
       <span className="tcp-subtle text-xs uppercase tracking-[0.12em]">{label}</span>
       {children}
     </label>
+  );
+}
+
+function ConnectorForm({
+  onCreate,
+  busy,
+}: {
+  onCreate: (input: CreateEnterpriseConnectorInput) => Promise<void>;
+  busy: boolean;
+}) {
+  const [connectorId, setConnectorId] = useState("");
+  const [provider, setProvider] = useState("manual_upload");
+  const [displayName, setDisplayName] = useState("");
+  const [state, setState] = useState("active");
+
+  return (
+    <PanelCard title="Create connector" subtitle="Lifecycle gate">
+      <form
+        className="grid gap-3"
+        onSubmit={async (event) => {
+          event.preventDefault();
+          await onCreate({
+            connector_id: connectorId.trim(),
+            provider: provider.trim(),
+            display_name: displayName.trim() || undefined,
+            state,
+          });
+          setConnectorId("");
+          setDisplayName("");
+        }}
+      >
+        <div className="grid gap-3 md:grid-cols-2">
+          <Field label="Connector ID">
+            <input
+              className="tcp-input"
+              value={connectorId}
+              onInput={(event) => setConnectorId(event.currentTarget.value)}
+              placeholder="google-drive-hr"
+              required
+            />
+          </Field>
+          <Field label="Provider">
+            <input
+              className="tcp-input"
+              value={provider}
+              onInput={(event) => setProvider(event.currentTarget.value)}
+              placeholder="google_drive"
+              required
+            />
+          </Field>
+          <Field label="Display Name">
+            <input
+              className="tcp-input"
+              value={displayName}
+              onInput={(event) => setDisplayName(event.currentTarget.value)}
+              placeholder="HR Google Drive"
+            />
+          </Field>
+          <Field label="State">
+            <select
+              className="tcp-select"
+              value={state}
+              onChange={(event) => setState(event.currentTarget.value)}
+            >
+              {CONNECTOR_STATES.map((option) => (
+                <option key={option} value={option}>
+                  {option}
+                </option>
+              ))}
+            </select>
+          </Field>
+        </div>
+        <div className="flex justify-end">
+          <button className="tcp-btn tcp-btn-primary" type="submit" disabled={busy}>
+            <i data-lucide="plug"></i>
+            {busy ? "Creating" : "Create connector"}
+          </button>
+        </div>
+      </form>
+    </PanelCard>
   );
 }
 
@@ -483,6 +572,96 @@ function OrgUnitsPanel({
   );
 }
 
+function connectorStateTone(state?: string): "ok" | "warn" | "err" | "info" | "ghost" {
+  if (state === "active") return "ok";
+  if (state === "revoked" || state === "quarantined") return "err";
+  if (state === "paused") return "warn";
+  return "ghost";
+}
+
+function ConnectorsPanel({
+  rows,
+  loading,
+  error,
+  onSetState,
+  busyConnectorId,
+}: {
+  rows: EnterpriseConnectorInstance[];
+  loading: boolean;
+  error: unknown;
+  onSetState: (connectorId: string, state: string) => void;
+  busyConnectorId?: string | null;
+}) {
+  return (
+    <PanelCard
+      title="Connectors"
+      subtitle="Tenant-scoped ingestion lifecycle"
+      actions={<Badge tone={error ? "err" : rows.length ? "ok" : "ghost"}>{rows.length}</Badge>}
+      fullHeight
+    >
+      {loading ? (
+        <LoadingState title="Loading" text="Reading connectors" />
+      ) : error ? (
+        <EmptyState title="Unavailable" text={errorText(error, "Connectors could not load.")} />
+      ) : rows.length ? (
+        <div className="grid gap-2">
+          {rows.map((connector) => {
+            const state = connector.state || "active";
+            const isBusy = busyConnectorId === connector.connector_id;
+            return (
+              <div
+                key={connector.connector_id}
+                className="rounded-lg border border-white/8 bg-black/20 p-3"
+              >
+                <div className="flex flex-wrap items-start justify-between gap-2">
+                  <div>
+                    <div className="font-medium text-tcp-text-primary">
+                      {connector.display_name || connector.connector_id}
+                    </div>
+                    <div className="tcp-subtle text-xs">
+                      {connector.provider} / {connector.connector_id}
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <Badge tone={connectorStateTone(state)}>{state}</Badge>
+                    <Badge tone="info">
+                      {connector.credential_refs?.length
+                        ? `${connector.credential_refs.length} secret refs`
+                        : "no secret refs"}
+                    </Badge>
+                  </div>
+                </div>
+                <div className="mt-3 grid gap-2 text-xs text-tcp-text-secondary md:grid-cols-2">
+                  <div>Created: {formatLifecycleTime(connector.created_at_ms)}</div>
+                  <div>Updated: {formatLifecycleTime(connector.updated_at_ms)}</div>
+                </div>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {CONNECTOR_STATES.map((nextState) => (
+                    <button
+                      key={nextState}
+                      className="tcp-btn"
+                      type="button"
+                      disabled={isBusy || state === nextState}
+                      onClick={() => onSetState(connector.connector_id, nextState)}
+                    >
+                      {nextState}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <EmptyState
+          title="No connectors"
+          text="Create a connector lifecycle record before binding source data."
+        />
+      )}
+    </PanelCard>
+  );
+}
+
 function SourceBindingsPanel({
   rows,
   loading,
@@ -783,16 +962,20 @@ function SourceObjectLifecyclePanel({
 
 export function EnterpriseAdminPage({ navigate, toast }: AppPageProps) {
   const orgUnits = useEnterpriseOrgUnits();
+  const connectors = useEnterpriseConnectors();
   const sourceBindings = useEnterpriseSourceBindings();
   const [selectedBindingId, setSelectedBindingId] = useState<string | null>(null);
   const createOrgUnit = useCreateEnterpriseOrgUnit();
+  const createConnector = useCreateEnterpriseConnector();
   const createSourceBinding = useCreateEnterpriseSourceBinding();
+  const updateConnector = useUpdateEnterpriseConnector();
   const updateSourceBinding = useUpdateEnterpriseSourceBinding();
   const sourceObjects = useEnterpriseSourceObjects(selectedBindingId);
   const reindexSourceObject = useReindexEnterpriseSourceObject();
   const deleteSourceObject = useDeleteEnterpriseSourceObject();
   const rescopeSourceObject = useRescopeEnterpriseSourceObject();
   const orgRows = useMemo(() => orgUnits.data?.org_units || [], [orgUnits.data]);
+  const connectorRows = useMemo(() => connectors.data?.connectors || [], [connectors.data]);
   const bindingRows = useMemo(
     () => sourceBindings.data?.source_bindings || [],
     [sourceBindings.data]
@@ -807,7 +990,7 @@ export function EnterpriseAdminPage({ navigate, toast }: AppPageProps) {
         rescopeSourceObject.variables?.source_object_id ||
         null
       : null;
-  const payload = orgUnits.data || sourceBindings.data;
+  const payload = orgUnits.data || connectors.data || sourceBindings.data;
   const headerBadges = (
     <>
       <Badge tone={noopStatus(payload) ? "warn" : "ok"}>{payload?.status || "checking"}</Badge>
@@ -816,6 +999,7 @@ export function EnterpriseAdminPage({ navigate, toast }: AppPageProps) {
   );
   const refreshEnterpriseState = () => {
     orgUnits.refetch();
+    connectors.refetch();
     sourceBindings.refetch();
     if (selectedBindingId) {
       sourceObjects.refetch();
@@ -846,10 +1030,11 @@ export function EnterpriseAdminPage({ navigate, toast }: AppPageProps) {
       <StaggerGroup className="grid gap-4">
         <GovernanceStatusStrip
           orgUnitsPayload={orgUnits.data}
+          connectorsPayload={connectors.data}
           sourceBindingsPayload={sourceBindings.data}
         />
 
-        <div className="grid gap-4 xl:grid-cols-2">
+        <div className="grid gap-4 xl:grid-cols-3">
           <OrgUnitForm
             busy={createOrgUnit.isPending}
             onCreate={async (input) => {
@@ -858,6 +1043,17 @@ export function EnterpriseAdminPage({ navigate, toast }: AppPageProps) {
                 toast("ok", "Organization unit created.");
               } catch (error) {
                 toast("err", errorText(error, "Organization unit could not be created."));
+              }
+            }}
+          />
+          <ConnectorForm
+            busy={createConnector.isPending}
+            onCreate={async (input) => {
+              try {
+                await createConnector.mutateAsync(input);
+                toast("ok", "Connector created.");
+              } catch (error) {
+                toast("err", errorText(error, "Connector could not be created."));
               }
             }}
           />
@@ -875,8 +1071,24 @@ export function EnterpriseAdminPage({ navigate, toast }: AppPageProps) {
           />
         </div>
 
-        <div className="grid gap-4 xl:grid-cols-2">
+        <div className="grid gap-4 xl:grid-cols-3">
           <OrgUnitsPanel rows={orgRows} loading={orgUnits.isLoading} error={orgUnits.error} />
+          <ConnectorsPanel
+            rows={connectorRows}
+            loading={connectors.isLoading}
+            error={connectors.error}
+            busyConnectorId={
+              updateConnector.isPending ? updateConnector.variables?.connector_id || null : null
+            }
+            onSetState={(connectorId, state) => {
+              updateConnector
+                .mutateAsync({ connector_id: connectorId, state })
+                .then(() => toast("ok", `Connector ${state}.`))
+                .catch((error) =>
+                  toast("err", errorText(error, "Connector could not be updated."))
+                );
+            }}
+          />
           <SourceBindingsPanel
             rows={bindingRows}
             loading={sourceBindings.isLoading}

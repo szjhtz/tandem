@@ -84,6 +84,9 @@ production connector ingestion flows remain follow-up implementation phases.
   lifecycle management. Source-bound imports require the referenced connector
   to exist and be active, so paused, revoked, or quarantined connectors block
   ingestion before data reaches memory.
+- The hidden Enterprise admin page can now create connector lifecycle records,
+  list tenant-scoped connector status, and pause, revoke, quarantine, or
+  reactivate connectors from the control panel.
 - Ingestion gating helpers model the required fail-closed behavior for paused,
   revoked, or quarantined connectors, disabled bindings, and review-only
   ingestion policy.

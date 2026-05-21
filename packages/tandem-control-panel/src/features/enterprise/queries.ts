@@ -64,8 +64,24 @@ export type EnterpriseSourceBinding = {
   ingestion_policy?: EnterpriseIngestionPolicy;
 };
 
+export type EnterpriseConnectorInstance = {
+  connector_id: string;
+  tenant_context?: EnterpriseTenantContext;
+  provider: string;
+  display_name?: string | null;
+  state?: string;
+  credential_refs?: unknown[];
+  created_at_ms?: number;
+  updated_at_ms?: number;
+};
+
 export type EnterpriseOrgUnitsResponse = EnterpriseNoopBase & {
   org_units?: EnterpriseOrganizationUnit[];
+  count?: number;
+};
+
+export type EnterpriseConnectorsResponse = EnterpriseNoopBase & {
+  connectors?: EnterpriseConnectorInstance[];
   count?: number;
 };
 
@@ -130,6 +146,19 @@ export type CreateEnterpriseSourceBindingInput = {
   ingestion_policy?: EnterpriseIngestionPolicy;
 };
 
+export type CreateEnterpriseConnectorInput = {
+  connector_id: string;
+  provider: string;
+  display_name?: string;
+  state?: string;
+};
+
+export type UpdateEnterpriseConnectorInput = {
+  connector_id: string;
+  display_name?: string;
+  state?: string;
+};
+
 export type UpdateEnterpriseSourceBindingInput = {
   binding_id: string;
   state?: string;
@@ -177,6 +206,19 @@ export function useEnterpriseSourceBindings(enabled = true) {
   });
 }
 
+export function useEnterpriseConnectors(enabled = true) {
+  return useQuery({
+    queryKey: ["enterprise", "connectors"],
+    queryFn: () =>
+      api("/api/engine/enterprise/connectors", {
+        method: "GET",
+      }) as Promise<EnterpriseConnectorsResponse>,
+    enabled,
+    staleTime: 15000,
+    retry: retryEnterpriseQuery,
+  });
+}
+
 export function useEnterpriseSourceObjects(bindingId?: string | null, enabled = true) {
   return useQuery({
     queryKey: ["enterprise", "source-objects", bindingId || ""],
@@ -205,6 +247,40 @@ export function useCreateEnterpriseOrgUnit() {
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["enterprise", "org-units"] });
+    },
+  });
+}
+
+function invalidateConnectorQueries(queryClient: QueryClient) {
+  queryClient.invalidateQueries({ queryKey: ["enterprise", "connectors"] });
+  queryClient.invalidateQueries({ queryKey: ["enterprise", "source-bindings"] });
+  queryClient.invalidateQueries({ queryKey: ["enterprise", "source-objects"] });
+}
+
+export function useCreateEnterpriseConnector() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: CreateEnterpriseConnectorInput) =>
+      api("/api/engine/enterprise/connectors", {
+        method: "POST",
+        body: JSON.stringify(input),
+      }) as Promise<EnterpriseConnectorsResponse>,
+    onSuccess: () => {
+      invalidateConnectorQueries(queryClient);
+    },
+  });
+}
+
+export function useUpdateEnterpriseConnector() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ connector_id, ...input }: UpdateEnterpriseConnectorInput) =>
+      api(`/api/engine/enterprise/connectors/${encodeURIComponent(connector_id)}`, {
+        method: "PATCH",
+        body: JSON.stringify(input),
+      }) as Promise<EnterpriseConnectorsResponse>,
+    onSuccess: () => {
+      invalidateConnectorQueries(queryClient);
     },
   });
 }

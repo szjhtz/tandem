@@ -82,6 +82,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   instance admin endpoints for tenant-scoped create/list/update and lifecycle
   states (`active`, `paused`, `revoked`, `quarantined`). Source-bound memory
   imports now require the referenced connector to exist and allow ingestion.
+- **Enterprise connector lifecycle UI**: Wired the hidden Enterprise admin
+  control-panel page to create tenant-scoped connector records, list connector
+  lifecycle status, and move connectors between active, paused, revoked, and
+  quarantined states.
 
 ### Documentation
 
