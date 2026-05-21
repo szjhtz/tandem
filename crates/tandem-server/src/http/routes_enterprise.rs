@@ -23,6 +23,9 @@ use crate::{util::time::now_ms, AppState, EngineEvent};
 
 type EnterpriseResult<T> = Result<Json<T>, (StatusCode, Json<Value>)>;
 
+const GOOGLE_DRIVE_PROVIDER: &str = "google_drive";
+const GOOGLE_DRIVE_SOURCE_TYPE: &str = "google_drive";
+
 #[derive(Debug, Serialize)]
 struct EnterpriseAdminResponseBase {
     tenant_context: TenantContext,
@@ -30,6 +33,27 @@ struct EnterpriseAdminResponseBase {
     bridge_state: &'static str,
     status: &'static str,
     message: &'static str,
+}
+
+#[derive(Debug, Serialize)]
+struct EnterpriseConnectorProvidersResponse {
+    #[serde(flatten)]
+    base: EnterpriseAdminResponseBase,
+    providers: Vec<EnterpriseConnectorProviderDescriptor>,
+    count: usize,
+}
+
+#[derive(Debug, Serialize)]
+struct EnterpriseConnectorProviderDescriptor {
+    provider: &'static str,
+    display_name: &'static str,
+    status: &'static str,
+    default_credential_class: ConnectorCredentialClass,
+    supported_credential_classes: Vec<ConnectorCredentialClass>,
+    source_types: Vec<&'static str>,
+    source_root_mode: &'static str,
+    acl_sync: &'static str,
+    live_ingestion: &'static str,
 }
 
 #[derive(Debug, Serialize)]
@@ -221,6 +245,10 @@ pub(super) fn apply(router: Router<AppState>) -> Router<AppState> {
             get(list_org_units).post(create_org_unit),
         )
         .route(
+            "/enterprise/connector-providers",
+            get(list_connector_providers),
+        )
+        .route(
             "/enterprise/source-bindings",
             get(list_source_bindings).post(create_source_binding),
         )
@@ -366,6 +394,31 @@ async fn create_org_unit(
     }))
 }
 
+async fn list_connector_providers(
+    Extension(tenant_context): Extension<TenantContext>,
+    Extension(request_principal): Extension<RequestPrincipal>,
+    verified_tenant_context: Option<Extension<VerifiedTenantContext>>,
+) -> EnterpriseResult<EnterpriseConnectorProvidersResponse> {
+    require_enterprise_admin(&request_principal, verified_tenant_context.as_deref())?;
+    let providers = vec![EnterpriseConnectorProviderDescriptor {
+        provider: GOOGLE_DRIVE_PROVIDER,
+        display_name: "Google Drive",
+        status: "planned_read_only",
+        default_credential_class: ConnectorCredentialClass::ReadOnly,
+        supported_credential_classes: vec![ConnectorCredentialClass::ReadOnly],
+        source_types: vec![GOOGLE_DRIVE_SOURCE_TYPE],
+        source_root_mode: "admin_labeled",
+        acl_sync: "not_synced_v1",
+        live_ingestion: "disabled_until_fetcher_worker",
+    }];
+
+    Ok(Json(EnterpriseConnectorProvidersResponse {
+        count: providers.len(),
+        providers,
+        base: storage_base(tenant_context, request_principal),
+    }))
+}
+
 async fn list_source_bindings(
     State(state): State<AppState>,
     Extension(tenant_context): Extension<TenantContext>,
@@ -402,6 +455,11 @@ async fn create_source_binding(
     let source_type = validate_enterprise_id("source_type", &input.source_type)?;
     let native_source_id = validate_external_id("native_source_id", &input.native_source_id)?;
     validate_resource_ref_matches_tenant(&input.resource_ref, &tenant_context)?;
+    validate_google_drive_source_binding_policy(
+        &connector_id,
+        &source_type,
+        &input.ingestion_policy,
+    )?;
     let credential_ref_id = input
         .credential_ref_id
         .as_deref()
@@ -771,6 +829,11 @@ async fn create_connector_credential_ref(
                 "ENTERPRISE_CONNECTOR_CREDENTIAL_ALREADY_EXISTS",
             ));
         }
+        validate_connector_credential_policy(
+            connector,
+            input.credential_class,
+            input.source_bound_resource.as_ref(),
+        )?;
         let now = now_ms();
         let mut credential_ref = ConnectorCredentialRef {
             org_id: tenant_context.org_id.clone(),
@@ -1610,6 +1673,46 @@ fn reject_raw_credential_value(value: Option<&Value>) -> Result<(), (StatusCode,
     if value.is_some() {
         return Err(bad_request(
             "ENTERPRISE_CONNECTOR_CREDENTIAL_VALUE_NOT_ALLOWED",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_google_drive_source_binding_policy(
+    connector_id: &str,
+    source_type: &str,
+    ingestion_policy: &IngestionPolicy,
+) -> Result<(), (StatusCode, Json<Value>)> {
+    if connector_id != GOOGLE_DRIVE_PROVIDER && source_type != GOOGLE_DRIVE_SOURCE_TYPE {
+        return Ok(());
+    }
+    if source_type != GOOGLE_DRIVE_SOURCE_TYPE {
+        return Err(bad_request("ENTERPRISE_GOOGLE_DRIVE_SOURCE_TYPE_REQUIRED"));
+    }
+    if !ingestion_policy.allow_prompt_context && ingestion_policy.allow_indexing {
+        return Err(bad_request(
+            "ENTERPRISE_GOOGLE_DRIVE_INDEXING_REQUIRES_PROMPT_CONTEXT_POLICY",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_connector_credential_policy(
+    connector: &ConnectorInstance,
+    credential_class: ConnectorCredentialClass,
+    source_bound_resource: Option<&ResourceRef>,
+) -> Result<(), (StatusCode, Json<Value>)> {
+    if connector.provider != GOOGLE_DRIVE_PROVIDER {
+        return Ok(());
+    }
+    if credential_class != ConnectorCredentialClass::ReadOnly {
+        return Err(bad_request(
+            "ENTERPRISE_GOOGLE_DRIVE_READ_ONLY_CREDENTIAL_REQUIRED",
+        ));
+    }
+    if source_bound_resource.is_none() {
+        return Err(bad_request(
+            "ENTERPRISE_GOOGLE_DRIVE_SOURCE_BOUND_CREDENTIAL_REQUIRED",
         ));
     }
     Ok(())

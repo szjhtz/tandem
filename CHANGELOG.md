@@ -156,6 +156,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   quarantine-review, connector lifecycle, and connector credential changes now
   evict matching source-bound response-cache entries when the response cache is
   present, while keeping unrelated tenant/source-binding entries intact.
+- **Enterprise Google Drive provider guardrails**: Added the first Google Drive
+  provider descriptor and v1 policy guards requiring read-only, source-bound
+  credentials before live Drive ingestion is enabled.
 
 ### Documentation
 

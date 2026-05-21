@@ -289,6 +289,49 @@ fn connector_credential_ref_body(credential_id: &str, secret_id: &str) -> String
 }
 
 #[tokio::test]
+async fn enterprise_connector_providers_expose_google_drive_read_only_constraints() {
+    let state = test_state().await;
+    let app = app_router(state);
+
+    let req = Request::builder()
+        .method("GET")
+        .uri("/enterprise/connector-providers")
+        .header("x-tandem-org-id", "acme")
+        .header("x-tandem-workspace-id", "finance")
+        .header("x-tandem-actor-id", "finance-admin")
+        .body(Body::empty())
+        .expect("request");
+    let resp = app.oneshot(req).await.expect("response");
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = to_bytes(resp.into_body(), usize::MAX).await.expect("body");
+    let payload: Value = serde_json::from_slice(&body).expect("json");
+    let provider = payload
+        .get("providers")
+        .and_then(Value::as_array)
+        .and_then(|providers| providers.first())
+        .expect("provider");
+    assert_eq!(
+        provider.get("provider").and_then(Value::as_str),
+        Some("google_drive")
+    );
+    assert_eq!(
+        provider
+            .get("default_credential_class")
+            .and_then(Value::as_str),
+        Some("read_only")
+    );
+    assert_eq!(
+        provider.get("acl_sync").and_then(Value::as_str),
+        Some("not_synced_v1")
+    );
+    assert!(provider
+        .get("supported_credential_classes")
+        .and_then(Value::as_array)
+        .is_some_and(|classes| classes.len() == 1
+            && classes.first().and_then(Value::as_str) == Some("read_only")));
+}
+
+#[tokio::test]
 async fn enterprise_connectors_reject_hosted_member_without_admin_role() {
     let state = test_state().await;
     let app = app_router(state);
@@ -580,6 +623,61 @@ async fn enterprise_connector_credentials_are_secret_refs_and_rotate_by_tenant()
         .expect("request");
     let resp = app.oneshot(req).await.expect("response");
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn enterprise_google_drive_rejects_write_credentials() {
+    let state = test_state().await;
+    let app = app_router(state.clone());
+
+    let req = Request::builder()
+        .method("POST")
+        .uri("/enterprise/connectors")
+        .header("content-type", "application/json")
+        .header("x-tandem-org-id", "acme")
+        .header("x-tandem-workspace-id", "finance")
+        .header("x-tandem-actor-id", "finance-admin")
+        .body(Body::from(connector_body("google_drive", "google_drive")))
+        .expect("request");
+    let resp = app.clone().oneshot(req).await.expect("response");
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let req = Request::builder()
+        .method("POST")
+        .uri("/enterprise/connectors/google_drive/credential-refs")
+        .header("content-type", "application/json")
+        .header("x-tandem-org-id", "acme")
+        .header("x-tandem-workspace-id", "finance")
+        .header("x-tandem-actor-id", "finance-admin")
+        .body(Body::from(
+            json!({
+                "credential_id": "drive-write",
+                "credential_class": "read_write",
+                "secret_ref": {
+                    "org_id": "acme",
+                    "workspace_id": "finance",
+                    "provider": "google_kms",
+                    "secret_id": "kms://finance/write",
+                    "name": "Finance Drive write secret"
+                },
+                "source_bound_resource": {
+                    "organization_id": "acme",
+                    "workspace_id": "finance",
+                    "resource_kind": "document_collection",
+                    "resource_id": "finance-drive"
+                }
+            })
+            .to_string(),
+        ))
+        .expect("request");
+    let resp = app.oneshot(req).await.expect("response");
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let body = to_bytes(resp.into_body(), usize::MAX).await.expect("body");
+    let payload: Value = serde_json::from_slice(&body).expect("json");
+    assert_eq!(
+        payload.get("code").and_then(Value::as_str),
+        Some("ENTERPRISE_GOOGLE_DRIVE_READ_ONLY_CREDENTIAL_REQUIRED")
+    );
 }
 
 #[tokio::test]
