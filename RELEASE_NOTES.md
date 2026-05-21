@@ -108,6 +108,9 @@ production connector ingestion flows remain follow-up implementation phases.
 - Automation upstream evidence now filters source-bound internal identifiers
   from read paths, discovered paths, and citations before downstream workflow
   nodes can reuse them as citation evidence.
+- Strict session KB grounding now ignores source-bound internal identifiers
+  when extracting source labels and document refs, preventing KB citation
+  renderers from exposing source-object metadata.
 - Managed hosted detection now reports hosted auth availability separately, so
   disconnected local test deployments can still use the engine-token sign-in
   path while connected hosted servers keep Tandem hosted login enforcement.

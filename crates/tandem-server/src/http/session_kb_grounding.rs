@@ -602,7 +602,7 @@ fn collect_document_refs_from_value(
                 .get("doc_id")
                 .and_then(Value::as_str)
                 .map(str::trim)
-                .filter(|value| !value.is_empty())
+                .filter(|value| kb_source_identifier_visible_without_grant(value))
             {
                 let collection_id = local_collection_id.map(ToOwned::to_owned);
                 let key = format!("{server_name}:{doc_id}");
@@ -801,7 +801,7 @@ fn source_label_from_map(map: &serde_json::Map<String, Value>) -> Option<String>
             .get(key)
             .and_then(Value::as_str)
             .map(str::trim)
-            .filter(|value| !value.is_empty())
+            .filter(|value| kb_source_identifier_visible_without_grant(value))
         {
             return Some(label.to_string());
         }
@@ -811,12 +811,29 @@ fn source_label_from_map(map: &serde_json::Map<String, Value>) -> Option<String>
             .get(key)
             .and_then(Value::as_str)
             .map(str::trim)
-            .filter(|value| !value.is_empty())
+            .filter(|value| kb_source_identifier_visible_without_grant(value))
         {
             return Some(safe_source_label(label));
         }
     }
     None
+}
+
+fn kb_source_identifier_visible_without_grant(value: &str) -> bool {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    let lowered = trimmed.to_ascii_lowercase();
+    !lowered.contains("enterprise_source_binding")
+        && !lowered.contains("source_object_id")
+        && !lowered.contains("source-object-")
+        && !lowered.contains("source_binding")
+        && !lowered.contains("binding_id")
+        && !lowered.contains("connector_id")
+        && !lowered.contains("native_object_id")
+        && !lowered.starts_with("/imports/")
+        && !lowered.starts_with("imports/")
 }
 
 fn structured_value_signals_no_hits(value: &Value) -> bool {
@@ -1774,6 +1791,29 @@ mod tests {
     }
 
     #[test]
+    fn source_label_extraction_hides_source_bound_internal_identifiers() {
+        let labels = extract_kb_source_labels(
+            r#"{"results":[{
+                "title": "source-object-hr-payroll",
+                "doc_id": "source-object-hr-payroll",
+                "source_path": "/imports/hr/payroll.md",
+                "content": "Payroll policy content"
+            }]}"#,
+        );
+        assert!(labels.is_empty());
+
+        let excerpts = extract_kb_excerpts(
+            r#"{"documents":[{
+                "doc_id": "source-object-hr-payroll",
+                "source_path": "/imports/hr/payroll.md",
+                "content": "Payroll policy content"
+            }]}"#,
+            MAX_EVIDENCE_CHARS,
+        );
+        assert_eq!(excerpts, vec!["Payroll policy content".to_string()]);
+    }
+
+    #[test]
     fn mcp_server_name_candidates_include_hyphenated_registry_name() {
         assert_eq!(
             mcp_server_name_candidates("aca_kb_mcp_local"),
@@ -1896,6 +1936,34 @@ mod tests {
         assert_eq!(refs[0].server_name, "kb");
         assert_eq!(refs[0].doc_id, "northstar-events/company-overview");
         assert_eq!(refs[0].collection_id.as_deref(), Some("northstar-events"));
+    }
+
+    #[test]
+    fn document_refs_ignore_source_bound_internal_identifiers() {
+        let policy = tandem_core::KnowledgebaseGroundingPolicy {
+            required: true,
+            strict: true,
+            server_names: vec!["kb".to_string()],
+            tool_patterns: vec!["mcp.kb.*".to_string()],
+        };
+        let message = tandem_types::Message::new(
+            MessageRole::User,
+            vec![MessagePart::ToolInvocation {
+                tool: "mcp.kb.search_docs".to_string(),
+                args: json!({"query": "payroll"}),
+                result: Some(json!({
+                    "collection_id": "northstar-events",
+                    "results": [{
+                        "doc_id": "source-object-hr-payroll",
+                        "source_path": "/imports/hr/payroll.md",
+                        "excerpt": "Payroll policy content"
+                    }]
+                })),
+                error: None,
+            }],
+        );
+        let refs = collect_kb_document_refs(&message, &policy);
+        assert!(refs.is_empty());
     }
 
     #[test]

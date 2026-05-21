@@ -108,6 +108,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Automation evidence source-bound guard**: Automation upstream evidence
   collection now filters source-bound internal identifiers from read paths,
   discovered paths, and citations before later nodes can reuse them.
+- **Session KB source-bound citation guard**: Strict KB grounding now ignores
+  source-bound internal identifiers when extracting source labels and document
+  refs, preventing KB citation renderers from exposing source-object metadata.
 - **Hosted panel auth availability split**: Control-panel capabilities now
   distinguish managed hosted deployments from deployments with usable hosted
   auth exchange credentials, allowing disconnected local test deployments to
