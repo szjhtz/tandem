@@ -3008,6 +3008,214 @@ mod tests {
     }
 
     #[test]
+    fn department_grants_do_not_cross_resource_or_data_class_boundaries() {
+        let finance_user = PrincipalRef::human_user("user-finance");
+        let finance_grant = ScopedGrant::new(
+            "grant-finance-ledger-read",
+            finance_user.clone(),
+            ResourceRef::new("acme", "finance", ResourceKind::Department, "finance"),
+            GrantSource::DepartmentMembership,
+        )
+        .with_permissions(vec![AccessPermission::Read])
+        .with_data_classes(vec![DataClass::FinancialRecord]);
+        let finance_context = test_strict_context(
+            "finance",
+            finance_user,
+            ResourceScope::root(ResourceRef::new(
+                "acme",
+                "finance",
+                ResourceKind::Department,
+                "finance",
+            )),
+            vec![finance_grant],
+        );
+        let engineering_repo = ResourceRef::new(
+            "acme",
+            "engineering",
+            ResourceKind::Repository,
+            "product-api",
+        );
+        let finance_denied_engineering = finance_context.evaluate_access(
+            &engineering_repo,
+            AccessPermission::Read,
+            DataClass::SourceCode,
+            1_500,
+        );
+
+        assert_eq!(
+            finance_denied_engineering.decision,
+            AccessDecision::NotApplicable
+        );
+        assert_eq!(
+            finance_denied_engineering.reason,
+            "resource_outside_projected_scope"
+        );
+
+        let engineering_user = PrincipalRef::human_user("user-engineering");
+        let engineering_grant = ScopedGrant::new(
+            "grant-engineering-source-read",
+            engineering_user.clone(),
+            ResourceRef::new("acme", "engineering", ResourceKind::Project, "product-api"),
+            GrantSource::DepartmentMembership,
+        )
+        .with_permissions(vec![AccessPermission::Read])
+        .with_data_classes(vec![DataClass::SourceCode]);
+        let engineering_context = test_strict_context(
+            "engineering",
+            engineering_user,
+            ResourceScope::root(ResourceRef::new(
+                "acme",
+                "engineering",
+                ResourceKind::Project,
+                "product-api",
+            )),
+            vec![engineering_grant],
+        );
+        let hr_compensation =
+            ResourceRef::new("acme", "hr", ResourceKind::Document, "compensation-bands");
+        let engineering_denied_hr = engineering_context.evaluate_access(
+            &hr_compensation,
+            AccessPermission::Read,
+            DataClass::FinancialRecord,
+            1_500,
+        );
+
+        assert_eq!(
+            engineering_denied_hr.decision,
+            AccessDecision::NotApplicable
+        );
+        assert_eq!(
+            engineering_denied_hr.reason,
+            "resource_outside_projected_scope"
+        );
+    }
+
+    #[test]
+    fn executive_global_access_is_explicit_and_not_inherited_by_agents() {
+        let ceo = PrincipalRef::human_user("ceo-user");
+        let executive_grant = ScopedGrant::new(
+            "grant-ceo-org-read",
+            ceo.clone(),
+            ResourceRef::new("acme", "*", ResourceKind::Organization, "acme"),
+            GrantSource::ExecutiveGlobal,
+        )
+        .with_permissions(vec![AccessPermission::Read])
+        .with_data_classes(vec![
+            DataClass::Executive,
+            DataClass::FinancialRecord,
+            DataClass::SourceCode,
+        ]);
+        let ceo_context = test_strict_context(
+            "*",
+            ceo,
+            ResourceScope::root(ResourceRef::new(
+                "acme",
+                "*",
+                ResourceKind::Organization,
+                "acme",
+            )),
+            vec![executive_grant],
+        );
+        let hr_compensation =
+            ResourceRef::new("acme", "hr", ResourceKind::Document, "compensation-bands");
+        let engineering_repo = ResourceRef::new(
+            "acme",
+            "engineering",
+            ResourceKind::Repository,
+            "product-api",
+        );
+
+        assert_eq!(
+            ceo_context
+                .evaluate_access(
+                    &hr_compensation,
+                    AccessPermission::Read,
+                    DataClass::FinancialRecord,
+                    1_500,
+                )
+                .decision,
+            AccessDecision::Allow
+        );
+        assert_eq!(
+            ceo_context
+                .evaluate_access(
+                    &engineering_repo,
+                    AccessPermission::Read,
+                    DataClass::SourceCode,
+                    1_500,
+                )
+                .decision,
+            AccessDecision::Allow
+        );
+
+        let ceo_agent =
+            PrincipalRef::agent_worker("agent-ceo-summary").with_tenant_actor_id("ceo-user");
+        let narrow_agent_grant = ScopedGrant::new(
+            "grant-agent-product-read",
+            ceo_agent.clone(),
+            ResourceRef::new("acme", "engineering", ResourceKind::Project, "product-api"),
+            GrantSource::Delegation,
+        )
+        .with_source_principal(PrincipalRef::human_user("ceo-user"))
+        .with_permissions(vec![AccessPermission::Read])
+        .with_data_classes(vec![DataClass::SourceCode]);
+        let agent_context = test_strict_context(
+            "engineering",
+            ceo_agent.clone(),
+            ResourceScope::root(ResourceRef::new(
+                "acme",
+                "engineering",
+                ResourceKind::Project,
+                "product-api",
+            )),
+            vec![narrow_agent_grant],
+        );
+
+        let agent_denied_hr = agent_context.evaluate_access(
+            &hr_compensation,
+            AccessPermission::Read,
+            DataClass::FinancialRecord,
+            1_500,
+        );
+        assert_eq!(agent_denied_hr.decision, AccessDecision::NotApplicable);
+        assert_eq!(agent_denied_hr.reason, "resource_outside_projected_scope");
+
+        let projected_agent_grant = ScopedGrant::new(
+            "grant-agent-executive-projection",
+            ceo_agent.clone(),
+            ResourceRef::new("acme", "*", ResourceKind::Organization, "acme"),
+            GrantSource::Delegation,
+        )
+        .with_source_principal(PrincipalRef::human_user("ceo-user"))
+        .with_permissions(vec![AccessPermission::Read])
+        .with_data_classes(vec![DataClass::FinancialRecord])
+        .with_delegation_id("delegation-ceo-summary");
+        let projected_agent_context = test_strict_context(
+            "*",
+            ceo_agent,
+            ResourceScope::root(ResourceRef::new(
+                "acme",
+                "*",
+                ResourceKind::Organization,
+                "acme",
+            )),
+            vec![projected_agent_grant],
+        );
+
+        assert_eq!(
+            projected_agent_context
+                .evaluate_access(
+                    &hr_compensation,
+                    AccessPermission::Read,
+                    DataClass::FinancialRecord,
+                    1_500,
+                )
+                .decision,
+            AccessDecision::Allow
+        );
+    }
+
+    #[test]
     fn connector_credential_ref_defaults_to_read_only_secret_reference() {
         let tenant = TenantContext::explicit_user_workspace(
             "acme",

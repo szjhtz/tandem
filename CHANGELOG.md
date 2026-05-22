@@ -213,6 +213,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ingress. The runtime appends matching tenant-scoped `ScopedGrant`
   projections from stored org-unit memberships and access grants without
   creating strict context for assertions that did not already carry one.
+- **Enterprise department/executive denial tests**: Added strict-context
+  regression coverage proving department grants do not cross resource or
+  data-class boundaries, CEO/global access is explicit, and CEO-spawned agents
+  stay narrow unless a delegation projection grants broader access.
 
 ### Documentation
 

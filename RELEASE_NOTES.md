@@ -146,6 +146,11 @@ automation remain follow-up implementation phases.
   consultant groups available to strict runtime access checks while preserving
   fail-closed behavior for assertions that do not already carry a strict
   projection.
+- Added denial-focused strict-context tests for department and executive
+  access: finance grants do not reveal engineering source data, engineering
+  grants do not reveal HR compensation records, CEO/global access is explicit,
+  and CEO-spawned agents remain narrow unless the signed projection delegates
+  broader access.
 - Connector credential-reference admin endpoints now accept and rotate
   `SecretRef` records without accepting raw credential values. Credential refs
   are tenant-validated, can be source-bound to a resource, and are visible in
