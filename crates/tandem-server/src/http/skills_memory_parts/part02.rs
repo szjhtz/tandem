@@ -1005,6 +1005,7 @@ pub(super) async fn memory_import(
         },
         source_binding,
         sync_deletes: input.sync_deletes,
+        import_namespace: None,
     };
 
     let stats = match import_files(&manager, &request, None::<fn(&MemoryImportProgress)>).await {

@@ -170,6 +170,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   preflight layer and admin-gated runtime endpoint that validate active Google
   Drive connectors, enabled source bindings, source-bound read-only credentials,
   and resolver-backed folder listing before any live indexing worker is enabled.
+- **Enterprise Google Drive admin import path**: Added the first admin-triggered
+  Google Drive import endpoint behind the existing enterprise admin, active
+  connector, enabled source-binding, read-only credential, and secret-ref
+  guardrails. The import path fetches supported Drive documents into a stable
+  source-binding namespace, records ingestion jobs/source-object lifecycle rows,
+  honors review-required quarantine, and invalidates source-bound response-cache
+  entries after indexing.
 
 ### Documentation
 

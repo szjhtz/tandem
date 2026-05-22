@@ -153,8 +153,13 @@ production connector ingestion flows remain follow-up implementation phases.
   runtime now includes a read-only Drive client for folder listing, stored-file
   download, and Google Workspace export, plus a runtime-only `env://...`
   secret-ref resolver and admin-gated source-binding preflight endpoint for
-  local bearer-token testing. Live Drive indexing remains disabled until the
-  fetcher worker lands.
+  local bearer-token testing.
+- The first admin-triggered Google Drive import endpoint now reuses those
+  guardrails to fetch supported Drive documents into a stable source-binding
+  namespace, create ingestion job and source-object lifecycle records, honor
+  review-required quarantine, and invalidate source-bound response-cache entries
+  after indexing. This remains an admin-controlled v1 path, not broad automatic
+  OAuth ingestion.
 - Ingestion gating helpers model the required fail-closed behavior for paused,
   revoked, or quarantined connectors, disabled bindings, and review-only
   ingestion policy.

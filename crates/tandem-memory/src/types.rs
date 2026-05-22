@@ -356,6 +356,8 @@ pub struct MemoryImportRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_binding: Option<MemoryImportSourceBinding>,
     pub sync_deletes: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub import_namespace: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

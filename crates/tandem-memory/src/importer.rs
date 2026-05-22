@@ -477,6 +477,15 @@ fn is_supported_extension(path: &Path) -> bool {
 }
 
 fn import_namespace(root_path: &Path, request: &MemoryImportRequest) -> String {
+    if let Some(namespace) = request
+        .import_namespace
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        return namespace.to_string();
+    }
+
     let mut hasher = Sha256::new();
     hasher.update(root_path.to_string_lossy().as_bytes());
     hasher.update(b"\n");
@@ -623,6 +632,7 @@ mod tests {
             tenant_scope: MemoryTenantScope::local(),
             source_binding: None,
             sync_deletes: false,
+            import_namespace: None,
         };
 
         let first = match import_files(&manager, &request, None::<fn(&MemoryImportProgress)>).await
@@ -663,6 +673,7 @@ mod tests {
             tenant_scope: MemoryTenantScope::local(),
             source_binding: None,
             sync_deletes: false,
+            import_namespace: None,
         };
         let request_b = MemoryImportRequest {
             root_path: root_b.display().to_string(),
@@ -673,6 +684,7 @@ mod tests {
             tenant_scope: MemoryTenantScope::local(),
             source_binding: None,
             sync_deletes: false,
+            import_namespace: None,
         };
 
         match import_files(&manager, &request_a, None::<fn(&MemoryImportProgress)>).await {
@@ -742,6 +754,7 @@ mod tests {
                 require_review: false,
             }),
             sync_deletes: false,
+            import_namespace: None,
         };
 
         let first = match import_files(&manager, &request, None::<fn(&MemoryImportProgress)>).await

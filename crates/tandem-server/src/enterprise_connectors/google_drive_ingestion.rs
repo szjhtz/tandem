@@ -6,7 +6,9 @@ use tandem_enterprise_contract::{
     SourceBindingState, TenantContext,
 };
 
-use super::google_drive::{GoogleDriveClient, GoogleDriveClientError, GoogleDriveListPage};
+use super::google_drive::{
+    GoogleDriveClient, GoogleDriveClientError, GoogleDriveFileMetadata, GoogleDriveListPage,
+};
 use super::secrets::{SecretResolver, SecretResolverError};
 
 const GOOGLE_DRIVE_PROVIDER: &str = "google_drive";
@@ -20,6 +22,19 @@ pub trait GoogleDriveReadClient: Send + Sync {
         folder_id: &str,
         page_token: Option<&str>,
     ) -> Result<GoogleDriveListPage, GoogleDriveClientError>;
+
+    async fn download_file_bytes(
+        &self,
+        bearer_token: &str,
+        file_id: &str,
+    ) -> Result<Vec<u8>, GoogleDriveClientError>;
+
+    async fn export_google_workspace_file(
+        &self,
+        bearer_token: &str,
+        file_id: &str,
+        mime_type: &str,
+    ) -> Result<Vec<u8>, GoogleDriveClientError>;
 }
 
 #[async_trait]
@@ -32,6 +47,24 @@ impl GoogleDriveReadClient for GoogleDriveClient {
     ) -> Result<GoogleDriveListPage, GoogleDriveClientError> {
         GoogleDriveClient::list_folder_children(self, bearer_token, folder_id, page_token).await
     }
+
+    async fn download_file_bytes(
+        &self,
+        bearer_token: &str,
+        file_id: &str,
+    ) -> Result<Vec<u8>, GoogleDriveClientError> {
+        GoogleDriveClient::download_file_bytes(self, bearer_token, file_id).await
+    }
+
+    async fn export_google_workspace_file(
+        &self,
+        bearer_token: &str,
+        file_id: &str,
+        mime_type: &str,
+    ) -> Result<Vec<u8>, GoogleDriveClientError> {
+        GoogleDriveClient::export_google_workspace_file(self, bearer_token, file_id, mime_type)
+            .await
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -41,6 +74,23 @@ pub struct GoogleDriveBindingPreflight {
     pub folder_id: String,
     pub file_count: usize,
     pub next_page_token: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct GoogleDriveIngestedFile {
+    pub drive_file_id: String,
+    pub name: String,
+    pub mime_type: String,
+    pub bytes: Vec<u8>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct GoogleDriveBindingIngestion {
+    pub binding_id: String,
+    pub connector_id: String,
+    pub folder_id: String,
+    pub files: Vec<GoogleDriveIngestedFile>,
+    pub skipped_files: usize,
 }
 
 pub async fn preflight_google_drive_binding<R, C>(
@@ -86,6 +136,79 @@ where
         folder_id: binding.native_source_id.clone(),
         file_count: page.files.len(),
         next_page_token: page.next_page_token,
+    })
+}
+
+pub async fn fetch_google_drive_binding_files<R, C>(
+    tenant_context: &TenantContext,
+    connector: &ConnectorInstance,
+    binding: &SourceBinding,
+    secret_resolver: &R,
+    drive_client: &C,
+) -> Result<GoogleDriveBindingIngestion, GoogleDriveIngestionError>
+where
+    R: SecretResolver,
+    C: GoogleDriveReadClient,
+{
+    validate_google_drive_binding(tenant_context, connector, binding)?;
+    let credential_ref_id = binding
+        .credential_ref_id
+        .as_deref()
+        .ok_or(GoogleDriveIngestionError::MissingCredentialRef)?;
+    let credential_ref = connector
+        .credential_refs
+        .iter()
+        .find(|credential| credential.credential_id == credential_ref_id)
+        .ok_or(GoogleDriveIngestionError::CredentialRefNotFound)?;
+    if credential_ref.credential_class != ConnectorCredentialClass::ReadOnly {
+        return Err(GoogleDriveIngestionError::CredentialNotReadOnly);
+    }
+    if credential_ref.source_bound_resource.as_ref() != Some(&binding.resource_ref) {
+        return Err(GoogleDriveIngestionError::CredentialResourceMismatch);
+    }
+
+    let token = secret_resolver
+        .resolve_bearer_token(tenant_context, credential_ref)
+        .await
+        .map_err(GoogleDriveIngestionError::Secret)?;
+    let mut page_token = None;
+    let mut files = Vec::new();
+    let mut skipped_files = 0usize;
+    loop {
+        let page = drive_client
+            .list_folder_children(
+                token.expose_for_request(),
+                &binding.native_source_id,
+                page_token.as_deref(),
+            )
+            .await
+            .map_err(GoogleDriveIngestionError::Drive)?;
+        for file in page.files {
+            match fetch_supported_file(token.expose_for_request(), drive_client, &file).await {
+                Ok(Some(bytes)) => files.push(GoogleDriveIngestedFile {
+                    drive_file_id: file.id,
+                    name: file.name,
+                    mime_type: file.mime_type,
+                    bytes,
+                }),
+                Ok(None) => skipped_files = skipped_files.saturating_add(1),
+                Err(error) => return Err(GoogleDriveIngestionError::Drive(error)),
+            }
+        }
+        page_token = page
+            .next_page_token
+            .filter(|value| !value.trim().is_empty());
+        if page_token.is_none() {
+            break;
+        }
+    }
+
+    Ok(GoogleDriveBindingIngestion {
+        binding_id: binding.binding_id.clone(),
+        connector_id: connector.connector_id.clone(),
+        folder_id: binding.native_source_id.clone(),
+        files,
+        skipped_files,
     })
 }
 
@@ -182,6 +305,41 @@ fn validate_google_drive_binding(
         return Err(GoogleDriveIngestionError::BindingNotEnabled);
     }
     Ok(())
+}
+
+async fn fetch_supported_file<C>(
+    bearer_token: &str,
+    drive_client: &C,
+    file: &GoogleDriveFileMetadata,
+) -> Result<Option<Vec<u8>>, GoogleDriveClientError>
+where
+    C: GoogleDriveReadClient,
+{
+    if file.mime_type == "application/vnd.google-apps.folder" {
+        return Ok(None);
+    }
+    if file.mime_type.starts_with("application/vnd.google-apps.") {
+        return drive_client
+            .export_google_workspace_file(bearer_token, &file.id, "text/plain")
+            .await
+            .map(Some);
+    }
+    if file.mime_type.starts_with("text/")
+        || matches!(
+            file.name
+                .rsplit('.')
+                .next()
+                .map(str::to_ascii_lowercase)
+                .as_deref(),
+            Some("md" | "markdown" | "mdx" | "txt")
+        )
+    {
+        return drive_client
+            .download_file_bytes(bearer_token, &file.id)
+            .await
+            .map(Some);
+    }
+    Ok(None)
 }
 
 #[cfg(test)]
@@ -287,6 +445,29 @@ mod tests {
         ));
     }
 
+    #[tokio::test]
+    async fn fetch_files_downloads_supported_drive_objects() {
+        let tenant = TenantContext::explicit("acme", "finance", None);
+        let binding = test_binding(&tenant);
+        let connector = test_connector(&tenant, &binding);
+
+        let ingestion = fetch_google_drive_binding_files(
+            &tenant,
+            &connector,
+            &binding,
+            &TestResolver,
+            &TestFetchDriveClient,
+        )
+        .await
+        .expect("ingestion fetch");
+
+        assert_eq!(ingestion.binding_id, "finance-drive");
+        assert_eq!(ingestion.files.len(), 1);
+        assert_eq!(ingestion.files[0].drive_file_id, "file-1");
+        assert_eq!(ingestion.files[0].bytes, b"downloaded drive note");
+        assert_eq!(ingestion.skipped_files, 0);
+    }
+
     struct TestResolver;
 
     #[async_trait]
@@ -327,6 +508,70 @@ mod tests {
                 }],
                 next_page_token: Some("next-token".to_string()),
             })
+        }
+
+        async fn download_file_bytes(
+            &self,
+            _bearer_token: &str,
+            _file_id: &str,
+        ) -> Result<Vec<u8>, GoogleDriveClientError> {
+            panic!("preflight fixture should not download file bytes")
+        }
+
+        async fn export_google_workspace_file(
+            &self,
+            _bearer_token: &str,
+            _file_id: &str,
+            _mime_type: &str,
+        ) -> Result<Vec<u8>, GoogleDriveClientError> {
+            panic!("text/plain fixture should download, not export")
+        }
+    }
+
+    struct TestFetchDriveClient;
+
+    #[async_trait]
+    impl GoogleDriveReadClient for TestFetchDriveClient {
+        async fn list_folder_children(
+            &self,
+            bearer_token: &str,
+            folder_id: &str,
+            page_token: Option<&str>,
+        ) -> Result<GoogleDriveListPage, GoogleDriveClientError> {
+            assert_eq!(bearer_token, "drive-token");
+            assert_eq!(folder_id, "drive-folder-123");
+            assert_eq!(page_token, None);
+            Ok(GoogleDriveListPage {
+                files: vec![super::super::google_drive::GoogleDriveFileMetadata {
+                    id: "file-1".to_string(),
+                    name: "Finance Note.txt".to_string(),
+                    mime_type: "text/plain".to_string(),
+                    modified_time: None,
+                    md5_checksum: None,
+                    size: None,
+                    web_view_link: None,
+                }],
+                next_page_token: None,
+            })
+        }
+
+        async fn download_file_bytes(
+            &self,
+            bearer_token: &str,
+            file_id: &str,
+        ) -> Result<Vec<u8>, GoogleDriveClientError> {
+            assert_eq!(bearer_token, "drive-token");
+            assert_eq!(file_id, "file-1");
+            Ok(b"downloaded drive note".to_vec())
+        }
+
+        async fn export_google_workspace_file(
+            &self,
+            _bearer_token: &str,
+            _file_id: &str,
+            _mime_type: &str,
+        ) -> Result<Vec<u8>, GoogleDriveClientError> {
+            panic!("text/plain fixture should download, not export")
         }
     }
 
