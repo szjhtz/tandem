@@ -433,9 +433,18 @@ pub(super) struct ToolExecutionInput {
 pub(super) async fn execute_tool(
     State(state): State<AppState>,
     Extension(tenant_context): Extension<TenantContext>,
+    verified_tenant_context: Option<Extension<tandem_types::VerifiedTenantContext>>,
     Json(input): Json<ToolExecutionInput>,
 ) -> Result<Json<Value>, StatusCode> {
-    let args = input.args.unwrap_or_else(|| json!({}));
+    let mut args = input.args.unwrap_or_else(|| json!({}));
+    if let Some(Extension(verified_tenant_context)) = verified_tenant_context {
+        if let Some(obj) = args.as_object_mut() {
+            obj.insert(
+                "__verified_tenant_context".to_string(),
+                serde_json::to_value(verified_tenant_context).unwrap_or(Value::Null),
+            );
+        }
+    }
     let result = state
         .tools
         .execute_for_tenant(&input.tool, args, tenant_context)

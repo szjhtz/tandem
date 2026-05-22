@@ -2,8 +2,13 @@ use super::*;
 use base64::Engine;
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
+use tandem_core::tool_name_security_descriptor;
 use tandem_runtime::McpAuthChallenge;
-use tandem_types::{RequestPrincipal, TenantContext};
+use tandem_types::{
+    AccessDecision, AccessPermission, DataClass, RequestPrincipal, ResourceKind, ResourceRef,
+    StrictTenantContext, TenantContext, ToolDefaultVisibility, ToolSecurityDescriptor,
+    VerifiedTenantContext,
+};
 use uuid::Uuid;
 
 const BUILTIN_GITHUB_MCP_SERVER_NAME: &str = "github";
@@ -382,6 +387,125 @@ pub(super) async fn list_mcp(State(state): State<AppState>) -> Json<Value> {
     Json(json!(state.mcp.list_public().await))
 }
 
+fn strict_context_from_tool_args(args: &Value) -> Option<StrictTenantContext> {
+    args.get("__strict_tenant_context")
+        .cloned()
+        .and_then(|value| serde_json::from_value::<StrictTenantContext>(value).ok())
+        .or_else(|| {
+            args.get("__verified_tenant_context")
+                .cloned()
+                .and_then(|value| serde_json::from_value::<VerifiedTenantContext>(value).ok())
+                .and_then(|verified| verified.strict_projection)
+        })
+}
+
+fn mcp_tool_authorized_for_discovery(
+    strict_context: Option<&StrictTenantContext>,
+    tool_name: &str,
+    security: Option<&Value>,
+    now_ms: u64,
+) -> bool {
+    let Some(strict_context) = strict_context else {
+        return true;
+    };
+    let descriptor = security
+        .cloned()
+        .and_then(|value| serde_json::from_value::<ToolSecurityDescriptor>(value).ok())
+        .filter(|descriptor| !descriptor.is_empty())
+        .unwrap_or_else(|| tool_name_security_descriptor(tool_name));
+
+    if descriptor.is_empty() {
+        return true;
+    }
+    if strict_context.is_expired_at(now_ms) {
+        return false;
+    }
+
+    let required_permissions = if descriptor.required_permissions.is_empty() {
+        vec![AccessPermission::View]
+    } else {
+        descriptor.required_permissions.clone()
+    };
+    let data_classes = if descriptor.data_classes.is_empty() {
+        vec![DataClass::Internal]
+    } else {
+        descriptor.data_classes.clone()
+    };
+    let resource_kinds = if descriptor.resource_kinds.is_empty() {
+        vec![ResourceKind::McpTool]
+    } else {
+        descriptor.resource_kinds.clone()
+    };
+
+    let hidden_by_default = matches!(descriptor.default_visibility, ToolDefaultVisibility::Hidden)
+        || descriptor.admin_surface
+        || descriptor.credential_access;
+
+    let all_permissions_allowed = required_permissions.iter().all(|permission| {
+        resource_kinds.iter().any(|resource_kind| {
+            let resource = mcp_tool_resource_ref(strict_context, *resource_kind, tool_name);
+            data_classes.iter().any(|data_class| {
+                matches!(
+                    strict_context
+                        .evaluate_access(&resource, *permission, *data_class, now_ms)
+                        .decision,
+                    AccessDecision::Allow
+                )
+            })
+        })
+    });
+
+    if all_permissions_allowed {
+        return true;
+    }
+
+    !hidden_by_default
+        && required_permissions
+            .iter()
+            .all(|permission| matches!(permission, AccessPermission::View | AccessPermission::Read))
+        && resource_kinds.iter().any(|resource_kind| {
+            let resource = mcp_tool_resource_ref(strict_context, *resource_kind, tool_name);
+            data_classes.iter().any(|data_class| {
+                matches!(
+                    strict_context
+                        .evaluate_access(&resource, AccessPermission::Read, *data_class, now_ms)
+                        .decision,
+                    AccessDecision::Allow
+                ) || matches!(
+                    strict_context
+                        .evaluate_access(&resource, AccessPermission::View, *data_class, now_ms)
+                        .decision,
+                    AccessDecision::Allow
+                )
+            })
+        })
+}
+
+fn mcp_tool_resource_ref(
+    strict_context: &StrictTenantContext,
+    resource_kind: ResourceKind,
+    tool_name: &str,
+) -> ResourceRef {
+    let resource_id = match resource_kind {
+        ResourceKind::McpServer => mcp_server_segment_from_tool_name(tool_name),
+        _ => tool_name.to_string(),
+    };
+    ResourceRef::new(
+        strict_context.tenant_context.org_id.clone(),
+        strict_context.tenant_context.workspace_id.clone(),
+        resource_kind,
+        resource_id,
+    )
+}
+
+fn mcp_server_segment_from_tool_name(tool_name: &str) -> String {
+    let mut parts = tool_name.split('.');
+    match (parts.next(), parts.next()) {
+        (Some("mcp"), Some(server)) if !server.trim().is_empty() => server.to_string(),
+        _ => "mcp".to_string(),
+    }
+}
+
 pub(super) async fn add_mcp(
     State(state): State<AppState>,
     axum::extract::Extension(tenant_context): axum::extract::Extension<TenantContext>,
@@ -461,6 +585,80 @@ fn mcp_tool_names_for_server(tool_names: &[String], server_name: &str) -> Vec<St
     tools.sort();
     tools.dedup();
     tools
+}
+
+fn catalog_tool_security_by_namespaced_name(
+    catalog_servers: &[Value],
+) -> std::collections::HashMap<String, Value> {
+    let mut out = std::collections::HashMap::new();
+    for server in catalog_servers {
+        let Some(tool_security) = server.get("tool_security").and_then(Value::as_object) else {
+            continue;
+        };
+        for value in tool_security.values() {
+            let Some(namespaced_name) = value.get("namespaced_name").and_then(Value::as_str) else {
+                continue;
+            };
+            if let Some(security) = value.get("security") {
+                out.insert(namespaced_name.to_string(), security.clone());
+            }
+        }
+    }
+    out
+}
+
+fn mcp_tool_security_for_inventory_server(
+    server_name: &str,
+    remote_tool_names: &[String],
+    registered_tool_names: &[String],
+    catalog_tool_security: &std::collections::HashMap<String, Value>,
+    registered_security: &std::collections::HashMap<String, Value>,
+) -> Value {
+    let server_segment = mcp_namespace_segment(server_name);
+    let mut tool_names = remote_tool_names
+        .iter()
+        .chain(registered_tool_names.iter())
+        .cloned()
+        .collect::<Vec<_>>();
+    tool_names.sort();
+    tool_names.dedup();
+
+    let mut out = serde_json::Map::new();
+    for tool_name in tool_names {
+        let short_name = tool_name
+            .strip_prefix(&format!("mcp.{server_segment}."))
+            .unwrap_or(&tool_name)
+            .to_string();
+        let security = catalog_tool_security
+            .get(&tool_name)
+            .cloned()
+            .filter(security_value_non_empty)
+            .or_else(|| {
+                registered_security
+                    .get(&tool_name)
+                    .cloned()
+                    .filter(security_value_non_empty)
+            })
+            .unwrap_or_else(|| {
+                serde_json::to_value(tool_name_security_descriptor(&tool_name))
+                    .unwrap_or(Value::Null)
+            });
+        out.insert(
+            short_name.clone(),
+            json!({
+                "tool_name": short_name,
+                "namespaced_name": tool_name,
+                "security": security,
+            }),
+        );
+    }
+    Value::Object(out)
+}
+
+fn security_value_non_empty(value: &Value) -> bool {
+    serde_json::from_value::<ToolSecurityDescriptor>(value.clone())
+        .map(|descriptor| !descriptor.is_empty())
+        .unwrap_or(false)
 }
 
 #[derive(Default)]
@@ -584,13 +782,25 @@ pub(crate) async fn mcp_inventory_snapshot(state: &AppState) -> Value {
     server_rows.sort_by(|a, b| a.name.cmp(&b.name));
 
     let remote_tools = state.mcp.list_tools().await;
-    let registered_tool_names = state
-        .tools
-        .list()
-        .await
-        .into_iter()
-        .map(|schema| schema.name)
+    let registered_schemas = state.tools.list().await;
+    let registered_tool_names = registered_schemas
+        .iter()
+        .map(|schema| schema.name.clone())
         .collect::<Vec<_>>();
+    let registered_security_by_name = registered_schemas
+        .into_iter()
+        .map(|schema| {
+            (
+                schema.name.clone(),
+                serde_json::to_value(schema.security).unwrap_or(Value::Null),
+            )
+        })
+        .collect::<std::collections::HashMap<_, _>>();
+    let catalog_tool_security = crate::mcp_catalog::index()
+        .and_then(|catalog| catalog.get("servers"))
+        .and_then(Value::as_array)
+        .map(|servers| catalog_tool_security_by_namespaced_name(servers.as_slice()))
+        .unwrap_or_default();
 
     let mut connected_server_names = Vec::new();
     let mut enabled_server_names = Vec::new();
@@ -609,6 +819,13 @@ pub(crate) async fn mcp_inventory_snapshot(state: &AppState) -> Value {
         remote_tool_names.dedup();
 
         let registered_names = mcp_tool_names_for_server(&registered_tool_names, &server.name);
+        let tool_security = mcp_tool_security_for_inventory_server(
+            &server.name,
+            &remote_tool_names,
+            &registered_names,
+            &catalog_tool_security,
+            &registered_security_by_name,
+        );
 
         if server.enabled {
             enabled_server_names.push(server.name.clone());
@@ -642,6 +859,7 @@ pub(crate) async fn mcp_inventory_snapshot(state: &AppState) -> Value {
             "discovered_tool_count": server.tool_cache.len(),
             "remote_tools": remote_tool_names,
             "registered_tools": registered_names,
+            "tool_security": tool_security,
         }));
     }
 
@@ -1414,6 +1632,114 @@ fn filter_mcp_snapshot_by_namespace_segments(
     snapshot
 }
 
+fn filter_mcp_snapshot_by_discovery_authorization(
+    snapshot: Value,
+    strict_context: Option<&StrictTenantContext>,
+    now_ms: u64,
+) -> Value {
+    if strict_context.is_none() {
+        return snapshot;
+    }
+    let mut snapshot = snapshot;
+    if let Some(root) = snapshot.as_object_mut() {
+        let mut allowed_tools = std::collections::HashSet::<String>::new();
+        let mut allowed_server_segments = std::collections::HashSet::<String>::new();
+
+        if let Some(Value::Array(rows)) = root.get_mut("servers") {
+            rows.retain_mut(|row| {
+                let server_name = row.get("name").and_then(Value::as_str).unwrap_or("");
+                let server_segment = mcp_namespace_segment(server_name);
+                let tool_security = row
+                    .get("tool_security")
+                    .and_then(Value::as_object)
+                    .cloned()
+                    .unwrap_or_default();
+
+                let mut server_allowed_tools = std::collections::HashSet::<String>::new();
+                for field in ["remote_tools", "registered_tools"] {
+                    if let Some(Value::Array(tools)) = row.get_mut(field) {
+                        tools.retain(|tool| {
+                            let Some(tool_name) = tool_name_from_inventory_value(tool) else {
+                                return false;
+                            };
+                            if tool_name == "mcp_list" {
+                                return true;
+                            }
+                            let short_name = tool_name
+                                .strip_prefix(&format!("mcp.{server_segment}."))
+                                .unwrap_or(&tool_name);
+                            let security = tool_security
+                                .get(short_name)
+                                .and_then(|value| value.get("security"));
+                            let allowed = mcp_tool_authorized_for_discovery(
+                                strict_context,
+                                &tool_name,
+                                security,
+                                now_ms,
+                            );
+                            if allowed {
+                                allowed_tools.insert(tool_name.clone());
+                                server_allowed_tools.insert(tool_name);
+                            }
+                            allowed
+                        });
+                    }
+                }
+
+                let keep = !server_allowed_tools.is_empty();
+                if keep {
+                    allowed_server_segments.insert(server_segment);
+                }
+                keep
+            });
+        }
+
+        if let Some(Value::Array(rows)) = root.get_mut("remote_tools") {
+            rows.retain(|row| {
+                tool_name_from_inventory_value(row)
+                    .is_some_and(|tool_name| allowed_tools.contains(&tool_name))
+            });
+        }
+        if let Some(Value::Array(rows)) = root.get_mut("registered_tools") {
+            rows.retain(|row| {
+                row.as_str().is_some_and(|tool_name| {
+                    tool_name == "mcp_list" || allowed_tools.contains(tool_name)
+                })
+            });
+        }
+        if let Some(Value::Array(rows)) = root.get_mut("connected_server_names") {
+            rows.retain(|row| {
+                row.as_str().is_some_and(|server| {
+                    allowed_server_segments.contains(&mcp_namespace_segment(server))
+                })
+            });
+        }
+        if let Some(Value::Array(rows)) = root.get_mut("enabled_server_names") {
+            rows.retain(|row| {
+                row.as_str().is_some_and(|server| {
+                    allowed_server_segments.contains(&mcp_namespace_segment(server))
+                })
+            });
+        }
+    }
+    snapshot
+}
+
+fn tool_name_from_inventory_value(value: &Value) -> Option<String> {
+    value
+        .as_str()
+        .map(str::to_string)
+        .or_else(|| {
+            value
+                .get("namespaced_name")
+                .or_else(|| value.get("name"))
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        })
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
 fn session_mcp_tool_filter(session_tools: &[String]) -> McpToolScopeFilter {
     parse_mcp_tool_scope_filter(session_tools)
 }
@@ -1455,6 +1781,7 @@ impl Tool for McpListTool {
 
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
         let mut snapshot = mcp_inventory_snapshot(&self.state).await;
+        let strict_context = strict_context_from_tool_args(&args);
         let session_id = args.get("__session_id").and_then(Value::as_str);
         let allowed_servers = if let Some(sid) = session_id {
             scoped_mcp_servers_for_session(&self.state, sid).await
@@ -1478,6 +1805,11 @@ impl Tool for McpListTool {
         {
             snapshot = filter_mcp_snapshot_by_tool_scope(snapshot, &session_tool_filter);
         }
+        snapshot = filter_mcp_snapshot_by_discovery_authorization(
+            snapshot,
+            strict_context.as_ref(),
+            crate::now_ms(),
+        );
         let output =
             serde_json::to_string_pretty(&snapshot).unwrap_or_else(|_| snapshot.to_string());
         Ok(ToolResult {
@@ -1520,7 +1852,8 @@ pub(crate) async fn sync_mcp_tools_for_server(state: &AppState, name: &str) -> u
                 tool.description.clone()
             },
             tool.input_schema.clone(),
-        );
+        )
+        .with_security(tool_name_security_descriptor(&tool.namespaced_name));
         state
             .tools
             .register_tool(

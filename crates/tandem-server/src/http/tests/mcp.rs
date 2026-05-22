@@ -42,6 +42,51 @@ impl Drop for McpEnvGuard {
     }
 }
 
+fn strict_context_with_grant(
+    permissions: Vec<tandem_types::AccessPermission>,
+    data_classes: Vec<tandem_types::DataClass>,
+) -> tandem_types::StrictTenantContext {
+    let tenant_context = tandem_types::TenantContext::explicit_user_workspace(
+        "acme",
+        "dev",
+        Some("deployment-test".to_string()),
+        "user-1",
+    );
+    let principal = tandem_types::PrincipalRef::human_user("user-1");
+    let root = tandem_types::ResourceRef::new(
+        "acme",
+        "*",
+        tandem_types::ResourceKind::Organization,
+        "acme",
+    );
+    let grant = tandem_types::ScopedGrant::new(
+        "grant-mcp-discovery",
+        principal.clone(),
+        root.clone(),
+        tandem_types::GrantSource::Direct,
+    )
+    .with_permissions(permissions)
+    .with_data_classes(data_classes.clone());
+
+    tandem_types::StrictTenantContext::new(
+        tenant_context,
+        principal.clone(),
+        tandem_types::AuthorityChain::from_request(
+            tandem_types::RequestPrincipal::authenticated_user(principal.id, "test"),
+        ),
+        tandem_types::ResourceScope::root(root),
+        tandem_types::AssertionMetadata::new(
+            "test",
+            "tandem-runtime",
+            1_000,
+            9_999_999_999_999,
+            "assertion-mcp-discovery",
+        ),
+    )
+    .with_grants(vec![grant])
+    .with_data_boundary(tandem_types::DataBoundary::allow(data_classes))
+}
+
 async fn spawn_fake_notion_oauth_mcp_server() -> (String, tokio::task::JoinHandle<()>) {
     async fn handle(axum::Json(payload): axum::Json<Value>) -> axum::Json<Value> {
         let id = payload.get("id").cloned().unwrap_or_else(|| json!(1));
@@ -519,6 +564,60 @@ async fn mcp_list_filters_to_session_scoped_servers() {
             || tool
                 .as_str()
                 .is_some_and(|name| name.starts_with("mcp.github."))));
+}
+
+#[tokio::test]
+async fn mcp_list_redacts_execute_tools_without_strict_grant() {
+    let state = test_state().await;
+    let strict_context = strict_context_with_grant(
+        vec![
+            tandem_types::AccessPermission::View,
+            tandem_types::AccessPermission::Read,
+        ],
+        vec![
+            tandem_types::DataClass::Internal,
+            tandem_types::DataClass::SourceCode,
+        ],
+    );
+
+    let output = state
+        .tools
+        .execute(
+            "mcp_list",
+            json!({
+                "__strict_tenant_context": strict_context
+            }),
+        )
+        .await
+        .expect("execute mcp_list");
+    let payload: Value = serde_json::from_str(&output.output).expect("inventory json");
+    let github = payload
+        .get("servers")
+        .and_then(Value::as_array)
+        .and_then(|servers| {
+            servers
+                .iter()
+                .find(|row| row.get("name").and_then(Value::as_str) == Some("github"))
+        })
+        .expect("github server remains visible");
+    let remote_tools = github
+        .get("remote_tools")
+        .and_then(Value::as_array)
+        .expect("remote tools");
+
+    assert!(remote_tools
+        .iter()
+        .any(|tool| tool.as_str() == Some("mcp.github.list_repository_issues")));
+    assert!(!remote_tools
+        .iter()
+        .any(|tool| tool.as_str() == Some("mcp.github.create_pull_request")));
+    let all_remote_tools = payload
+        .get("remote_tools")
+        .and_then(Value::as_array)
+        .expect("all remote tools");
+    assert!(!all_remote_tools
+        .iter()
+        .any(|tool| tool.as_str() == Some("mcp.github.create_pull_request")));
 }
 
 #[tokio::test]

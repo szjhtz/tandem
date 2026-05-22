@@ -79,6 +79,10 @@ automation remain follow-up implementation phases.
   `TANDEM_MCP_TOOL_SECURITY_OVERRIDES_PATH`, allowing enterprise deployments to
   tune server and per-tool security descriptors without rebuilding the embedded
   catalog.
+- `mcp_list` now applies discovery authorization when a signed strict tenant
+  projection is present. Unauthorized MCP tools are removed from the discovery
+  inventory before the model can see them; local/unscoped discovery remains
+  unchanged.
 - Source-bound manual uploads now create durable source-object lifecycle
   records keyed by tenant, source binding, and native object identity. Changed
   documents keep the same source object ID while their hashes update, and

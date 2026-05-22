@@ -73,6 +73,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   via `TANDEM_MCP_TOOL_SECURITY_OVERRIDES_PATH` so hosted/self-hosted operators
   can override server and per-tool MCP security descriptors without editing the
   embedded catalog.
+- **MCP discovery authorization filtering**: `mcp_list` now carries
+  per-tool security metadata in inventory snapshots and redacts unauthorized
+  tool names when a signed strict tenant projection is present, while preserving
+  legacy/local unscoped discovery behavior.
 - **Enterprise source-object lifecycle records**: Added source-bound uploaded
   document lifecycle records in memory storage so manual imports can track
   active and tombstoned source objects by tenant, binding, resource, data class,
