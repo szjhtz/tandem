@@ -65,6 +65,12 @@ automation remain follow-up implementation phases.
   and invalidated for a specific binding. Source-binding admin changes emit an
   invalidation-required event so future cache consumers can purge stale answers
   after disable, quarantine, revoke, or permission changes.
+- Tool schemas now have additive enterprise security descriptors covering
+  required permissions, resource kinds, data classes, admin surfaces, external
+  side effects, credential access, and default visibility. Built-in tools emit
+  descriptors from their metadata, and unannotated MCP/provider tools can be
+  classified conservatively before future discovery masking and execution
+  enforcement.
 - Source-bound manual uploads now create durable source-object lifecycle
   records keyed by tenant, source binding, and native object identity. Changed
   documents keep the same source object ID while their hashes update, and

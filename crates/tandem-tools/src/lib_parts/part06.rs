@@ -120,6 +120,14 @@ mod tests {
             read.capabilities.effects,
             vec![tandem_types::ToolEffect::Read]
         );
+        assert!(read
+            .security
+            .required_permissions
+            .contains(&tandem_types::AccessPermission::Read));
+        assert!(read
+            .security
+            .resource_kinds
+            .contains(&tandem_types::ResourceKind::File));
 
         let write = schema_by_name.get("write").expect("write tool");
         assert!(write.capabilities.writes_workspace);
@@ -128,6 +136,10 @@ mod tests {
             write.capabilities.effects,
             vec![tandem_types::ToolEffect::Write]
         );
+        assert!(write
+            .security
+            .required_permissions
+            .contains(&tandem_types::AccessPermission::Edit));
 
         let grep = schema_by_name.get("grep").expect("grep tool");
         assert!(grep.capabilities.reads_workspace);
@@ -144,6 +156,11 @@ mod tests {
             bash.capabilities.effects,
             vec![tandem_types::ToolEffect::Execute]
         );
+        assert!(bash
+            .security
+            .required_permissions
+            .contains(&tandem_types::AccessPermission::Execute));
+        assert!(bash.security.external_side_effect);
 
         let webfetch = schema_by_name.get("webfetch").expect("webfetch tool");
         assert!(webfetch.capabilities.network_access);
@@ -161,6 +178,14 @@ mod tests {
             apply_patch.capabilities.effects,
             vec![tandem_types::ToolEffect::Patch]
         );
+        assert!(apply_patch
+            .security
+            .required_permissions
+            .contains(&tandem_types::AccessPermission::Edit));
+        assert!(apply_patch
+            .security
+            .data_classes
+            .contains(&tandem_types::DataClass::SourceCode));
     }
 
     fn grep_args(root: &Path, pattern: &str) -> Value {

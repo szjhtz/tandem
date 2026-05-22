@@ -1,4 +1,7 @@
-use tandem_types::{ToolDomain, ToolEffect, ToolSchema};
+use tandem_types::{
+    AccessPermission, DataClass, ResourceKind, ToolCapabilities, ToolDomain, ToolEffect,
+    ToolSchema, ToolSecurityDescriptor,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ToolCapabilityProfile {
@@ -15,6 +18,17 @@ pub enum ToolCapabilityProfile {
     ExternalMutation,
 }
 
+pub fn tool_schema_security_descriptor(schema: &ToolSchema) -> ToolSecurityDescriptor {
+    if !schema.security.is_empty() {
+        return schema.security.clone();
+    }
+    tool_security_descriptor_from_name_and_capabilities(&schema.name, &schema.capabilities)
+}
+
+pub fn tool_name_security_descriptor(tool_name: &str) -> ToolSecurityDescriptor {
+    tool_security_descriptor_from_name_and_capabilities(tool_name, &ToolCapabilities::default())
+}
+
 pub fn canonical_tool_name(name: &str) -> String {
     let lowered = name.trim().to_ascii_lowercase().replace('-', "_");
     let canonical = if let Some(stripped) = strip_known_namespace(&lowered) {
@@ -27,6 +41,96 @@ pub fn canonical_tool_name(name: &str) -> String {
         "todowrite" | "update_todo_list" | "update_todos" => "todo_write".to_string(),
         other => other.to_string(),
     }
+}
+
+fn tool_security_descriptor_from_name_and_capabilities(
+    tool_name: &str,
+    capabilities: &ToolCapabilities,
+) -> ToolSecurityDescriptor {
+    if tool_name_looks_like_admin_or_credential_surface(tool_name) {
+        return ToolSecurityDescriptor::new()
+            .permission(AccessPermission::Admin)
+            .permission(AccessPermission::Execute)
+            .resource_kind(ResourceKind::McpServer)
+            .resource_kind(ResourceKind::McpTool)
+            .resource_kind(ResourceKind::SecretProviderCredential)
+            .data_class(DataClass::Credential)
+            .admin_surface()
+            .credential_access()
+            .external_side_effect()
+            .hidden_by_default();
+    }
+
+    let schema = ToolSchema::new(tool_name, "", serde_json::json!({}))
+        .with_capabilities(capabilities.clone());
+
+    if tool_schema_matches_profile(&schema, ToolCapabilityProfile::ShellExecution) {
+        return ToolSecurityDescriptor::new()
+            .permission(AccessPermission::Execute)
+            .resource_kind(ResourceKind::Directory)
+            .resource_kind(ResourceKind::File)
+            .resource_kind(ResourceKind::Repository)
+            .data_class(DataClass::Internal)
+            .data_class(DataClass::SourceCode)
+            .external_side_effect();
+    }
+
+    if tool_schema_matches_profile(&schema, ToolCapabilityProfile::ArtifactWrite) {
+        return ToolSecurityDescriptor::new()
+            .permission(AccessPermission::Edit)
+            .resource_kind(ResourceKind::Artifact)
+            .resource_kind(ResourceKind::Directory)
+            .resource_kind(ResourceKind::File)
+            .resource_kind(ResourceKind::Repository)
+            .data_class(DataClass::Internal)
+            .data_class(DataClass::SourceCode);
+    }
+
+    if tool_schema_matches_profile(&schema, ToolCapabilityProfile::ExternalMutation)
+        || tool_schema_matches_profile(&schema, ToolCapabilityProfile::EmailSend)
+        || tool_schema_matches_profile(&schema, ToolCapabilityProfile::EmailDraft)
+    {
+        return ToolSecurityDescriptor::new()
+            .permission(AccessPermission::Execute)
+            .resource_kind(ResourceKind::ExternalIntegrationAccount)
+            .resource_kind(ResourceKind::McpTool)
+            .data_class(DataClass::Internal)
+            .external_side_effect();
+    }
+
+    if tool_schema_matches_profile(&schema, ToolCapabilityProfile::WorkspaceRead)
+        || tool_schema_matches_profile(&schema, ToolCapabilityProfile::WorkspaceDiscover)
+    {
+        return ToolSecurityDescriptor::new()
+            .permission(AccessPermission::Read)
+            .resource_kind(ResourceKind::Directory)
+            .resource_kind(ResourceKind::File)
+            .resource_kind(ResourceKind::Repository)
+            .data_class(DataClass::Internal)
+            .data_class(DataClass::SourceCode);
+    }
+
+    if tool_schema_matches_profile(&schema, ToolCapabilityProfile::MemoryOperation) {
+        let permission = if tool_name_looks_like_external_mutation(tool_name) {
+            AccessPermission::Edit
+        } else {
+            AccessPermission::Read
+        };
+        return ToolSecurityDescriptor::new()
+            .permission(permission)
+            .resource_kind(ResourceKind::MemorySpace)
+            .resource_kind(ResourceKind::KnowledgeSpace)
+            .data_class(DataClass::Internal)
+            .data_class(DataClass::Confidential);
+    }
+
+    if tool_schema_matches_profile(&schema, ToolCapabilityProfile::WebResearch) {
+        return ToolSecurityDescriptor::new()
+            .permission(AccessPermission::View)
+            .data_class(DataClass::Public);
+    }
+
+    ToolSecurityDescriptor::new()
 }
 
 pub fn tool_schema_matches_profile(schema: &ToolSchema, profile: ToolCapabilityProfile) -> bool {
@@ -67,6 +171,36 @@ pub fn tool_name_matches_profile(tool_name: &str, profile: ToolCapabilityProfile
             tool_name_looks_like_external_mutation(tool_name)
         }
     }
+}
+
+fn tool_name_looks_like_admin_or_credential_surface(tool_name: &str) -> bool {
+    let tokens = tool_name_tokens(tool_name);
+    let compact = tool_name_compact(tool_name);
+    let action = mcp_tool_action_name(tool_name);
+
+    let token_match = tokens.iter().any(|token| {
+        matches!(
+            token.as_str(),
+            "admin"
+                | "administrator"
+                | "credential"
+                | "credentials"
+                | "secret"
+                | "secrets"
+                | "token"
+                | "tokens"
+                | "oauth"
+                | "kms"
+                | "key"
+                | "keys"
+        )
+    });
+
+    token_match
+        || compact.contains("accesstoken")
+        || compact.contains("refreshtoken")
+        || compact.contains("secretref")
+        || action.is_some_and(|action| tool_name_looks_like_admin_or_credential_surface(&action))
 }
 
 fn tool_schema_matches_profile_from_metadata(
@@ -328,7 +462,10 @@ fn tool_name_compact(tool_name: &str) -> String {
 mod tests {
     use super::*;
     use serde_json::json;
-    use tandem_types::{ToolCapabilities, ToolDomain, ToolEffect};
+    use tandem_types::{
+        AccessPermission, DataClass, ResourceKind, ToolCapabilities, ToolDomain, ToolEffect,
+        ToolSecurityDescriptor,
+    };
 
     #[test]
     fn schema_metadata_overrides_unknown_name_for_workspace_read() {
@@ -422,6 +559,75 @@ mod tests {
         assert!(!tool_name_matches_profile(
             "mcp.anything.reddit_search_across_subreddits",
             ToolCapabilityProfile::ExternalMutation
+        ));
+    }
+
+    #[test]
+    fn tool_security_descriptor_prefers_explicit_schema_metadata() {
+        let schema = ToolSchema::new("mcp.admin.rotate_credential", "", json!({})).with_security(
+            ToolSecurityDescriptor::new()
+                .permission(AccessPermission::Read)
+                .resource_kind(ResourceKind::Document)
+                .data_class(DataClass::Internal),
+        );
+
+        let descriptor = tool_schema_security_descriptor(&schema);
+
+        assert_eq!(
+            descriptor.required_permissions,
+            vec![AccessPermission::Read]
+        );
+        assert!(!descriptor.admin_surface);
+        assert!(!descriptor.credential_access);
+    }
+
+    #[test]
+    fn tool_security_descriptor_marks_workspace_read_boundaries() {
+        let schema = ToolSchema::new("workspace_inspector", "", json!({})).with_capabilities(
+            ToolCapabilities::new()
+                .effect(ToolEffect::Read)
+                .domain(ToolDomain::Workspace)
+                .reads_workspace(),
+        );
+
+        let descriptor = tool_schema_security_descriptor(&schema);
+
+        assert!(descriptor
+            .required_permissions
+            .contains(&AccessPermission::Read));
+        assert!(descriptor.resource_kinds.contains(&ResourceKind::File));
+        assert!(descriptor.data_classes.contains(&DataClass::SourceCode));
+        assert!(!descriptor.external_side_effect);
+    }
+
+    #[test]
+    fn tool_security_descriptor_marks_shell_as_execute_side_effect() {
+        let descriptor = tool_name_security_descriptor("bash");
+
+        assert!(descriptor
+            .required_permissions
+            .contains(&AccessPermission::Execute));
+        assert!(descriptor
+            .resource_kinds
+            .contains(&ResourceKind::Repository));
+        assert!(descriptor.external_side_effect);
+        assert!(!descriptor.admin_surface);
+    }
+
+    #[test]
+    fn tool_security_descriptor_hides_admin_credential_surfaces() {
+        let descriptor = tool_name_security_descriptor("mcp.google_admin.rotate_credential");
+
+        assert!(descriptor.admin_surface);
+        assert!(descriptor.credential_access);
+        assert!(descriptor
+            .required_permissions
+            .contains(&AccessPermission::Admin));
+        assert!(descriptor.data_classes.contains(&DataClass::Credential));
+        assert!(descriptor.resource_kinds.contains(&ResourceKind::McpTool));
+        assert!(matches!(
+            descriptor.default_visibility,
+            tandem_types::ToolDefaultVisibility::Hidden
         ));
     }
 }

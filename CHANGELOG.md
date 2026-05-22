@@ -59,6 +59,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and source-binding invalidation APIs. Source-binding admin create/update now
   emits an explicit cache-invalidation-required event for revoke, quarantine,
   permission, or policy changes.
+- **Enterprise tool security descriptors**: Added additive `ToolSchema`
+  security descriptors that record required permissions, resource kinds, data
+  classes, admin surfaces, external side effects, credential access, and default
+  visibility. Built-in tool metadata now emits these descriptors and the core
+  tool capability classifier can derive conservative descriptors for
+  unannotated provider/MCP tools.
 - **Enterprise source-object lifecycle records**: Added source-bound uploaded
   document lifecycle records in memory storage so manual imports can track
   active and tombstoned source objects by tenant, binding, resource, data class,

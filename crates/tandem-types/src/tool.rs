@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::sync::Arc;
+use tandem_enterprise_contract::{AccessPermission, DataClass, ResourceKind};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -49,6 +50,46 @@ pub struct ToolCapabilities {
     pub preferred_for_validation: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolDefaultVisibility {
+    #[default]
+    Visible,
+    Hidden,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ToolSecurityDescriptor {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub required_permissions: Vec<AccessPermission>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub resource_kinds: Vec<ResourceKind>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub data_classes: Vec<DataClass>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub admin_surface: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub external_side_effect: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub credential_access: bool,
+    #[serde(default, skip_serializing_if = "is_default_visibility_visible")]
+    pub default_visibility: ToolDefaultVisibility,
+}
+
+impl Default for ToolSecurityDescriptor {
+    fn default() -> Self {
+        Self {
+            required_permissions: Vec::new(),
+            resource_kinds: Vec::new(),
+            data_classes: Vec::new(),
+            admin_surface: false,
+            external_side_effect: false,
+            credential_access: false,
+            default_visibility: ToolDefaultVisibility::Visible,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ToolSchema {
     pub name: String,
@@ -56,10 +97,16 @@ pub struct ToolSchema {
     pub input_schema: Value,
     #[serde(default, skip_serializing_if = "ToolCapabilities::is_empty")]
     pub capabilities: ToolCapabilities,
+    #[serde(default, skip_serializing_if = "ToolSecurityDescriptor::is_empty")]
+    pub security: ToolSecurityDescriptor,
 }
 
 fn is_false(value: &bool) -> bool {
     !*value
+}
+
+fn is_default_visibility_visible(value: &ToolDefaultVisibility) -> bool {
+    matches!(value, ToolDefaultVisibility::Visible)
 }
 
 impl ToolCapabilities {
@@ -129,6 +176,63 @@ impl ToolCapabilities {
     }
 }
 
+impl ToolSecurityDescriptor {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn permission(mut self, permission: AccessPermission) -> Self {
+        if !self.required_permissions.contains(&permission) {
+            self.required_permissions.push(permission);
+        }
+        self
+    }
+
+    pub fn resource_kind(mut self, resource_kind: ResourceKind) -> Self {
+        if !self.resource_kinds.contains(&resource_kind) {
+            self.resource_kinds.push(resource_kind);
+        }
+        self
+    }
+
+    pub fn data_class(mut self, data_class: DataClass) -> Self {
+        if !self.data_classes.contains(&data_class) {
+            self.data_classes.push(data_class);
+        }
+        self
+    }
+
+    pub fn admin_surface(mut self) -> Self {
+        self.admin_surface = true;
+        self
+    }
+
+    pub fn external_side_effect(mut self) -> Self {
+        self.external_side_effect = true;
+        self
+    }
+
+    pub fn credential_access(mut self) -> Self {
+        self.credential_access = true;
+        self
+    }
+
+    pub fn hidden_by_default(mut self) -> Self {
+        self.default_visibility = ToolDefaultVisibility::Hidden;
+        self
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.required_permissions.is_empty()
+            && self.resource_kinds.is_empty()
+            && self.data_classes.is_empty()
+            && !self.admin_surface
+            && !self.external_side_effect
+            && !self.credential_access
+            && matches!(self.default_visibility, ToolDefaultVisibility::Visible)
+    }
+}
+
 impl ToolSchema {
     pub fn new(
         name: impl Into<String>,
@@ -140,11 +244,17 @@ impl ToolSchema {
             description: description.into(),
             input_schema,
             capabilities: ToolCapabilities::default(),
+            security: ToolSecurityDescriptor::default(),
         }
     }
 
     pub fn with_capabilities(mut self, capabilities: ToolCapabilities) -> Self {
         self.capabilities = capabilities;
+        self
+    }
+
+    pub fn with_security(mut self, security: ToolSecurityDescriptor) -> Self {
+        self.security = security;
         self
     }
 }
@@ -226,6 +336,20 @@ mod tests {
     }
 
     #[test]
+    fn tool_schema_deserializes_legacy_payload_without_security() {
+        let actual: ToolSchema = serde_json::from_value(serde_json::json!({
+            "name": "read",
+            "description": "Read file contents",
+            "input_schema": {
+                "type": "object"
+            }
+        }))
+        .unwrap();
+
+        assert!(actual.security.is_empty());
+    }
+
+    #[test]
     fn tool_schema_round_trips_capabilities() {
         let actual: ToolSchema = serde_json::from_value(serde_json::json!({
             "name": "write",
@@ -255,6 +379,49 @@ mod tests {
                 .domain(ToolDomain::Workspace)
                 .writes_workspace()
                 .requires_verification(),
+        );
+
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn tool_schema_round_trips_security_descriptor() {
+        let actual: ToolSchema = serde_json::from_value(serde_json::json!({
+            "name": "connector_admin",
+            "description": "Manage connector credentials",
+            "input_schema": {
+                "type": "object"
+            },
+            "security": {
+                "required_permissions": ["admin", "execute"],
+                "resource_kinds": ["connector_instance", "secret_provider_credential"],
+                "data_classes": ["credential"],
+                "admin_surface": true,
+                "external_side_effect": true,
+                "credential_access": true,
+                "default_visibility": "hidden"
+            }
+        }))
+        .unwrap();
+
+        let expected = ToolSchema::new(
+            "connector_admin",
+            "Manage connector credentials",
+            serde_json::json!({
+                "type": "object"
+            }),
+        )
+        .with_security(
+            ToolSecurityDescriptor::new()
+                .permission(AccessPermission::Admin)
+                .permission(AccessPermission::Execute)
+                .resource_kind(ResourceKind::ConnectorInstance)
+                .resource_kind(ResourceKind::SecretProviderCredential)
+                .data_class(DataClass::Credential)
+                .admin_surface()
+                .external_side_effect()
+                .credential_access()
+                .hidden_by_default(),
         );
 
         assert_eq!(actual, expected);

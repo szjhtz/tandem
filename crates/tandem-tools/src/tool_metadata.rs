@@ -1,5 +1,8 @@
 use serde_json::Value;
-use tandem_types::{ToolCapabilities, ToolDomain, ToolEffect, ToolSchema};
+use tandem_types::{
+    AccessPermission, DataClass, ResourceKind, ToolCapabilities, ToolDomain, ToolEffect,
+    ToolSchema, ToolSecurityDescriptor,
+};
 
 pub(crate) fn tool_schema(
     name: &'static str,
@@ -15,7 +18,10 @@ pub(crate) fn tool_schema_with_capabilities(
     input_schema: Value,
     capabilities: ToolCapabilities,
 ) -> ToolSchema {
-    ToolSchema::new(name, description, input_schema).with_capabilities(capabilities)
+    let security = security_descriptor_for_capabilities(&capabilities);
+    ToolSchema::new(name, description, input_schema)
+        .with_capabilities(capabilities)
+        .with_security(security)
 }
 
 pub(crate) fn workspace_read_capabilities() -> ToolCapabilities {
@@ -68,4 +74,49 @@ pub(crate) fn apply_patch_capabilities() -> ToolCapabilities {
         .reads_workspace()
         .writes_workspace()
         .requires_verification()
+}
+
+fn security_descriptor_for_capabilities(capabilities: &ToolCapabilities) -> ToolSecurityDescriptor {
+    let mut security = ToolSecurityDescriptor::new();
+
+    if capabilities.reads_workspace {
+        security = security
+            .permission(AccessPermission::Read)
+            .resource_kind(ResourceKind::Directory)
+            .resource_kind(ResourceKind::File)
+            .resource_kind(ResourceKind::Repository)
+            .data_class(DataClass::Internal)
+            .data_class(DataClass::SourceCode);
+    }
+
+    if capabilities.writes_workspace {
+        security = security
+            .permission(AccessPermission::Edit)
+            .resource_kind(ResourceKind::Artifact);
+    }
+
+    if capabilities.domains.contains(&ToolDomain::Shell)
+        || capabilities.effects.contains(&ToolEffect::Execute)
+    {
+        security = security
+            .permission(AccessPermission::Execute)
+            .external_side_effect();
+    }
+
+    if capabilities.network_access
+        && (capabilities.effects.contains(&ToolEffect::Write)
+            || capabilities.effects.contains(&ToolEffect::Patch)
+            || capabilities.effects.contains(&ToolEffect::Delete)
+            || capabilities.effects.contains(&ToolEffect::Execute))
+    {
+        security = security.external_side_effect();
+    }
+
+    if capabilities.domains.contains(&ToolDomain::Web) {
+        security = security
+            .permission(AccessPermission::View)
+            .data_class(DataClass::Public);
+    }
+
+    security
 }
