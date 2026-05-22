@@ -968,6 +968,7 @@ async fn main() -> anyhow::Result<()> {
                         tenant_scope: tandem_memory::types::MemoryTenantScope::local(),
                         source_binding: None,
                         sync_deletes,
+                        import_namespace: None,
                     },
                     None::<fn(&tandem_memory::types::MemoryImportProgress)>,
                 )
@@ -2686,6 +2687,7 @@ mod tests {
             created_at: Utc::now(),
             token_count: 4,
             metadata: None,
+            tenant_scope: tandem_memory::types::MemoryTenantScope::local(),
         };
         let embedding = vec![0.0f32; tandem_memory::types::DEFAULT_EMBEDDING_DIMENSION];
         db.store_chunk(&chunk, &embedding)
