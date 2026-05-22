@@ -31,6 +31,15 @@ impl GoogleDriveClient {
         }
     }
 
+    pub fn new_from_env() -> Self {
+        std::env::var("TANDEM_GOOGLE_DRIVE_API_BASE_URL")
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .map(Self::new_with_base_url)
+            .unwrap_or_else(Self::new)
+    }
+
     pub async fn list_folder_children(
         &self,
         bearer_token: &str,

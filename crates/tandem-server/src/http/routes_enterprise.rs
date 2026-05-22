@@ -19,6 +19,11 @@ use tandem_memory::types::{
     MemoryTenantScope, SourceObjectLifecycleRecord, SourceObjectLifecycleState,
 };
 
+use crate::enterprise_connectors::google_drive::GoogleDriveClient;
+use crate::enterprise_connectors::google_drive_ingestion::{
+    preflight_google_drive_binding, GoogleDriveBindingPreflight, GoogleDriveIngestionError,
+};
+use crate::enterprise_connectors::secrets::EnvSecretResolver;
 use crate::{util::time::now_ms, AppState, EngineEvent};
 
 type EnterpriseResult<T> = Result<Json<T>, (StatusCode, Json<Value>)>;
@@ -128,6 +133,13 @@ struct EnterpriseConnectorImpactResponse {
     compromise_window_started_at_ms: Option<u64>,
     compromise_window_finished_at_ms: Option<u64>,
     recommended_actions: Vec<&'static str>,
+}
+
+#[derive(Debug, Serialize)]
+struct EnterpriseGoogleDrivePreflightResponse {
+    #[serde(flatten)]
+    base: EnterpriseAdminResponseBase,
+    preflight: GoogleDriveBindingPreflight,
 }
 
 #[derive(Debug, Deserialize)]
@@ -284,6 +296,10 @@ pub(super) fn apply(router: Router<AppState>) -> Router<AppState> {
         .route(
             "/enterprise/source-bindings/{binding_id}",
             patch(update_source_binding),
+        )
+        .route(
+            "/enterprise/source-bindings/{binding_id}/google-drive/preflight",
+            post(preflight_google_drive_source_binding),
         )
         .route(
             "/enterprise/source-bindings/{binding_id}/source-objects",
@@ -1003,6 +1019,35 @@ async fn update_source_binding(
     }))
 }
 
+async fn preflight_google_drive_source_binding(
+    State(state): State<AppState>,
+    Path(binding_id): Path<String>,
+    Extension(tenant_context): Extension<TenantContext>,
+    Extension(request_principal): Extension<RequestPrincipal>,
+    verified_tenant_context: Option<Extension<VerifiedTenantContext>>,
+) -> EnterpriseResult<EnterpriseGoogleDrivePreflightResponse> {
+    require_enterprise_admin(&request_principal, verified_tenant_context.as_deref())?;
+    let binding_id = validate_enterprise_id("binding_id", &binding_id)?;
+    let binding = source_binding_for_tenant(&state, &tenant_context, &binding_id).await?;
+    let connector = connector_for_tenant(&state, &tenant_context, &binding.connector_id).await?;
+    let resolver = EnvSecretResolver;
+    let drive_client = GoogleDriveClient::new_from_env();
+    let preflight = preflight_google_drive_binding(
+        &tenant_context,
+        &connector,
+        &binding,
+        &resolver,
+        &drive_client,
+    )
+    .await
+    .map_err(map_google_drive_preflight_error)?;
+
+    Ok(Json(EnterpriseGoogleDrivePreflightResponse {
+        base: storage_base(tenant_context, request_principal),
+        preflight,
+    }))
+}
+
 async fn list_source_objects(
     State(state): State<AppState>,
     Path(binding_id): Path<String>,
@@ -1378,6 +1423,61 @@ struct ConnectorImpact {
     compromise_window_started_at_ms: Option<u64>,
     compromise_window_finished_at_ms: Option<u64>,
     recommended_actions: Vec<&'static str>,
+}
+
+async fn connector_for_tenant(
+    state: &AppState,
+    tenant_context: &TenantContext,
+    connector_id: &str,
+) -> Result<ConnectorInstance, (StatusCode, Json<Value>)> {
+    state
+        .enterprise_connectors
+        .read()
+        .await
+        .values()
+        .find(|connector| {
+            connector.connector_id == connector_id && connector.tenant_matches(tenant_context)
+        })
+        .cloned()
+        .ok_or_else(|| not_found("ENTERPRISE_CONNECTOR_NOT_FOUND"))
+}
+
+async fn source_binding_for_tenant(
+    state: &AppState,
+    tenant_context: &TenantContext,
+    binding_id: &str,
+) -> Result<SourceBinding, (StatusCode, Json<Value>)> {
+    state
+        .enterprise_source_bindings
+        .read()
+        .await
+        .values()
+        .find(|binding| binding.binding_id == binding_id && binding.tenant_matches(tenant_context))
+        .cloned()
+        .ok_or_else(|| not_found("ENTERPRISE_SOURCE_BINDING_NOT_FOUND"))
+}
+
+fn map_google_drive_preflight_error(error: GoogleDriveIngestionError) -> (StatusCode, Json<Value>) {
+    match error {
+        GoogleDriveIngestionError::Secret(_) => {
+            bad_request("ENTERPRISE_GOOGLE_DRIVE_SECRET_UNAVAILABLE")
+        }
+        GoogleDriveIngestionError::Drive(_) => {
+            bad_request("ENTERPRISE_GOOGLE_DRIVE_PREFLIGHT_READ_FAILED")
+        }
+        GoogleDriveIngestionError::TenantMismatch
+        | GoogleDriveIngestionError::ConnectorMismatch
+        | GoogleDriveIngestionError::UnsupportedConnectorProvider
+        | GoogleDriveIngestionError::UnsupportedSourceType
+        | GoogleDriveIngestionError::ConnectorNotActive
+        | GoogleDriveIngestionError::BindingNotEnabled
+        | GoogleDriveIngestionError::MissingCredentialRef
+        | GoogleDriveIngestionError::CredentialRefNotFound
+        | GoogleDriveIngestionError::CredentialNotReadOnly
+        | GoogleDriveIngestionError::CredentialResourceMismatch => {
+            bad_request("ENTERPRISE_GOOGLE_DRIVE_PREFLIGHT_POLICY_FAILED")
+        }
+    }
 }
 
 async fn ensure_connector_exists_for_tenant(

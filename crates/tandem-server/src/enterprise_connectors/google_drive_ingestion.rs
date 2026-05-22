@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use serde::Serialize;
 use std::fmt;
 use tandem_enterprise_contract::{
     ConnectorCredentialClass, ConnectorInstance, ConnectorLifecycleState, SourceBinding,
@@ -33,7 +34,7 @@ impl GoogleDriveReadClient for GoogleDriveClient {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct GoogleDriveBindingPreflight {
     pub binding_id: String,
     pub connector_id: String,
