@@ -54,7 +54,14 @@ export default defineConfig({
         },
         {
           label: "Server & Deployment",
-          items: ["control-panel", "headless-service", "channel-integrations", "desktop/headless-deployment", "installation"],
+          items: [
+            "control-panel",
+            "enterprise-data-governance",
+            "headless-service",
+            "channel-integrations",
+            "desktop/headless-deployment",
+            "installation",
+          ],
         },
         {
           label: "Developer Guide & SDKs",

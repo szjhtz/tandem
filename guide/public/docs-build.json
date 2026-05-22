@@ -6,6 +6,6 @@
   "git_ref": "local",
   "git_ref_name": "local",
   "built_at": "2026-04-27T21:12:08.119Z",
-  "engine_version": "0.4.44",
+  "engine_version": "0.5.9",
   "docs_channel": "stable"
 }

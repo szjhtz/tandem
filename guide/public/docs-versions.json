@@ -3,7 +3,7 @@
   "default_ref": "stable",
   "stable": {
     "ref": "stable",
-    "engine_version": "0.4.44",
+    "engine_version": "0.5.9",
     "git_sha": "local",
     "built_at": "2026-04-27T21:12:08.119Z"
   },

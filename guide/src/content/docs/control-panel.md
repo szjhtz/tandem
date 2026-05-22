@@ -113,6 +113,18 @@ The control panel now uses a shell with:
 
 The web app intentionally pushes motion a bit further than the Tauri app while keeping the same overall visual language.
 
+## Enterprise Admin
+
+Hosted enterprise operators can open `#/enterprise-admin` for tenant-scoped
+data governance. The page covers organization-unit taxonomy, memberships,
+resource/data-class grants, connector lifecycle, secret-reference credential
+metadata, source bindings, Google Drive preflight/import/reindex operations,
+quarantine review, source-object lifecycle actions, and connector impact
+reports.
+
+Start with [Enterprise Data Governance](./enterprise-data-governance/) before
+using the page in a hosted deployment.
+
 ## Automations Workspace (Tabbed + Wizard)
 
 The left nav `Automations` page (`#/automations`) now uses task-focused tabs:
