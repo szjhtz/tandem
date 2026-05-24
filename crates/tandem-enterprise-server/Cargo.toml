@@ -1,0 +1,33 @@
+[package]
+name = "tandem-enterprise-server"
+version = "0.5.9"
+description = "Enterprise HTTP routes and connectors for Tandem server"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/frumu-ai/tandem"
+edition = "2021"
+
+[features]
+default = []
+google-drive = []
+governance = ["tandem-server/premium-governance"]
+local-embeddings = ["tandem-memory/local-embeddings"]
+full = ["google-drive", "governance", "local-embeddings"]
+
+[dependencies]
+async-trait = "0.1"
+axum = { version = "0.8", features = ["ws"] }
+reqwest = { version = "0.12", default-features = true, features = ["json"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+urlencoding = "2"
+uuid = { version = "1", features = ["v4", "serde"] }
+
+tandem-core = { path = "../tandem-core", version = "0.5.9" }
+tandem-enterprise-contract = { path = "../tandem-enterprise-contract", version = "0.5.9" }
+tandem-memory = { path = "../tandem-memory", version = "0.5.9" }
+tandem-server = { path = "../tandem-server", version = "0.5.9", default-features = false, features = ["browser"] }
+
+[dev-dependencies]
+tower = "0.5"

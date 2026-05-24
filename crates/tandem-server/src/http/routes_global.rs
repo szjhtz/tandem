@@ -9,8 +9,13 @@ use super::channels_api::{
     channels_verify,
 };
 use super::config_providers::{global_config, global_config_patch};
-use super::enterprise::enterprise_status;
 use super::global::*;
+
+async fn enterprise_status() -> axum::Json<tandem_enterprise_contract::EnterpriseStatus> {
+    use tandem_enterprise_contract::{EnterpriseBridge, NoopEnterpriseBridge};
+
+    axum::Json(NoopEnterpriseBridge.status())
+}
 
 pub(super) fn apply(router: Router<AppState>) -> Router<AppState> {
     router

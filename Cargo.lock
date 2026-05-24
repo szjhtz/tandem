@@ -7589,6 +7589,7 @@ dependencies = [
  "sha2",
  "tandem-browser",
  "tandem-core",
+ "tandem-enterprise-server",
  "tandem-memory",
  "tandem-observability",
  "tandem-providers",
@@ -7699,6 +7700,26 @@ dependencies = [
  "http 1.4.0",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "tandem-enterprise-server"
+version = "0.5.9"
+dependencies = [
+ "async-trait",
+ "axum",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "tandem-core",
+ "tandem-enterprise-contract",
+ "tandem-memory",
+ "tandem-server",
+ "tokio",
+ "tower",
+ "tracing",
+ "urlencoding",
+ "uuid",
 ]
 
 [[package]]

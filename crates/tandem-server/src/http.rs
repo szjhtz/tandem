@@ -67,7 +67,6 @@ mod context_run_mutation_checkpoints;
 pub(crate) mod context_runs;
 pub(crate) mod context_types;
 mod discord_interactions;
-mod enterprise;
 mod external_actions;
 mod global;
 pub(crate) mod governance;
@@ -93,11 +92,6 @@ mod routes_channel_automation_drafts;
 mod routes_coder;
 mod routes_config_providers;
 mod routes_context;
-mod routes_enterprise;
-mod routes_enterprise_google_drive;
-mod routes_enterprise_lifecycle;
-mod routes_enterprise_onboarding;
-mod routes_enterprise_org_units;
 mod routes_external_actions;
 mod routes_global;
 mod routes_governance;
@@ -277,7 +271,18 @@ struct ErrorEnvelope {
     code: Option<String>,
 }
 
+pub type ServerRouter = Router<AppState>;
+pub type RouteRegistrar = fn(ServerRouter) -> ServerRouter;
+
 pub async fn serve(addr: SocketAddr, state: AppState) -> anyhow::Result<()> {
+    serve_with_route_extensions(addr, state, &[]).await
+}
+
+pub async fn serve_with_route_extensions(
+    addr: SocketAddr,
+    state: AppState,
+    route_extensions: &[RouteRegistrar],
+) -> anyhow::Result<()> {
     let reaper_state = state.clone();
     let session_part_persister_state = state.clone();
     let session_context_run_journaler_state = state.clone();
@@ -300,7 +305,7 @@ pub async fn serve(addr: SocketAddr, state: AppState) -> anyhow::Result<()> {
     tokio::spawn(async move {
         bootstrap_mcp_servers_when_ready(mcp_bootstrap_state).await;
     });
-    let app = app_router(state.clone());
+    let app = build_router_with_extensions(state.clone(), route_extensions);
     let reaper = tokio::spawn(async move {
         if !reaper_state.wait_until_ready_or_failed(120, 250).await {
             let startup = reaper_state.startup_snapshot().await;
@@ -720,8 +725,15 @@ async fn run_approval_outbound(state: AppState) {
     .await;
 }
 
+pub fn build_router_with_extensions(
+    state: AppState,
+    route_extensions: &[RouteRegistrar],
+) -> Router {
+    router::build_router(state, route_extensions)
+}
+
 fn app_router(state: AppState) -> Router {
-    router::build_router(state)
+    build_router_with_extensions(state, &[])
 }
 
 fn tenant_matches(a: &TenantContext, b: &TenantContext) -> bool {

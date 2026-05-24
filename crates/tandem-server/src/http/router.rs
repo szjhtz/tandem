@@ -53,7 +53,7 @@ fn build_cors_layer() -> CorsLayer {
         ])
 }
 
-pub(super) fn build_router(state: AppState) -> Router {
+pub(super) fn build_router(state: AppState, route_extensions: &[super::RouteRegistrar]) -> Router {
     let cors = build_cors_layer();
     let body_limit = RequestBodyLimitLayer::new(10 * 1024 * 1024);
 
@@ -96,7 +96,6 @@ pub(super) fn build_router(state: AppState) -> Router {
     router = super::routes_channel_automation_drafts::apply(router);
     router = super::routes_routines_automations::apply(router);
     router = super::routes_governance::apply(router);
-    router = super::routes_enterprise::apply(router);
     router = super::routes_permissions_questions::apply(router);
     router = super::routes_resources::apply(router);
     router = super::routes_capabilities::apply(router);
@@ -110,6 +109,10 @@ pub(super) fn build_router(state: AppState) -> Router {
     router = super::routes_workflows::apply(router);
     router = super::routes_setup_understanding::apply(router);
     router = super::routes_global::apply(router);
+
+    for route_extension in route_extensions {
+        router = route_extension(router);
+    }
 
     if state.web_ui_enabled() {
         router = router.merge(crate::webui::web_ui_router(&state.web_ui_prefix()));

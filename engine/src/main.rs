@@ -27,6 +27,8 @@ use tandem_observability::{
     canonical_logs_dir_from_root, emit_event, init_process_logging, ObservabilityEvent, ProcessKind,
 };
 use tandem_runtime::{LspManager, McpRegistry, PtyManager, WorkspaceIndex};
+#[cfg(feature = "enterprise-server")]
+use tandem_server::serve_with_route_extensions;
 use tandem_server::{
     detect_host_runtime_context, install_browser_sidecar, serve, AppState, AutomationRunStatus,
     AutomationV2RunRecord, AutomationV2Spec, BrowserSidecarInstallResult, BrowserSubsystem,
@@ -654,7 +656,15 @@ async fn main() -> anyhow::Result<()> {
                     );
                 }
             });
-            serve(addr, state).await?;
+            #[cfg(feature = "enterprise-server")]
+            {
+                serve_with_route_extensions(addr, state, &[tandem_enterprise_server::apply_routes])
+                    .await?;
+            }
+            #[cfg(not(feature = "enterprise-server"))]
+            {
+                serve(addr, state).await?;
+            }
         }
         Command::Run {
             prompt,

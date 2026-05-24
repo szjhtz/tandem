@@ -7,8 +7,10 @@ repository = "https://github.com/frumu-ai/tandem"
 edition = "2021"
 
 [features]
-default = ["browser", "premium-governance"]
+default = ["browser"]
+enterprise = []
 browser = ["tandem-browser"]
+local-embeddings = ["tandem-memory/local-embeddings"]
 premium-governance = ["dep:tandem-governance-engine"]
 
 [dependencies]
@@ -45,7 +47,7 @@ tandem-providers = { path = "../tandem-providers", version = "0.5.9" }
 tandem-runtime = { path = "../tandem-runtime", version = "0.5.9" }
 tandem-tools = { path = "../tandem-tools", version = "0.5.9" }
 tandem-skills = { path = "../tandem-skills", version = "0.5.9" }
-tandem-memory = { path = "../tandem-memory", version = "0.5.9", features = ["local-embeddings"] }
+tandem-memory = { path = "../tandem-memory", version = "0.5.9" }
 tandem-orchestrator = { path = "../tandem-orchestrator", version = "0.5.9" }
 tandem-enterprise-contract = { path = "../tandem-enterprise-contract", version = "0.5.9" }
 tandem-governance-engine = { path = "../tandem-governance-engine", version = "0.5.9", optional = true }
