@@ -3,8 +3,11 @@ const assert = require("node:assert/strict");
 
 const {
   parseVersion,
+  resolveArtifactInfo,
   shouldDownloadBinary,
 } = require("../scripts/install.js");
+
+const enterpriseInstaller = require("../../tandem-enterprise/scripts/install.js");
 
 const {
   buildWorktreeCleanupPayload,
@@ -98,4 +101,46 @@ test("installer replaces existing binary when version mismatches package", () =>
   });
 
   require("node:fs").rmSync(temp, { recursive: true, force: true });
+});
+
+
+test("installer resolves standard engine platform artifacts", () => {
+  assert.deepEqual(
+    resolveArtifactInfo({ binaryBaseName: "tandem-engine" }, { platform: "linux", arch: "x64" }),
+    {
+      artifactName: "tandem-engine-linux-x64.tar.gz",
+      binaryName: "tandem-engine",
+      isWindows: false,
+    }
+  );
+  assert.deepEqual(
+    resolveArtifactInfo({ binaryBaseName: "tandem-engine" }, { platform: "win32", arch: "x64" }),
+    {
+      artifactName: "tandem-engine-windows-x64.zip",
+      binaryName: "tandem-engine.exe",
+      isWindows: true,
+    }
+  );
+});
+
+test("enterprise installer resolves Linux x64 enterprise artifact", () => {
+  assert.deepEqual(
+    enterpriseInstaller.resolveArtifactInfo(enterpriseInstaller.config, { platform: "linux", arch: "x64" }),
+    {
+      artifactName: "tandem-engine-enterprise-linux-x64.tar.gz",
+      binaryName: "tandem-engine",
+      isWindows: false,
+    }
+  );
+});
+
+test("enterprise installer rejects unsupported platforms", () => {
+  assert.throws(
+    () => enterpriseInstaller.resolveArtifactInfo(enterpriseInstaller.config, { platform: "darwin", arch: "x64" }),
+    /Unsupported platform for @frumu\/tandem-enterprise: darwin-x64/
+  );
+  assert.throws(
+    () => enterpriseInstaller.resolveArtifactInfo(enterpriseInstaller.config, { platform: "linux", arch: "arm64" }),
+    /Unsupported platform for @frumu\/tandem-enterprise: linux-arm64/
+  );
 });

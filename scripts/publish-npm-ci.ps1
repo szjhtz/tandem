@@ -33,6 +33,7 @@ New-Item -ItemType File -Path $logFile -Force | Out-Null
 
 $packages = @(
     "packages/tandem-engine",
+    "packages/tandem-enterprise",
     "packages/tandem-tui",
     "packages/tandem-client-ts",
     "packages/tandem-control-panel"

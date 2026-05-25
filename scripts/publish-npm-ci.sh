@@ -31,6 +31,7 @@ done
 
 PACKAGES=(
   "packages/tandem-engine"
+  "packages/tandem-enterprise"
   "packages/tandem-tui"
   "packages/tandem-client-ts"
   "packages/tandem-control-panel"

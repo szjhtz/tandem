@@ -27,10 +27,12 @@ use tandem_observability::{
     canonical_logs_dir_from_root, emit_event, init_process_logging, ObservabilityEvent, ProcessKind,
 };
 use tandem_runtime::{LspManager, McpRegistry, PtyManager, WorkspaceIndex};
+#[cfg(not(feature = "enterprise-server"))]
+use tandem_server::serve;
 #[cfg(feature = "enterprise-server")]
 use tandem_server::serve_with_route_extensions;
 use tandem_server::{
-    detect_host_runtime_context, serve, AppState, AutomationRunStatus, AutomationV2RunRecord,
+    detect_host_runtime_context, AppState, AutomationRunStatus, AutomationV2RunRecord,
     AutomationV2Spec, RuntimeState,
 };
 #[cfg(feature = "browser")]

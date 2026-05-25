@@ -97,6 +97,7 @@ jobs:
 
           update_json(root / "package.json")
           update_json(root / "packages" / "tandem-engine" / "package.json")
+          update_json(root / "packages" / "tandem-enterprise" / "package.json")
           update_json(root / "packages" / "tandem-tui" / "package.json")
           update_json(root / "packages" / "tandem-ai" / "package.json")
           update_json(root / "packages" / "tandem-client-ts" / "package.json")
@@ -120,6 +121,7 @@ jobs:
             src-tauri/tauri.conf.json \
             package.json \
             packages/tandem-engine/package.json \
+            packages/tandem-enterprise/package.json \
             packages/tandem-tui/package.json \
             packages/tandem-ai/package.json \
             packages/tandem-client-ts/package.json \
@@ -195,6 +197,7 @@ jobs:
           - platform: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
             engine_asset: tandem-engine-linux-x64.tar.gz
+            enterprise_engine_asset: tandem-engine-enterprise-linux-x64.tar.gz
             tui_asset: tandem-tui-linux-x64.tar.gz
             browser_asset: tandem-browser-linux-x64.tar.gz
             standalone_archive: tar.gz
@@ -273,6 +276,11 @@ jobs:
         run: |
           set -euo pipefail
           cargo build --release --target ${{ matrix.target }} -p tandem-ai -p tandem-tui -p tandem-browser --features tandem-ai/browser
+          if [ -n "${{ matrix.enterprise_engine_asset || '' }}" ]; then
+            cargo build --release --target ${{ matrix.target }} -p tandem-ai --features tandem-ai/browser,tandem-ai/enterprise-full
+            cp "target/${{ matrix.target }}/release/tandem-engine" "target/${{ matrix.target }}/release/tandem-engine-enterprise"
+            cargo build --release --target ${{ matrix.target }} -p tandem-ai -p tandem-tui -p tandem-browser --features tandem-ai/browser
+          fi
           mkdir -p src-tauri/resources/binaries
           cp "target/${{ matrix.target }}/release/tandem-engine" "src-tauri/resources/binaries/tandem-engine"
           cp "target/${{ matrix.target }}/release/tandem-browser" "src-tauri/resources/binaries/tandem-browser"
@@ -483,7 +491,13 @@ jobs:
           cp "target/${{ matrix.target }}/release/tandem-engine" dist/tandem-engine
           cp "target/${{ matrix.target }}/release/tandem-tui" dist/tandem-tui
           cp "target/${{ matrix.target }}/release/tandem-browser" dist/tandem-browser
+          if [ -n "${{ matrix.enterprise_engine_asset || '' }}" ]; then
+            cp "target/${{ matrix.target }}/release/tandem-engine-enterprise" dist/tandem-engine-enterprise
+          fi
           chmod +x dist/tandem-engine dist/tandem-tui dist/tandem-browser
+          if [ -f dist/tandem-engine-enterprise ]; then
+            chmod +x dist/tandem-engine-enterprise
+          fi
 
           if [ "${{ matrix.standalone_archive }}" = "zip" ]; then
             zip -j "dist/${{ matrix.engine_asset }}" dist/tandem-engine
@@ -491,6 +505,11 @@ jobs:
             zip -j "dist/${{ matrix.browser_asset }}" dist/tandem-browser
           else
             tar -czf "dist/${{ matrix.engine_asset }}" -C dist tandem-engine
+            if [ -n "${{ matrix.enterprise_engine_asset || '' }}" ]; then
+              mkdir -p dist/enterprise
+              cp dist/tandem-engine-enterprise dist/enterprise/tandem-engine
+              tar -czf "dist/${{ matrix.enterprise_engine_asset }}" -C dist/enterprise tandem-engine
+            fi
             tar -czf "dist/${{ matrix.tui_asset }}" -C dist tandem-tui
             tar -czf "dist/${{ matrix.browser_asset }}" -C dist tandem-browser
           fi
@@ -502,6 +521,7 @@ jobs:
           ENGINE_ASSET: ${{ matrix.engine_asset }}
           TUI_ASSET: ${{ matrix.tui_asset }}
           BROWSER_ASSET: ${{ matrix.browser_asset }}
+          ENTERPRISE_ENGINE_ASSET: ${{ matrix.enterprise_engine_asset || '' }}
         with:
           script: |
             const fs = require('fs');
@@ -512,6 +532,7 @@ jobs:
               process.env.ENGINE_ASSET,
               process.env.TUI_ASSET,
               process.env.BROWSER_ASSET,
+              process.env.ENTERPRISE_ENGINE_ASSET,
             ].filter(Boolean);
 
             const existing = await github.rest.repos.listReleaseAssets({
