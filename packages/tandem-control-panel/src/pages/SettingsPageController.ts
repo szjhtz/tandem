@@ -477,6 +477,7 @@ const BUILTIN_PROVIDER_IDS = new Set([
 ]);
 
 export const OPENAI_CODEX_PROVIDER_ID = "openai-codex";
+export const OPENAI_CODEX_DEFAULT_MODEL_ID = "gpt-5.5";
 export const CHANNEL_NAMES = ["telegram", "discord", "slack"] as const;
 
 function isInternalConfigProviderId(providerId: string) {
@@ -1678,8 +1679,8 @@ export function useSettingsPageController({
     String(
       providersConfig.data?.providers?.[OPENAI_CODEX_PROVIDER_ID]?.default_model ||
         providersConfig.data?.providers?.[OPENAI_CODEX_PROVIDER_ID]?.defaultModel ||
-        "gpt-5.4"
-    ).trim() || "gpt-5.4";
+        OPENAI_CODEX_DEFAULT_MODEL_ID
+    ).trim() || OPENAI_CODEX_DEFAULT_MODEL_ID;
   const promoteCodexAsDefaultProvider = async () => {
     await client.providers.setDefaults(OPENAI_CODEX_PROVIDER_ID, getCodexDefaultModelId());
   };

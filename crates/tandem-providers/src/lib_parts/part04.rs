@@ -299,7 +299,7 @@ mod tests {
             name: "OpenAI Codex".to_string(),
             base_url: format!("http://{}/codex", addr),
             api_key: Some("codex-test-token".to_string()),
-            default_model: "gpt-5.4".to_string(),
+            default_model: "gpt-5.5".to_string(),
             models: codex_supported_models(272_000),
             client: Client::new(),
         };
@@ -361,7 +361,7 @@ mod tests {
         assert!(body.contains("\"tool_choice\":\"auto\""));
         assert!(body.contains("\"parallel_tool_calls\":false"));
         assert!(body.contains("\"instructions\":\"Be concise.\""));
-        assert!(body.contains("\"gpt-5.4\""));
+        assert!(body.contains("\"gpt-5.5\""));
         assert!(body.contains("\"browser_wait\""));
         assert!(!body.contains("\"anyOf\""));
         assert!(!body.contains("\"role\":\"developer\""));
@@ -551,7 +551,7 @@ mod tests {
             name: "OpenAI Codex".to_string(),
             base_url: format!("http://{}/codex", addr),
             api_key: Some("codex-test-token".to_string()),
-            default_model: "gpt-5.4".to_string(),
+            default_model: "gpt-5.5".to_string(),
             models: codex_supported_models(272_000),
             client: Client::new(),
         };
@@ -658,7 +658,7 @@ mod tests {
             name: "OpenAI Codex".to_string(),
             base_url: format!("http://{}/codex", addr),
             api_key: Some("codex-test-token".to_string()),
-            default_model: "gpt-5.4".to_string(),
+            default_model: "gpt-5.5".to_string(),
             models: codex_supported_models(272_000),
             client: Client::new(),
         };

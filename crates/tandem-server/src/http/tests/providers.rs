@@ -118,6 +118,68 @@ async fn provider_route_returns_known_providers_without_synthetic_default_models
 }
 
 #[tokio::test]
+async fn config_patch_preserves_saved_codex_default_over_runtime_provider() {
+    let state = test_state().await;
+    state
+        .config
+        .patch_runtime(json!({
+            "providers": {
+                "openai-codex": {
+                    "url": "https://chatgpt.com/backend-api/codex",
+                    "default_model": "gpt-5.4"
+                }
+            }
+        }))
+        .await
+        .expect("runtime codex provider");
+
+    let app = app_router(state);
+    let req = Request::builder()
+        .method("PATCH")
+        .uri("/config")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "default_provider": "openai-codex",
+                "providers": {
+                    "openai-codex": { "default_model": "gpt-5.5" }
+                }
+            })
+            .to_string(),
+        ))
+        .expect("request");
+    let resp = app.clone().oneshot(req).await.expect("response");
+    assert_eq!(resp.status(), StatusCode::OK);
+    let payload = json_body(resp).await;
+    assert_eq!(
+        payload
+            .get("effective")
+            .and_then(|v| v.get("providers"))
+            .and_then(|v| v.get("openai-codex"))
+            .and_then(|v| v.get("default_model"))
+            .and_then(Value::as_str),
+        Some("gpt-5.5")
+    );
+
+    let req = Request::builder()
+        .method("GET")
+        .uri("/config/providers")
+        .body(Body::empty())
+        .expect("request");
+    let resp = app.oneshot(req).await.expect("response");
+    assert_eq!(resp.status(), StatusCode::OK);
+    let payload = json_body(resp).await;
+    assert_eq!(
+        payload
+            .get("providers")
+            .and_then(|v| v.get("openai-codex"))
+            .and_then(|v| v.get("default_model"))
+            .and_then(Value::as_str),
+        Some("gpt-5.5")
+    );
+}
+
+#[tokio::test]
 async fn provider_auth_set_writes_protected_audit_record() {
     let state = test_state().await;
     let app = app_router(state.clone());

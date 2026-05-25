@@ -5,6 +5,7 @@ import { EmptyState } from "./ui";
 import { Badge, PanelCard, Toolbar } from "../ui/index.tsx";
 import { providerHints } from "../app/store.js";
 import {
+  OPENAI_CODEX_DEFAULT_MODEL_ID,
   OPENAI_CODEX_PROVIDER_ID,
   providerCatalogBadge,
   providerCatalogSubtitle,
@@ -994,7 +995,7 @@ export function SettingsPageNavigationProvidersSections({
                                           onClick={() =>
                                             setDefaultsMutation.mutate({
                                               providerId,
-                                              modelId: defaultModel || "gpt-5.4",
+                                              modelId: defaultModel || OPENAI_CODEX_DEFAULT_MODEL_ID,
                                             })
                                           }
                                         >
@@ -1080,7 +1081,7 @@ export function SettingsPageNavigationProvidersSections({
                                         onClick={() =>
                                           setDefaultsMutation.mutate({
                                             providerId,
-                                            modelId: defaultModel || "gpt-5.4",
+                                            modelId: defaultModel || OPENAI_CODEX_DEFAULT_MODEL_ID,
                                           })
                                         }
                                       >

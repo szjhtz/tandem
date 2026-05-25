@@ -85,7 +85,7 @@ struct OpenAiCodexApiKeyExchangeResponse {
 const OPENAI_CODEX_OAUTH_CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
 const OPENAI_CODEX_OAUTH_ISSUER: &str = "https://auth.openai.com";
 const OPENAI_CODEX_PROVIDER_ID: &str = "openai-codex";
-const OPENAI_CODEX_DEFAULT_MODEL: &str = "gpt-5.4";
+const OPENAI_CODEX_DEFAULT_MODEL: &str = "gpt-5.5";
 const OPENAI_CODEX_API_BASE_URL: &str = "https://chatgpt.com/backend-api/codex";
 const OPENAI_CODEX_OAUTH_REFRESH_SKEW_MS: u64 = 5 * 60 * 1000;
 const OPENAI_CODEX_LOCAL_CALLBACK_ADDR: &str = "127.0.0.1:1455";
@@ -135,13 +135,17 @@ pub(super) async fn patch_config(
         )
             .into_response();
     }
-    let effective = match state
-        .config
-        .patch_project(normalize_config_patch_input(input))
-        .await
-    {
+    let normalized_input = normalize_config_patch_input(input);
+    let updates_openai_codex_default = config_patch_updates_openai_codex_default(&normalized_input);
+    let effective = match state.config.patch_project(normalized_input).await {
         Ok(effective) => effective,
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    };
+    let effective = if updates_openai_codex_default {
+        ensure_openai_codex_runtime_provider(&state).await;
+        state.config.get_effective_value().await
+    } else {
+        effective
     };
     state
         .providers

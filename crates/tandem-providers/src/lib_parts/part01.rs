@@ -784,7 +784,7 @@ fn build_providers(config: &AppConfig) -> Vec<Arc<dyn Provider>> {
         "openai-codex",
         "OpenAI Codex",
         "https://chatgpt.com/backend-api/codex",
-        "gpt-5.4",
+        "gpt-5.5",
         true,
         272_000,
     );

@@ -286,14 +286,50 @@ async fn refresh_openai_codex_cli_oauth_if_needed(state: &AppState) -> anyhow::R
     Ok(())
 }
 
+fn config_patch_updates_openai_codex_default(input: &Value) -> bool {
+    input
+        .get("providers")
+        .and_then(Value::as_object)
+        .and_then(|providers| providers.get(OPENAI_CODEX_PROVIDER_ID))
+        .and_then(Value::as_object)
+        .and_then(|provider| provider.get("default_model"))
+        .and_then(Value::as_str)
+        .is_some_and(|model| !model.trim().is_empty())
+}
+
+fn openai_codex_default_model_from_layer(layers: &Value, layer: &str) -> Option<String> {
+    layers
+        .get(layer)
+        .and_then(|value| value.get("providers"))
+        .and_then(Value::as_object)
+        .and_then(|providers| providers.get(OPENAI_CODEX_PROVIDER_ID))
+        .and_then(Value::as_object)
+        .and_then(|provider| provider.get("default_model"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|model| !model.is_empty())
+        .map(ToString::to_string)
+}
+
+async fn openai_codex_runtime_default_model(state: &AppState) -> String {
+    let layers = state.config.get_layers_value().await;
+    for layer in ["cli", "env", "managed", "project", "global"] {
+        if let Some(model) = openai_codex_default_model_from_layer(&layers, layer) {
+            return model;
+        }
+    }
+    OPENAI_CODEX_DEFAULT_MODEL.to_string()
+}
+
 async fn ensure_openai_codex_runtime_provider(state: &AppState) {
+    let default_model = openai_codex_runtime_default_model(state).await;
     let _ = state
         .config
         .patch_runtime(json!({
             "providers": {
                 OPENAI_CODEX_PROVIDER_ID: {
                     "url": OPENAI_CODEX_API_BASE_URL,
-                    "default_model": OPENAI_CODEX_DEFAULT_MODEL,
+                    "default_model": default_model,
                 }
             }
         }))
