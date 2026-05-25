@@ -697,6 +697,44 @@ async fn update_session_refreshes_mcp_permissions() {
 }
 
 #[tokio::test]
+async fn create_session_applies_deny_permission_rules_and_ignores_invalid_entries() {
+    let state = test_state().await;
+    let app = app_router(state.clone());
+    let req = Request::builder()
+        .method("POST")
+        .uri("/session")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            serde_json::json!({
+                "title": "deny permissions",
+                "directory": ".",
+                "permission": [
+                    {"permission": "todo_write", "pattern": "todo_write", "action": "deny"},
+                    {"permission": "mcp*", "pattern": "*", "action": "reject"},
+                    {"permission": "ignored_missing_action", "pattern": "*"},
+                    {"permission": "", "pattern": "*", "action": "deny"},
+                    {"permission": "ignored_bad_action", "pattern": "*", "action": "never"}
+                ]
+            })
+            .to_string(),
+        ))
+        .expect("request");
+    let resp = app.oneshot(req).await.expect("response");
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let todo_action = state.permissions.evaluate("todo_write", "todo_write").await;
+    assert!(matches!(todo_action, tandem_core::PermissionAction::Deny));
+    let mcp_action = state.permissions.evaluate("mcp_list", "anything").await;
+    assert!(matches!(mcp_action, tandem_core::PermissionAction::Deny));
+    let ignored_action = state
+        .permissions
+        .evaluate("ignored_bad_action", "anything")
+        .await;
+    assert!(matches!(ignored_action, tandem_core::PermissionAction::Ask));
+    assert_eq!(state.permissions.list_rules().await.len(), 2);
+}
+
+#[tokio::test]
 async fn session_part_persister_stores_tool_parts_in_session_history() {
     let state = test_state().await;
     let task = tokio::spawn(crate::run_session_part_persister(state.clone()));

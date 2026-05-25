@@ -335,6 +335,110 @@ async fn prompt_async_return_run_returns_202_with_run_id_and_attach_stream() {
 }
 
 #[tokio::test]
+async fn prompt_async_stream_error_persists_error_message_and_finishes_run() {
+    let state = test_state().await;
+    state
+        .providers
+        .replace_for_test(
+            vec![Arc::new(ScriptedStrictKbProvider {
+                steps: Arc::new(Mutex::new(VecDeque::from([
+                    StrictKbProviderStep::StreamError("provider stream exploded".to_string()),
+                ]))),
+            })],
+            Some("strict-kb-test".to_string()),
+        )
+        .await;
+    let mut session = Session::new(Some("stream-error".to_string()), Some(".".to_string()));
+    session.model = Some(ModelSpec {
+        provider_id: "strict-kb-test".to_string(),
+        model_id: "strict-kb-test-1".to_string(),
+    });
+    let session_id = session.id.clone();
+    state.storage.save_session(session).await.expect("save");
+    let mut rx = state.event_bus.subscribe();
+    let app = app_router(state.clone());
+
+    let req = Request::builder()
+        .method("POST")
+        .uri(format!("/session/{session_id}/prompt_async?return=run"))
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "parts":[{"type":"text","text":"trigger a stream failure"}],
+                "model": {
+                    "provider_id": "strict-kb-test",
+                    "model_id": "strict-kb-test-1"
+                }
+            })
+            .to_string(),
+        ))
+        .expect("request");
+    let resp = app.clone().oneshot(req).await.expect("response");
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    let body = to_bytes(resp.into_body(), usize::MAX).await.expect("body");
+    let payload: Value = serde_json::from_slice(&body).expect("json");
+    let run_id = payload
+        .get("runID")
+        .and_then(Value::as_str)
+        .expect("run id")
+        .to_string();
+
+    let finished = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let event = rx.recv().await.expect("event");
+            if event.event_type == "session.run.finished"
+                && event.properties.get("sessionID").and_then(Value::as_str)
+                    == Some(session_id.as_str())
+                && event.properties.get("runID").and_then(Value::as_str) == Some(run_id.as_str())
+            {
+                return event;
+            }
+        }
+    })
+    .await
+    .expect("session.run.finished timeout");
+    assert_eq!(
+        finished.properties.get("status").and_then(Value::as_str),
+        Some("error")
+    );
+    assert!(finished
+        .properties
+        .get("error")
+        .and_then(Value::as_str)
+        .is_some_and(|error| error.contains("provider stream exploded")));
+
+    let stored = state
+        .storage
+        .get_session(&session_id)
+        .await
+        .expect("stored session");
+    assert!(stored.messages.iter().any(|message| {
+        matches!(message.role, MessageRole::Assistant)
+            && message.parts.iter().any(|part| {
+                matches!(
+                    part,
+                    MessagePart::Text { text }
+                        if text.contains("ENGINE_ERROR")
+                            && text.contains("provider stream exploded")
+                )
+            })
+    }));
+
+    let run_req = Request::builder()
+        .method("GET")
+        .uri(format!("/session/{session_id}/run"))
+        .body(Body::empty())
+        .expect("run request");
+    let run_resp = app.oneshot(run_req).await.expect("run response");
+    assert_eq!(run_resp.status(), StatusCode::OK);
+    let run_body = to_bytes(run_resp.into_body(), usize::MAX)
+        .await
+        .expect("run body");
+    let run_payload: Value = serde_json::from_slice(&run_body).expect("run json");
+    assert!(run_payload.get("active").is_none_or(Value::is_null));
+}
+
+#[tokio::test]
 async fn get_session_run_returns_active_metadata_while_run_is_in_flight() {
     let state = test_state().await;
     let session = Session::new(Some("active-run".to_string()), Some(".".to_string()));
