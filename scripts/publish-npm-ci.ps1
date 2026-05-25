@@ -131,19 +131,15 @@ Then retry:
         Wait-NpmPackageVersion -Name "@frumu/tandem" -Version $version
         Wait-NpmPackageVersion -Name "@frumu/tandem-client" -Version $version
 
-        $buildPanel = if (Get-Command pnpm -ErrorAction SilentlyContinue) {
-            "Installing panel dependencies for $name@$version with pnpm (refresh lock metadata)" | Tee-Object -FilePath $logFile -Append
-            $installPanel = Invoke-NpmText -WorkingDirectory $dir -Command "pnpm install --no-frozen-lockfile"
-            $installPanel.Output | Tee-Object -FilePath $logFile -Append | Out-Null
-            if ($installPanel.ExitCode -ne 0) {
-                throw "Failed panel dependency install for $name@$version"
-            }
-            "Building static bundle for $name@$version with pnpm run build" | Tee-Object -FilePath $logFile -Append
-            Invoke-NpmText -WorkingDirectory $dir -Command "pnpm run build"
-        } else {
-            "Building static bundle for $name@$version with npx vite build (fallback)" | Tee-Object -FilePath $logFile -Append
-            Invoke-NpmText -WorkingDirectory $dir -Command "npx --yes -p vite -p @frumu/tandem-client -p tailwindcss -p autoprefixer -p @tailwindcss/forms vite build"
+        "Installing panel dependencies for $name@$version with npm" | Tee-Object -FilePath $logFile -Append
+        $installPanel = Invoke-NpmText -WorkingDirectory $dir -Command "npm install --include=dev --no-package-lock"
+        $installPanel.Output | Tee-Object -FilePath $logFile -Append | Out-Null
+        if ($installPanel.ExitCode -ne 0) {
+            throw "Failed panel dependency install for $name@$version"
         }
+
+        "Building static bundle for $name@$version with npm run build" | Tee-Object -FilePath $logFile -Append
+        $buildPanel = Invoke-NpmText -WorkingDirectory $dir -Command "npm run build"
         $buildPanel.Output | Tee-Object -FilePath $logFile -Append | Out-Null
         if ($buildPanel.ExitCode -ne 0) {
             throw "Failed static bundle build for $name@$version"
