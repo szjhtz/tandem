@@ -17,6 +17,11 @@ on:
         required: true
         default: true
         type: boolean
+      publish_npm_enterprise:
+        description: "Publish @frumu/tandem-enterprise npm wrapper"
+        required: true
+        default: false
+        type: boolean
       publish_pypi:
         description: "Publish python wrappers"
         required: true
@@ -49,6 +54,7 @@ jobs:
       crates_enabled: ${{ steps.resolve.outputs.crates_enabled }}
       npm_enabled: ${{ steps.resolve.outputs.npm_enabled }}
       pypi_enabled: ${{ steps.resolve.outputs.pypi_enabled }}
+      npm_enterprise_enabled: ${{ steps.resolve.outputs.npm_enterprise_enabled }}
       dry_run: ${{ steps.resolve.outputs.dry_run }}
     steps:
       - name: Resolve inputs / tag contract
@@ -63,6 +69,7 @@ jobs:
             checkout_ref="${GITHUB_REF}"
             crates_enabled="${{ inputs.publish_crates }}"
             npm_enabled="${{ inputs.publish_npm }}"
+            npm_enterprise_enabled="${{ inputs.publish_npm_enterprise }}"
             pypi_enabled="${{ inputs.publish_pypi }}"
             dry_run="${{ inputs.dry_run }}"
           else
@@ -76,6 +83,7 @@ jobs:
             checkout_ref="refs/tags/v${version}"
             crates_enabled="true"
             npm_enabled="true"
+            npm_enterprise_enabled="false"
             pypi_enabled="true"
             dry_run="false"
           fi
@@ -89,6 +97,7 @@ jobs:
           echo "checkout_ref=$checkout_ref" >> "$GITHUB_OUTPUT"
           echo "crates_enabled=$crates_enabled" >> "$GITHUB_OUTPUT"
           echo "npm_enabled=$npm_enabled" >> "$GITHUB_OUTPUT"
+          echo "npm_enterprise_enabled=$npm_enterprise_enabled" >> "$GITHUB_OUTPUT"
           echo "pypi_enabled=$pypi_enabled" >> "$GITHUB_OUTPUT"
           echo "dry_run=$dry_run" >> "$GITHUB_OUTPUT"
 
@@ -96,6 +105,7 @@ jobs:
           echo "Checkout ref: $checkout_ref"
           echo "Publish crates: $crates_enabled"
           echo "Publish npm: $npm_enabled"
+          echo "Publish npm enterprise: $npm_enterprise_enabled"
           echo "Publish pypi: $pypi_enabled"
           echo "Dry run: $dry_run"
 
@@ -398,6 +408,7 @@ jobs:
         shell: bash
         env:
           PUBLISH_NPM_LOG: publish-npm.log
+          PUBLISH_NPM_ENTERPRISE: ${{ needs.preflight.outputs.npm_enterprise_enabled }}
         run: |
           set -euo pipefail
           chmod +x scripts/publish-npm-ci.sh
