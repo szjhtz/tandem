@@ -7,6 +7,7 @@ use axum::Json;
 
 use base64::Engine;
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use tandem_types::{
     AccessPermission, DataBoundary, DataClass, GrantSource, HeaderTenantContextResolver,
@@ -264,7 +265,19 @@ fn request_transport_token_authorized(
         return !runtime_auth_mode_requires_transport_token(mode);
     };
 
-    extract_request_token(headers).as_deref() == Some(expected)
+    extract_request_token(headers)
+        .as_deref()
+        .is_some_and(|provided| constant_time_token_eq(provided, expected))
+}
+
+fn constant_time_token_eq(provided: &str, expected: &str) -> bool {
+    let provided_hash = Sha256::digest(provided.as_bytes());
+    let expected_hash = Sha256::digest(expected.as_bytes());
+    let mut diff = 0u8;
+    for (left, right) in provided_hash.iter().zip(expected_hash.iter()) {
+        diff |= left ^ right;
+    }
+    diff == 0
 }
 
 fn authorize_request(principal: &RequestPrincipal, tenant: &TenantContext) -> bool {
