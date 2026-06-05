@@ -54,23 +54,40 @@ fn audit_admin_allowed(principal: &RequestPrincipal) -> bool {
 }
 
 fn audit_event_matches_tenant(event: &EngineEvent, tenant: &TenantContext) -> bool {
-    let event_org = event
-        .properties
-        .get("org_id")
+    // Producers tag tenancy in one of two shapes: a nested `tenantContext` object (the
+    // canonical serialized `TenantContext`, e.g. approval/fintech/tool-effect events) or
+    // flat top-level `org_id`/`workspace_id` fields. Read the nested object first, then
+    // fall back to the flat spellings so every recognized shape is scoped.
+    let tenant_ctx = event.properties.get("tenantContext");
+    let event_org = tenant_ctx
+        .and_then(|ctx| ctx.get("org_id"))
+        .or_else(|| event.properties.get("org_id"))
         .or_else(|| event.properties.get("orgID"))
         .or_else(|| event.properties.get("organization_id"))
         .and_then(Value::as_str);
-    let event_workspace = event
-        .properties
-        .get("workspace_id")
+    let event_workspace = tenant_ctx
+        .and_then(|ctx| ctx.get("workspace_id"))
+        .or_else(|| event.properties.get("workspace_id"))
         .or_else(|| event.properties.get("workspaceID"))
         .and_then(Value::as_str);
 
-    if let Some(org_id) = event_org {
-        if org_id != tenant.org_id {
-            return false;
-        }
+    // Local/single-tenant deployments are a no-op: there is exactly one tenant, so the
+    // implicit-local admin sees every event regardless of whether it carries an org tag.
+    if tenant.is_local_implicit() {
+        return true;
     }
+
+    // Explicit (multi-tenant) context: fail closed. An event is only visible to a reader
+    // that can be positively matched to it. An untagged event (no org_id) cannot be proven
+    // to belong to this tenant, so it is hidden rather than leaked to every tenant (TAN-9).
+    let Some(org_id) = event_org else {
+        return false;
+    };
+    if org_id != tenant.org_id {
+        return false;
+    }
+    // Workspace is a second isolation axis. When the event carries a workspace, it must
+    // match; when it omits one, org-level scoping above is sufficient to attribute it.
     if let Some(workspace_id) = event_workspace {
         if workspace_id != tenant.workspace_id {
             return false;
@@ -259,4 +276,152 @@ mod tests {
         assert_eq!(row["command"], "fintech_protected_action_approved");
         assert_eq!(row["result"]["approval"]["action_hash"], "hash-1");
     }
+
+    // --- TAN-9 / CT-04: cross-tenant audit visibility negative tests ---------
+    //
+    // These exercise the pure tenant-scoping predicate `audit_event_matches_tenant`,
+    // which is the gate every event passes through before it is streamed to a reader
+    // (see the `audit_stream` handler). Driving the full `/audit/stream` HTTP path is
+    // scaffolded separately below (`tenant_b_cannot_read_tenant_a_audit_events`) but
+    // left #[ignore] until the streaming harness gotchas are resolved.
+
+    fn tenant(org: &str, workspace: &str) -> TenantContext {
+        TenantContext::explicit(org, workspace, None)
+    }
+
+    fn org_tagged_event(org: &str, workspace: &str) -> EngineEvent {
+        EngineEvent::new(
+            "fintech.protected_action.denied",
+            json!({
+                "org_id": org,
+                "workspace_id": workspace,
+                "runID": "run-sensitive-1",
+                "automationID": "automation-sensitive-1",
+                "tool": "mcp.bank.release_funds",
+                "classification": "requires_approval",
+                "category": "money_movement",
+                "reason": "approval required",
+            }),
+        )
+    }
+
+    #[test]
+    fn tenant_a_can_see_its_own_org_scoped_audit_event() {
+        let event = org_tagged_event("tenant-a-org", "tenant-a-workspace");
+        let reader = tenant("tenant-a-org", "tenant-a-workspace");
+        assert!(
+            audit_event_matches_tenant(&event, &reader),
+            "tenant A must see audit events emitted under its own org/workspace"
+        );
+    }
+
+    #[test]
+    fn tenant_b_cannot_see_tenant_a_org_scoped_audit_event() {
+        // The core CT-04 negative assertion: an event tagged with tenant A's org
+        // must be filtered out for a tenant B reader.
+        let event = org_tagged_event("tenant-a-org", "tenant-a-workspace");
+        let reader = tenant("tenant-b-org", "tenant-b-workspace");
+        assert!(
+            !audit_event_matches_tenant(&event, &reader),
+            "tenant B must NOT see tenant A's audit events"
+        );
+    }
+
+    #[test]
+    fn matching_org_but_foreign_workspace_is_denied() {
+        // Workspace is a second isolation axis: same org, different workspace -> deny.
+        let event = org_tagged_event("shared-org", "workspace-a");
+        let reader = tenant("shared-org", "workspace-b");
+        assert!(
+            !audit_event_matches_tenant(&event, &reader),
+            "a foreign workspace within the same org must still be denied"
+        );
+    }
+
+    #[test]
+    fn alternate_org_id_property_spellings_are_scoped() {
+        // The handler accepts `org_id` / `orgID` / `organization_id`. A negative test
+        // must hold for each spelling so a producer can't sidestep scoping by casing.
+        for org_key in ["org_id", "orgID", "organization_id"] {
+            let event = EngineEvent::new(
+                "fintech.protected_action.denied",
+                json!({ org_key: "tenant-a-org", "tool": "mcp.bank.release_funds" }),
+            );
+            let reader = tenant("tenant-b-org", "tenant-b-workspace");
+            assert!(
+                !audit_event_matches_tenant(&event, &reader),
+                "event keyed by `{org_key}` must be scoped out for a foreign tenant"
+            );
+        }
+    }
+
+    fn tenant_context_tagged_event(org: &str, workspace: &str) -> EngineEvent {
+        // Mirrors the canonical producer shape (approval/fintech/tool-effect events):
+        // tenancy carried as a nested serialized `TenantContext` under `tenantContext`.
+        EngineEvent::new(
+            "approval.decision.recorded",
+            json!({
+                "run_id": "run-1",
+                "automation_id": "automation-1",
+                "node_id": "approve_protected_action",
+                "decision": "approved",
+                "executed_as": "approval_gate",
+                "tenantContext": TenantContext::explicit(org, workspace, None),
+            }),
+        )
+    }
+
+    #[test]
+    fn nested_tenant_context_tag_is_scoped_to_its_tenant() {
+        // Regression guard for the review finding: events tagged via a nested
+        // `tenantContext` object (not top-level org_id) must still be tenant-scoped.
+        let event = tenant_context_tagged_event("tenant-a-org", "tenant-a-workspace");
+        let owner = tenant("tenant-a-org", "tenant-a-workspace");
+        let other = tenant("tenant-b-org", "tenant-b-workspace");
+        assert!(
+            audit_event_matches_tenant(&event, &owner),
+            "owning tenant must see its own tenantContext-tagged audit event"
+        );
+        assert!(
+            !audit_event_matches_tenant(&event, &other),
+            "a tenantContext-tagged event must not leak to another tenant"
+        );
+    }
+
+    #[test]
+    fn untagged_event_is_hidden_from_explicit_tenant_fail_closed() {
+        // TAN-9 hardening: an event with no org_id/workspace_id cannot be attributed to
+        // any tenant, so under an explicit (multi-tenant) context it must be hidden rather
+        // than leaked to every reader. Regression guard for the former fail-open gap.
+        let event = EngineEvent::new(
+            "fintech.protected_action.denied",
+            json!({ "tool": "mcp.bank.release_funds", "category": "money_movement" }),
+        );
+        let reader = tenant("tenant-b-org", "tenant-b-workspace");
+        assert!(
+            !audit_event_matches_tenant(&event, &reader),
+            "an untagged audit event must fail closed for an explicit tenant reader"
+        );
+    }
+
+    #[test]
+    fn local_implicit_reader_sees_untagged_events_no_op() {
+        // The "local/single-tenant no-op" invariant: with exactly one (implicit-local)
+        // tenant, the admin must still see untagged events. Fail-closed only applies to
+        // explicit multi-tenant contexts.
+        let event = EngineEvent::new(
+            "fintech.protected_action.denied",
+            json!({ "tool": "mcp.bank.release_funds", "category": "money_movement" }),
+        );
+        let reader = TenantContext::local_implicit();
+        assert!(
+            audit_event_matches_tenant(&event, &reader),
+            "local/single-tenant deployments must remain a no-op (see untagged events)"
+        );
+    }
+
+    // The full HTTP-path negative tests for `/audit/stream` (subscribe-then-publish
+    // ordering + bounded stream reads) live in
+    // `crate::http::tests::audit` — see `audit_stream_hides_other_tenants_events` and
+    // `audit_stream_hides_untagged_events_from_explicit_tenant`.
 }
