@@ -21,13 +21,18 @@ fn provider_config_api_key(
     provider_id: &str,
     runtime_auth: &HashMap<String, String>,
     persisted_auth: &HashMap<String, String>,
+    allow_shared_auth_sources: bool,
 ) -> Option<String> {
-    provider_config_value(cfg, provider_id)
-        .and_then(|entry| entry.get("api_key").or_else(|| entry.get("apiKey")))
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty() && *value != "x")
-        .map(str::to_string)
+    allow_shared_auth_sources
+        .then(|| {
+            provider_config_value(cfg, provider_id)
+                .and_then(|entry| entry.get("api_key").or_else(|| entry.get("apiKey")))
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty() && *value != "x")
+                .map(str::to_string)
+        })
+        .flatten()
         .or_else(|| {
             runtime_auth
                 .get(&provider_id.to_ascii_lowercase())
@@ -45,12 +50,58 @@ fn provider_config_api_key(
                 .map(str::to_string)
         })
         .or_else(|| {
-            provider_env_candidates(provider_id)
-                .into_iter()
-                .find_map(|key| std::env::var(&key).ok())
-                .map(|value| value.trim().to_string())
-                .filter(|value| !value.is_empty())
+            allow_shared_auth_sources
+                .then(|| {
+                    provider_env_candidates(provider_id)
+                        .into_iter()
+                        .find_map(|key| std::env::var(&key).ok())
+                        .map(|value| value.trim().to_string())
+                        .filter(|value| !value.is_empty())
+                })
+                .flatten()
         })
+}
+
+#[cfg(test)]
+mod provider_auth_resolution_tests {
+    use super::*;
+
+    #[test]
+    fn provider_api_key_resolution_preserves_runtime_precedence_over_env_fallback() {
+        let provider_id = format!("review-precedence-{}", uuid::Uuid::new_v4());
+        let env_key = provider_env_candidates(&provider_id)
+            .into_iter()
+            .next()
+            .expect("provider env key");
+        std::env::set_var(&env_key, "env-key");
+
+        let runtime_auth = HashMap::from([(provider_id.to_ascii_lowercase(), "runtime-key".to_string())]);
+        let persisted_auth =
+            HashMap::from([(provider_id.to_ascii_lowercase(), "persisted-key".to_string())]);
+        assert_eq!(
+            provider_config_api_key(&json!({}), &provider_id, &runtime_auth, &persisted_auth, true)
+                .as_deref(),
+            Some("runtime-key")
+        );
+        assert_eq!(
+            provider_config_api_key(&json!({}), &provider_id, &HashMap::new(), &persisted_auth, true)
+                .as_deref(),
+            Some("persisted-key")
+        );
+        assert!(
+            provider_config_api_key(
+                &json!({}),
+                &provider_id,
+                &HashMap::new(),
+                &HashMap::new(),
+                false,
+            )
+            .is_none(),
+            "explicit tenants must not use shared env fallback keys"
+        );
+
+        std::env::remove_var(env_key);
+    }
 }
 
 /// Validate provider base URL to prevent SSRF attacks.
@@ -204,9 +255,20 @@ async fn fetch_openrouter_models(
     cfg: &Value,
     runtime_auth: &HashMap<String, String>,
     persisted_auth: &HashMap<String, String>,
+    allow_shared_auth_sources: bool,
 ) -> Result<HashMap<String, WireProviderModel>, String> {
-    let api_key = provider_config_api_key(cfg, "openrouter", runtime_auth, persisted_auth)
-        .or_else(|| std::env::var("OPENCODE_OPENROUTER_API_KEY").ok())
+    let api_key = provider_config_api_key(
+        cfg,
+        "openrouter",
+        runtime_auth,
+        persisted_auth,
+        allow_shared_auth_sources,
+    )
+        .or_else(|| {
+            allow_shared_auth_sources
+                .then(|| std::env::var("OPENCODE_OPENROUTER_API_KEY").ok())
+                .flatten()
+        })
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty());
     let Some(api_key) = api_key else {
@@ -243,8 +305,15 @@ async fn fetch_openai_compatible_models(
     cfg: &Value,
     runtime_auth: &HashMap<String, String>,
     persisted_auth: &HashMap<String, String>,
+    allow_shared_auth_sources: bool,
 ) -> Result<HashMap<String, WireProviderModel>, String> {
-    let api_key = provider_config_api_key(cfg, provider_id, runtime_auth, persisted_auth);
+    let api_key = provider_config_api_key(
+        cfg,
+        provider_id,
+        runtime_auth,
+        persisted_auth,
+        allow_shared_auth_sources,
+    );
     if api_key.is_none() && !provider_supports_optional_auth(provider_id) {
         return Err(format!(
             "{} requires an API key before live model discovery is available.",
@@ -290,9 +359,15 @@ async fn fetch_openai_codex_models(
     cfg: &Value,
     runtime_auth: &HashMap<String, String>,
     persisted_auth: &HashMap<String, String>,
+    allow_shared_auth_sources: bool,
 ) -> Result<HashMap<String, WireProviderModel>, String> {
-    let Some(api_key) =
-        provider_config_api_key(cfg, OPENAI_CODEX_PROVIDER_ID, runtime_auth, persisted_auth)
+    let Some(api_key) = provider_config_api_key(
+        cfg,
+        OPENAI_CODEX_PROVIDER_ID,
+        runtime_auth,
+        persisted_auth,
+        allow_shared_auth_sources,
+    )
     else {
         return Err(
             "OpenAI Codex requires a connected account before live model discovery is available."
@@ -359,8 +434,15 @@ async fn fetch_anthropic_models(
     cfg: &Value,
     runtime_auth: &HashMap<String, String>,
     persisted_auth: &HashMap<String, String>,
+    allow_shared_auth_sources: bool,
 ) -> Result<HashMap<String, WireProviderModel>, String> {
-    let Some(api_key) = provider_config_api_key(cfg, "anthropic", runtime_auth, persisted_auth)
+    let Some(api_key) = provider_config_api_key(
+        cfg,
+        "anthropic",
+        runtime_auth,
+        persisted_auth,
+        allow_shared_auth_sources,
+    )
     else {
         return Err(
             "Anthropic requires an API key before live model discovery is available.".to_string(),
@@ -421,8 +503,15 @@ async fn fetch_cohere_models(
     cfg: &Value,
     runtime_auth: &HashMap<String, String>,
     persisted_auth: &HashMap<String, String>,
+    allow_shared_auth_sources: bool,
 ) -> Result<HashMap<String, WireProviderModel>, String> {
-    let Some(api_key) = provider_config_api_key(cfg, "cohere", runtime_auth, persisted_auth) else {
+    let Some(api_key) = provider_config_api_key(
+        cfg,
+        "cohere",
+        runtime_auth,
+        persisted_auth,
+        allow_shared_auth_sources,
+    ) else {
         return Err(
             "Cohere requires an API key before live model discovery is available.".to_string(),
         );
@@ -458,10 +547,18 @@ async fn fetch_remote_provider_models(
     cfg: &Value,
     runtime_auth: &HashMap<String, String>,
     persisted_auth: &HashMap<String, String>,
+    allow_shared_auth_sources: bool,
 ) -> ProviderCatalogFetchResult {
     match provider_id {
         "openai-codex" => {
-            match fetch_openai_codex_models(cfg, runtime_auth, persisted_auth).await {
+            match fetch_openai_codex_models(
+                cfg,
+                runtime_auth,
+                persisted_auth,
+                allow_shared_auth_sources,
+            )
+            .await
+            {
                 Ok(models) => ProviderCatalogFetchResult::Remote { models },
                 Err(message) => {
                     tracing::debug!(
@@ -473,7 +570,14 @@ async fn fetch_remote_provider_models(
                 }
             }
         }
-        "openrouter" => match fetch_openrouter_models(cfg, runtime_auth, persisted_auth).await {
+        "openrouter" => match fetch_openrouter_models(
+            cfg,
+            runtime_auth,
+            persisted_auth,
+            allow_shared_auth_sources,
+        )
+        .await
+        {
             Ok(models) => ProviderCatalogFetchResult::Remote { models },
             Err(message) => {
                 if message.contains("requires an API key") {
@@ -485,8 +589,14 @@ async fn fetch_remote_provider_models(
             }
         },
         "openai" | "llama_cpp" | "groq" | "mistral" | "together" => {
-            match fetch_openai_compatible_models(provider_id, cfg, runtime_auth, persisted_auth)
-                .await
+            match fetch_openai_compatible_models(
+                provider_id,
+                cfg,
+                runtime_auth,
+                persisted_auth,
+                allow_shared_auth_sources,
+            )
+            .await
             {
                 Ok(models) => ProviderCatalogFetchResult::Remote { models },
                 Err(message) => {
@@ -499,7 +609,14 @@ async fn fetch_remote_provider_models(
                 }
             }
         }
-        "anthropic" => match fetch_anthropic_models(cfg, runtime_auth, persisted_auth).await {
+        "anthropic" => match fetch_anthropic_models(
+            cfg,
+            runtime_auth,
+            persisted_auth,
+            allow_shared_auth_sources,
+        )
+        .await
+        {
             Ok(models) => ProviderCatalogFetchResult::Remote { models },
             Err(message) => {
                 if message.contains("requires an API key") {
@@ -510,7 +627,14 @@ async fn fetch_remote_provider_models(
                 }
             }
         },
-        "cohere" => match fetch_cohere_models(cfg, runtime_auth, persisted_auth).await {
+        "cohere" => match fetch_cohere_models(
+            cfg,
+            runtime_auth,
+            persisted_auth,
+            allow_shared_auth_sources,
+        )
+        .await
+        {
             Ok(models) => ProviderCatalogFetchResult::Remote { models },
             Err(message) => {
                 if message.contains("requires an API key") {
