@@ -138,7 +138,7 @@ impl MemoryDecryptBrokerConfig {
             ));
         }
         if self.hosted_required {
-            if is_wildcard_or_blank(&self.provider) || self.provider == "disabled" {
+            if is_wildcard_or_blank(&self.provider) || provider_is_local(&self.provider) {
                 return Err(MemoryError::InvalidConfig(
                     "hosted memory decrypt requires an explicit KMS provider".to_string(),
                 ));
@@ -150,6 +150,101 @@ impl MemoryDecryptBrokerConfig {
             }
         }
         Ok(())
+    }
+
+    /// Classify the effective memory crypto mode for operator diagnostics and
+    /// guard checks. Hosted mode is selected whenever hosted encryption is
+    /// required or a non-local KMS provider is configured; otherwise the runtime
+    /// is local (plaintext, or a local file/passphrase-backed provider).
+    pub fn crypto_mode(&self) -> MemoryCryptoMode {
+        if self.hosted_required || !provider_is_local(&self.provider) {
+            return MemoryCryptoMode::HostedKms {
+                provider: self.provider.clone(),
+            };
+        }
+        let trimmed = self.provider.trim();
+        if trimmed.to_ascii_lowercase().starts_with("local-") {
+            return MemoryCryptoMode::LocalEncrypted {
+                provider: trimmed.to_string(),
+            };
+        }
+        MemoryCryptoMode::LocalPlaintext
+    }
+
+    /// Human-readable startup diagnostic so operators know whether memory is
+    /// local plaintext, local encrypted, or hosted-KMS encrypted.
+    pub fn describe(&self) -> String {
+        match self.crypto_mode() {
+            MemoryCryptoMode::LocalPlaintext => {
+                "memory crypto: local plaintext (single-user; relies on host/file security, no KMS)"
+                    .to_string()
+            }
+            MemoryCryptoMode::LocalEncrypted { provider } => format!(
+                "memory crypto: local encrypted (provider `{provider}`; single-user, no hosted KMS)"
+            ),
+            MemoryCryptoMode::HostedKms { provider } => format!(
+                "memory crypto: hosted KMS (provider `{provider}`, principal `{}`)",
+                self.runtime_principal_id
+            ),
+        }
+    }
+
+    /// Like [`describe`](Self::describe), but surfaces a fail-closed
+    /// misconfiguration instead of claiming a protected mode when the config is
+    /// invalid (e.g. hosted encryption is required but no valid KMS provider /
+    /// principal is configured). Boot diagnostics should use this so operators
+    /// see the hosted misconfiguration rather than a false "hosted KMS" claim.
+    pub fn describe_validated(&self) -> String {
+        match self.validate() {
+            Ok(()) => self.describe(),
+            Err(err) => format!(
+                "memory crypto: misconfigured ({err}); fail-closed — memory decrypt requests will be rejected"
+            ),
+        }
+    }
+}
+
+/// Returns true when a provider name denotes a local (non-hosted) provider:
+/// blank, `disabled`, or any `local`-prefixed provider.
+fn provider_is_local(provider: &str) -> bool {
+    let trimmed = provider.trim();
+    trimmed.is_empty()
+        || trimmed.eq_ignore_ascii_case("disabled")
+        || trimmed.to_ascii_lowercase().starts_with("local")
+}
+
+/// Operator-facing classification of how memory secrets are protected at rest.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "mode")]
+pub enum MemoryCryptoMode {
+    /// Local/single-user runtime; memory is stored as plaintext and relies on
+    /// host/file security. No KMS credentials are required.
+    LocalPlaintext,
+    /// Local/single-user runtime with an explicitly configured local
+    /// file/passphrase-backed provider (e.g. `local-passphrase`).
+    LocalEncrypted { provider: String },
+    /// Hosted/multi-tenant runtime; memory DEKs are governed by an external KMS.
+    HostedKms { provider: String },
+}
+
+impl MemoryCryptoMode {
+    pub fn is_hosted(&self) -> bool {
+        matches!(self, MemoryCryptoMode::HostedKms { .. })
+    }
+
+    pub fn is_local(&self) -> bool {
+        !self.is_hosted()
+    }
+}
+
+/// Resolve the memory crypto mode from the environment and render the startup
+/// diagnostic string operators should see at boot.
+pub fn memory_crypto_startup_diagnostic() -> String {
+    match MemoryDecryptBrokerConfig::from_env() {
+        // Validate before describing so a hosted-required-but-misconfigured
+        // runtime reports its fail-closed state instead of a false "hosted KMS".
+        Ok(config) => config.describe_validated(),
+        Err(err) => format!("memory crypto: configuration error ({err})"),
     }
 }
 
@@ -573,6 +668,85 @@ mod tests {
             ))
             .expect("local noop");
         assert!(ticket.is_none());
+    }
+
+    #[test]
+    fn local_default_config_reports_plaintext_mode() {
+        let config = MemoryDecryptBrokerConfig::local_disabled();
+        assert_eq!(config.crypto_mode(), MemoryCryptoMode::LocalPlaintext);
+        assert!(config.crypto_mode().is_local());
+        assert!(config.describe().contains("local plaintext"));
+        config.validate().expect("local plaintext config is valid");
+    }
+
+    #[test]
+    fn hosted_config_reports_hosted_kms_mode() {
+        let config =
+            MemoryDecryptBrokerConfig::hosted("google_cloud_kms", "runtime-memory-decryptor")
+                .expect("hosted config");
+        match config.crypto_mode() {
+            MemoryCryptoMode::HostedKms { provider } => assert_eq!(provider, "google_cloud_kms"),
+            other => panic!("expected hosted KMS mode, got {other:?}"),
+        }
+        assert!(config.crypto_mode().is_hosted());
+        assert!(config.describe().contains("hosted KMS"));
+    }
+
+    #[test]
+    fn local_encryption_provider_reports_local_encrypted_mode() {
+        let config = MemoryDecryptBrokerConfig {
+            provider: "local-passphrase".to_string(),
+            runtime_principal_id: "local".to_string(),
+            secret_family: MemorySecretFamily::MemoryEnvelope,
+            hosted_required: false,
+        };
+        assert!(matches!(
+            config.crypto_mode(),
+            MemoryCryptoMode::LocalEncrypted { .. }
+        ));
+        assert!(config.describe().contains("local encrypted"));
+    }
+
+    #[test]
+    fn describe_validated_surfaces_hosted_misconfiguration() {
+        // hosted_required but no valid KMS provider: the boot diagnostic must
+        // report the fail-closed misconfiguration, not claim "hosted KMS".
+        let misconfigured = MemoryDecryptBrokerConfig {
+            provider: String::new(),
+            runtime_principal_id: "runtime-memory-decryptor".to_string(),
+            secret_family: MemorySecretFamily::MemoryEnvelope,
+            hosted_required: true,
+        };
+        let diagnostic = misconfigured.describe_validated();
+        assert!(
+            diagnostic.contains("misconfigured") && diagnostic.contains("fail-closed"),
+            "diagnostic={diagnostic}"
+        );
+        assert!(
+            !diagnostic.contains("hosted KMS"),
+            "must not claim hosted KMS when fail-closed: {diagnostic}"
+        );
+
+        // A valid hosted config still describes hosted KMS.
+        let valid =
+            MemoryDecryptBrokerConfig::hosted("google_cloud_kms", "runtime-memory-decryptor")
+                .expect("hosted config");
+        assert!(valid.describe_validated().contains("hosted KMS"));
+    }
+
+    #[test]
+    fn hosted_mode_rejects_local_provider() {
+        // A local provider must never back a hosted/multi-tenant runtime.
+        let config = MemoryDecryptBrokerConfig {
+            provider: "local-passphrase".to_string(),
+            runtime_principal_id: "runtime-memory-decryptor".to_string(),
+            secret_family: MemorySecretFamily::MemoryEnvelope,
+            hosted_required: true,
+        };
+        let err = config
+            .validate()
+            .expect_err("local provider must not back hosted tenants");
+        assert!(err.to_string().contains("explicit KMS provider"));
     }
 
     #[test]
