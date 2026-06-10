@@ -31,8 +31,25 @@ meta-harness evaluation models for scoring workflow candidates.
 - Sensitive-path basename fallback protections were rechecked, and shared
   SSRF URL/IP validation now covers web fetch and browser navigation paths.
 
+### Evaluation Gate Assurance
+
+- The per-PR evaluation regression gate now fails closed when `eval-runner`
+  cannot build or when an evaluation run crashes. Earlier CI behavior could
+  emit hardcoded passing JSON for the critical-path, tenant-isolation, and
+  action-firewall datasets, creating a plausible green check even when the
+  runner was broken. The gate now builds `eval-runner` as a required step, runs
+  each dataset through the binary directly, and reports missing results in the
+  PR comment instead of fabricating pass rates.
+
 ### Cross-Tenant Data Governance
 
+- Hosted and enterprise requests now rely on signed tenant-context assertions
+  as the trust primitive. Assertions are Ed25519 JWS values selected by `kid`,
+  validated against issuer/audience, expiry, explicit deployment scope, actor
+  consistency, key metadata, allowed resource-scope prefixes, and a replay
+  policy (`bound` by default, with `one_shot` available for per-request
+  issuers). `docs/CONTEXT_ASSERTION_SECURITY.md` documents configuration and
+  operational guidance.
 - A dedicated `tenant_isolation` evaluation dataset now runs in the per-PR
   regression gate, covering must-block scenarios: cross-tenant source/secret
   access and cross-tenant memory reads must fail closed and emit audit evidence
@@ -243,6 +260,12 @@ meta-harness evaluation models for scoring workflow candidates.
 
 ### Security Review
 
+- Strict tenant enforcement now covers external-effect built-in tools and MCP
+  dispatch. Local-implicit contexts are blocked from web, memory, shell/network,
+  and MCP calls in strict modes; store-backed MCP secret headers are checked
+  against the executing tenant/deployment before dispatch; and built-in tool
+  alias/path resolution is covered against namespace spoofing, parent traversal,
+  unsafe absolutes, wildcard tokens, and symlink escapes.
 - Added a source-verified Rust runtime security analysis covering command
   execution, HTTP API exposure, secrets/crypto, permission/governance defaults,
   and external integration risks. The report records source-location-backed

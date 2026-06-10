@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Made the per-PR evaluation regression gate fail closed when `eval-runner`
+  cannot build or execute (TAN-219). The `critical_path`,
+  `tenant_isolation`, and `action_firewall` datasets now run the built
+  `eval-runner` binary directly with no hardcoded stub-result fallback and no
+  `continue-on-error`; the PR comment reports missing results explicitly
+  instead of fabricating pass rates.
+
 - Added per-role sampling parameters (`temperature`, `top_p`, `max_tokens`) to
   the engine runtime and the `tandem-client` Python SDK (bumped to `0.5.14`).
   Callers can set a session-level default on `sessions.create(...)` and override
@@ -154,6 +161,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   implementation parts while preserving existing runtime behavior.
 
 ### Security
+
+- Hardened hosted/enterprise tenant-context assertions: signed Ed25519 JWS
+  assertions now enforce key metadata (purpose, status, lifetime, audience,
+  organization/deployment, and resource-scope prefixes) and a configurable
+  replay policy (`bound` by default, `one_shot`, or `off`). Added
+  `docs/CONTEXT_ASSERTION_SECURITY.md` to document key configuration, replay
+  behavior, and recommended assertion lifetimes.
+- Added strict tenant-scope guards for external-effect built-in tools and MCP
+  dispatch. In strict modes, local-implicit contexts are denied before web,
+  memory, shell/network, or MCP calls can dispatch, store-backed MCP secret
+  headers must belong to the executing tenant/deployment, and built-in tool
+  alias/path resolution is pinned with traversal, absolute-path, wildcard, and
+  symlink-escape coverage.
 
 - Added a CI guard (EAA-11) proving the public engine build (`tandem-ai`)
   excludes enterprise-only and heavyweight crates (`tandem-enterprise-server`,
