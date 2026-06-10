@@ -652,6 +652,112 @@ mod tests {
         std::env::remove_var("TANDEM_TEST_MCP_SECRET");
     }
 
+    #[tokio::test]
+    async fn strict_mode_denies_local_implicit_tool_calls_before_dispatch() {
+        let file = std::env::temp_dir().join(format!("mcp-test-{}.json", Uuid::new_v4()));
+        let registry = McpRegistry::new_with_state_file(file);
+        registry.set_strict_tenant_enforcement(true);
+
+        // Denied before server lookup: no server named "any-server" exists,
+        // so reaching "not found" would mean the guard did not fire first.
+        let err = registry
+            .call_tool_for_tenant(
+                "any-server",
+                "any_tool",
+                json!({}),
+                &TenantContext::local_implicit(),
+            )
+            .await
+            .expect_err("strict mode must deny local-implicit tool calls");
+        assert!(err.contains("ToolDenied { reason: TenantScope }"));
+        assert!(err.contains("local-implicit"));
+
+        // Explicit tenants pass the strict guard (and then fail later on the
+        // missing server, proving the guard is scope-specific).
+        let err = registry
+            .call_tool_for_tenant(
+                "any-server",
+                "any_tool",
+                json!({}),
+                &TenantContext::explicit("org-a", "workspace-a", None),
+            )
+            .await
+            .expect_err("server does not exist");
+        assert!(err.contains("not found"));
+    }
+
+    #[test]
+    fn mismatched_store_secret_headers_flags_only_foreign_store_refs() {
+        let tenant_a = TenantContext::explicit("tenant-a", "workspace-a", None);
+        let tenant_b = TenantContext::explicit("tenant-b", "workspace-b", None);
+
+        let secret_headers = HashMap::from([
+            (
+                "Authorization".to_string(),
+                McpSecretRef::Store {
+                    secret_id: "secret-a".to_string(),
+                    tenant_context: tenant_a.clone(),
+                },
+            ),
+            (
+                "X-Api-Key".to_string(),
+                McpSecretRef::Store {
+                    secret_id: "secret-b".to_string(),
+                    tenant_context: tenant_b.clone(),
+                },
+            ),
+            (
+                "X-Env-Token".to_string(),
+                McpSecretRef::Env {
+                    env: "SOME_ENV".to_string(),
+                },
+            ),
+        ]);
+
+        let mismatched = mismatched_store_secret_headers(&secret_headers, &tenant_b);
+        assert_eq!(
+            mismatched,
+            vec!["Authorization".to_string()],
+            "only store refs owned by a different tenant are flagged; env refs are not"
+        );
+
+        let denial = store_secret_tenant_denial_error("server", "tool", &mismatched);
+        assert!(denial.contains("ToolDenied { reason: TenantScope }"));
+        assert!(denial.contains("Authorization"));
+
+        assert!(
+            mismatched_store_secret_headers(&secret_headers, &TenantContext::local_implicit())
+                .is_empty(),
+            "local implicit tenants skip the store-secret tenant check"
+        );
+    }
+
+    #[test]
+    fn mismatched_store_secret_headers_treats_deployments_as_distinct_tenants() {
+        let mut deployment_one = TenantContext::explicit("org-a", "workspace-a", None);
+        deployment_one.deployment_id = Some("deployment-1".to_string());
+        let mut deployment_two = deployment_one.clone();
+        deployment_two.deployment_id = Some("deployment-2".to_string());
+
+        let secret_headers = HashMap::from([(
+            "Authorization".to_string(),
+            McpSecretRef::Store {
+                secret_id: "secret-one".to_string(),
+                tenant_context: deployment_one.clone(),
+            },
+        )]);
+
+        assert!(
+            mismatched_store_secret_headers(&secret_headers, &deployment_one).is_empty(),
+            "same deployment resolves its own secret"
+        );
+        assert_eq!(
+            mismatched_store_secret_headers(&secret_headers, &deployment_two),
+            vec!["Authorization".to_string()],
+            "a different deployment in the same org/workspace must be denied"
+        );
+    }
+
     #[test]
     fn explicit_tenant_mcp_secret_headers_are_not_cached_globally() {
         let current_tenant = TenantContext::explicit("tenant", "workspace", None);
