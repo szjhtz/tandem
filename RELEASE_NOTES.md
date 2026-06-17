@@ -2,7 +2,7 @@
 
 This is the canonical release-notes file used by release tooling.
 
-## v0.6.0 (Unreleased)
+## v0.6.0 (2026-06-17)
 
 Tandem 0.6.0 is a security- and assurance-focused release that lays the
 foundation for cross-tenant data governance, governed runtime decisions, and
