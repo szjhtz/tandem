@@ -196,6 +196,67 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn list_session_summaries_omit_message_history() {
+        let base = std::env::temp_dir().join(format!("tandem-core-summary-{}", Uuid::new_v4()));
+        let storage = Storage::new(&base).await.expect("storage");
+        let mut session = Session::new(Some("summary".to_string()), Some(".".to_string()));
+        session.messages.push(Message::new(
+            MessageRole::Assistant,
+            vec![MessagePart::Text {
+                text: "large transcript payload".repeat(1_000),
+            }],
+        ));
+        let id = session.id.clone();
+        storage.save_session(session).await.expect("save session");
+
+        let summaries = storage.list_session_summaries().await;
+        let summary = summaries.iter().find(|s| s.id == id).expect("summary");
+        assert_eq!(summary.title, "summary");
+        assert!(summary.messages.is_empty());
+
+        let full = storage.get_session(&id).await.expect("full session");
+        assert_eq!(full.messages.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn list_session_summaries_scoped_filters_without_messages() {
+        let base = std::env::temp_dir().join(format!(
+            "tandem-core-summary-scope-{}",
+            Uuid::new_v4()
+        ));
+        let storage = Storage::new(&base).await.expect("storage");
+        let ws_a = base.join("ws-a");
+        let ws_b = base.join("ws-b");
+        stdfs::create_dir_all(&ws_a).expect("ws_a");
+        stdfs::create_dir_all(&ws_b).expect("ws_b");
+        let ws_a_str = ws_a.to_string_lossy().to_string();
+        let ws_b_str = ws_b.to_string_lossy().to_string();
+
+        let mut a = Session::new(Some("a".to_string()), Some(ws_a_str.clone()));
+        a.workspace_root = Some(ws_a_str.clone());
+        a.messages.push(Message::new(
+            MessageRole::Assistant,
+            vec![MessagePart::Text {
+                text: "workspace transcript".repeat(1_000),
+            }],
+        ));
+        storage.save_session(a).await.expect("save a");
+
+        let mut b = Session::new(Some("b".to_string()), Some(ws_b_str.clone()));
+        b.workspace_root = Some(ws_b_str);
+        storage.save_session(b).await.expect("save b");
+
+        let scoped = storage
+            .list_session_summaries_scoped(SessionListScope::Workspace {
+                workspace_root: ws_a_str,
+            })
+            .await;
+        assert_eq!(scoped.len(), 1);
+        assert_eq!(scoped[0].title, "a");
+        assert!(scoped[0].messages.is_empty());
+    }
+
+    #[tokio::test]
     async fn attach_session_persists_audit_metadata() {
         let base = std::env::temp_dir().join(format!("tandem-core-attach-{}", Uuid::new_v4()));
         let storage = Storage::new(&base).await.expect("storage");

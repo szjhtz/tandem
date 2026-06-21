@@ -136,6 +136,46 @@ fn compact_session_snapshots(snapshots: &mut Vec<Vec<Message>>) -> usize {
     removed
 }
 
+fn session_matches_normalized_workspace(session: &Session, normalized_workspace: &str) -> bool {
+    session
+        .workspace_root
+        .as_ref()
+        .and_then(|p| normalize_workspace_path(p))
+        .map(|p| p == normalized_workspace)
+        .unwrap_or(false)
+        || normalize_workspace_path(&session.directory)
+            .map(|p| p == normalized_workspace)
+            .unwrap_or(false)
+}
+
+fn session_summary_without_messages(session: &Session) -> Session {
+    Session {
+        id: session.id.clone(),
+        slug: session.slug.clone(),
+        version: session.version.clone(),
+        project_id: session.project_id.clone(),
+        title: session.title.clone(),
+        directory: session.directory.clone(),
+        workspace_root: session.workspace_root.clone(),
+        pinned_workspace_id: session.pinned_workspace_id.clone(),
+        origin_workspace_root: session.origin_workspace_root.clone(),
+        attached_from_workspace: session.attached_from_workspace.clone(),
+        attached_to_workspace: session.attached_to_workspace.clone(),
+        attach_timestamp_ms: session.attach_timestamp_ms,
+        attach_reason: session.attach_reason.clone(),
+        tenant_context: session.tenant_context.clone(),
+        verified_tenant_context: session.verified_tenant_context.clone(),
+        time: session.time.clone(),
+        model: session.model.clone(),
+        provider: session.provider.clone(),
+        sampling: session.sampling,
+        source_kind: session.source_kind.clone(),
+        source_metadata: session.source_metadata.clone(),
+        environment: session.environment.clone(),
+        messages: Vec::new(),
+    }
+}
+
 fn session_meta_is_empty(meta: &SessionMeta) -> bool {
     meta.parent_id.is_none()
         && !meta.archived
@@ -277,6 +317,11 @@ impl Storage {
         self.list_sessions_scoped(SessionListScope::Global).await
     }
 
+    pub async fn list_session_summaries(&self) -> Vec<Session> {
+        self.list_session_summaries_scoped(SessionListScope::Global)
+            .await
+    }
+
     pub async fn list_sessions_scoped(&self, scope: SessionListScope) -> Vec<Session> {
         let all = self
             .sessions
@@ -305,6 +350,33 @@ impl Storage {
                         normalize_workspace_path(&session.directory)
                             .map(|p| p == normalized_workspace)
                             .unwrap_or(false)
+                    })
+                    .collect()
+            }
+        }
+    }
+
+    pub async fn list_session_summaries_scoped(&self, scope: SessionListScope) -> Vec<Session> {
+        match scope {
+            SessionListScope::Global => {
+                let sessions = self.sessions.read().await;
+                sessions.values().map(session_summary_without_messages).collect()
+            }
+            SessionListScope::Workspace { workspace_root } => {
+                let Some(normalized_workspace) = normalize_workspace_path(&workspace_root) else {
+                    return Vec::new();
+                };
+                let summaries = {
+                    let sessions = self.sessions.read().await;
+                    sessions
+                        .values()
+                        .map(session_summary_without_messages)
+                        .collect::<Vec<_>>()
+                };
+                summaries
+                    .into_iter()
+                    .filter(|session| {
+                        session_matches_normalized_workspace(session, &normalized_workspace)
                     })
                     .collect()
             }
