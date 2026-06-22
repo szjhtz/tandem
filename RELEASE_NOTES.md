@@ -48,6 +48,12 @@ MCP connections.
   evidence with actor, request, decision, and rule provenance. Stale persisted
   request IDs are rejected after restart, and concurrent state-file writes are
   serialized so simultaneous prompts and decisions remain durable.
+- Dogfooding bugs now have a permanent replay lane: `eval_datasets/dogfooding_regressions.yaml`
+  seeds five recent workflow/runtime bug classes, `bug-monitor-fixture` scaffolds
+  sanitized eval fixtures from Bug Monitor incidents, and a nightly workflow runs
+  the dogfooding regression dataset through `eval-runner --engine-mode stub`.
+  Stub/live eval-runner modes now use Tokio's multithreaded runtime so local
+  in-process Automation V2 evals do not overflow the single-thread runtime stack.
 
 ### Runtime Governance
 
