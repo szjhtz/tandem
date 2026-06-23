@@ -578,7 +578,26 @@ impl AppState {
                 && status.required_capabilities.github_create_issue
                 && status.required_capabilities.github_comment_on_issue
                 && selected_model_ready,
+            destination_ready: config.enabled
+                && !config.paused
+                && repo_valid
+                && selected_server
+                    .as_ref()
+                    .map(|row| row.connected)
+                    .unwrap_or(false)
+                && status.required_capabilities.github_list_issues
+                && status.required_capabilities.github_get_issue
+                && status.required_capabilities.github_create_issue
+                && status.required_capabilities.github_comment_on_issue,
+            route_preview_ready: true,
         };
+        status.destinations = config.effective_destinations();
+        status.destination_readiness =
+            bug_monitor_destination_readiness(&config, &status, &servers);
+        status.readiness.destination_ready = status
+            .destination_readiness
+            .iter()
+            .any(|destination| destination.publish_ready);
         if config.enabled {
             if config.paused {
                 status.last_error = Some("Bug monitor monitoring is paused.".to_string());
