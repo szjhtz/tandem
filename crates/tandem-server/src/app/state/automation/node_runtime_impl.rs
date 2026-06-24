@@ -103,6 +103,38 @@ pub(crate) fn automation_node_has_explicit_tool_policy(node: &AutomationFlowNode
             .is_some()
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct AutomationNodeMcpPreflightScope {
+    pub(crate) allowed_servers: Vec<String>,
+    pub(crate) allowed_connections: Vec<crate::AutomationMcpConnectionGrant>,
+    pub(crate) allowlist: Vec<String>,
+}
+
+pub(crate) fn automation_node_mcp_preflight_scope(
+    node: &AutomationFlowNode,
+    agent: &AutomationAgentProfile,
+    agent_allowlist: &[String],
+) -> AutomationNodeMcpPreflightScope {
+    if automation_node_has_explicit_tool_policy(node) {
+        let policy = node.mcp_policy.as_ref();
+        return AutomationNodeMcpPreflightScope {
+            allowed_servers: policy
+                .map(AutomationAgentMcpPolicy::effective_allowed_servers)
+                .unwrap_or_default(),
+            allowed_connections: policy
+                .map(|policy| policy.allowed_connections.clone())
+                .unwrap_or_default(),
+            allowlist: automation_node_metadata_tool_allowlist(node),
+        };
+    }
+
+    AutomationNodeMcpPreflightScope {
+        allowed_servers: agent.mcp_policy.effective_allowed_servers(),
+        allowed_connections: agent.mcp_policy.allowed_connections.clone(),
+        allowlist: agent_allowlist.to_vec(),
+    }
+}
+
 pub(crate) fn automation_node_builder_priority(node: &AutomationFlowNode) -> i32 {
     node.metadata
         .as_ref()

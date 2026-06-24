@@ -1764,13 +1764,14 @@ pub(crate) async fn execute_automation_v2_node(
         allowlist.extend(mcp_tools.clone());
     }
     let tenant_context = automation.tenant_context();
-    let allowed_mcp_servers = agent.mcp_policy.effective_allowed_servers();
+    let mcp_preflight_scope =
+        node_runtime_impl::automation_node_mcp_preflight_scope(node, agent, &allowlist);
     let mcp_tool_diagnostics = sync_automation_allowed_mcp_servers(
         state,
         node,
-        &allowed_mcp_servers,
-        &agent.mcp_policy.allowed_connections,
-        &allowlist,
+        &mcp_preflight_scope.allowed_servers,
+        &mcp_preflight_scope.allowed_connections,
+        &mcp_preflight_scope.allowlist,
         &tenant_context,
     )
     .await;
@@ -1812,7 +1813,8 @@ pub(crate) async fn execute_automation_v2_node(
         .to_string();
     let execution_mode = automation_node_execution_mode(node, &workspace_root);
     let mut requested_tools = requested_tools;
-    let has_concrete_mcp_tool_policy = allowlist
+    let has_concrete_mcp_tool_policy = mcp_preflight_scope
+        .allowlist
         .iter()
         .any(|tool| tool.starts_with("mcp.") && !tool.ends_with(".*"));
     if !has_concrete_mcp_tool_policy {

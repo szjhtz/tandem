@@ -1124,6 +1124,160 @@ fn node_first_class_mcp_policy_is_hard_tool_scope() {
 }
 
 #[test]
+fn node_empty_mcp_policy_suppresses_agent_mcp_preflight_scope() {
+    let mut node = node_with_input_ref();
+    node.node_id = "filter_agent_tool_security".to_string();
+    node.objective = "Read the upstream Reddit artifact, filter leads, write JSON, and do not call external tools.".to_string();
+    node.tool_policy = Some(crate::AutomationAgentToolPolicy {
+        allowlist: vec!["read".to_string(), "write".to_string()],
+        denylist: Vec::new(),
+    });
+    node.mcp_policy = Some(crate::AutomationAgentMcpPolicy {
+        allowed_servers: Vec::new(),
+        allowed_tools: None,
+        allowed_connections: Vec::new(),
+    });
+
+    let agent = crate::AutomationAgentProfile {
+        agent_id: "lead_analyst".to_string(),
+        template_id: None,
+        display_name: "Lead Analyst".to_string(),
+        avatar_url: None,
+        model_policy: None,
+        skills: Vec::new(),
+        tool_policy: crate::AutomationAgentToolPolicy {
+            allowlist: vec![
+                "read".to_string(),
+                "write".to_string(),
+                "mcp.composio_gmail.composio_multi_execute_tool".to_string(),
+                "mcp.notion.notion_create_pages".to_string(),
+            ],
+            denylist: Vec::new(),
+        },
+        mcp_policy: crate::AutomationAgentMcpPolicy {
+            allowed_servers: vec!["composio-gmail".to_string(), "notion".to_string()],
+            allowed_tools: Some(vec![
+                "mcp.composio_gmail.composio_multi_execute_tool".to_string(),
+                "mcp.notion.notion_create_pages".to_string(),
+            ]),
+            allowed_connections: Vec::new(),
+        },
+        approval_policy: None,
+    };
+    let mut agent_allowlist = merge_automation_agent_allowlist(&agent, None);
+    if let Some(mcp_tools) = agent.mcp_policy.allowed_tools.as_ref() {
+        agent_allowlist.extend(mcp_tools.clone());
+    }
+    let available_tool_names = std::collections::HashSet::from([
+        "mcp.composio_gmail.composio_multi_execute_tool".to_string(),
+        "mcp.notion.notion_create_pages".to_string(),
+        "mcp_list".to_string(),
+        "read".to_string(),
+        "write".to_string(),
+    ]);
+
+    let scope =
+        node_runtime_impl::automation_node_mcp_preflight_scope(&node, &agent, &agent_allowlist);
+    let requested =
+        automation_requested_tools_for_node(&node, "/tmp", agent_allowlist, &available_tool_names);
+    let offered =
+        automation_add_mcp_list_when_scoped(requested, !scope.allowed_servers.is_empty());
+
+    assert!(scope.allowed_servers.is_empty());
+    assert_eq!(scope.allowlist, vec!["read".to_string(), "write".to_string()]);
+    assert_eq!(offered, vec!["read".to_string(), "write".to_string()]);
+}
+
+#[test]
+fn exact_node_mcp_policy_does_not_offer_discovery_tool() {
+    let mut node = node_with_input_ref();
+    node.node_id = "notion_agent_tool_security".to_string();
+    node.objective =
+        "Use filtered leads, call the exact Notion tools, then write the insertion artifact."
+            .to_string();
+    node.tool_policy = Some(crate::AutomationAgentToolPolicy {
+        allowlist: vec![
+            "write".to_string(),
+            "mcp.notion.notion_fetch".to_string(),
+            "mcp.notion.notion_search".to_string(),
+            "mcp.notion.notion_create_pages".to_string(),
+            "mcp.notion.notion_update_page".to_string(),
+        ],
+        denylist: Vec::new(),
+    });
+    node.mcp_policy = Some(crate::AutomationAgentMcpPolicy {
+        allowed_servers: vec!["notion".to_string()],
+        allowed_tools: Some(vec![
+            "mcp.notion.notion_fetch".to_string(),
+            "mcp.notion.notion_search".to_string(),
+            "mcp.notion.notion_create_pages".to_string(),
+            "mcp.notion.notion_update_page".to_string(),
+        ]),
+        allowed_connections: Vec::new(),
+    });
+
+    let agent = crate::AutomationAgentProfile {
+        agent_id: "notion_writer".to_string(),
+        template_id: None,
+        display_name: "Notion Writer".to_string(),
+        avatar_url: None,
+        model_policy: None,
+        skills: Vec::new(),
+        tool_policy: crate::AutomationAgentToolPolicy {
+            allowlist: vec![
+                "write".to_string(),
+                "mcp_list".to_string(),
+                "mcp.composio_gmail.composio_multi_execute_tool".to_string(),
+                "mcp.notion.notion_fetch".to_string(),
+                "mcp.notion.notion_search".to_string(),
+                "mcp.notion.notion_create_pages".to_string(),
+                "mcp.notion.notion_update_page".to_string(),
+            ],
+            denylist: Vec::new(),
+        },
+        mcp_policy: crate::AutomationAgentMcpPolicy {
+            allowed_servers: vec!["composio-gmail".to_string(), "notion".to_string()],
+            allowed_tools: Some(vec![
+                "mcp.composio_gmail.composio_multi_execute_tool".to_string(),
+                "mcp.notion.notion_fetch".to_string(),
+                "mcp.notion.notion_search".to_string(),
+                "mcp.notion.notion_create_pages".to_string(),
+                "mcp.notion.notion_update_page".to_string(),
+            ]),
+            allowed_connections: Vec::new(),
+        },
+        approval_policy: None,
+    };
+    let mut agent_allowlist = merge_automation_agent_allowlist(&agent, None);
+    if let Some(mcp_tools) = agent.mcp_policy.allowed_tools.as_ref() {
+        agent_allowlist.extend(mcp_tools.clone());
+    }
+    let available_tool_names = std::collections::HashSet::from([
+        "mcp.composio_gmail.composio_multi_execute_tool".to_string(),
+        "mcp.notion.notion_fetch".to_string(),
+        "mcp.notion.notion_search".to_string(),
+        "mcp.notion.notion_create_pages".to_string(),
+        "mcp.notion.notion_update_page".to_string(),
+        "mcp_list".to_string(),
+        "read".to_string(),
+        "write".to_string(),
+    ]);
+
+    let scope =
+        node_runtime_impl::automation_node_mcp_preflight_scope(&node, &agent, &agent_allowlist);
+    let requested =
+        automation_requested_tools_for_node(&node, "/tmp", agent_allowlist, &available_tool_names);
+    let offered =
+        automation_add_mcp_list_when_scoped(requested, !scope.allowed_servers.is_empty());
+
+    assert_eq!(scope.allowed_servers, vec!["notion".to_string()]);
+    assert!(offered.contains(&"mcp.notion.notion_fetch".to_string()));
+    assert!(offered.contains(&"mcp.notion.notion_create_pages".to_string()));
+    assert!(!offered.contains(&"mcp_list".to_string()));
+    assert!(!offered.contains(&"mcp.composio_gmail.composio_multi_execute_tool".to_string()));
+}
+
+#[test]
 fn bug_monitor_downstream_structured_json_nodes_reuse_upstream_source_evidence() {
     let mut inspection = bare_node();
     inspection.node_id = "inspect_failure_report".to_string();
