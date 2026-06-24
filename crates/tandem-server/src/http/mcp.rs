@@ -1,7 +1,7 @@
 use super::mcp_inventory::{
-    filter_mcp_inventory_snapshot_to_servers, filter_mcp_snapshot_by_discovery_authorization,
-    filter_mcp_snapshot_by_tool_scope, mcp_inventory_snapshot, session_mcp_tool_filter,
-    McpToolScopeFilter,
+    compact_mcp_inventory_for_tool_output, filter_mcp_inventory_snapshot_to_servers,
+    filter_mcp_snapshot_by_discovery_authorization, filter_mcp_snapshot_by_tool_scope,
+    mcp_inventory_snapshot, session_mcp_tool_filter, McpToolScopeFilter,
 };
 use super::*;
 use base64::Engine;
@@ -13,6 +13,9 @@ use tandem_types::{RequestPrincipal, StrictTenantContext, TenantContext, Verifie
 use uuid::Uuid;
 
 pub(crate) use super::mcp_run_as::call_mcp_tool_for_tenant_with_audit;
+
+mod mcp_base_url;
+pub(super) use mcp_base_url::{mcp_public_base_url_from_config, mcp_public_base_url_from_env};
 
 const BUILTIN_GITHUB_MCP_SERVER_NAME: &str = "github";
 const BUILTIN_GITHUB_MCP_TRANSPORT_URL: &str = "https://api.githubcopilot.com/mcp/";
@@ -530,29 +533,6 @@ fn effective_mcp_headers(server: &tandem_runtime::McpServer) -> HashMap<String, 
 }
 fn mcp_uses_oauth(server: &tandem_runtime::McpServer) -> bool {
     server.auth_kind.trim().eq_ignore_ascii_case("oauth")
-}
-pub(super) fn mcp_public_base_url_from_config(cfg: &Value) -> Option<String> {
-    cfg.get("hosted")
-        .and_then(Value::as_object)
-        .and_then(|hosted| hosted.get("public_url"))
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(|value| value.trim_end_matches('/').to_string())
-}
-pub(super) fn mcp_public_base_url_from_env() -> Option<String> {
-    [
-        "TANDEM_CONTROL_PANEL_PUBLIC_URL",
-        "HOSTED_CONTROL_PANEL_PUBLIC_URL",
-        "HOSTED_PUBLIC_URL",
-    ]
-    .into_iter()
-    .find_map(|key| {
-        std::env::var(key)
-            .ok()
-            .map(|value| value.trim().trim_end_matches('/').to_string())
-            .filter(|value| !value.is_empty())
-    })
 }
 fn mcp_public_base_url(state: &AppState, cfg: &Value) -> String {
     mcp_public_base_url_from_config(cfg)
@@ -1254,16 +1234,27 @@ async fn finish_mcp_oauth_callback(
         api_key: None,
     };
     let credential_result = if session.tenant_context.is_local_implicit() {
-        tandem_core::set_provider_oauth_credential(&session.provider_id, credential)
+        tandem_core::set_provider_oauth_credential(&session.provider_id, credential.clone())
     } else {
         tandem_core::set_provider_oauth_credential_for_tenant(
             &session.tenant_context,
             &session.provider_id,
-            credential,
+            credential.clone(),
         )
     };
     if let Err(error) = credential_result {
         tracing::warn!(%error, provider_id = %session.provider_id, "failed to persist MCP OAuth credential");
+    }
+    if let Err(error) = state
+        .mcp
+        .set_oauth_credential_for_tenant(&session.provider_id, credential, &session.tenant_context)
+        .await
+    {
+        tracing::warn!(
+            %error,
+            provider_id = %session.provider_id,
+            "failed to persist MCP OAuth credential in registry store"
+        );
     }
 
     match state
@@ -1393,8 +1384,9 @@ impl Tool for McpListTool {
             strict_context.as_ref(),
             crate::now_ms(),
         );
-        let output =
-            serde_json::to_string_pretty(&snapshot).unwrap_or_else(|_| snapshot.to_string());
+        let compact_snapshot = compact_mcp_inventory_for_tool_output(&snapshot);
+        let output = serde_json::to_string_pretty(&compact_snapshot)
+            .unwrap_or_else(|_| compact_snapshot.to_string());
         Ok(ToolResult {
             output,
             metadata: snapshot,

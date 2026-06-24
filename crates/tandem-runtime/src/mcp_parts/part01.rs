@@ -693,6 +693,7 @@ impl McpRegistry {
         delete_secret_header_refs(&server.secret_headers, &current_tenant);
         delete_oauth_secret_ref(server.oauth.as_ref(), &current_tenant);
         delete_oauth_credential(
+            name,
             server.oauth.as_ref(),
             &current_tenant,
             &self.oauth_security_dir,
@@ -915,6 +916,31 @@ impl McpRegistry {
             .await;
         self.persist_state().await;
         Ok(true)
+    }
+
+    pub async fn set_oauth_credential_for_tenant(
+        &self,
+        provider_id: &str,
+        credential: tandem_core::OAuthProviderCredential,
+        current_tenant: &TenantContext,
+    ) -> Result<(), String> {
+        if current_tenant.is_local_implicit() {
+            tandem_core::set_provider_oauth_credential_in_dir(
+                &self.oauth_security_dir,
+                provider_id,
+                credential,
+            )
+            .map_err(|error| error.to_string())?;
+        } else {
+            tandem_core::set_provider_oauth_credential_for_tenant_in_dir(
+                &self.oauth_security_dir,
+                current_tenant,
+                provider_id,
+                credential,
+            )
+            .map_err(|error| error.to_string())?;
+        }
+        Ok(())
     }
 
     pub async fn list_tools(&self) -> Vec<McpRemoteTool> {
@@ -1927,57 +1953,4 @@ fn resolve_secret_header_values(
         }
     }
     out
-}
-
-fn delete_secret_header_refs(
-    secret_headers: &HashMap<String, McpSecretRef>,
-    current_tenant: &TenantContext,
-) {
-    for secret_ref in secret_headers.values() {
-        if let McpSecretRef::Store {
-            secret_id,
-            tenant_context,
-        } = secret_ref
-        {
-            if tenant_context != current_tenant {
-                continue;
-            }
-            let _ = tandem_core::delete_provider_auth_for_tenant(current_tenant, secret_id);
-        }
-    }
-}
-
-fn delete_oauth_secret_ref(oauth: Option<&McpOAuthConfig>, current_tenant: &TenantContext) {
-    let Some(secret_ref) = oauth.and_then(|oauth| oauth.client_secret_ref.as_ref()) else {
-        return;
-    };
-    if let McpSecretRef::Store {
-        secret_id,
-        tenant_context,
-    } = secret_ref
-    {
-        if tenant_context == current_tenant {
-            let _ = tandem_core::delete_provider_auth_for_tenant(current_tenant, secret_id);
-        }
-    }
-}
-
-fn delete_oauth_credential(
-    oauth: Option<&McpOAuthConfig>,
-    current_tenant: &TenantContext,
-    oauth_security_dir: &Path,
-) {
-    let Some(oauth) = oauth else {
-        return;
-    };
-    let provider_id = oauth.provider_id.trim();
-    if provider_id.is_empty() {
-        return;
-    }
-    let _ = tandem_core::delete_provider_credential_for_tenant_in_dir(
-        oauth_security_dir,
-        current_tenant,
-        provider_id,
-    );
-    let _ = tandem_core::delete_provider_credential(provider_id);
 }

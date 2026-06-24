@@ -476,6 +476,62 @@ pub(super) fn synthesize_artifact_write_completion_from_tool_state(
     completion
 }
 
+fn normalize_artifact_write_target_path(path: &str) -> String {
+    let mut normalized = path.trim().trim_matches('`').replace('\\', "/");
+    while let Some(stripped) = normalized.strip_prefix("./") {
+        normalized = stripped.to_string();
+    }
+    normalized
+}
+
+pub(super) fn productive_write_targets_satisfy_required_artifact_target(
+    required_artifact_target: Option<&str>,
+    write_target_paths: &[String],
+) -> bool {
+    let Some(required) = required_artifact_target else {
+        return false;
+    };
+    let required = normalize_artifact_write_target_path(required);
+    if required.is_empty() {
+        return false;
+    }
+    write_target_paths.iter().any(|candidate| {
+        let candidate = normalize_artifact_write_target_path(candidate);
+        candidate == required
+            || (!required.starts_with('/') && candidate.ends_with(&format!("/{required}")))
+    })
+}
+
+pub(super) fn should_complete_after_productive_artifact_write(
+    requested_write_required: bool,
+    productive_artifact_write_tool_calls_total: usize,
+    prewrite_satisfied: bool,
+) -> bool {
+    requested_write_required && productive_artifact_write_tool_calls_total > 0 && prewrite_satisfied
+}
+
+pub(super) fn should_block_connector_action_before_concrete_read(
+    latest_user_text: &str,
+    tool_name: &str,
+    productive_concrete_read_total: usize,
+) -> bool {
+    if productive_concrete_read_total > 0 {
+        return false;
+    }
+    let normalized = normalize_tool_name(tool_name);
+    if !normalized.starts_with("mcp.") {
+        return false;
+    }
+    if matches!(
+        normalized.as_str(),
+        "mcp_list" | "mcp_list_catalog" | "mcp_request_capability"
+    ) {
+        return false;
+    }
+    latest_user_text.contains("Concrete files for this node:")
+        && latest_user_text.contains("read these files before any connector action call")
+}
+
 pub(super) fn should_generate_post_tool_final_narrative(
     requested_tool_mode: ToolMode,
     productive_tool_calls_total: usize,

@@ -87,6 +87,25 @@ fn productive_tool_output_detector_accepts_real_tool_results() {
 }
 
 #[test]
+fn mcp_discovery_and_empty_notion_actions_are_not_productive() {
+    assert!(!is_productive_tool_output(
+        "mcp_list",
+        r#"Tool `mcp_list` result:
+{"enabled_server_names":["notion"]}"#
+    ));
+    assert!(!is_productive_tool_output(
+        "mcp.notion.notion_create_pages",
+        r#"Tool `mcp.notion.notion_create_pages` result:
+{"pages":[]}"#
+    ));
+    assert!(!is_productive_tool_output(
+        "mcp.notion.notion_update_page",
+        r#"Tool `mcp.notion.notion_update_page` result:
+{"name":"APIResponseError","code":"validation_error","status":400}"#
+    ));
+}
+
+#[test]
 fn glob_empty_result_is_productive() {
     assert!(is_productive_tool_output("glob", "Tool `glob` result:\n"));
     assert!(is_productive_tool_output("glob", ""));
@@ -368,6 +387,20 @@ fn concrete_mcp_preflight_blocks_workspace_write_until_attempted() {
     counts.insert("mcp.notion.notion_create_pages".to_string(), 1);
     assert!(!has_unattempted_required_mcp_tool(&required, &counts));
     assert!(unattempted_required_mcp_tools(&required, &counts).is_empty());
+}
+
+#[test]
+fn required_mcp_gate_stays_pending_until_productive_call_is_counted() {
+    let required = vec!["mcp.notion.notion_create_pages".to_string()];
+    let mut attempted_counts = HashMap::new();
+    attempted_counts.insert("mcp.notion.notion_create_pages".to_string(), 1);
+
+    let productive_counts = HashMap::new();
+    assert!(
+        unattempted_required_mcp_tools(&required, &productive_counts)
+            .contains("mcp.notion.notion_create_pages")
+    );
+    assert!(unattempted_required_mcp_tools(&required, &attempted_counts).is_empty());
 }
 
 #[test]
@@ -970,6 +1003,67 @@ fn empty_completion_retry_context_mentions_missing_prewrite_work() {
     assert!(prompt.contains("still need to use `read`"));
     assert!(prompt.contains("use `websearch`"));
     assert!(prompt.contains("After completing the missing requirement"));
+}
+
+#[test]
+fn connector_action_guard_requires_concrete_read_before_mcp_action() {
+    let prompt = "Concrete Source Coverage:\n- If this node also has connector action tools, read these files before any connector action call.\n- Concrete files for this node:\n- `.tandem/runs/run/artifacts/input.json`";
+
+    assert!(should_block_connector_action_before_concrete_read(
+        prompt,
+        "mcp.notion.notion_create_pages",
+        0,
+    ));
+    assert!(!should_block_connector_action_before_concrete_read(
+        prompt,
+        "mcp.notion.notion_create_pages",
+        1,
+    ));
+    assert!(!should_block_connector_action_before_concrete_read(
+        prompt, "mcp_list", 0,
+    ));
+    assert!(!should_block_connector_action_before_concrete_read(
+        "no concrete source section",
+        "mcp.notion.notion_create_pages",
+        0,
+    ));
+}
+
+#[test]
+fn productive_artifact_write_completion_requires_satisfied_prewrite_gate() {
+    assert!(productive_write_targets_satisfy_required_artifact_target(
+        Some("artifacts/final.json"),
+        &["artifacts/final.json".to_string()],
+    ));
+    assert!(productive_write_targets_satisfy_required_artifact_target(
+        Some("artifacts/final.json"),
+        &["/workspace/artifacts/final.json".to_string()],
+    ));
+    assert!(!productive_write_targets_satisfy_required_artifact_target(
+        Some("artifacts/final.json"),
+        &["workspace-notes.md".to_string()],
+    ));
+    assert!(!productive_write_targets_satisfy_required_artifact_target(
+        Some(".tandem/runs/run-1/artifacts/final.json"),
+        &["reports/customer-summary.md".to_string()],
+    ));
+    assert!(!productive_write_targets_satisfy_required_artifact_target(
+        None,
+        &["artifacts/final.json".to_string()],
+    ));
+
+    assert!(should_complete_after_productive_artifact_write(
+        true, 1, true
+    ));
+    assert!(!should_complete_after_productive_artifact_write(
+        false, 1, true
+    ));
+    assert!(!should_complete_after_productive_artifact_write(
+        true, 0, true
+    ));
+    assert!(!should_complete_after_productive_artifact_write(
+        true, 1, false
+    ));
 }
 
 #[test]

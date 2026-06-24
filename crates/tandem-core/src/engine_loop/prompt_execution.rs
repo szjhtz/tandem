@@ -194,6 +194,7 @@ impl EngineLoop {
             let mut followup_context: Option<String> = None;
             let mut last_tool_outputs: Vec<String> = Vec::new();
             let mut tool_call_counts: HashMap<String, usize> = HashMap::new();
+            let mut productive_tool_call_counts: HashMap<String, usize> = HashMap::new();
             let mut readonly_tool_cache: HashMap<String, String> = HashMap::new();
             let mut readonly_signature_counts: HashMap<String, usize> = HashMap::new();
             let mut mutable_signature_counts: HashMap<String, usize> = HashMap::new();
@@ -205,6 +206,7 @@ impl EngineLoop {
             let mut auto_workspace_probe_attempted = false;
             let mut productive_tool_calls_total = 0usize;
             let mut productive_write_tool_calls_total = 0usize;
+            let mut productive_artifact_write_tool_calls_total = 0usize;
             let mut productive_workspace_inspection_total = 0usize;
             let mut productive_web_research_total = 0usize;
             let mut productive_concrete_read_total = 0usize;
@@ -223,6 +225,7 @@ impl EngineLoop {
             let email_delivery_requested = requires_email_delivery_prompt(&text);
             let web_research_requested = requires_web_research_prompt(&text);
             let code_workflow_requested = infer_code_workflow_from_text(&text);
+            let required_artifact_target_path = infer_required_output_target_path_from_text(&text);
             let structured_handoff_final_response_requested =
                 requires_structured_handoff_final_response_prompt(&text);
             let mut email_action_executed = false;
@@ -508,7 +511,7 @@ impl EngineLoop {
                     );
                 let pending_required_mcp_tools = unattempted_required_mcp_tools(
                     &required_mcp_tools_before_write,
-                    &tool_call_counts,
+                    &productive_tool_call_counts,
                 );
                 let required_mcp_tool_pending =
                     !mcp_gate_blocked_by_prewrite_repair && !pending_required_mcp_tools.is_empty();
@@ -524,7 +527,7 @@ impl EngineLoop {
                     && required_mcp_source_available
                     && !has_attempted_concrete_mcp_for_wildcard(
                         &required_mcp_source_wildcards_before_write,
-                        &tool_call_counts,
+                        &productive_tool_call_counts,
                     );
                 if prewrite_gate_write || required_mcp_source_pending {
                     tool_schemas.retain(|schema| !is_workspace_write_tool(&schema.name));
@@ -1348,7 +1351,7 @@ impl EngineLoop {
             if completion.trim().is_empty()
                 && !last_tool_outputs.is_empty()
                 && requested_write_required
-                && productive_write_tool_calls_total > 0
+                && productive_artifact_write_tool_calls_total > 0
             {
                 let final_prewrite_satisfied = evaluate_prewrite_gate(
                     requested_write_required,
