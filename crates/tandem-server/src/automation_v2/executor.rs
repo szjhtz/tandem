@@ -380,6 +380,25 @@ fn automation_node_execution_error_max_attempts(
         .unwrap_or(configured)
 }
 
+fn automation_node_max_attempts_for_recorded_output(
+    node: &crate::automation_v2::types::AutomationFlowNode,
+    output: Option<&Value>,
+) -> u32 {
+    let Some(output) = output else {
+        return crate::app::state::automation_node_max_attempts(node);
+    };
+    let detail = output
+        .get("blocked_reason")
+        .or_else(|| output.get("summary"))
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let blocker_category = output
+        .get("blocker_category")
+        .and_then(Value::as_str)
+        .unwrap_or_else(|| execution_error_blocker_category(detail));
+    automation_node_execution_error_max_attempts(node, detail, blocker_category)
+}
+
 fn transient_provider_retry_backoff_ms(detail: &str, attempts: u32) -> Option<u64> {
     match execution_error_blocker_category(detail) {
         "provider_connect_timeout" | "provider_server_error" => Some(match attempts {
@@ -1062,7 +1081,8 @@ fn derive_terminal_run_state(
             .get(&node.node_id)
             .copied()
             .unwrap_or(0);
-        let max_attempts = crate::app::state::automation_node_max_attempts(node);
+        let output = run.checkpoint.node_outputs.get(&node.node_id);
+        let max_attempts = automation_node_max_attempts_for_recorded_output(node, output);
         if pending_nodes.contains(&node.node_id) && attempts >= max_attempts {
             // Don't flag a node as failed if its latest attempt is still
             // mid-execution. The attempt counter bumps on node_started; until
@@ -1115,7 +1135,7 @@ fn derive_terminal_run_state(
                         .get(node_id)
                         .copied()
                         .unwrap_or(0)
-                        < crate::app::state::automation_node_max_attempts(node)
+                        < automation_node_max_attempts_for_recorded_output(node, Some(output))
             });
         if retryable_pending_output
             && (status == "verify_failed" || failure_kind == "verification_failed")

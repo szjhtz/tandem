@@ -1305,6 +1305,27 @@ fn derive_terminal_run_state_fails_pending_verify_failed_at_attempt_cap() {
 }
 
 #[test]
+fn derive_terminal_run_state_respects_execution_error_retry_floor() {
+    let mut automation = test_automation();
+    automation.flow.nodes[0].retry_policy = Some(json!({ "max_attempts": 2 }));
+    let mut run = test_run_with_output(json!({
+        "status": "needs_repair",
+        "failure_kind": "execution_failed",
+        "blocker_category": "execution_error",
+        "blocked_reason": "required output `.tandem/runs/run-1/artifacts/notion-agent-tool-security.json` was not created for node `research-brief`",
+    }));
+    run.checkpoint.pending_nodes = vec!["research-brief".to_string()];
+    run.checkpoint
+        .node_attempts
+        .insert("research-brief".to_string(), 2);
+
+    assert_eq!(
+        derive_terminal_run_state(&automation, &run, false),
+        DerivedTerminalRunState::Completed
+    );
+}
+
+#[test]
 fn derive_terminal_run_state_fails_pending_repairable_nodes_at_attempt_cap() {
     let automation = test_automation();
     let mut run = test_run_with_output(json!({
