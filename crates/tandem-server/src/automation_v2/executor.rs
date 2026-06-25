@@ -322,7 +322,14 @@ fn promote_materialized_output(
 
 fn execution_error_blocker_category(detail: &str) -> &'static str {
     let lowered = detail.trim().to_ascii_lowercase();
-    if lowered.contains("connect timeout") || lowered.contains("timed out") {
+    if lowered.contains("failed to reach provider")
+        || lowered.contains("error sending request")
+        || lowered.contains("request error")
+        || lowered.contains("connect timeout")
+        || lowered.contains("connection refused")
+        || lowered.contains("dns error")
+        || lowered.contains("timed out")
+    {
         "provider_connect_timeout"
     } else if lowered.contains("provider returned error")
         || lowered.contains("provider stream chunk error")
@@ -346,6 +353,31 @@ fn normalize_execution_error_detail(detail: &str) -> String {
         return "provider returned error before any node response was recorded".to_string();
     }
     trimmed.to_string()
+}
+
+fn execution_error_retry_floor(detail: &str, blocker_category: &str) -> Option<u32> {
+    if matches!(
+        blocker_category,
+        "provider_connect_timeout" | "provider_server_error"
+    ) {
+        return Some(3);
+    }
+    let lowered = detail.trim().to_ascii_lowercase();
+    if lowered.contains("required output") && lowered.contains("was not created") {
+        return Some(3);
+    }
+    None
+}
+
+fn automation_node_execution_error_max_attempts(
+    node: &crate::automation_v2::types::AutomationFlowNode,
+    detail: &str,
+    blocker_category: &str,
+) -> u32 {
+    let configured = crate::app::state::automation_node_max_attempts(node);
+    execution_error_retry_floor(detail, blocker_category)
+        .map(|floor| configured.max(floor))
+        .unwrap_or(configured)
 }
 
 fn transient_provider_retry_backoff_ms(detail: &str, attempts: u32) -> Option<u64> {
@@ -2206,7 +2238,12 @@ pub async fn run_automation_v2_run(
                         &crate::app::state::truncate_text(&error.to_string(), 500),
                     );
                     let attempts = latest_attempts.get(&node_id).copied().unwrap_or(1);
-                    let max_attempts = crate::app::state::automation_node_max_attempts(&node);
+                    let blocker_category = execution_error_blocker_category(&detail);
+                    let max_attempts = automation_node_execution_error_max_attempts(
+                        &node,
+                        &detail,
+                        blocker_category,
+                    );
                     let terminal = attempts >= max_attempts;
 
                     let artifact_recovered = if let Some(output_path) =
@@ -2265,9 +2302,12 @@ pub async fn run_automation_v2_run(
                         false
                     };
 
-                    let mut failure_output =
-                        build_node_execution_error_output(&node, &detail, terminal);
-                    let blocker_category = execution_error_blocker_category(&detail);
+                    let mut failure_output = build_node_execution_error_output_with_category(
+                        &node,
+                        &detail,
+                        terminal,
+                        blocker_category,
+                    );
                     let failure_class = match blocker_category {
                         "provider_connect_timeout" | "provider_server_error" => {
                             "provider_transient"

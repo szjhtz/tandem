@@ -38,6 +38,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Fixed Automation V2 execution-error retries so transient provider request
+  failures and missing required-output artifacts get a minimum repair budget
+  before terminal failure, preventing low-retry workflow nodes from failing
+  branches after one flaky provider or write attempt.
 - Fixed MCP-enabled Automation V2 workflows that lost node execution
   configuration after editing, which could leave connector runs blocked before
   any useful work executed.

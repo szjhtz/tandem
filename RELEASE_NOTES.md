@@ -12,6 +12,11 @@ publishing behavior.
 
 ### Automation V2 MCP Workflows
 
+- Automation V2 execution errors now classify provider request failures as
+  transient and give provider/write-related artifact misses a minimum retry
+  budget before terminal failure. This prevents low-retry Reddit/Notion workflow
+  branches from failing immediately on flaky provider calls or missing artifact
+  writes.
 - Workflow edits now preserve the full Automation V2 agents and flow payload
   when saving from the summary editor, so MCP-enabled workflows do not lose node
   execution configuration after operators change model routing, swarm settings,

@@ -1678,6 +1678,40 @@ fn tool_resolution_execution_error_output_uses_dedicated_blocker_category() {
 }
 
 #[test]
+fn provider_request_error_is_transient_with_retry_floor() {
+    let detail = "failed to reach provider `openai-codex` at https://chatgpt.com/backend-api/codex (request error): error sending request for url (https://chatgpt.com/backend-api/codex/responses)";
+    assert_eq!(
+        execution_error_blocker_category(detail),
+        "provider_connect_timeout"
+    );
+    assert_eq!(transient_provider_retry_backoff_ms(detail, 1), Some(2_000));
+
+    let mut node = test_node("filter", Vec::new());
+    node.retry_policy = Some(json!({ "max_attempts": 1 }));
+    let category = execution_error_blocker_category(detail);
+
+    assert_eq!(
+        automation_node_execution_error_max_attempts(&node, detail, category),
+        3
+    );
+}
+
+#[test]
+fn missing_required_output_execution_error_gets_repair_retry_floor() {
+    let detail = "required output `.tandem/runs/run-1/artifacts/notion-agent-tool-security.json` was not created for node `notion_agent_tool_security`";
+    assert_eq!(execution_error_blocker_category(detail), "execution_error");
+
+    let mut node = test_node("notion_agent_tool_security", Vec::new());
+    node.retry_policy = Some(json!({ "max_attempts": 2 }));
+    let category = execution_error_blocker_category(detail);
+
+    assert_eq!(
+        automation_node_execution_error_max_attempts(&node, detail, category),
+        3
+    );
+}
+
+#[test]
 fn terminal_execution_error_output_marks_node_failed() {
     let node = &test_automation().flow.nodes[0];
     let output = build_node_execution_error_output(
