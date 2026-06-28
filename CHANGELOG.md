@@ -20,6 +20,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   automation` modal with callback URL copy, one-time secret reveal on
   create/rotate, trigger status badges, and sanitized recent delivery rows that
   link to queued Automation V2 runs.
+- Added a public Automation V2 webhook intake route with a dedicated auth bypass
+  for signed trigger calls, sanitized rejection delivery records, and
+  tenant-scoped validation before any run is queued.
+- Added webhook-triggered Automation V2 run queueing with delivery provenance,
+  duplicate suppression, untrusted sanitized event previews, trigger data-class
+  and risk defaults, and `automation.v2.run.created` events using
+  `triggerType: "webhook"`.
 - Added a Studio-inspired workflow flow map to the `Edit workflow automation`
   modal so generated automations can be inspected by dependency stage while
   operators edit them.
@@ -36,6 +43,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   automation is opened for editing.
 - Opened the prompt editor by default in the workflow automation edit modal so
   generic workflow prompts are immediately reachable from the visual map.
+
+### Fixed
+
+- Persisted Automation V2 webhook delivery idempotency markers before queueing
+  runs so provider retries cannot create duplicate runs if delivery linking
+  fails after run creation.
 
 ## [0.6.3] - 2026-06-26
 
