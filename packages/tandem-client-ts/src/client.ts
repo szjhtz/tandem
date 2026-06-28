@@ -136,6 +136,14 @@ import type {
   AgentStandupComposeResponse,
   AutomationV2Spec,
   AutomationV2RunRecord,
+  AutomationWebhookDeleteResponse,
+  AutomationWebhookDeliveryListResponse,
+  AutomationWebhookDeliveryResponse,
+  AutomationWebhookTriggerCreateInput,
+  AutomationWebhookTriggerListResponse,
+  AutomationWebhookTriggerResponse,
+  AutomationWebhookTriggerSecretResponse,
+  AutomationWebhookTriggerUpdateInput,
   WorkflowPlan,
   WorkflowPlanConversation,
   WorkflowPlanPreviewResponse,
@@ -215,6 +223,39 @@ const parseRunId = (payload: JsonObject): string => {
     }
   }
   throw new Error("Run ID missing in engine response");
+};
+
+const hasOwn = (value: object, key: string): boolean =>
+  Object.prototype.hasOwnProperty.call(value, key);
+
+type PayloadAlias = readonly [snakeCase: string, camelCase: string];
+
+const webhookTriggerCreateAliases = [
+  ["provider_event_kind", "providerEventKind"],
+  ["owning_org_unit_id", "owningOrgUnitId"],
+  ["resource_scope", "resourceScope"],
+  ["default_data_class", "defaultDataClass"],
+  ["default_risk_tier", "defaultRiskTier"],
+] as const satisfies readonly PayloadAlias[];
+
+const webhookTriggerUpdateAliases = [
+  ["provider_event_kind", "providerEventKind"],
+  ["default_data_class", "defaultDataClass"],
+  ["default_risk_tier", "defaultRiskTier"],
+] as const satisfies readonly PayloadAlias[];
+
+const normalizeWebhookTriggerPayload = (
+  input: AutomationWebhookTriggerCreateInput | AutomationWebhookTriggerUpdateInput,
+  aliases: readonly PayloadAlias[]
+): Record<string, unknown> => {
+  const payload: Record<string, unknown> = { ...(input as Record<string, unknown>) };
+  for (const [snakeCase, camelCase] of aliases) {
+    if (payload[snakeCase] === undefined && hasOwn(payload, camelCase)) {
+      payload[snakeCase] = payload[camelCase];
+    }
+    delete payload[camelCase];
+  }
+  return payload;
 };
 
 type RequestInitWithTimeout = RequestInit & {
@@ -3359,6 +3400,102 @@ class AutomationsV2 {
   async getRun(runId: string): Promise<{ run: AutomationV2RunRecord }> {
     return this.req<{ run: AutomationV2RunRecord }>(
       `/automations/v2/runs/${encodeURIComponent(runId)}`
+    );
+  }
+
+  async listWebhookTriggers(id: string): Promise<AutomationWebhookTriggerListResponse> {
+    return this.req<AutomationWebhookTriggerListResponse>(
+      `/automations/v2/${encodeURIComponent(id)}/webhook-triggers`
+    );
+  }
+
+  async createWebhookTrigger(
+    id: string,
+    input: AutomationWebhookTriggerCreateInput
+  ): Promise<AutomationWebhookTriggerSecretResponse> {
+    return this.req<AutomationWebhookTriggerSecretResponse>(
+      `/automations/v2/${encodeURIComponent(id)}/webhook-triggers`,
+      {
+        method: "POST",
+        body: JSON.stringify(
+          normalizeWebhookTriggerPayload(input, webhookTriggerCreateAliases)
+        ),
+      }
+    );
+  }
+
+  async getWebhookTrigger(
+    id: string,
+    triggerId: string
+  ): Promise<AutomationWebhookTriggerResponse> {
+    return this.req<AutomationWebhookTriggerResponse>(
+      `/automations/v2/${encodeURIComponent(id)}/webhook-triggers/${encodeURIComponent(triggerId)}`
+    );
+  }
+
+  async updateWebhookTrigger(
+    id: string,
+    triggerId: string,
+    input: AutomationWebhookTriggerUpdateInput
+  ): Promise<AutomationWebhookTriggerResponse> {
+    return this.req<AutomationWebhookTriggerResponse>(
+      `/automations/v2/${encodeURIComponent(id)}/webhook-triggers/${encodeURIComponent(triggerId)}`,
+      {
+        method: "PATCH",
+        body: JSON.stringify(
+          normalizeWebhookTriggerPayload(input, webhookTriggerUpdateAliases)
+        ),
+      }
+    );
+  }
+
+  async disableWebhookTrigger(
+    id: string,
+    triggerId: string
+  ): Promise<AutomationWebhookTriggerResponse & { ok?: boolean }> {
+    return this.req<AutomationWebhookTriggerResponse & { ok?: boolean }>(
+      `/automations/v2/${encodeURIComponent(id)}/webhook-triggers/${encodeURIComponent(triggerId)}/disable`,
+      { method: "POST", body: JSON.stringify({}) }
+    );
+  }
+
+  async deleteWebhookTrigger(
+    id: string,
+    triggerId: string
+  ): Promise<AutomationWebhookDeleteResponse> {
+    return this.req<AutomationWebhookDeleteResponse>(
+      `/automations/v2/${encodeURIComponent(id)}/webhook-triggers/${encodeURIComponent(triggerId)}`,
+      { method: "DELETE" }
+    );
+  }
+
+  async rotateWebhookSecret(
+    id: string,
+    triggerId: string
+  ): Promise<AutomationWebhookTriggerSecretResponse> {
+    return this.req<AutomationWebhookTriggerSecretResponse>(
+      `/automations/v2/${encodeURIComponent(id)}/webhook-triggers/${encodeURIComponent(triggerId)}/rotate-secret`,
+      { method: "POST", body: JSON.stringify({}) }
+    );
+  }
+
+  async listWebhookDeliveries(
+    id: string,
+    triggerId: string,
+    limit = 50
+  ): Promise<AutomationWebhookDeliveryListResponse> {
+    return this.req<AutomationWebhookDeliveryListResponse>(
+      `/automations/v2/${encodeURIComponent(id)}/webhook-triggers/${encodeURIComponent(triggerId)}/deliveries?limit=${limit}`
+    );
+  }
+
+  async getWebhookDelivery(
+    id: string,
+    triggerId: string,
+    deliveryId: string
+  ): Promise<AutomationWebhookDeliveryResponse> {
+    return this.req<AutomationWebhookDeliveryResponse>(
+      `/automations/v2/${encodeURIComponent(id)}/webhook-triggers/${encodeURIComponent(triggerId)}/deliveries/${encodeURIComponent(deliveryId)}`
     );
   }
 
