@@ -9,7 +9,6 @@
     <a href="https://www.npmjs.com/package/@frumu/tandem-client"><img src="https://img.shields.io/npm/v/%40frumu%2Ftandem-client?label=npm%20client&style=for-the-badge" alt="npm client"></a>
     <a href="https://pypi.org/project/tandem-client/"><img src="https://img.shields.io/pypi/v/tandem-client?label=PyPI%20client&style=for-the-badge" alt="PyPI client"></a>
     <a href="docs/LICENSING.md"><img src="https://img.shields.io/badge/License-Mixed%3A%20MIT%2FApache--2.0%20%2B%20BUSL--1.1-blue.svg?style=for-the-badge" alt="License: Mixed MIT/Apache-2.0 + BUSL-1.1"></a>
-    <a href="https://github.com/sponsors/frumu-ai"><img src="https://img.shields.io/badge/sponsor-30363D?logo=GitHub-Sponsors&logoColor=%23EA4AAA&style=for-the-badge" alt="Sponsor"></a>
   </p>
 </div>
 
@@ -549,12 +548,6 @@ tandem/
 ├── scripts/                # Build scripts
 └── docs/                   # Documentation
 ```
-
-## Support this project
-
-If Tandem saves you time, consider [sponsoring development](https://github.com/sponsors/frumu-ai).
-
-[❤️ Become a Sponsor](https://github.com/sponsors/frumu-ai)
 
 ## Star history
 
