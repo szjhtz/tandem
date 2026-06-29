@@ -3,9 +3,11 @@ import test from "node:test";
 import {
   appendRunTimelineLiveEvent,
   buildRunTimeline,
+  legacyRunTimelineRequestPath,
   nextRunTimelineAfterSeq,
   normalizeRunTimelineEntry,
   normalizeRunTimelinePage,
+  runTimelinePageEventCount,
   runTimelineRequestPath,
 } from "../lib/runs/run-timeline.js";
 
@@ -69,12 +71,22 @@ test("run timeline orders persisted pages and exposes the next sequence cursor",
   assert.equal(nextRunTimelineAfterSeq(entries), 7);
   assert.equal(
     runTimelineRequestPath("run/a", { afterSeq: 7, limit: 50 }),
-    "/api/engine/runs/run%2Fa/events?after_seq=7&limit=50"
+    "/api/engine/stateful-runtime/runs/run%2Fa/events?after_seq=7&limit=50"
   );
   assert.equal(
     runTimelineRequestPath("run/a", { beforeSeq: 3, limit: 50, tail: true }),
+    "/api/engine/stateful-runtime/runs/run%2Fa/events?before_seq=3&limit=50&tail=50"
+  );
+  assert.equal(
+    legacyRunTimelineRequestPath("run/a", { beforeSeq: 3, limit: 50, tail: true }),
     "/api/engine/runs/run%2Fa/events?before_seq=3&limit=50&tail=50"
   );
+  assert.equal(
+    runTimelineRequestPath("run/a", { tail: 25 }),
+    "/api/engine/stateful-runtime/runs/run%2Fa/events?limit=250&tail=25"
+  );
+  assert.equal(runTimelinePageEventCount({ events: [] }), 0);
+  assert.equal(runTimelinePageEventCount({ rows: [{ seq: 1 }] }), 1);
 });
 
 test("run timeline dedupes live and persisted copies by canonical event id", () => {
