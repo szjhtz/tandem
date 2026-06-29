@@ -214,15 +214,18 @@ fn idempotency_outcome_for_webhook_delivery(
             .duplicate_of_run_id
             .as_ref()
             .or(delivery.queued_run_id.as_ref())
+            .or(delivery.woken_run_id.as_ref())
             .map(|_| "run".to_string()),
         secondary_ref_id: delivery
             .duplicate_of_run_id
             .clone()
-            .or_else(|| delivery.queued_run_id.clone()),
+            .or_else(|| delivery.queued_run_id.clone())
+            .or_else(|| delivery.woken_run_id.clone()),
         details: json!({
             "delivery_id": delivery.delivery_id,
             "dedupe_result": delivery.dedupe_result,
             "dedupe_reason_code": delivery.dedupe_reason_code,
+            "woken_wait_id": delivery.woken_wait_id,
         }),
     }
 }

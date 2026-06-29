@@ -139,6 +139,10 @@ async fn automation_webhook_intake(
             update_raw_event_from_delivery(&state, &raw_event_tenant, &raw_event, &delivery).await;
             webhook_public_response(StatusCode::ACCEPTED, "accepted")
         }
+        Ok(AutomationWebhookQueueResult::Woken { delivery, .. }) => {
+            update_raw_event_from_delivery(&state, &raw_event_tenant, &raw_event, &delivery).await;
+            webhook_public_response(StatusCode::ACCEPTED, "accepted")
+        }
         Ok(AutomationWebhookQueueResult::Rejected { delivery, .. }) => {
             update_raw_event_from_delivery(&state, &raw_event_tenant, &raw_event, &delivery).await;
             webhook_public_response(StatusCode::CONFLICT, "rejected")

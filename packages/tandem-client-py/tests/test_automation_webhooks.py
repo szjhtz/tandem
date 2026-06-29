@@ -87,6 +87,8 @@ async def test_automation_v2_webhook_trigger_management_routes() -> None:
                         "verification_provider": "github",
                         "verification_reason_code": "verified",
                         "queued_run_id": "run-1",
+                        "woken_run_id": "run-woken-1",
+                        "woken_wait_id": "wait-1",
                         "sanitized_preview": {"action": "opened"},
                     }
                 ],
@@ -115,6 +117,8 @@ async def test_automation_v2_webhook_trigger_management_routes() -> None:
                     "verificationProvider": "github",
                     "verificationReasonCode": "verified",
                     "queuedRunID": "run-1",
+                    "wokenRunID": "run-woken-1",
+                    "wokenWaitID": "wait-1",
                     "sanitizedPreview": {"action": "opened"},
                 }
             },
@@ -191,10 +195,14 @@ async def test_automation_v2_webhook_trigger_management_routes() -> None:
     assert deliveries.deliveries[0].verification_scheme == "hmac_sha256_v1"
     assert deliveries.deliveries[0].verification_provider == "github"
     assert deliveries.deliveries[0].verification_reason_code == "verified"
+    assert deliveries.deliveries[0].woken_run_id == "run-woken-1"
+    assert deliveries.deliveries[0].woken_wait_id == "wait-1"
     assert delivery.delivery.delivery_id == "delivery-1"
     assert delivery.delivery.idempotency_record_id == "idem-record-1"
     assert delivery.delivery.dedupe_result == "accepted"
     assert delivery.delivery.queued_run_id == "run-1"
+    assert delivery.delivery.woken_run_id == "run-woken-1"
+    assert delivery.delivery.woken_wait_id == "wait-1"
     assert delivery.delivery.verification_reason_code == "verified"
     assert deleted.ok is True
     assert deleted.trigger_id == "trigger-1"
