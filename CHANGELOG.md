@@ -14,6 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added stateful runtime definition identity helpers so snapshot-backed
   automation runs expose durable workflow definition versions and `sha256:`
   snapshot hashes for future replay and resume checks.
+- Added persisted Automation V2 execution claim metadata with claim ids,
+  claimant ids, lease expiry, and claim epochs so resumed runs can distinguish
+  the active executor from abandoned launch claims.
 - Added tenant-scoped idempotency key persistence for long-running automation
   operations, keyed by org/workspace/deployment plus operation and request
   fingerprint so retries, duplicate deliveries, and conflicts survive restarts.
@@ -41,6 +44,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Running Automation V2 runs interrupted by a server restart are now queued for
   resume when their persisted checkpoint can be safely rehydrated; in-progress
   nodes receive repair markers, while corrupt records still fail closed.
+- Automation V2 supervisors now reclaim expired execution claims that have no
+  active session or agent handles, requeueing those runs for a single safe
+  claimant instead of leaving them stuck as `Running`.
 - Automation V2 webhook queueing now reserves idempotency records before
   creating runs, treats same provider event IDs with different payloads as
   conflicts, and treats same body digests as duplicates without crossing tenant
