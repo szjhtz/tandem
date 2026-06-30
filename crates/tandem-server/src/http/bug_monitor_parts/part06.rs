@@ -758,7 +758,10 @@ pub(super) async fn patch_bug_monitor_config(
             .into_response();
     };
     match state.put_bug_monitor_config(config).await {
-        Ok(saved) => Json(json!({ "bug_monitor": saved })).into_response(),
+        Ok(saved) => {
+            emit_bug_monitor_config_audit(&state, &saved).await;
+            Json(json!({ "bug_monitor": saved })).into_response()
+        }
         Err(error) => (
             StatusCode::BAD_REQUEST,
             Json(json!({
@@ -1564,6 +1567,7 @@ pub(super) async fn create_bug_monitor_intake_key(
     };
     match state.put_bug_monitor_intake_key(key.clone()).await {
         Ok(mut key) => {
+            emit_bug_monitor_intake_key_audit(&state, "bug_monitor.intake_key.created", &key).await;
             key.key_hash = "[redacted]".to_string();
             Json(json!({ "key": key, "raw_key": raw_key })).into_response()
         }
@@ -1596,6 +1600,8 @@ pub(super) async fn disable_bug_monitor_intake_key(
     key.enabled = false;
     match state.put_bug_monitor_intake_key(key.clone()).await {
         Ok(mut key) => {
+            emit_bug_monitor_intake_key_audit(&state, "bug_monitor.intake_key.disabled", &key)
+                .await;
             key.key_hash = "[redacted]".to_string();
             Json(json!({ "key": key })).into_response()
         }
