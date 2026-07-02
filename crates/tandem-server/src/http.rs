@@ -138,6 +138,7 @@ mod stateful_runtime_reliability;
 mod system_api;
 mod task_intake;
 mod telegram_interactions;
+mod tenant_rate_limit;
 pub(crate) mod workflow_planner;
 mod workflow_planner_connector_writers;
 mod workflow_planner_host;
@@ -598,13 +599,13 @@ pub async fn serve_with_route_extensions(
             approval_outbound_cancel_for_shutdown.store(true, Ordering::Relaxed);
             shutdown_state.set_automation_scheduler_stopping(true);
             tokio::time::sleep(Duration::from_secs(shutdown_timeout_secs)).await;
-            let failed = shutdown_state
-                .fail_running_automation_runs_for_shutdown()
+            let interrupted = shutdown_state
+                .interrupt_running_automation_runs_for_shutdown()
                 .await;
-            if failed > 0 {
-                tracing::warn!(
-                    failed_runs = failed,
-                    "automation runs marked failed during scheduler shutdown"
+            if interrupted > 0 {
+                tracing::info!(
+                    interrupted_runs = interrupted,
+                    "automation runs interrupted by shutdown; kept resumable for restart"
                 );
             }
         })
