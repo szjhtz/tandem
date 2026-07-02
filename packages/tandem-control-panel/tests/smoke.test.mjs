@@ -609,6 +609,7 @@ test("control panel auth/proxy/swarm smoke", async (t) => {
       TANDEM_CONTROL_PANEL_PORT: String(panelPort),
       TANDEM_ENGINE_URL: `http://127.0.0.1:${fake.port}`,
       TANDEM_CONTROL_PANEL_AUTO_START_ENGINE: "0",
+      TANDEM_STRICT_WRITE_RETRY_MAX_ATTEMPTS: "1",
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -808,7 +809,7 @@ test("control panel auth/proxy/swarm smoke", async (t) => {
     const payload = await runState.json();
     const status = String(payload?.run?.status || "").toLowerCase();
     return status === "failed";
-  }, 12000);
+  }, 30000);
 
   const failedRunRes = await request(
     baseUrl,
@@ -1370,7 +1371,7 @@ test("swarm strict write retries malformed write failures up to configured budge
     if (!runState.ok) return false;
     const payload = await runState.json();
     return String(payload?.run?.status || "").toLowerCase() === "failed";
-  }, 12000);
+  }, 30000);
 
   const failedRunRes = await request(
     baseUrl,

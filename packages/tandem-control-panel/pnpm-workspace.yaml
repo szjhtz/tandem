@@ -1,3 +1,7 @@
+packages:
+  - .
+  - ../tandem-client-ts
+
 allowBuilds:
   '@frumu/tandem': true
 minimumReleaseAgeExclude:
