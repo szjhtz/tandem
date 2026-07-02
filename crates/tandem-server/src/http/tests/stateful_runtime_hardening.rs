@@ -17,6 +17,9 @@ use crate::stateful_runtime::{
     StatefulWorkflowPhase, StatefulWorkflowRunStatus, STATEFUL_RUNTIME_SCHEMA_VERSION,
 };
 use serde_json::{json, Value};
+use tandem_enterprise_contract::{
+    AccessPermission, OrganizationUnit, OrganizationUnitAccessGrant, OrganizationUnitKind,
+};
 use tandem_types::{
     DataClass, PolicyDecisionEffect, PolicyDecisionRecord, PrincipalKind, PrincipalRef,
     ResourceKind, ResourceRef, ResourceScope, TenantContext, ToolRiskTier,
@@ -246,6 +249,14 @@ async fn stateful_runtime_enterprise_scope_filters_are_tenant_scoped() {
     let state = test_state().await;
     let tenant_a = tenant("org-enterprise-a", "workspace-a", "operator-a");
     let tenant_b = tenant("org-enterprise-b", "workspace-b", "operator-b");
+    seed_runtime_delegation_grant(
+        &state,
+        &tenant_a,
+        "finance",
+        "repo-finance",
+        "grant-finance",
+    )
+    .await;
     insert_workflow_run(
         &state,
         workflow_run(
@@ -329,6 +340,91 @@ async fn stateful_runtime_enterprise_scope_filters_are_tenant_scoped() {
     assert_eq!(
         detail["enterprise_scope"]["delegation_grant_ids"],
         json!(["grant-finance"])
+    );
+}
+
+#[tokio::test]
+async fn stateful_runtime_delegation_filter_requires_stored_grant_id() {
+    let state = test_state().await;
+    let tenant_a = tenant("org-enterprise-a", "workspace-a", "operator-a");
+    seed_runtime_delegation_grant(
+        &state,
+        &tenant_a,
+        "finance",
+        "repo-finance",
+        "grant-finance",
+    )
+    .await;
+    let mut scope = enterprise_scope(
+        "org-enterprise-a",
+        "workspace-a",
+        "finance",
+        "repo-finance",
+        "grant-finance",
+    );
+    scope
+        .as_object_mut()
+        .expect("enterprise scope object")
+        .insert("delegation_grant_ids".to_string(), json!([]));
+    insert_workflow_run(
+        &state,
+        workflow_run("run-without-grant", tenant_a.clone(), scope),
+    )
+    .await;
+
+    let payload = get_json(
+        state,
+        "/stateful-runtime/runs?delegation_grant_id=grant-finance",
+        &tenant_a,
+    )
+    .await;
+    assert_eq!(payload["count"], json!(0));
+}
+
+#[tokio::test]
+async fn stateful_runtime_grant_only_scope_resolves_active_authority() {
+    let state = test_state().await;
+    let tenant_a = tenant("org-enterprise-a", "workspace-a", "operator-a");
+    seed_runtime_delegation_grant(
+        &state,
+        &tenant_a,
+        "finance",
+        "repo-finance",
+        "grant-finance",
+    )
+    .await;
+    let mut scope = enterprise_scope(
+        "org-enterprise-a",
+        "workspace-a",
+        "finance",
+        "repo-finance",
+        "grant-finance",
+    );
+    scope
+        .as_object_mut()
+        .expect("enterprise scope object")
+        .remove("owning_org_unit_id");
+    insert_workflow_run(
+        &state,
+        workflow_run("run-grant-only", tenant_a.clone(), scope),
+    )
+    .await;
+
+    let payload = get_json(
+        state,
+        "/stateful-runtime/runs?delegation_grant_id=grant-finance&resource_kind=repository&resource_id=repo-finance",
+        &tenant_a,
+    )
+    .await;
+    assert_eq!(payload["count"], json!(1));
+    assert_eq!(payload["runs"][0]["run"]["run_id"], json!("run-grant-only"));
+    assert_eq!(
+        payload["runs"][0]["enterprise_scope"]["delegation_grant_authority"]["status"],
+        json!("active")
+    );
+    assert_eq!(
+        payload["runs"][0]["enterprise_scope"]["delegation_grant_authority"]["missing_grant_ids"],
+        json!([])
     );
 }
 
@@ -853,6 +949,51 @@ fn enterprise_scope(
         "policy_version_id": format!("policy-{org_unit_id}"),
         "delegation_grant_ids": [delegation_grant_id],
     })
+}
+
+async fn seed_runtime_delegation_grant(
+    state: &AppState,
+    tenant: &TenantContext,
+    org_unit_id: &str,
+    resource_id: &str,
+    grant_id: &str,
+) {
+    let org_unit = OrganizationUnit::active(
+        org_unit_id,
+        tenant.clone(),
+        format!("{org_unit_id} Ops"),
+        OrganizationUnitKind::Department,
+        PrincipalRef::human_user(tenant.actor_id.as_deref().unwrap_or("operator")),
+        1,
+    );
+    let resource = ResourceRef::new(
+        tenant.org_id.clone(),
+        tenant.workspace_id.clone(),
+        ResourceKind::Repository,
+        resource_id,
+    );
+    let grant = OrganizationUnitAccessGrant::active(
+        grant_id,
+        tenant.clone(),
+        org_unit.principal_ref(),
+        resource,
+        1,
+    )
+    .with_permissions(vec![AccessPermission::Read])
+    .with_data_classes(vec![DataClass::FinancialRecord]);
+
+    state
+        .enterprise
+        .org_units
+        .write()
+        .await
+        .insert(org_unit_id.to_string(), org_unit);
+    state
+        .enterprise
+        .org_unit_access_grants
+        .write()
+        .await
+        .insert(grant_id.to_string(), grant);
 }
 
 async fn insert_workflow_run(state: &AppState, run: WorkflowRunRecord) {

@@ -909,6 +909,9 @@ impl AppState {
         migrate_bundled_studio_research_split_automation(&mut automation);
         canonicalize_automation_output_paths(&mut automation);
         repair_automation_output_contracts(&mut automation);
+        automation.stamp_enterprise_scope_metadata();
+        self.validate_automation_enterprise_delegation_grants(&automation)
+            .await?;
         let _guard = self.automations_v2_persistence.lock().await;
         self.automations_v2
             .write()

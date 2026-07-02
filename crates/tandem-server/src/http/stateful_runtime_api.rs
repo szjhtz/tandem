@@ -8,7 +8,8 @@ use crate::stateful_runtime::{
 };
 use tandem_enterprise_contract::{canonical_enterprise_scope_id, enterprise_scope_ids_match};
 use tandem_types::{
-    OrganizationUnit, OrganizationUnitAccessGrant, ResourceRef, ResourceScope, SourceBinding,
+    AccessEffect, OrganizationUnit, OrganizationUnitAccessGrant, ResourceRef, ResourceScope,
+    SourceBinding,
 };
 
 const DEFAULT_STATEFUL_RUNTIME_LIMIT: usize = 250;
@@ -432,6 +433,14 @@ fn stateful_enterprise_scope_summary(
         .into_iter()
         .map(org_unit_grant_summary)
         .collect::<Vec<_>>();
+    let missing_delegation_grant_ids = missing_delegation_grant_ids(catalog, scope);
+    let delegation_grant_authority_status = if scope.delegation_grant_ids.is_empty() {
+        "not_required"
+    } else if missing_delegation_grant_ids.is_empty() {
+        "active"
+    } else {
+        "invalid"
+    };
     let visible_sources = source_bindings_for_scope(catalog, scope)
         .into_iter()
         .take(MAX_SCOPE_SOURCE_BINDINGS)
@@ -452,6 +461,10 @@ fn stateful_enterprise_scope_summary(
         "risk_tier": &scope.risk_tier,
         "policy_version_id": &scope.policy_version_id,
         "delegation_grant_ids": &scope.delegation_grant_ids,
+        "delegation_grant_authority": {
+            "status": delegation_grant_authority_status,
+            "missing_grant_ids": missing_delegation_grant_ids,
+        },
         "org_unit_grants": org_unit_grants,
         "visible_knowledge_sources": visible_sources,
         "summary": {
@@ -497,17 +510,23 @@ fn active_org_unit_grants_for_scope<'a>(
     catalog: &'a EnterpriseScopeCatalog,
     scope: &crate::stateful_runtime::StatefulRuntimeScope,
 ) -> Vec<&'a OrganizationUnitAccessGrant> {
-    let Some(org_unit_id) = scope.owning_org_unit_id.as_deref() else {
+    if scope.owning_org_unit_id.is_none() && scope.delegation_grant_ids.is_empty() {
         return Vec::new();
-    };
+    }
     let now = crate::util::time::now_ms();
     let mut grants = catalog
         .org_unit_access_grants
         .iter()
         .filter(|grant| {
             tenant_matches(&grant.tenant_context, &scope.tenant_context)
-                && principal_matches_org_unit_id(&grant.unit, org_unit_id)
+                && grant.effect == AccessEffect::Allow
+                && scope
+                    .owning_org_unit_id
+                    .as_deref()
+                    .map(|org_unit_id| principal_matches_org_unit_id(&grant.unit, org_unit_id))
+                    .unwrap_or(true)
                 && grant.is_active_at(now)
+                && delegation_grant_ids_authorize_scope(scope, grant)
                 && scope
                     .resource_scope
                     .as_ref()
@@ -519,6 +538,37 @@ fn active_org_unit_grants_for_scope<'a>(
         .collect::<Vec<_>>();
     grants.sort_by(|left, right| left.grant_id.cmp(&right.grant_id));
     grants
+}
+
+fn delegation_grant_ids_authorize_scope(
+    scope: &crate::stateful_runtime::StatefulRuntimeScope,
+    grant: &OrganizationUnitAccessGrant,
+) -> bool {
+    scope.delegation_grant_ids.is_empty()
+        || scope
+            .delegation_grant_ids
+            .iter()
+            .any(|grant_id| delegation_grant_id_matches(grant_id, &grant.grant_id))
+}
+
+fn missing_delegation_grant_ids(
+    catalog: &EnterpriseScopeCatalog,
+    scope: &crate::stateful_runtime::StatefulRuntimeScope,
+) -> Vec<String> {
+    scope
+        .delegation_grant_ids
+        .iter()
+        .filter(|grant_id| {
+            !active_org_unit_grants_for_scope(catalog, scope)
+                .iter()
+                .any(|grant| delegation_grant_id_matches(grant_id, &grant.grant_id))
+        })
+        .cloned()
+        .collect()
+}
+
+fn delegation_grant_id_matches(left: &str, right: &str) -> bool {
+    normalize_filter_value(left) == normalize_filter_value(right)
 }
 
 fn principal_matches_org_unit_id(
@@ -696,7 +746,11 @@ fn run_matches_enterprise_query(
             query.risk_tier.as_deref(),
             run.scope.risk_tier.as_ref(),
         )
-        && delegation_grant_filter_matches(&run.scope, query.delegation_grant_id.as_deref())
+        && delegation_grant_filter_matches(
+            &run.scope,
+            query.delegation_grant_id.as_deref(),
+            catalog,
+        )
         && source_binding_filter_matches(&run.scope, query.source_binding_id.as_deref(), catalog)
 }
 
@@ -772,14 +826,21 @@ fn data_class_filter_matches(
 fn delegation_grant_filter_matches(
     scope: &crate::stateful_runtime::StatefulRuntimeScope,
     expected: Option<&str>,
+    catalog: &EnterpriseScopeCatalog,
 ) -> bool {
     let Some(expected) = normalized_filter(expected) else {
         return true;
     };
-    scope
+    if !scope
         .delegation_grant_ids
         .iter()
         .any(|grant_id| normalize_filter_value(grant_id) == expected)
+    {
+        return false;
+    }
+    active_org_unit_grants_for_scope(catalog, scope)
+        .iter()
+        .any(|grant| normalize_filter_value(&grant.grant_id) == expected)
 }
 
 fn source_binding_filter_matches(
@@ -1327,7 +1388,7 @@ mod tests {
             "Organization_Unit",
         );
         let grant = OrganizationUnitAccessGrant::active(
-            "grant-finance-repo",
+            "delegation-a",
             tenant_a.clone(),
             org_unit.principal_ref(),
             resource.clone(),
@@ -1346,7 +1407,7 @@ mod tests {
             .org_unit_access_grants
             .write()
             .await
-            .insert("grant-finance-repo".to_string(), grant);
+            .insert("delegation-a".to_string(), grant);
         {
             let mut source_bindings = state.enterprise.source_bindings.write().await;
             for index in 0..13 {
@@ -1445,7 +1506,7 @@ mod tests {
         assert_eq!(
             row.pointer("/enterprise_scope/org_unit_grants/0/grant_id")
                 .and_then(Value::as_str),
-            Some("grant-finance-repo")
+            Some("delegation-a")
         );
     }
 }
