@@ -290,7 +290,11 @@ fn secret_ref_for_trigger(
     }
 }
 
-fn secret_digest(secret: &str, tenant_context: &TenantContext, trigger_id: &str) -> String {
+pub(crate) fn secret_digest(
+    secret: &str,
+    tenant_context: &TenantContext,
+    trigger_id: &str,
+) -> String {
     let mut hasher = Sha256::new();
     hasher.update(tenant_context.org_id.as_bytes());
     hasher.update([0]);
@@ -622,7 +626,7 @@ impl AppState {
         Ok(())
     }
 
-    async fn persist_automation_webhook_triggers_locked(&self) -> anyhow::Result<()> {
+    pub(crate) async fn persist_automation_webhook_triggers_locked(&self) -> anyhow::Result<()> {
         let triggers = self.automation_webhook_triggers.read().await.clone();
         let payload = serialize_automation_webhook_triggers_file(triggers)?;
         ensure_parent_dir(&self.automation_webhook_triggers_path).await?;
@@ -660,7 +664,9 @@ impl AppState {
         Ok(scheme)
     }
 
-    async fn persist_automation_webhook_secret_material_locked(&self) -> anyhow::Result<()> {
+    pub(crate) async fn persist_automation_webhook_secret_material_locked(
+        &self,
+    ) -> anyhow::Result<()> {
         let secrets = self.automation_webhook_secret_material.read().await.clone();
         let payload = serialize_automation_webhook_secret_material_file(secrets)?;
         ensure_parent_dir(&self.automation_webhook_secret_material_path).await?;
@@ -696,9 +702,14 @@ impl AppState {
             }
         }
 
-        let requested_scheme = self.validate_webhook_signature_scheme_allowed(
+        let mut requested_scheme = self.validate_webhook_signature_scheme_allowed(
             input.signature_scheme.clone().unwrap_or_default(),
         )?;
+        // Notion's signing secret is its provider-owned verification token.
+        let is_notion = provider == "notion";
+        if is_notion {
+            requested_scheme = AutomationWebhookSignatureScheme::NotionHmacSha256;
+        }
         let _guard = self.automation_webhook_persistence.lock().await;
         let now = now_ms();
         let trigger_id = format!("whtr_{}", Uuid::new_v4().simple());
@@ -746,6 +757,7 @@ impl AppState {
             last_received_at_ms: None,
             last_accepted_at_ms: None,
             last_rejected_at_ms: None,
+            notion_verification: is_notion.then(AutomationWebhookNotionVerification::default),
         };
         let material = AutomationWebhookSecretMaterialRecord {
             secret_ref: secret_ref.clone(),
@@ -1094,6 +1106,10 @@ impl AppState {
                     let accepted_at_ms = delivery.accepted_at_ms.unwrap_or(now);
                     delivery.accepted_at_ms = Some(accepted_at_ms);
                     trigger.last_accepted_at_ms = Some(accepted_at_ms);
+                    // First verified signed Notion event marks it active (TAN-562).
+                    if let Some(verification) = trigger.notion_verification.as_mut() {
+                        verification.mark_active(accepted_at_ms);
+                    }
                 }
                 AutomationWebhookDeliveryStatus::Rejected
                 | AutomationWebhookDeliveryStatus::Duplicate
