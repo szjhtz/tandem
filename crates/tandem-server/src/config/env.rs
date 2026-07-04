@@ -41,6 +41,17 @@ pub(crate) fn resolve_automation_quality_legacy_rollback_enabled() -> bool {
 }
 
 pub(crate) fn resolve_allow_unsigned_dev_webhooks() -> bool {
+    // TAN-575: unsigned dev-mode webhooks are a local-development affordance and
+    // must never be selectable in a production posture. Refuse the opt-in for
+    // the same "hosted_or_enterprise" posture the security-invariant checks use
+    // (config/engine.rs): a configured hosted control-plane URL alone puts the
+    // process in production even when TANDEM_RUNTIME_AUTH_MODE is still the
+    // default `local`, so checking the raw auth mode is not sufficient.
+    let production_posture = resolve_runtime_auth_mode() != RuntimeAuthMode::LocalSingleTenant
+        || hosted_control_plane_configured();
+    if production_posture {
+        return false;
+    }
     std::env::var("TANDEM_AUTOMATION_WEBHOOK_ALLOW_UNSIGNED_DEV_MODE")
         .ok()
         .and_then(|v| match v.trim().to_ascii_lowercase().as_str() {
@@ -286,6 +297,82 @@ pub(crate) fn resolve_scheduler_shutdown_timeout_secs() -> u64 {
         .and_then(|value| value.trim().parse::<u64>().ok())
         .filter(|value| *value > 0)
         .unwrap_or(30)
+}
+
+#[cfg(test)]
+mod unsigned_dev_webhook_gate_tests {
+    use super::*;
+
+    fn clear() {
+        std::env::remove_var("TANDEM_AUTOMATION_WEBHOOK_ALLOW_UNSIGNED_DEV_MODE");
+        std::env::remove_var("TANDEM_RUNTIME_AUTH_MODE");
+        // The gate also consults the hosted control-plane signal; clear every
+        // var hosted_control_plane_configured() reads so cases don't bleed.
+        for name in [
+            "HOSTED_CONTROL_PANEL_PUBLIC_URL",
+            "HOSTED_PUBLIC_URL",
+            "TANDEM_HOSTED_CONTROL_PLANE_URL",
+            "TANDEM_ENTERPRISE_CONTROL_PLANE_URL",
+        ] {
+            std::env::remove_var(name);
+        }
+    }
+
+    // NOTE: bare `#[serial]` (unnamed lock) — shared with the auth-mode config
+    // tests in config/engine.rs, which also mutate TANDEM_RUNTIME_AUTH_MODE. A
+    // separate named lock would let the two suites race (Codex P2 on #1759).
+    #[test]
+    #[serial_test::serial]
+    fn unsigned_dev_allowed_only_in_local_mode() {
+        // TAN-575: the opt-in flag is honored in local single-tenant mode...
+        clear();
+        std::env::set_var("TANDEM_AUTOMATION_WEBHOOK_ALLOW_UNSIGNED_DEV_MODE", "true");
+        std::env::set_var("TANDEM_RUNTIME_AUTH_MODE", "local");
+        let local = resolve_allow_unsigned_dev_webhooks();
+
+        // ...but is refused under a production (hosted/enterprise) posture even
+        // when the operator sets it.
+        std::env::set_var("TANDEM_RUNTIME_AUTH_MODE", "hosted");
+        let hosted = resolve_allow_unsigned_dev_webhooks();
+        std::env::set_var("TANDEM_RUNTIME_AUTH_MODE", "enterprise");
+        let enterprise = resolve_allow_unsigned_dev_webhooks();
+        clear();
+
+        assert!(local, "unsigned dev mode should be allowed in local mode");
+        assert!(!hosted, "unsigned dev mode must be refused in hosted mode");
+        assert!(
+            !enterprise,
+            "unsigned dev mode must be refused in enterprise mode"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn unsigned_dev_refused_when_hosted_control_plane_configured() {
+        // Codex P1 on #1759: a hosted control-plane URL puts the process in a
+        // production posture even while the auth mode is still the default
+        // `local` — the opt-in must be refused there too.
+        clear();
+        std::env::set_var("TANDEM_AUTOMATION_WEBHOOK_ALLOW_UNSIGNED_DEV_MODE", "true");
+        std::env::set_var("TANDEM_RUNTIME_AUTH_MODE", "local");
+        std::env::set_var("TANDEM_HOSTED_CONTROL_PLANE_URL", "https://control.example");
+        let hosted_via_control_plane = resolve_allow_unsigned_dev_webhooks();
+        clear();
+        assert!(
+            !hosted_via_control_plane,
+            "a configured hosted control plane must refuse unsigned dev webhooks"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn unsigned_dev_defaults_off() {
+        clear();
+        std::env::set_var("TANDEM_RUNTIME_AUTH_MODE", "local");
+        let default_local = resolve_allow_unsigned_dev_webhooks();
+        clear();
+        assert!(!default_local, "unsigned dev mode is off unless opted in");
+    }
 }
 
 #[cfg(test)]
