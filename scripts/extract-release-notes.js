@@ -24,7 +24,9 @@ if (!input) {
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const repoRoot = path.resolve(__dirname, '..');
+const repoRoot = process.env.RELEASE_NOTES_REPO_ROOT
+  ? path.resolve(process.env.RELEASE_NOTES_REPO_ROOT)
+  : path.resolve(__dirname, '..');
 
 const raw = input.replace(/^refs\/tags\//, '');
 const versionNumber = raw.replace(/^v/, '');
@@ -56,6 +58,10 @@ const extracted =
     : null) ||
   (fromChangelog ? extractFromChangelog(fromChangelog, versionCandidates) : null) ||
   null;
+
+if (extracted?.trim()) {
+  validateReleaseNotes(extracted, currentTag);
+}
 
 const previousTag = getPreviousTag(currentTag);
 const fullChangelogLine = previousTag
@@ -144,6 +150,40 @@ function extractFromChangelog(markdown, versions) {
   if (unreleasedMatch) return "## What's Changed\n\n" + unreleasedMatch[1].trim();
 
   return null;
+}
+
+function validateReleaseNotes(markdown, currentTag) {
+  const errors = [];
+  const lines = markdown.split(/\r?\n/);
+  const firstHeader = lines.find((line) => /^#{1,3}\s+\S/.test(line));
+
+  if (firstHeader && /\bunreleased\b/i.test(firstHeader)) {
+    errors.push(
+      `release notes for ${currentTag} are still marked "Unreleased" in: ${firstHeader.trim()}`
+    );
+  }
+
+  const wordCount = (markdown.match(/[A-Za-z0-9][A-Za-z0-9'_-]*/g) || []).length;
+  const hasSectionHeading = /^#{3,6}\s+\S/m.test(markdown);
+  const bulletCount = (markdown.match(/^\s*[-*]\s+\S/gm) || []).length;
+
+  if (wordCount >= 500 && !hasSectionHeading && bulletCount < 3) {
+    errors.push(
+      `release notes for ${currentTag} are ${wordCount} words without section headings or a bullet list`
+    );
+  }
+
+  if (!errors.length) return;
+
+  console.error(
+    [
+      'Refusing to publish release notes that look unfinished or unstructured.',
+      ...errors.map((error) => `- ${error}`),
+      '',
+      'Finalize RELEASE_NOTES.md before tagging: replace "(Unreleased)" with the release date and break long notes into "###" sections or bullets.',
+    ].join('\n')
+  );
+  process.exit(1);
 }
 
 function getPreviousTag(current) {

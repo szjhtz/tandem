@@ -12,6 +12,7 @@
     "engine:build": "cargo build -p tandem-ai",
     "agents:catalog:refresh": "node scripts/generate-agent-catalog.mjs",
     "agents:catalog:test": "node --test scripts/agent-catalog.test.mjs",
+    "release-notes:test": "node --test scripts/extract-release-notes.test.mjs",
     "engine:start": "cargo run -p tandem-ai --bin tandem-engine -- serve --host 127.0.0.1 --port 39731",
     "engine:test": "cargo test -p tandem-server -p tandem-core -p tandem-ai",
     "test:blackboard": "pnpm -C apps/tandem-desktop test:blackboard",

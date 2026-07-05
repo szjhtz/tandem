@@ -101,7 +101,9 @@ Before creating a release, ensure:
 
 - [ ] All changes are committed and pushed to `main`
 - [ ] `CHANGELOG.md` is updated with the new version
-- [ ] `RELEASE_NOTES.md` is updated with detailed release notes
+- [ ] `RELEASE_NOTES.md` is finalized for the new version: replace
+      `(Unreleased)` with the release date and use readable `###` sections or
+      bullets for long releases
 - [ ] Workflow-runtime fixes since the previous release have replay coverage
 - [ ] Workflow fast gate and deep gate are green for release-relevant workflow changes
 - [ ] Version numbers are updated with `./scripts/bump-version.sh <version>`
