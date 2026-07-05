@@ -53,6 +53,16 @@
 - /autonomous-coding-agents-github-projects/ - GitHub Projects coding-agent workflows.
 - /browser-setup-and-testing/ - Browser setup, install, and validation.
 - /eval-runner/ - AI evaluation CLI for `eval-runner`, `eval_runner`, `EvalRunner`, `eval_datasets`, simulation mode, and regression result JSON.
+- /reference/incident-monitor/ - Incident Monitor API and behavior reference for governed failure intake, drafts, approvals, routing, receipts, and destination publishes.
+- /incident-monitor-external-log-intake/ - Configure external project log intake, scoped report keys, reset/replay debug actions, and monitored project setup.
+- /incident-monitor/overview/ - Incident Monitor overview for governed intake, triage, routing, evidence, destination readiness, and receipts.
+- /incident-monitor/agent-runtime-guide/ - Safe Incident Monitor operating sequence for MCP-connected agents, SDK clients, and HTTP callers.
+- /incident-monitor/production-governance/ - Production governance guidance for deployment cards, posture checks, assessment reports, protected evidence, and receipts.
+- /incident-monitor/destination-router/ - Destination router model for GitHub, Linear, webhooks, telemetry, MCP tools, and memory.
+- /incident-monitor/external-sources/ - External source identity, monitored source bindings, and destination routing context.
+- /incident-monitor/destinations/ - Destination adapter coverage and readiness requirements for governed Incident Monitor publishing.
+- /incident-monitor/security-posture/ - Read-only authority inventory, posture assessment, scenario packs, and remediation routing.
+- /incident-monitor/setup-checklist/ - Setup checklist for Incident Monitor intake, routing, destinations, security posture, and governance evidence.
 - /sdk/ - SDK landing page.
 - /sdk/typescript/ - TypeScript SDK.
 - /sdk/python/ - Python SDK.
@@ -87,6 +97,7 @@
 - Want a ready-made showcase payload playbook? Start with `/tandem-wow-demo-playbook/`.
 - Want to know which engine path to call next? Use `/creating-and-running-workflows-and-missions/`.
 - Need the token and auth pattern first? Use `/engine-authentication-for-agents/`.
+- Need Incident Monitor? Start with `/incident-monitor/overview/`, then use `/incident-monitor/agent-runtime-guide/` for MCP-connected agents or `/reference/incident-monitor/` for API details.
 - Want low-level behavior? Use the `/reference/` pages and `/protocol-matrix/`.
 - Want the canonical under-the-hood runtime reference? Use `/how-tandem-works/`.
 

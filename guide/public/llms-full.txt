@@ -50,6 +50,19 @@
 - /browser-setup-and-testing/ - Browser install, setup, and validation.
 - /eval-runner/ - AI evaluation CLI for `eval-runner`, `eval_runner`, `EvalRunner`, `eval_datasets`, simulation mode, and regression result JSON.
 
+## Incident Monitor
+
+- /reference/incident-monitor/ - API and behavior reference for governed failure intake, drafts, approvals, routing, receipts, and destination publishes.
+- /incident-monitor-external-log-intake/ - External project log intake, scoped report keys, reset/replay debug actions, and monitored project setup.
+- /incident-monitor/overview/ - Governed Incident Monitor intake, triage, routing, evidence, destination readiness, and receipts.
+- /incident-monitor/agent-runtime-guide/ - Safe Incident Monitor operating sequence for MCP-connected agents, SDK clients, and HTTP callers.
+- /incident-monitor/production-governance/ - Deployment cards, posture checks, assessment reports, protected evidence, and production governance mapping.
+- /incident-monitor/destination-router/ - Destination router model for GitHub, Linear, webhooks, telemetry, MCP tools, and memory.
+- /incident-monitor/external-sources/ - External source identity, monitored source bindings, and destination routing context.
+- /incident-monitor/destinations/ - Destination adapter coverage and readiness requirements for governed publishing.
+- /incident-monitor/security-posture/ - Read-only authority inventory, posture assessment, scenario packs, and remediation routing.
+- /incident-monitor/setup-checklist/ - Setup checklist for intake, routing, destinations, security posture, and governance evidence.
+
 ## Architecture and reference
 
 - /how-tandem-works/ - Canonical runtime reference for sessions, runs, context, memory, and channels.
@@ -90,6 +103,7 @@
 - If it needs to generate a mission or workflow from human intent, use `/prompting-workflows-and-missions/`.
 - If it needs to choose the correct runtime path, use `/creating-and-running-workflows-and-missions/`.
 - If it needs engine auth or token handling, use `/engine-authentication-for-agents/`.
+- If it needs Incident Monitor, start with `/incident-monitor/overview/`, then use `/incident-monitor/agent-runtime-guide/` for MCP-connected agents or `/reference/incident-monitor/` for API details.
 - If it needs implementation details, use the `/reference/` pages plus `/protocol-matrix/` and `/architecture/`.
 - If it needs the canonical under-the-hood runtime reference, use `/how-tandem-works/`.
 

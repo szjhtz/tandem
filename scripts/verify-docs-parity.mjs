@@ -14,10 +14,13 @@ function unique(values) {
 const toolsSource = read("crates/tandem-tools/src/lib.rs");
 const tuiSource = read("crates/tandem-tui/src/command_catalog.rs");
 const engineSource = read("engine/src/main.rs");
+const guideConfig = read("guide/astro.config.mjs");
 
 const toolsDoc = read("guide/src/content/docs/reference/tools.md");
 const tuiDoc = read("guide/src/content/docs/reference/tui-commands.md");
 const engineDoc = read("guide/src/content/docs/reference/engine-commands.md");
+const llmsDoc = read("guide/public/llms.txt");
+const llmsFullDoc = read("guide/public/llms-full.txt");
 
 const toolNames = unique(
   [...toolsSource.matchAll(/map\.insert\("([^"]+)"/g)].map((match) => match[1]),
@@ -44,8 +47,19 @@ if (!commandEnumBlock?.groups?.block) {
 const engineCommands = [
   ...commandEnumBlock.groups.block.matchAll(/^\s{4}([A-Z][A-Za-z0-9_]*)\s*(?:\{|,)/gm),
 ].map((match) => match[1].toLowerCase());
+const incidentMonitorRoutes = unique(
+  [
+    ...guideConfig.matchAll(
+      /"((?:reference\/incident-monitor|incident-monitor(?:\/[^"]+|-external-log-intake)))"/g,
+    ),
+  ].map((match) => `/${match[1]}/`),
+).sort();
 
 const missing = [];
+
+if (incidentMonitorRoutes.length === 0) {
+  missing.push("guide config missing Incident Monitor sidebar routes");
+}
 
 for (const tool of toolNames) {
   if (!toolsDoc.includes(`\`${tool}\``)) {
@@ -66,6 +80,15 @@ if (!tuiDoc.includes("Alt+1..9")) {
 for (const command of engineCommands) {
   if (!engineDoc.includes(`## \`${command}\``)) {
     missing.push(`engine doc missing command heading: ${command}`);
+  }
+}
+
+for (const route of incidentMonitorRoutes) {
+  if (!llmsDoc.includes(route)) {
+    missing.push(`llms doc missing Incident Monitor route: ${route}`);
+  }
+  if (!llmsFullDoc.includes(route)) {
+    missing.push(`llms-full doc missing Incident Monitor route: ${route}`);
   }
 }
 
