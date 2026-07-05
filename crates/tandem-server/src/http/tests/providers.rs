@@ -96,14 +96,16 @@ async fn provider_route_returns_known_providers_without_synthetic_default_models
         .and_then(Value::as_object)
         .cloned()
         .unwrap_or_default();
+    assert!(codex_models.contains_key("gpt-5.6"));
     assert!(codex_models.contains_key("gpt-5.5"));
     assert!(codex_models.contains_key("gpt-5.4"));
     assert!(codex_models.contains_key("gpt-5.2-codex"));
-    assert!(codex_models.contains_key("gpt-5.1-codex-max"));
     assert!(codex_models.contains_key("gpt-5.4-mini"));
     assert!(codex_models.contains_key("gpt-5.3-codex"));
     assert!(codex_models.contains_key("gpt-5.3-codex-spark"));
     assert!(codex_models.contains_key("gpt-5.1-codex-mini"));
+    // Retired phantom model must not reappear in the catalog.
+    assert!(!codex_models.contains_key("gpt-5.1-codex-max"));
     assert_eq!(
         openai_codex.get("catalog_source").and_then(Value::as_str),
         Some("static")
@@ -166,6 +168,46 @@ async fn config_patch_preserves_saved_codex_default_over_runtime_provider() {
     let resp = app.oneshot(req).await.expect("response");
     assert_eq!(resp.status(), StatusCode::OK);
     let payload = json_body(resp).await;
+    assert_eq!(
+        payload
+            .get("providers")
+            .and_then(|v| v.get("openai-codex"))
+            .and_then(|v| v.get("default_model"))
+            .and_then(Value::as_str),
+        Some("gpt-5.5")
+    );
+}
+
+#[tokio::test]
+async fn config_providers_heals_retired_codex_default_model() {
+    let state = test_state().await;
+    // Reproduce a deployment that persisted the retired phantom model as its
+    // openai-codex default — the exact state that broke channel dispatches.
+    state
+        .config
+        .patch_runtime(json!({
+            "providers": {
+                "openai-codex": {
+                    "url": "https://chatgpt.com/backend-api/codex",
+                    "default_model": "gpt-5.1-codex-max"
+                }
+            }
+        }))
+        .await
+        .expect("runtime codex provider");
+
+    let app = app_router(state);
+    let req = Request::builder()
+        .method("GET")
+        .uri("/config/providers")
+        .body(Body::empty())
+        .expect("request");
+    let resp = app.oneshot(req).await.expect("response");
+    assert_eq!(resp.status(), StatusCode::OK);
+    let payload = json_body(resp).await;
+    // Channel dispatchers read this endpoint fresh each run and dispatch the
+    // returned default as the request model; the retired model must be healed
+    // to the compiled default, not surfaced.
     assert_eq!(
         payload
             .get("providers")
