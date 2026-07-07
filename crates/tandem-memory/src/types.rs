@@ -173,12 +173,18 @@ pub struct GovernedReadTarget {
     pub source_object_id: Option<String>,
     pub evidence: GovernedReadEvidence,
     /// Org-unit that owns this record, if department-restricted. Tenant-local
-    /// reads require the caller to be a member of this unit; unset means
-    /// tenant-wide visibility (the pre-org-unit behavior).
+    /// reads require the caller to be a member of this unit. Unset means the
+    /// record carries no department: it is **fail-closed** for a department-scoped
+    /// caller (TAN-647) unless `tenant_shared` is set.
     pub owner_org_unit_id: Option<String>,
     /// Principal that owns this record, if user-restricted. Tenant-local reads
     /// require the caller's memory subject to match; unset means shared.
     pub owner_subject: Option<String>,
+    /// Explicit opt-in marking genuinely tenant-wide content (e.g. shared guide
+    /// docs) as visible to every department within the tenant (TAN-647). Only
+    /// meaningful when `owner_org_unit_id` is unset; department-owned records are
+    /// governed by membership regardless.
+    pub tenant_shared: bool,
 }
 
 /// Optional enterprise access projection applied before memory ranking.
@@ -357,6 +363,9 @@ impl MemoryAccessFilter {
             evidence: GovernedReadEvidence::SourceBinding,
             owner_org_unit_id: None,
             owner_subject: None,
+            // Source-bound records are governed by the grant path, not the
+            // department default; tenant_shared does not apply.
+            tenant_shared: false,
         })
     }
 
@@ -397,11 +406,10 @@ impl MemoryAccessFilter {
             {
                 return GovernedReadDecision::deny("tenant_scope_mismatch");
             }
-            // Department restriction: a record owned by an org unit is readable
-            // only by members of that unit. Membership comes from the verified
-            // assertion; absent membership information denies, fail closed.
-            // Source-bound records are governed by the grant path below instead,
-            // where org-unit access grants already apply.
+            // Department enforcement (TAN-647). Department is the primary
+            // isolation axis, so it fails **closed**: a record owned by an org
+            // unit is readable only by members of that unit (absent membership
+            // denies). Source-bound records are governed by the grant path below.
             if let Some(owner_org_unit_id) = target.owner_org_unit_id.as_deref() {
                 let is_member = self
                     .caller_org_units
@@ -422,6 +430,23 @@ impl MemoryAccessFilter {
                 if !is_owner {
                     return GovernedReadDecision::deny("subject_scope_mismatch");
                 }
+            }
+            // Fail-closed default for a record governed by **neither** department
+            // nor subject (TAN-647): such a fully-unscoped record is invisible to a
+            // department-scoped caller unless explicitly `tenant_shared`, so
+            // legacy/untagged rows never leak across departments. Records owned by
+            // a subject are intentionally excluded here — they are already governed
+            // by the subject check above, so the owner keeps access to their own
+            // private/session memory even before it carries a department stamp.
+            if target.owner_org_unit_id.is_none()
+                && target.owner_subject.is_none()
+                && !target.tenant_shared
+                && self
+                    .caller_org_units
+                    .as_ref()
+                    .is_some_and(|units| !units.is_empty())
+            {
+                return GovernedReadDecision::deny("org_unit_absent_fail_closed");
             }
             if strict_context
                 .resource_scope
@@ -542,6 +567,7 @@ fn governed_read_target_from_chunk(
             .map(str::trim)
             .filter(|subject| !subject.is_empty())
             .map(ToString::to_string),
+        tenant_shared: tenant_shared_from_metadata(chunk.metadata.as_ref()),
     })
 }
 
@@ -579,6 +605,7 @@ fn governed_read_target_from_global_record(
         // (user_id predicates per TAN-601); visibility="shared" records are
         // deliberately cross-subject, so no owner_subject is projected here.
         owner_subject: None,
+        tenant_shared: tenant_shared_from_metadata(record.metadata.as_ref()),
     })
 }
 
@@ -617,6 +644,7 @@ fn source_binding_target_from_metadata(
         evidence: GovernedReadEvidence::SourceBinding,
         owner_org_unit_id: None,
         owner_subject: None,
+        tenant_shared: false,
     }))
 }
 
@@ -645,6 +673,18 @@ pub fn owner_org_unit_id_from_metadata(metadata: Option<&serde_json::Value>) -> 
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToString::to_string)
+}
+
+/// Metadata key marking a department-unscoped record as genuinely tenant-wide,
+/// so it stays visible to every department under the fail-closed rule (TAN-647).
+pub const TENANT_SHARED_METADATA_KEY: &str = "tenant_shared";
+
+/// Whether a record is explicitly marked tenant-shared (opt-in, `true` only).
+pub fn tenant_shared_from_metadata(metadata: Option<&serde_json::Value>) -> bool {
+    metadata
+        .and_then(|value| value.get(TENANT_SHARED_METADATA_KEY))
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false)
 }
 
 fn data_class_from_label(label: &str) -> Option<DataClass> {
