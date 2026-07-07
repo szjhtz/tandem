@@ -545,16 +545,24 @@ pub(super) async fn memory_put_impl_with_verified(
     // is preserved; otherwise the verified context's active department is written
     // so attributable data is never persisted without a department.
     let active_org_unit = crate::memory::subject::active_org_unit(verified_tenant_context);
-    let metadata = memory_metadata_with_owner_org_unit(
-        memory_metadata_with_trust_fields(
-            memory_metadata_with_storage_fields(
-                request.metadata.clone(),
-                &artifact_refs,
-                request.classification,
+    // Per-user opt-in (TAN-648): a `private` write additionally restricts the
+    // record to the collecting subject (`user_id`), stamped as `owner_subject`
+    // so the governed read filter denies any other caller. Default (not private)
+    // leaves the record department/tenant-governed.
+    let owner_subject = request.private.then(|| user_id.clone());
+    let metadata = memory_metadata_with_owner_subject(
+        memory_metadata_with_owner_org_unit(
+            memory_metadata_with_trust_fields(
+                memory_metadata_with_storage_fields(
+                    request.metadata.clone(),
+                    &artifact_refs,
+                    request.classification,
+                ),
+                trust_label,
             ),
-            trust_label,
+            active_org_unit.as_deref(),
         ),
-        active_org_unit.as_deref(),
+        owner_subject.as_deref(),
     );
     let provenance = memory_provenance_with_trust(
         memory_put_provenance(&request, &partition_key, &artifact_refs, tenant_context),
@@ -731,6 +739,47 @@ mod retrieval_gateway_subject_tests {
             assertion_id: "channel-service-assertion".to_string(),
             assertion_key_id: None,
         }
+    }
+
+    #[test]
+    fn owner_subject_metadata_is_server_controlled() {
+        use tandem_memory::types::owner_subject_from_metadata;
+
+        // Private write → collector subject stamped.
+        let private = memory_metadata_with_owner_subject(None, Some("user-a"));
+        assert_eq!(
+            owner_subject_from_metadata(private.as_ref()).as_deref(),
+            Some("user-a")
+        );
+
+        // Non-private write must STRIP any client-supplied owner_subject, so a
+        // forged metadata key can't lock the record to someone else (P2 fix).
+        let stripped = memory_metadata_with_owner_subject(
+            Some(serde_json::json!({ "owner_subject": "forged", "role": "user" })),
+            None,
+        );
+        assert_eq!(owner_subject_from_metadata(stripped.as_ref()), None);
+        // Other metadata keys survive the strip.
+        assert_eq!(
+            stripped
+                .as_ref()
+                .and_then(|m| m.get("role"))
+                .and_then(|v| v.as_str()),
+            Some("user")
+        );
+
+        // Private write overrides a client-supplied value with the collector.
+        let overridden = memory_metadata_with_owner_subject(
+            Some(serde_json::json!({ "owner_subject": "forged" })),
+            Some("user-a"),
+        );
+        assert_eq!(
+            owner_subject_from_metadata(overridden.as_ref()).as_deref(),
+            Some("user-a")
+        );
+
+        // Nothing to do → untouched.
+        assert!(memory_metadata_with_owner_subject(None, None).is_none());
     }
 
     #[test]

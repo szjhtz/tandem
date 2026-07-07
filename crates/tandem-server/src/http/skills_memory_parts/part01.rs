@@ -1470,6 +1470,7 @@ impl GovernedDistillationWriter {
         }
 
         let request = MemoryPutRequest {
+            private: false,
             run_id: self.run_id.clone(),
             partition: self.partition.clone(),
             kind: tandem_memory::MemoryContentKind::Fact,
@@ -1576,6 +1577,43 @@ fn memory_metadata_with_owner_org_unit(
             tandem_memory::types::OWNER_ORG_UNIT_METADATA_KEY.to_string(),
             json!(owner_org_unit_id),
         );
+    }
+    Some(metadata)
+}
+
+/// Make the `owner_subject` metadata key **server-controlled** (TAN-648).
+///
+/// `owner_subject` drives the governed subject check, so it must never be
+/// trusted from client input (`/memory/put` accepts arbitrary metadata). This
+/// always strips any client-supplied `owner_subject`, then stamps the collecting
+/// subject **only** for a private write (`owner_subject = Some`). A non-private
+/// write therefore never carries an enforced `owner_subject`, preserving the
+/// default department/tenant-shared behavior regardless of client metadata.
+fn memory_metadata_with_owner_subject(
+    metadata: Option<Value>,
+    owner_subject: Option<&str>,
+) -> Option<Value> {
+    let owner_subject = owner_subject.map(str::trim).filter(|s| !s.is_empty());
+    let key = tandem_memory::types::OWNER_SUBJECT_METADATA_KEY;
+    let client_has_key = metadata
+        .as_ref()
+        .and_then(Value::as_object)
+        .map(|obj| obj.contains_key(key))
+        .unwrap_or(false);
+    // Nothing to strip and nothing to stamp — leave metadata untouched.
+    if owner_subject.is_none() && !client_has_key {
+        return metadata;
+    }
+    let mut metadata = metadata.unwrap_or_else(|| json!({}));
+    if !metadata.is_object() {
+        metadata = json!({ "value": metadata });
+    }
+    if let Some(obj) = metadata.as_object_mut() {
+        // Drop any client-supplied value, then re-stamp only for private writes.
+        obj.remove(key);
+        if let Some(owner_subject) = owner_subject {
+            obj.insert(key.to_string(), json!(owner_subject));
+        }
     }
     Some(metadata)
 }
