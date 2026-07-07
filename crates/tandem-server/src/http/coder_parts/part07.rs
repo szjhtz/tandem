@@ -690,6 +690,7 @@ pub(super) async fn coder_memory_candidate_list(
         &record.repo_binding.repo_slug,
         record.github_ref.as_ref(),
         20,
+        Some(&tenant_context),
     )
     .await?;
     Ok(Json(json!({
@@ -930,6 +931,17 @@ pub(super) async fn coder_memory_candidate_promote(
             extra
         },
     );
+    // Mark the promoted candidate rather than deleting it, keeping the file the
+    // promoted memory record references as provenance while filtering it out of
+    // retrieval; time-based GC reaps it later (TAN-638).
+    mark_coder_candidate_promoted(
+        &state,
+        &record.linked_context_run_id,
+        &candidate_id,
+        &candidate_payload,
+        &put_response.id,
+    )
+    .await;
     Ok(Json(json!({
         "ok": true,
         "memory_id": put_response.id,

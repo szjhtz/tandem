@@ -733,6 +733,7 @@ fn coder_memory_candidate_path(
     coder_memory_candidates_dir(state, linked_context_run_id).join(format!("{candidate_id}.json"))
 }
 
+
 async fn ensure_coder_runs_dir(state: &AppState) -> Result<(), StatusCode> {
     tokio::fs::create_dir_all(coder_runs_root(state))
         .await
@@ -1004,11 +1005,39 @@ async fn open_semantic_memory_manager(state: &AppState) -> Option<MemoryManager>
     MemoryManager::new(&state.memory_db_path).await.ok()
 }
 
+/// A coder memory candidate belongs to its run's linked context run; only
+/// surface it to callers in that run's tenant (TAN-638). A `None` caller tenant
+/// means no tenant boundary to enforce (local / incident-monitor system scope)
+/// and matches every candidate. Fails closed: if the owning run's tenant can't
+/// be resolved for a scoped caller, the candidate is hidden rather than leaked.
+/// A candidate promoted into governed memory is retained only as provenance for
+/// the promoted record (its file is referenced by the promoted memory's
+/// artifact_refs); it must not re-surface as an unpromoted candidate in
+/// retrieval (TAN-638).
+fn coder_candidate_is_promoted(candidate_payload: &Value) -> bool {
+    candidate_payload.get("promoted_at_ms").is_some()
+}
+
+async fn coder_candidate_run_visible_to_tenant(
+    state: &AppState,
+    record: &CoderRunRecord,
+    tenant_context: Option<&tandem_types::TenantContext>,
+) -> bool {
+    let Some(caller) = tenant_context else {
+        return true;
+    };
+    match load_context_run_state(state, &record.linked_context_run_id).await {
+        Ok(run) => super::ensure_same_tenant(caller, &run.tenant_context).is_ok(),
+        Err(_) => false,
+    }
+}
+
 async fn list_repo_memory_candidates(
     state: &AppState,
     repo_slug: &str,
     github_ref: Option<&CoderGithubRef>,
     limit: usize,
+    tenant_context: Option<&tandem_types::TenantContext>,
 ) -> Result<Vec<Value>, StatusCode> {
     let mut hits = Vec::<Value>::new();
     let root = coder_runs_root(state);
@@ -1036,6 +1065,9 @@ async fn list_repo_memory_candidates(
         if record.repo_binding.repo_slug != repo_slug {
             continue;
         }
+        if !coder_candidate_run_visible_to_tenant(state, &record, tenant_context).await {
+            continue;
+        }
         let candidates_dir = coder_memory_candidates_dir(state, &record.linked_context_run_id);
         if !candidates_dir.exists() {
             continue;
@@ -1058,6 +1090,9 @@ async fn list_repo_memory_candidates(
             let Ok(candidate_payload) = serde_json::from_str::<Value>(&candidate_raw) else {
                 continue;
             };
+            if coder_candidate_is_promoted(&candidate_payload) {
+                continue;
+            }
             let same_ref = github_ref.is_some_and(|reference| {
                 candidate_payload
                     .get("github_ref")
@@ -1142,6 +1177,7 @@ async fn list_repo_memory_candidate_payloads(
     repo_slug: &str,
     kind: Option<CoderMemoryCandidateKind>,
     limit: usize,
+    tenant_context: Option<&tandem_types::TenantContext>,
 ) -> Result<Vec<Value>, StatusCode> {
     let mut hits = Vec::<Value>::new();
     let root = coder_runs_root(state);
@@ -1169,6 +1205,9 @@ async fn list_repo_memory_candidate_payloads(
         if record.repo_binding.repo_slug != repo_slug {
             continue;
         }
+        if !coder_candidate_run_visible_to_tenant(state, &record, tenant_context).await {
+            continue;
+        }
         let candidates_dir = coder_memory_candidates_dir(state, &record.linked_context_run_id);
         if !candidates_dir.exists() {
             continue;
@@ -1191,6 +1230,9 @@ async fn list_repo_memory_candidate_payloads(
             let Ok(candidate_payload) = serde_json::from_str::<Value>(&candidate_raw) else {
                 continue;
             };
+            if coder_candidate_is_promoted(&candidate_payload) {
+                continue;
+            }
             let parsed_kind = candidate_payload
                 .get("kind")
                 .cloned()
@@ -1278,6 +1320,7 @@ pub(crate) async fn query_failure_pattern_matches(
     detail: Option<&str>,
     excerpt: &[String],
     limit: usize,
+    tenant_context: Option<&tandem_types::TenantContext>,
 ) -> Result<Vec<Value>, StatusCode> {
     let excerpt_text = (!excerpt.is_empty()).then(|| excerpt.join(" "));
     let haystack = normalize_failure_pattern_text(&[
@@ -1291,6 +1334,7 @@ pub(crate) async fn query_failure_pattern_matches(
         repo_slug,
         Some(CoderMemoryCandidateKind::FailurePattern),
         limit.saturating_mul(4).max(8),
+        tenant_context,
     )
     .await?;
     let mut matches = Vec::<Value>::new();
@@ -1398,6 +1442,7 @@ pub(crate) async fn query_failure_pattern_matches(
         &haystack,
         Some(fingerprint),
         limit,
+        tenant_context,
     )
     .await?;
     for governed in governed_matches {
@@ -1881,6 +1926,7 @@ async fn collect_coder_memory_hits(
         &record.repo_binding.repo_slug,
         record.github_ref.as_ref(),
         limit,
+        tenant_context,
     )
     .await?;
     let mut project_hits =
