@@ -801,7 +801,13 @@ async fn load_governance_evidence_memory_audit(
     tenant_context: &TenantContext,
     run_ids: &BTreeSet<String>,
 ) -> Vec<crate::MemoryAuditEvent> {
-    let mut rows = load_jsonl_rows::<crate::MemoryAuditEvent>(&state.memory_audit_path).await;
+    let mut rows = match crate::governance_store::for_state(state)
+        .read_jsonl_lines(crate::governance_store::GovernanceStoreFile::MemoryAudit)
+        .await
+    {
+        Ok(Some(lines)) => parse_jsonl_rows::<crate::MemoryAuditEvent>(&lines),
+        Ok(None) | Err(_) => Vec::new(),
+    };
     if rows.is_empty() {
         rows = state.memory_audit_log.read().await.clone();
     }
@@ -834,29 +840,11 @@ async fn load_governance_evidence_protected_audit(
     rows
 }
 
-async fn load_jsonl_rows<T: serde::de::DeserializeOwned>(path: &std::path::Path) -> Vec<T> {
-    let Ok(content) = tokio::fs::read_to_string(path).await else {
-        return Vec::new();
-    };
-    let mut rows = Vec::new();
-    for line in content.lines() {
-        let plaintext = match crate::encrypted_file_store::decrypt_jsonl_line(line) {
-            Ok(Some(plaintext)) => plaintext,
-            Ok(None) => continue,
-            Err(error) => {
-                tracing::warn!(
-                    path = %path.display(),
-                    error = ?error,
-                    "failed to decrypt JSONL evidence file"
-                );
-                return Vec::new();
-            }
-        };
-        if let Ok(row) = serde_json::from_str::<T>(plaintext.trim()) {
-            rows.push(row);
-        }
-    }
-    rows
+fn parse_jsonl_rows<T: serde::de::DeserializeOwned>(lines: &[String]) -> Vec<T> {
+    lines
+        .iter()
+        .filter_map(|line| serde_json::from_str::<T>(line.trim()).ok())
+        .collect()
 }
 
 fn automation_run_id_from_context_run_id(context_run_id: &str) -> Option<String> {
