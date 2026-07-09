@@ -85,13 +85,6 @@ const updateJson = (relativePath) => {
   const original = fs.readFileSync(filePath, "utf8");
   let content = original;
 
-  const internalDeps = [
-    ["@frumu/tandem", `^${version}`],
-    ["@frumu/tandem-client", `^${version}`],
-    ["@frumu/tandem-tui", `^${version}`],
-    ["@frumu/tandem-panel", `^${version}`],
-  ];
-
   // Top-level "version" only — match a "version": "..." pair preceded by
   // either the opening `{` or another field, before any nested objects'
   // version fields. JSON files in this list put `version` near the top.
@@ -99,12 +92,8 @@ const updateJson = (relativePath) => {
     /^(\s*)"version"(\s*):(\s*)"[^"]*"/m,
     `$1"version"$2:$3"${version}"`
   );
-
-  for (const [name, nextVersion] of internalDeps) {
-    const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const re = new RegExp(`("${escapedName}"\\s*:\\s*)"[^"]*"`, "g");
-    content = content.replace(re, `$1"${nextVersion}"`);
-  }
+  // Leave internal npm dependency ranges pinned to published-compatible
+  // versions; CI runs before the candidate release exists on npm.
 
   if (content !== original) {
     fs.writeFileSync(filePath, content);
