@@ -1,6 +1,57 @@
 // Continuation of routines tests split from routines.rs for the file-size gate
 // (same module via include!).
 
+#[tokio::test]
+async fn routines_create_rolls_back_when_protected_audit_persistence_fails() {
+    let state = test_state().await;
+    tokio::fs::create_dir_all(&state.protected_audit_path)
+        .await
+        .expect("make protected audit path unwritable as a file");
+    crate::audit::reset_protected_audit_tail_for_test(&state.protected_audit_path).await;
+    let tenant = TenantContext::local_implicit();
+    let app = app_router(state.clone());
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/routines")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "routine_id": "routine-audit-failure",
+                        "name": "Must be audited",
+                        "schedule": { "interval_seconds": { "seconds": 60 } },
+                        "entrypoint": "mission.default"
+                    })
+                    .to_string(),
+                ))
+                .expect("create request"),
+        )
+        .await
+        .expect("create response");
+
+    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    let body = to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("error body");
+    let payload: Value = serde_json::from_slice(&body).expect("error json");
+    assert_eq!(
+        payload.get("code").and_then(Value::as_str),
+        Some("PROTECTED_AUDIT_PERSISTENCE_FAILED")
+    );
+    assert!(
+        state
+            .get_routine_for_tenant("routine-audit-failure", &tenant)
+            .await
+            .is_none(),
+        "an unaudited routine must not remain active"
+    );
+    assert!(
+        state.list_routines_for_tenant(&tenant).await.is_empty(),
+        "the failed routine must also be absent from the scheduler view"
+    );
+}
 
 #[tokio::test]
 async fn routines_run_now_requires_approval_for_external_side_effects_when_enabled() {
@@ -143,6 +194,11 @@ async fn routine_fired_event_contract_snapshot() {
             "routineID": "routine-fired-contract",
             "runCount": 2,
             "runID": run_id,
+            "tenantContext": {
+                "org_id": "local",
+                "source": "local_implicit",
+                "workspace_id": "local"
+            },
             "triggerType": "manual"
         }
     });
@@ -207,6 +263,11 @@ async fn routine_approval_required_event_contract_snapshot() {
             "routineID": "routine-approval-contract",
             "runCount": 1,
             "runID": run_id,
+            "tenantContext": {
+                "org_id": "local",
+                "source": "local_implicit",
+                "workspace_id": "local"
+            },
             "triggerType": "manual",
             "reason": "manual approval required before external side effects (manual)"
         }
@@ -272,6 +333,11 @@ async fn routine_blocked_event_contract_snapshot() {
             "routineID": "routine-blocked-contract",
             "runCount": 1,
             "runID": run_id,
+            "tenantContext": {
+                "org_id": "local",
+                "source": "local_implicit",
+                "workspace_id": "local"
+            },
             "triggerType": "manual",
             "reason": "external integrations are disabled by policy"
         }
@@ -295,6 +361,7 @@ async fn routine_tool_policy_hook_denies_disallowed_tool_for_session_scope() {
             session_id.clone(),
             "run-routine-hook-1".to_string(),
             "routine-hook-1".to_string(),
+            tandem_types::TenantContext::local_implicit(),
             vec!["read".to_string(), "mcp.arcade.search".to_string()],
         )
         .await;
@@ -434,10 +501,16 @@ async fn routines_reject_agent_context_create_and_run() {
             .to_string(),
         ))
         .expect("create request");
-    let create_resp = app.clone().oneshot(create_req).await.expect("create response");
+    let create_resp = app
+        .clone()
+        .oneshot(create_req)
+        .await
+        .expect("create response");
     assert_eq!(create_resp.status(), StatusCode::FORBIDDEN);
     let create_body: Value = serde_json::from_slice(
-        &to_bytes(create_resp.into_body(), usize::MAX).await.expect("body"),
+        &to_bytes(create_resp.into_body(), usize::MAX)
+            .await
+            .expect("body"),
     )
     .expect("json");
     assert_eq!(
@@ -452,9 +525,12 @@ async fn routines_reject_agent_context_create_and_run() {
         .body(Body::empty())
         .expect("list request");
     let list_resp = app.clone().oneshot(list_req).await.expect("list response");
-    let list_body: Value =
-        serde_json::from_slice(&to_bytes(list_resp.into_body(), usize::MAX).await.expect("body"))
-            .expect("json");
+    let list_body: Value = serde_json::from_slice(
+        &to_bytes(list_resp.into_body(), usize::MAX)
+            .await
+            .expect("body"),
+    )
+    .expect("json");
     assert_eq!(list_body.get("count").and_then(Value::as_u64), Some(0));
 
     // A human creates a routine; an agent-context run_now is then refused.
@@ -473,7 +549,11 @@ async fn routines_reject_agent_context_create_and_run() {
         ))
         .expect("human create request");
     assert_eq!(
-        app.clone().oneshot(human_create).await.expect("resp").status(),
+        app.clone()
+            .oneshot(human_create)
+            .await
+            .expect("resp")
+            .status(),
         StatusCode::OK
     );
 
