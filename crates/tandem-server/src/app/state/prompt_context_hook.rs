@@ -28,6 +28,7 @@ pub(super) enum PromptMemoryAccess {
         tenant_context: TenantContext,
         subject: String,
         access_filter: MemoryAccessFilter,
+        decrypt_principal: Option<tandem_memory::MemoryDecryptPrincipal>,
         audit: MemorySubjectAudit,
     },
     Blocked {
@@ -183,18 +184,15 @@ impl ServerPromptContextHook {
     }
 
     async fn open_memory_store(&self) -> Option<std::sync::Arc<dyn tandem_memory::MemoryStore>> {
-        if let Some(parent) = self.state.memory_db_path.parent() {
-            let _ = tokio::fs::create_dir_all(parent).await;
-        }
-        tandem_memory::open_sqlite_memory_store(&self.state.memory_db_path)
-            .await
-            .ok()
+        self.state.memory_store().await.ok()
     }
 
     async fn open_memory_manager(&self) -> Option<tandem_memory::MemoryManager> {
         if let Some(parent) = self.state.memory_db_path.parent() {
             let _ = tokio::fs::create_dir_all(parent).await;
         }
+        // Embedded guide docs are a local product index even when customer
+        // memory is hosted in PostgreSQL.
         tandem_memory::MemoryManager::new(&self.state.memory_db_path)
             .await
             .ok()
@@ -363,6 +361,10 @@ impl ServerPromptContextHook {
             tenant_context: verified.tenant_context.clone(),
             subject: resolution.subject,
             access_filter,
+            decrypt_principal:
+                crate::memory::decrypt_principal::memory_decrypt_principal_from_verified_context(
+                    verified, now_ms,
+                ),
             audit: resolution.audit,
         }
     }
@@ -550,6 +552,7 @@ impl ServerPromptContextHook {
                 tenant_context,
                 subject,
                 access_filter,
+                decrypt_principal,
                 ..
             } => {
                 let mut scope = tandem_memory::MemoryReadScope::tenant(
@@ -565,9 +568,15 @@ impl ServerPromptContextHook {
                     .as_ref()
                     .and_then(|units| (units.len() == 1).then(|| units.iter().next().cloned()))
                     .flatten();
-                let (project_hits, global_hits) =
-                    Self::search_prompt_memory_with_scope(store, scope, subject, query, project_id)
-                        .await;
+                let search =
+                    Self::search_prompt_memory_with_scope(store, scope, subject, query, project_id);
+                let (project_hits, global_hits) = match decrypt_principal.clone() {
+                    Some(principal) => {
+                        tandem_memory::decrypt_context::with_decrypt_principal(principal, search)
+                            .await
+                    }
+                    None => search.await,
+                };
                 let project_hits = project_hits
                     .into_iter()
                     .filter(|hit| {

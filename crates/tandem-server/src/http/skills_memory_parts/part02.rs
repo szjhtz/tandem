@@ -635,12 +635,28 @@ pub(super) async fn open_global_memory_db_for_state(state: &AppState) -> Option<
 pub(super) async fn open_global_memory_store_for_state(
     state: &AppState,
 ) -> Option<std::sync::Arc<dyn tandem_memory::MemoryStore>> {
-    if let Some(parent) = state.memory_db_path.parent() {
-        let _ = tokio::fs::create_dir_all(parent).await;
+    state.memory_store().await.ok()
+}
+
+pub(super) async fn with_verified_memory_decrypt_principal<F, T>(
+    verified_tenant_context: Option<&VerifiedTenantContext>,
+    future: F,
+) -> T
+where
+    F: std::future::Future<Output = T>,
+{
+    let principal = verified_tenant_context.and_then(|verified| {
+        crate::memory::decrypt_principal::memory_decrypt_principal_from_verified_context(
+            verified,
+            crate::now_ms(),
+        )
+    });
+    match principal {
+        Some(principal) => {
+            tandem_memory::decrypt_context::with_decrypt_principal(principal, future).await
+        }
+        None => future.await,
     }
-    tandem_memory::open_sqlite_memory_store(&state.memory_db_path)
-        .await
-        .ok()
 }
 
 pub(super) async fn open_memory_manager() -> Option<tandem_memory::MemoryManager> {
@@ -648,38 +664,23 @@ pub(super) async fn open_memory_manager() -> Option<tandem_memory::MemoryManager
     if let Some(parent) = paths.memory_db_path.parent() {
         let _ = tokio::fs::create_dir_all(parent).await;
     }
-    tandem_memory::MemoryManager::new(&paths.memory_db_path)
+    tandem_memory::MemoryManager::new_runtime(&paths.memory_db_path)
         .await
         .ok()
 }
 
-#[cfg(not(test))]
 pub(super) async fn open_memory_manager_for_state(
     state: &AppState,
 ) -> Option<tandem_memory::MemoryManager> {
-    if let Some(parent) = state.memory_db_path.parent() {
-        let _ = tokio::fs::create_dir_all(parent).await;
-    }
-    tandem_memory::MemoryManager::new(&state.memory_db_path)
-        .await
-        .ok()
-}
-
-#[cfg(test)]
-pub(super) async fn open_memory_manager_for_state(
-    state: &AppState,
-) -> Option<tandem_memory::MemoryManager> {
-    if let Some(parent) = state.memory_db_path.parent() {
-        let _ = tokio::fs::create_dir_all(parent).await;
-    }
-    tandem_memory::MemoryManager::new_with_embedding_service(
-        &state.memory_db_path,
+    let store = state.memory_store().await.ok()?;
+    #[cfg(not(test))]
+    let embedding_service = tandem_memory::embeddings::EmbeddingService::new();
+    #[cfg(test)]
+    let embedding_service =
         tandem_memory::embeddings::EmbeddingService::deterministic_for_tests(
             tandem_memory::types::DEFAULT_EMBEDDING_DIMENSION,
-        ),
-    )
-    .await
-    .ok()
+        );
+    tandem_memory::MemoryManager::new_with_store(store, embedding_service).ok()
 }
 
 pub(super) fn event_run_id(event: &EngineEvent) -> Option<String> {
@@ -1528,7 +1529,12 @@ pub(super) async fn memory_import(
         import_namespace: None,
     };
 
-    let stats = match import_files(&manager, &request, None::<fn(&MemoryImportProgress)>).await {
+    let stats = match with_verified_memory_decrypt_principal(
+        verified_tenant_context.as_deref(),
+        import_files(&manager, &request, None::<fn(&MemoryImportProgress)>),
+    )
+    .await
+    {
         Ok(stats) => stats,
         Err(err) => {
             if let (Some(job_id), Some(binding)) =
@@ -1579,11 +1585,14 @@ pub(super) async fn memory_import(
     };
 
     if let (Some(job_id), Some(binding)) = (&ingestion_job_id, source_binding_for_job.as_ref()) {
-        let source_objects = source_objects_seen_since(
-            &manager,
-            &request.tenant_scope,
-            &binding.binding_id,
-            job_started_at_ms,
+        let source_objects = with_verified_memory_decrypt_principal(
+            verified_tenant_context.as_deref(),
+            source_objects_seen_since(
+                &manager,
+                &request.tenant_scope,
+                &binding.binding_id,
+                job_started_at_ms,
+            ),
         )
         .await
         .unwrap_or_default();
@@ -1594,12 +1603,15 @@ pub(super) async fn memory_import(
         let quarantine_id = if binding.require_review {
             let quarantine_id =
                 format!("quarantine-{}-{}", job_started_at_ms, uuid::Uuid::new_v4());
-            if let Err(err) = quarantine_source_bound_import(
-                &manager,
-                &request.tenant_scope,
-                &binding.binding_id,
-                &source_objects,
-                job_started_at_ms,
+            if let Err(err) = with_verified_memory_decrypt_principal(
+                verified_tenant_context.as_deref(),
+                quarantine_source_bound_import(
+                    &manager,
+                    &request.tenant_scope,
+                    &binding.binding_id,
+                    &source_objects,
+                    job_started_at_ms,
+                ),
             )
             .await
             {
