@@ -128,7 +128,7 @@ jobs:
           retention-days: 7
 
   lint-backend:
-    name: Lint Backend
+    name: Backend Rust Gates
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
@@ -149,21 +149,23 @@ jobs:
             pkg-config \
             build-essential
 
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+      - name: Setup shared Rust CI
+        uses: ./.github/actions/setup-rust-ci
         with:
+          cache-profile: desktop-default
           components: rustfmt, clippy
-
-      - name: Cache Cargo
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: apps/tandem-desktop/src-tauri
+          workspaces: |
+            . -> target
+            apps/tandem-desktop/src-tauri -> apps/tandem-desktop/src-tauri/target
 
       - name: Check formatting
         run: cargo fmt --manifest-path apps/tandem-desktop/src-tauri/Cargo.toml -- --check
 
       - name: Run clippy
         run: cargo clippy --manifest-path apps/tandem-desktop/src-tauri/Cargo.toml -- -D warnings || true
+
+      - name: Run desktop Rust tests
+        run: cargo test --manifest-path apps/tandem-desktop/src-tauri/Cargo.toml
 
       - name: Verify memory DB blast-radius boundary
         run: node scripts/verify-memory-db-blast-radius.mjs
@@ -279,36 +281,8 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  test-rust:
-    name: Test Rust
-    runs-on: ubuntu-22.04
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Linux dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev \
-            libappindicator3-dev \
-            librsvg2-dev \
-            libglib2.0-dev \
-            pkg-config \
-            build-essential
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache Cargo
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: apps/tandem-desktop/src-tauri
-
-      - name: Run tests
-        run: cargo test --manifest-path apps/tandem-desktop/src-tauri/Cargo.toml
-
-  test-postgres-memory:
-    name: Test PostgreSQL Memory
+  test-postgres-storage:
+    name: Test PostgreSQL Storage
     runs-on: ubuntu-22.04
     services:
       postgres:
@@ -328,48 +302,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+      - name: Setup shared Rust CI
+        uses: ./.github/actions/setup-rust-ci
         with:
+          cache-profile: postgres-storage
           components: clippy
-
-      - name: Cache Cargo
-        uses: Swatinem/rust-cache@v2
 
       - name: Run PostgreSQL memory contract tests
         run: cargo test -p tandem-memory --features postgres postgres_store::tests -- --test-threads=1
 
       - name: Lint PostgreSQL memory backend
         run: cargo clippy -p tandem-memory --features postgres --lib -- -D warnings
-
-  test-postgres-storage:
-    name: Test PostgreSQL Stateful Storage
-    runs-on: ubuntu-22.04
-    services:
-      postgres:
-        image: pgvector/pgvector:pg16
-        env:
-          POSTGRES_PASSWORD: tandem
-          POSTGRES_DB: tandem
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres -d tandem"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
-    env:
-      TANDEM_TEST_POSTGRES_URL: postgres://postgres:tandem@localhost:5432/tandem
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
-
-      - name: Cache Cargo
-        uses: Swatinem/rust-cache@v2
 
       - name: Run SQLite-only storage conformance and scale gates
         run: cargo test -p tandem-server --no-default-features --features storage-sqlite backend_conformance_tests -- --test-threads=1
@@ -439,10 +382,12 @@ jobs:
           cache: pnpm
           cache-dependency-path: apps/tandem-desktop/pnpm-lock.yaml
 
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+      - name: Setup shared Rust CI
+        uses: ./.github/actions/setup-rust-ci
         with:
+          cache-profile: desktop-release-${{ matrix.target }}
           targets: ${{ matrix.target }}
+          workspaces: apps/tandem-desktop/src-tauri -> apps/tandem-desktop/src-tauri/target
 
       - name: Install Linux dependencies
         if: matrix.platform == 'ubuntu-22.04'
@@ -455,11 +400,6 @@ jobs:
             patchelf \
             pkg-config \
             build-essential
-
-      - name: Cache Cargo
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: apps/tandem-desktop/src-tauri
 
       - name: Install dependencies
         run: pnpm -C apps/tandem-desktop install

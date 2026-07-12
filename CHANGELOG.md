@@ -115,6 +115,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   transitions, idempotent replay, tenant scoping, retention, cursors,
   concurrent commit races, lock exclusivity) against every compiled backend
   in CI, including a real PostgreSQL service container.
+- Added `tandem-engine storage migrate` for verified, offline SQLite to
+  PostgreSQL and PostgreSQL to SQLite stateful-store migrations. Transfers
+  preserve durable event and reliability ordering IDs, idempotency ledgers,
+  KMS-sealed values, sessions, messages, and runtime-event sidecars; bounded
+  batches, typed SHA-256 fingerprints, row-count verification, and a durable
+  transfer journal make interrupted runs resumable while keeping the source
+  authoritative and incomplete targets fail-closed.
+- Added required storage-backend CI gates for SQLite-only, PostgreSQL-only,
+  and combined-feature builds, shared conformance and high-volume query
+  coverage, a SQLite to PostgreSQL to SQLite round trip, and PostgreSQL-only
+  clippy. The storage operations guide now documents backend selection,
+  migration, TLS and secret handling, locking, maintenance, retention, and
+  backup behavior.
 - Added a transactional SQLite session store in the engine core: sessions,
   session metadata, snapshots, and interactive questions now persist through
   crash-safe transactions with a once-only atomic import of the legacy JSON
@@ -126,6 +139,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Rust CI now shares Cargo artifacts by runner OS and feature profile, uses
+  `sccache` for compiled dependencies, combines compatible Ubuntu gates, and
+  skips unrelated cross-platform engine matrices for storage-only changes.
 - The stateful runtime now reads and writes through the transactional SQLite
   store after a once-only migration, and the legacy JSON/JSONL sidecars are
   retired: once migration completes, retention sweeps archive them into a
@@ -144,6 +160,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with actionable recovery guidance; stale-lock recovery stays manual so
   filesystems with unreliable advisory locks cannot enable unsafe
   multi-engine sharing.
+- Stateful runtime startup now acquires the SQLite filesystem lock before
+  opening or migrating the database, while PostgreSQL takes both its local
+  filesystem guard and schema advisory lock before initialization. A losing
+  engine therefore cannot run schema DDL against a live store.
 - Legacy workspace file handoffs now import exactly once with quarantine for
   corrupt, foreign (no locally known source or target automation),
   conflicting-duplicate, and workspace-escaping envelopes, backed by a

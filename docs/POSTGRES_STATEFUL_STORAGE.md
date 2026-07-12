@@ -43,8 +43,8 @@ Selecting a backend the build does not include is a startup error.
 
 `backend_conformance_tests` runs the same store scenarios against every
 compiled backend: always on SQLite, and on PostgreSQL when
-`TANDEM_TEST_POSTGRES_URL` is set (CI job `test-postgres-storage`, mirroring
-`test-postgres-memory`). The scenarios cover the dialect-sensitive surface:
+`TANDEM_TEST_POSTGRES_URL` is set (CI job `test-postgres-storage`). The
+scenarios cover the dialect-sensitive surface:
 `ON CONFLICT` upserts, tenant scoping, rowid cursors, `INSERT .. RETURNING`,
 retention's correlated subqueries, and engine-lock exclusivity.
 

@@ -169,6 +169,28 @@ compiled backend, and CI exercises it against a real PostgreSQL service
 container. See `docs/POSTGRES_STATEFUL_STORAGE.md` for configuration and
 scope notes.
 
+Operators can now move authoritative state between those backends with
+`tandem-engine storage migrate`. The offline command locks the source,
+transfers rows in bounded batches, preserves event cursors, generated
+reliability ordering IDs, idempotency ledgers, and KMS-sealed values verbatim,
+then compares typed SHA-256 fingerprints and row counts before marking the
+target complete. A durable transfer journal keeps the source authoritative,
+makes a partially populated target unusable by normal startup, and allows a
+restart to finish an interrupted transfer without duplicating data. When a
+different target state directory is requested, the direct-SQLite session and
+runtime-event sidecars are copied through consistent SQLite snapshots and
+verified alongside the primary store.
+
+The backend contract is now a required CI surface rather than a best-effort
+build. SQLite-only and PostgreSQL-only conformance and scale suites run against
+their real backends, the migration path round-trips SQLite to PostgreSQL and
+back, feature combinations compile independently, and PostgreSQL-only clippy
+guards dialect drift. Startup locking was tightened at the same time: SQLite
+takes its filesystem lock before any database initialization, and PostgreSQL
+takes both the local guard and schema advisory lock before schema work. The
+storage operations guide covers selection, provisioning, TLS/secrets,
+migration, retention, maintenance, locking, and backend-specific backups.
+
 ### Memory Storage Portability And PostgreSQL
 
 The portable `MemoryStore` abstraction is complete, including private
@@ -178,6 +200,12 @@ decrypts, and hardened failure handling. Channel memory consolidation is now
 tenant- and subject-scoped and atomic, preserving source ownership.
 
 ### Governance Proof, Release Gates, And Test Stability
+
+Rust CI is leaner without reducing its required coverage. Cargo artifacts are
+shared by runner OS and feature profile, `sccache` reuses compiled dependencies,
+compatible Ubuntu server and PostgreSQL gates build once, and storage-only
+changes skip unrelated cross-platform engine matrices. The full workspace and
+backend contract suites still run for storage changes.
 
 The five-profile ACME Slack governance demo now runs on the production path:
 signed Slack events drive real governed sessions, decisions persist as

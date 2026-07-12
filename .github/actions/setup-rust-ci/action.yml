@@ -1,0 +1,43 @@
+name: Setup Rust CI
+description: Install Rust and restore caches shared by OS and Cargo feature profile.
+
+inputs:
+  cache-profile:
+    description: Stable Cargo feature/profile name shared by compatible jobs.
+    required: true
+  components:
+    description: Optional rustup components.
+    required: false
+    default: ""
+  targets:
+    description: Optional rustup compilation targets.
+    required: false
+    default: ""
+  workspaces:
+    description: Workspace to target-directory mappings for rust-cache.
+    required: false
+    default: ". -> target"
+
+runs:
+  using: composite
+  steps:
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        components: ${{ inputs.components }}
+        targets: ${{ inputs.targets }}
+
+    - name: Install sccache
+      uses: mozilla-actions/sccache-action@v0.0.10
+
+    - name: Enable shared compiler cache
+      shell: bash
+      run: |
+        echo "SCCACHE_GHA_ENABLED=true" >> "$GITHUB_ENV"
+        echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"
+
+    - name: Restore Cargo profile cache
+      uses: Swatinem/rust-cache@v2
+      with:
+        shared-key: ${{ runner.os }}-${{ inputs.cache-profile }}
+        workspaces: ${{ inputs.workspaces }}
