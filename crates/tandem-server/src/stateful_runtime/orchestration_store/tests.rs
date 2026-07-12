@@ -647,6 +647,32 @@ fn engine_lock_rejects_a_second_owner() {
 }
 
 #[test]
+fn runtime_engine_lock_rejects_sqlite_owner_before_opening_store() {
+    let directory = tempfile::tempdir().unwrap();
+    let paths = OrchestrationStorePaths {
+        database_path: directory.path().join("runtime.sqlite3"),
+        engine_lock_path: directory.path().join("engine.lock"),
+    };
+    let _first = OrchestrationStateStore::acquire_engine_lock_for_runtime_with_config(
+        paths.clone(),
+        backend::StorageBackendConfig::Sqlite,
+    )
+    .unwrap();
+
+    assert!(
+        OrchestrationStateStore::acquire_engine_lock_for_runtime_with_config(
+            paths.clone(),
+            backend::StorageBackendConfig::Sqlite,
+        )
+        .is_err()
+    );
+    assert!(
+        !paths.database_path.exists(),
+        "a rejected SQLite engine must not initialize the store"
+    );
+}
+
+#[test]
 fn engine_lock_records_owner_and_diagnoses_the_holder() {
     let directory = tempfile::tempdir().unwrap();
     let lock_path = directory.path().join("engine.lock");
