@@ -27,5 +27,5 @@ The Markdown table in `docs/ENGINE_CONFIGURATION.md` is generated from the same 
 
 The PostgreSQL backend is scoped to the stateful orchestration store. Session,
 question, and runtime-event stores remain SQLite-backed. Follow the
-[storage maintenance guide](/storage-maintenance/) for backend migration,
+[storage maintenance guide](../storage-maintenance/) for backend migration,
 retention, backup, and single-engine locking procedures.
