@@ -114,6 +114,38 @@ impl OrchestrationStateStore {
         Self::open_with_config(paths, backend::StorageBackendConfig::from_env()?)
     }
 
+    /// Acquires the process-lifetime engine lock before the store can be used
+    /// by the runtime. SQLite takes its filesystem lock before the database is
+    /// opened so a losing process cannot initialize or migrate the live file.
+    /// PostgreSQL takes both the local lock and the advisory lock before its
+    /// schema is initialized.
+    pub fn acquire_engine_lock_for_runtime(
+        paths: OrchestrationStorePaths,
+    ) -> anyhow::Result<StatefulEngineLock> {
+        Self::acquire_engine_lock_for_runtime_with_config(
+            paths,
+            backend::StorageBackendConfig::from_env()?,
+        )
+    }
+
+    fn acquire_engine_lock_for_runtime_with_config(
+        paths: OrchestrationStorePaths,
+        config: backend::StorageBackendConfig,
+    ) -> anyhow::Result<StatefulEngineLock> {
+        match config {
+            backend::StorageBackendConfig::Sqlite => {
+                StatefulEngineLock::acquire(&paths.engine_lock_path)
+            }
+            config @ backend::StorageBackendConfig::Postgres { .. } => {
+                let store = Self::open_with_config_inner(paths, config)?;
+                let engine_lock = store.acquire_engine_lock()?;
+                store.initialize()?;
+                transfer::ensure_target_is_not_mid_transfer(&store)?;
+                Ok(engine_lock)
+            }
+        }
+    }
+
     /// Opens the store against an explicit backend target. Production code
     /// goes through [`Self::open`] (environment-selected); tests use this to
     /// exercise a specific backend without mutating process environment.
