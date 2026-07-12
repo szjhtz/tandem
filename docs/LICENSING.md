@@ -182,8 +182,8 @@ are covered without script changes.
 BUSL applies separately to each version, so a license change is prospective:
 the grant and Change Date above first took effect in **0.6.8** (released
 2026-07-09). `0.6.7` and earlier remain under the terms they were released
-with. The `Change Date` in the shipped 0.6.8 `LICENSE` files is `2030-07-09` —
-the 0.6.8 release date plus four years, per the rolling-window policy above.
+with. The `Change Date` in the shipped 0.6.9 `LICENSE` files is `2030-07-12` —
+the 0.6.9 release date plus four years, per the rolling-window policy above.
 
 ## License Texts
 
