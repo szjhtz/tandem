@@ -654,6 +654,7 @@ export function ChatPage({ client, api, toast, providerStatus, identity, navigat
       promptRaw || (attached.length ? "Please analyze the attached file(s)." : "");
     if (!resolvedPrompt) return;
 
+    setSetupCard(null);
     try {
       const setup = (await api("/api/engine/setup/understand", {
         method: "POST",
@@ -675,12 +676,7 @@ export function ChatPage({ client, api, toast, providerStatus, identity, navigat
         }),
       })) as SetupUnderstandResponse;
       if (setup.decision !== "pass_through") {
-        const card = setupCardFromResponse(setup);
-        if (card) {
-          setSetupCard(card);
-          setPrompt("");
-          return;
-        }
+        setSetupCard(setupCardFromResponse(setup));
       }
     } catch {
       // continue with normal chat flow

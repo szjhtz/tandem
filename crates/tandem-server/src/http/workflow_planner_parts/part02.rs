@@ -1119,11 +1119,50 @@ pub(super) async fn workflow_planner_session_reset(
     workflow_planner_session_response(&state, &session, response).await
 }
 
+pub(super) fn workflow_plan_mutation_actor_id(
+    tenant_context: &tandem_types::TenantContext,
+    verified_tenant_context: Option<&tandem_types::VerifiedTenantContext>,
+) -> Result<String, (StatusCode, Json<Value>)> {
+    if let Some(verified) = verified_tenant_context {
+        if super::ensure_same_tenant(tenant_context, &verified.tenant_context).is_err() {
+            return Err((
+                StatusCode::FORBIDDEN,
+                Json(json!({
+                    "error": "verified principal does not match the request tenant",
+                    "code": "WORKFLOW_PLAN_TENANT_MISMATCH",
+                })),
+            ));
+        }
+        let actor_id = verified.human_actor.actor_id.trim();
+        if !actor_id.is_empty() {
+            return Ok(actor_id.to_string());
+        }
+    }
+    if tenant_context.is_local_implicit() {
+        return Ok("local-operator".to_string());
+    }
+    Err((
+        StatusCode::UNAUTHORIZED,
+        Json(json!({
+            "error": "workflow materialization requires a verified tenant principal",
+            "code": "WORKFLOW_PLAN_AUTH_REQUIRED",
+        })),
+    ))
+}
+
 pub(super) async fn workflow_plan_apply(
     State(state): State<AppState>,
     Extension(tenant_context): Extension<tandem_types::TenantContext>,
+    verified_tenant_context: Option<Extension<tandem_types::VerifiedTenantContext>>,
     Json(input): Json<WorkflowPlanApplyRequest>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let requested_creator_id = input.creator_id.clone();
+    let creator_id = workflow_plan_mutation_actor_id(
+        &tenant_context,
+        verified_tenant_context
+            .as_ref()
+            .map(|Extension(verified)| verified),
+    )?;
     let plan_id = input
         .plan_id
         .as_deref()
@@ -1240,7 +1279,7 @@ pub(super) async fn workflow_plan_apply(
     }
     if let Some(entry) = compiler_api::overlap_log_entry_from_analysis(
         &overlap_analysis,
-        input.creator_id.as_deref().unwrap_or("workflow_planner"),
+        &creator_id,
         &chrono::Utc::now().to_rfc3339(),
     ) {
         plan_package
@@ -1250,11 +1289,8 @@ pub(super) async fn workflow_plan_apply(
             .push(entry);
     }
 
-    let mut automation = compile_plan_to_automation_v2(
-        &plan,
-        Some(&plan_package),
-        input.creator_id.as_deref().unwrap_or("workflow_planner"),
-    );
+    let mut automation =
+        compile_plan_to_automation_v2(&plan, Some(&plan_package), &creator_id);
     let approved_plan_materialization = compiler_api::approved_plan_materialization(&plan_package);
     let approved_plan_success_memory =
         compiler_api::approved_plan_success_memory_value(&plan_package);
@@ -1288,6 +1324,14 @@ pub(super) async fn workflow_plan_apply(
             "planner_diagnostics".to_string(),
             planner_diagnostics.clone().unwrap_or(Value::Null),
         );
+        metadata.insert(
+            "authoring_actor_id".to_string(),
+            json!(creator_id.clone()),
+        );
+        metadata.insert(
+            "requested_creator_id".to_string(),
+            requested_creator_id.clone().map(Value::String).unwrap_or(Value::Null),
+        );
     } else {
         automation.metadata = Some(json!({
             "plan_package": plan_package,
@@ -1296,6 +1340,8 @@ pub(super) async fn workflow_plan_apply(
             "overlap_analysis": overlap_analysis,
             "approved_plan_materialization": approved_plan_success_memory.clone(),
             "planner_diagnostics": planner_diagnostics,
+            "authoring_actor_id": creator_id.clone(),
+            "requested_creator_id": requested_creator_id.clone(),
         }));
     }
     automation.set_tenant_context(&tenant_context);
@@ -1308,6 +1354,21 @@ pub(super) async fn workflow_plan_apply(
             })),
         )
     })?;
+    crate::audit::append_protected_audit_event(
+        &state,
+        "workflow_plan.materialized",
+        &tenant_context,
+        Some(creator_id.clone()),
+        json!({
+            "plan_id": plan_id.clone(),
+            "automation_id": stored.automation_id.clone(),
+            "actor_id": creator_id.clone(),
+            "requested_creator_id": requested_creator_id.clone(),
+            "plan_source": plan.plan_source.clone(),
+        }),
+    )
+    .await
+    .map_err(super::protected_audit_error_response)?;
     if let Some(plan_id) = plan_id.as_deref() {
         if let Some(mut draft) = state.get_workflow_plan_draft(plan_id).await {
             draft.last_success_materialization = Some(approved_plan_success_memory);

@@ -3,6 +3,29 @@ fn planner_env_lock() -> &'static Mutex<()> {
     LOCK.get_or_init(|| Mutex::new(()))
 }
 
+fn verified_workflow_plan_context(
+    tenant_context: tandem_types::TenantContext,
+    actor_id: &str,
+) -> tandem_types::VerifiedTenantContext {
+    let principal = tandem_types::RequestPrincipal::authenticated_user(actor_id, "tandem-web");
+    tandem_types::VerifiedTenantContext {
+        tenant_context,
+        human_actor: tandem_types::HumanActor::tandem_user(actor_id),
+        authority_chain: tandem_types::AuthorityChain::from_request(principal),
+        roles: Vec::new(),
+        org_units: Vec::new(),
+        capabilities: Vec::new(),
+        policy_version: None,
+        strict_projection: None,
+        issuer: "tandem-web".to_string(),
+        audience: "tandem-runtime".to_string(),
+        issued_at_ms: 1_000,
+        expires_at_ms: 9_999_999_999_999,
+        assertion_id: format!("workflow-plan-{actor_id}"),
+        assertion_key_id: None,
+    }
+}
+
 struct PlannerEnvGuard {
     _guard: MutexGuard<'static, ()>,
     saved: Vec<(&'static str, Option<String>)>,
@@ -1127,7 +1150,7 @@ async fn workflow_plan_apply_persists_automation_v2_with_planner_metadata() {
         .and_then(Value::as_str)
         .expect("plan id");
 
-    let apply_req = Request::builder()
+    let mut apply_req = Request::builder()
         .method("POST")
         .uri("/workflow-plans/apply")
         .header("x-tandem-org-id", "org-a")
@@ -1142,6 +1165,10 @@ async fn workflow_plan_apply_persists_automation_v2_with_planner_metadata() {
             .to_string(),
         ))
         .expect("apply request");
+    apply_req.extensions_mut().insert(verified_workflow_plan_context(
+        tandem_types::TenantContext::explicit("org-a", "workspace-a", None),
+        "user-a",
+    ));
     let apply_resp = app
         .clone()
         .oneshot(apply_req)
@@ -1166,7 +1193,23 @@ async fn workflow_plan_apply_persists_automation_v2_with_planner_metadata() {
     assert_eq!(tenant.org_id, "org-a");
     assert_eq!(tenant.workspace_id, "workspace-a");
     assert_eq!(tenant.actor_id.as_deref(), Some("user-a"));
-    assert_eq!(stored.creator_id, "control-panel");
+    assert_eq!(stored.creator_id, "user-a");
+    assert_eq!(
+        stored
+            .metadata
+            .as_ref()
+            .and_then(|row| row.get("authoring_actor_id"))
+            .and_then(Value::as_str),
+        Some("user-a")
+    );
+    assert_eq!(
+        stored
+            .metadata
+            .as_ref()
+            .and_then(|row| row.get("requested_creator_id"))
+            .and_then(Value::as_str),
+        Some("control-panel")
+    );
     assert_eq!(
         stored.workspace_root.as_deref(),
         Some("/tmp/custom-workspace")
@@ -1301,7 +1344,7 @@ async fn workflow_plan_apply_persists_automation_v2_with_planner_metadata() {
         manual_trigger_record
             .get("triggered_by")
             .and_then(Value::as_str),
-        Some("control-panel")
+        Some("user-a")
     );
     assert_eq!(
         manual_trigger_record
@@ -1344,6 +1387,30 @@ async fn workflow_plan_apply_persists_automation_v2_with_planner_metadata() {
         .nodes
         .iter()
         .any(|node| !node.input_refs.is_empty()));
+}
+
+#[test]
+fn workflow_plan_materialization_requires_verified_identity_outside_local_mode() {
+    let hosted_tenant = tandem_types::TenantContext::explicit(
+        "org-a",
+        "workspace-a",
+        Some("claimed-user".to_string()),
+    );
+    let (status, Json(payload)) =
+        crate::http::workflow_planner::workflow_plan_mutation_actor_id(&hosted_tenant, None)
+            .expect_err("hosted materialization must require verified identity");
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        payload.get("code").and_then(Value::as_str),
+        Some("WORKFLOW_PLAN_AUTH_REQUIRED")
+    );
+
+    let local_actor = crate::http::workflow_planner::workflow_plan_mutation_actor_id(
+        &tandem_types::TenantContext::local_implicit(),
+        None,
+    )
+    .expect("local implicit mode should retain an operator identity");
+    assert_eq!(local_actor, "local-operator");
 }
 
 #[tokio::test]
