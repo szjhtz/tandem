@@ -253,8 +253,9 @@ export function MyAutomationsContent({ state, actions, helpers }: any) {
     const categoryLabel = String(row?.categoryLabel || "").trim();
     const sourceLabel = String(row?.sourceLabel || "").trim();
     const createdAtMs = Number(row?.createdAtMs || 0) || 0;
+    const missionBlueprint = isMissionBlueprintAutomation(automation);
     const openWorkflowEditor = (editorInitialView: "flow" | "configure") => {
-      if (editorInitialView === "configure" && isMissionBlueprintAutomation(automation)) {
+      if (missionBlueprint) {
         onOpenAdvancedEdit(automation);
         return;
       }
@@ -303,15 +304,17 @@ export function MyAutomationsContent({ state, actions, helpers }: any) {
             >
               <Icon name="star" className={`w-3.5 h-3.5 ${favorite ? "fill-current" : ""}`} />
             </button>
-            <button
-              className="tcp-icon-btn h-8 w-8"
-              onClick={() => openWorkflowEditor("flow")}
-              disabled={!id}
-              title="View workflow flow"
-              aria-label="View workflow flow"
-            >
-              <Icon name="network" className="w-3.5 h-3.5" />
-            </button>
+            {!missionBlueprint ? (
+              <button
+                className="tcp-icon-btn h-8 w-8"
+                onClick={() => openWorkflowEditor("flow")}
+                disabled={!id}
+                title="View workflow flow"
+                aria-label="View workflow flow"
+              >
+                <Icon name="network" className="w-3.5 h-3.5" />
+              </button>
+            ) : null}
             <button
               className="tcp-icon-btn h-8 w-8 opacity-100 md:opacity-0 group-hover:opacity-100 transition-opacity"
               onClick={() => openWorkflowEditor("configure")}

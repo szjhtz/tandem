@@ -55,10 +55,19 @@ const automation = {
   },
 };
 
+const missionBlueprintAutomation = {
+  ...automation,
+  automation_id: "mission-blueprint",
+  name: "Mission blueprint workflow",
+  metadata: {
+    builder_kind: "mission_blueprint",
+  },
+};
+
 function mockParallelAutomation(apiFixture: any) {
   apiFixture.mockResponse(
     "/api/engine/automations/v2?view=summary",
-    { automations: [automation], count: 1 },
+    { automations: [automation, missionBlueprintAutomation], count: 2 },
     "GET"
   );
   apiFixture.mockResponse(
@@ -78,7 +87,11 @@ test("workflow library opens parallel Flow and task configuration views", async 
   await page.getByRole("button", { name: "Library", exact: true }).click();
 
   await expect(page.getByText(automation.name, { exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "View workflow flow" }).click();
+  await expect(page.getByText(missionBlueprintAutomation.name, { exact: true })).toBeVisible();
+  const workflowCard = page.locator(".tcp-card").filter({ hasText: automation.name });
+  await expect(workflowCard).toHaveCount(1);
+  await expect(page.getByRole("button", { name: "View workflow flow" })).toHaveCount(1);
+  await workflowCard.getByRole("button", { name: "View workflow flow" }).click();
 
   const flowTab = page.getByRole("tab", { name: "Flow", exact: true });
   const configureTab = page.getByRole("tab", { name: "Configure", exact: true });
@@ -97,7 +110,7 @@ test("workflow library opens parallel Flow and task configuration views", async 
   );
 
   await page.getByRole("button", { name: "Close workflow editor" }).click();
-  await page.getByRole("button", { name: "Edit workflow automation" }).click();
+  await workflowCard.getByRole("button", { name: "Edit workflow automation" }).click();
   await expect(configureTab).toHaveAttribute("aria-selected", "true");
   expect(await blankIconDescriptions(page)).toEqual([]);
 
