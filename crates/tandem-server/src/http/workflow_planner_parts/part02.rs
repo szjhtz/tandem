@@ -447,11 +447,17 @@ async fn workflow_planner_session_response(
 
 pub(super) async fn workflow_planner_session_list(
     State(state): State<AppState>,
+    Extension(tenant_context): Extension<tandem_types::TenantContext>,
     Query(query): Query<WorkflowPlannerSessionListQuery>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     let sessions = state
         .list_workflow_planner_sessions(query.project_slug.as_deref())
-        .await;
+        .await
+        .into_iter()
+        .filter(|session| {
+            ensure_workflow_planner_session_tenant(session, &tenant_context).is_ok()
+        })
+        .collect::<Vec<_>>();
     let items = sessions
         .iter()
         .map(workflow_planner_session_list_item)
@@ -464,6 +470,7 @@ pub(super) async fn workflow_planner_session_list(
 
 pub(super) async fn workflow_planner_session_create(
     State(state): State<AppState>,
+    Extension(tenant_context): Extension<tandem_types::TenantContext>,
     Json(input): Json<WorkflowPlannerSessionCreateRequest>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     let project_slug = input.project_slug.trim();
@@ -490,6 +497,11 @@ pub(super) async fn workflow_planner_session_create(
     let now = crate::now_ms();
     let session = WorkflowPlannerSessionRecord {
         session_id: format!("wfplan-session-{}", Uuid::new_v4()),
+        tenant_context,
+        linked_chat_session_id: None,
+        linked_chat_run_id: None,
+        last_referenced_at_ms: None,
+        artifact_links: Vec::new(),
         project_slug: project_slug.to_string(),
         title: input
             .title
@@ -593,6 +605,7 @@ pub(super) async fn workflow_planner_session_create(
 
 pub(super) async fn workflow_planner_session_get(
     State(state): State<AppState>,
+    Extension(tenant_context): Extension<tandem_types::TenantContext>,
     Path(session_id): Path<String>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     let Some(session) = state.get_workflow_planner_session(&session_id).await else {
@@ -605,6 +618,7 @@ pub(super) async fn workflow_planner_session_get(
             })),
         ));
     };
+    ensure_workflow_planner_session_tenant(&session, &tenant_context)?;
     Ok(Json(json!({
         "session": session,
     })))
@@ -612,6 +626,7 @@ pub(super) async fn workflow_planner_session_get(
 
 pub(super) async fn workflow_planner_session_patch(
     State(state): State<AppState>,
+    Extension(tenant_context): Extension<tandem_types::TenantContext>,
     Path(session_id): Path<String>,
     Json(input): Json<WorkflowPlannerSessionPatchRequest>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
@@ -625,6 +640,7 @@ pub(super) async fn workflow_planner_session_patch(
             })),
         ));
     };
+    ensure_workflow_planner_session_tenant(&session, &tenant_context)?;
     if let Some(title) = input.title.as_deref() {
         let title = title.trim();
         if title.is_empty() {
@@ -715,8 +731,14 @@ pub(super) async fn workflow_planner_session_patch(
 
 pub(super) async fn workflow_planner_session_delete(
     State(state): State<AppState>,
+    Extension(tenant_context): Extension<tandem_types::TenantContext>,
     Path(session_id): Path<String>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let session = state
+        .get_workflow_planner_session(&session_id)
+        .await
+        .ok_or_else(|| workflow_planner_session_scope_error(&session_id))?;
+    ensure_workflow_planner_session_tenant(&session, &tenant_context)?;
     let Some(session) = state.delete_workflow_planner_session(&session_id).await else {
         return Err((
             StatusCode::NOT_FOUND,
@@ -735,6 +757,7 @@ pub(super) async fn workflow_planner_session_delete(
 
 pub(super) async fn workflow_planner_session_duplicate(
     State(state): State<AppState>,
+    Extension(tenant_context): Extension<tandem_types::TenantContext>,
     Path(session_id): Path<String>,
     Json(input): Json<WorkflowPlannerSessionDuplicateRequest>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
@@ -748,6 +771,7 @@ pub(super) async fn workflow_planner_session_duplicate(
             })),
         ));
     };
+    ensure_workflow_planner_session_tenant(&source, &tenant_context)?;
     let now = crate::now_ms();
     let mut next = source.clone();
     next.session_id = format!("wfplan-session-{}", Uuid::new_v4());
@@ -812,6 +836,7 @@ pub(super) async fn workflow_planner_session_start(
             })),
         ));
     };
+    ensure_workflow_planner_session_tenant(&session, &tenant_context)?;
     let chat_start = WorkflowPlanChatStartRequest {
         prompt: input.prompt,
         schedule: input.schedule,
@@ -892,6 +917,7 @@ pub(super) async fn workflow_planner_session_start_async(
             })),
         ));
     };
+    ensure_workflow_planner_session_tenant(&session, &tenant_context)?;
     if planner_session_operation_running(&session) {
         return Err((
             StatusCode::CONFLICT,
@@ -955,6 +981,7 @@ pub(super) async fn workflow_planner_session_message(
             })),
         ));
     };
+    ensure_workflow_planner_session_tenant(&session, &tenant_context)?;
     if session.current_plan_id.is_none() {
         if let Some(draft) = session.draft.clone() {
             session.current_plan_id = Some(draft.current_plan.plan_id.clone());
@@ -1017,6 +1044,7 @@ pub(super) async fn workflow_planner_session_message_async(
             })),
         ));
     };
+    ensure_workflow_planner_session_tenant(&session, &tenant_context)?;
     if planner_session_operation_running(&session) {
         return Err((
             StatusCode::CONFLICT,
@@ -1065,6 +1093,7 @@ pub(super) async fn workflow_planner_session_message_async(
 
 pub(super) async fn workflow_planner_session_reset(
     State(state): State<AppState>,
+    Extension(tenant_context): Extension<tandem_types::TenantContext>,
     Path(session_id): Path<String>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     let Some(mut session) = state.get_workflow_planner_session(&session_id).await else {
@@ -1077,6 +1106,7 @@ pub(super) async fn workflow_planner_session_reset(
             })),
         ));
     };
+    ensure_workflow_planner_session_tenant(&session, &tenant_context)?;
     if session.current_plan_id.is_none() {
         if let Some(draft) = session.draft.clone() {
             session.current_plan_id = Some(draft.current_plan.plan_id.clone());
@@ -1126,6 +1156,24 @@ pub(super) async fn workflow_plan_apply(
     Json(input): Json<WorkflowPlanApplyRequest>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     let requested_creator_id = input.creator_id.clone();
+    let apply_idempotency_key = input
+        .idempotency_key
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    if apply_idempotency_key
+        .as_ref()
+        .is_some_and(|key| key.len() > 256)
+    {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "error": "idempotency_key must not exceed 256 characters",
+                "code": "WORKFLOW_PLAN_INVALID",
+            })),
+        ));
+    }
     let creator_id = workflow_plan_mutation_actor_id(
         &tenant_context,
         verified_tenant_context
@@ -1199,7 +1247,6 @@ pub(super) async fn workflow_plan_apply(
         apply_revision,
     );
     let plan_package_validation = compiler_api::validate_plan_package(&plan_package);
-    let mut overlap_analysis = compile_preview_plan_overlap(&state, &plan_package).await;
     if plan_package_validation.blocker_count > 0 {
         return Err((
             StatusCode::BAD_REQUEST,
@@ -1221,6 +1268,78 @@ pub(super) async fn workflow_plan_apply(
                 })),
             )
         })?;
+    let plan_json_text = serde_json::to_string(&plan_json).map_err(|error| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({
+                "error": format!("failed to fingerprint workflow plan: {error}"),
+                "code": "WORKFLOW_PLAN_APPLY_FAILED",
+            })),
+        )
+    })?;
+    let apply_revision_text = apply_revision.to_string();
+    let pack_builder_export_text = serde_json::to_string(&input.pack_builder_export)
+        .unwrap_or_else(|_| "null".to_string());
+    let materialization_mode = if input.materialize_as_draft {
+        "draft"
+    } else {
+        "active"
+    };
+    let apply_idempotency_fingerprint = apply_idempotency_key.as_ref().map(|_| {
+        crate::sha256_hex(&[
+            plan_id.as_deref().unwrap_or(&plan.plan_id),
+            &plan_json_text,
+            &apply_revision_text,
+            input.overlap_decision.as_deref().unwrap_or(""),
+            materialization_mode,
+            &pack_builder_export_text,
+            &creator_id,
+        ])
+    });
+    if let (Some(key), Some(fingerprint)) = (
+        apply_idempotency_key.as_deref(),
+        apply_idempotency_fingerprint.as_deref(),
+    ) {
+        let reservation = state
+            .reserve_idempotency_key(crate::app::state::IdempotencyReservationInput {
+                tenant_context: tenant_context.clone(),
+                operation: "workflow_plan.apply".to_string(),
+                key: key.to_string(),
+                owner: creator_id.clone(),
+                request_fingerprint: fingerprint.to_string(),
+                first_seen_event_id: None,
+                now_ms: crate::now_ms(),
+                expires_at_ms: None,
+            })
+            .await
+            .map_err(|error| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({
+                        "error": format!("failed to reserve workflow apply: {error}"),
+                        "code": "WORKFLOW_PLAN_APPLY_FAILED",
+                    })),
+                )
+            })?;
+        match reservation {
+            crate::app::state::IdempotencyReservation::Duplicate(record) => {
+                if let Some(outcome) = record.outcome {
+                    return Ok(Json(outcome.details));
+                }
+            }
+            crate::app::state::IdempotencyReservation::Conflict(_) => {
+                return Err((
+                    StatusCode::CONFLICT,
+                    Json(json!({
+                        "error": "idempotency key is already bound to a different workflow apply request",
+                        "code": "WORKFLOW_PLAN_IDEMPOTENCY_CONFLICT",
+                    })),
+                ));
+            }
+            crate::app::state::IdempotencyReservation::Reserved(_) => {}
+        }
+    }
+    let mut overlap_analysis = compile_preview_plan_overlap(&state, &plan_package).await;
     if overlap_analysis.requires_user_confirmation && requested_overlap_decision.is_none() {
         return Err((
             StatusCode::CONFLICT,
@@ -1260,6 +1379,10 @@ pub(super) async fn workflow_plan_apply(
 
     let mut automation =
         compile_plan_to_automation_v2(&plan, Some(&plan_package), &creator_id);
+    if input.materialize_as_draft {
+        automation.status = crate::AutomationV2Status::Draft;
+        automation.next_fire_at_ms = None;
+    }
     let approved_plan_materialization = compiler_api::approved_plan_materialization(&plan_package);
     let approved_plan_success_memory =
         compiler_api::approved_plan_success_memory_value(&plan_package);
@@ -1314,15 +1437,65 @@ pub(super) async fn workflow_plan_apply(
         }));
     }
     automation.set_tenant_context(&tenant_context);
-    let stored = state.put_automation_v2(automation).await.map_err(|error| {
-        (
-            StatusCode::BAD_REQUEST,
-            Json(json!({
-                "error": error.to_string(),
-                "code": "WORKFLOW_PLAN_APPLY_FAILED",
-            })),
-        )
-    })?;
+    let mut recovered_automation = None;
+    if let (Some(key), Some(fingerprint)) = (
+        apply_idempotency_key.as_deref(),
+        apply_idempotency_fingerprint.as_deref(),
+    ) {
+        let stable_digest = crate::sha256_hex(&[
+            &tenant_context.org_id,
+            &tenant_context.workspace_id,
+            tenant_context.deployment_id.as_deref().unwrap_or(""),
+            "workflow_plan.apply",
+            key,
+            fingerprint,
+        ]);
+        automation.automation_id = format!("automation-v2-idem-{}", &stable_digest[..32]);
+        if let Some(metadata) = automation.metadata.as_mut().and_then(Value::as_object_mut) {
+            metadata.insert(
+                "workflow_plan_apply_idempotency_fingerprint".to_string(),
+                Value::String(fingerprint.to_string()),
+            );
+        }
+        if let Some(existing) = state.get_automation_v2(&automation.automation_id).await {
+            let same_tenant = super::ensure_same_tenant(
+                &tenant_context,
+                &existing.tenant_context(),
+            )
+            .is_ok();
+            let same_request = existing
+                .metadata
+                .as_ref()
+                .and_then(|metadata| {
+                    metadata
+                        .get("workflow_plan_apply_idempotency_fingerprint")
+                        .and_then(Value::as_str)
+                })
+                == Some(fingerprint);
+            if !same_tenant || !same_request {
+                return Err((
+                    StatusCode::CONFLICT,
+                    Json(json!({
+                        "error": "stable materialization identifier is already in use",
+                        "code": "WORKFLOW_PLAN_IDEMPOTENCY_CONFLICT",
+                    })),
+                ));
+            }
+            recovered_automation = Some(existing);
+        }
+    }
+    let stored = match recovered_automation {
+        Some(existing) => existing,
+        None => state.put_automation_v2(automation).await.map_err(|error| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(json!({
+                    "error": error.to_string(),
+                    "code": "WORKFLOW_PLAN_APPLY_FAILED",
+                })),
+            )
+        })?,
+    };
     append_workflow_plan_materialization_audit(
         &state,
         &tenant_context,
@@ -1345,7 +1518,7 @@ pub(super) async fn workflow_plan_apply(
         }
         _ => None,
     };
-    Ok(Json(json!({
+    let response = json!({
         "ok": true,
         "plan": plan,
         "plan_package": plan_package,
@@ -1354,7 +1527,49 @@ pub(super) async fn workflow_plan_apply(
         "approved_plan_materialization": approved_plan_materialization,
         "automation": stored,
         "pack_builder_export": pack_builder_export,
-    })))
+    });
+    if let (Some(key), Some(fingerprint)) = (
+        apply_idempotency_key.as_deref(),
+        apply_idempotency_fingerprint.as_deref(),
+    ) {
+        state
+            .complete_idempotency_key(
+                &tenant_context,
+                "workflow_plan.apply",
+                key,
+                crate::app::state::IdempotencyKeyOutcome {
+                    outcome_kind: "materialized".to_string(),
+                    completed_at_ms: crate::now_ms(),
+                    primary_ref_kind: Some("automation".to_string()),
+                    primary_ref_id: response
+                        .pointer("/automation/automation_id")
+                        .and_then(Value::as_str)
+                        .map(str::to_string),
+                    secondary_ref_kind: Some("workflow_plan".to_string()),
+                    secondary_ref_id: Some(plan_id.unwrap_or_else(|| {
+                        response
+                            .pointer("/plan/plan_id")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .to_string()
+                    })),
+                    details: response.clone(),
+                },
+                crate::now_ms(),
+            )
+            .await
+            .map_err(|error| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({
+                        "error": format!("failed to persist workflow apply outcome: {error}"),
+                        "code": "WORKFLOW_PLAN_APPLY_FAILED",
+                        "idempotency_fingerprint": fingerprint,
+                    })),
+                )
+            })?;
+    }
+    Ok(Json(response))
 }
 
 async fn workflow_plan_import_inner(
@@ -1413,6 +1628,11 @@ async fn workflow_plan_import_inner(
     let draft = workflow_plan_import_draft(&import_preview, &workspace_root);
     let session = WorkflowPlannerSessionRecord {
         session_id: format!("wfplan-session-{}", Uuid::new_v4()),
+        tenant_context: tandem_types::TenantContext::local_implicit(),
+        linked_chat_session_id: None,
+        linked_chat_run_id: None,
+        last_referenced_at_ms: None,
+        artifact_links: Vec::new(),
         project_slug,
         title: input
             .title

@@ -1051,7 +1051,7 @@ async fn workflow_plan_preview_rejects_invalid_llm_dependency_and_uses_fallback(
 
 #[tokio::test]
 #[serial_test::serial]
-async fn workflow_plan_apply_persists_automation_v2_with_planner_metadata() {
+async fn workflow_plan_apply_can_materialize_a_disabled_draft_with_planner_metadata() {
     let state = test_state().await;
     configure_openai_provider(&state).await;
     let app = app_router(state.clone());
@@ -1137,7 +1137,9 @@ async fn workflow_plan_apply_persists_automation_v2_with_planner_metadata() {
         .body(Body::from(
             json!({
                 "plan_id": plan_id,
-                "creator_id": "control-panel"
+                "creator_id": "control-panel",
+                "materialize_as_draft": true,
+                "idempotency_key": "workflow-apply-draft-1"
             })
             .to_string(),
         ))
@@ -1166,6 +1168,8 @@ async fn workflow_plan_apply_persists_automation_v2_with_planner_metadata() {
         .get_automation_v2(automation_id)
         .await
         .expect("stored automation");
+    assert_eq!(stored.status, crate::AutomationV2Status::Draft);
+    assert_eq!(stored.next_fire_at_ms, None);
     let tenant = stored.tenant_context();
     assert_eq!(tenant.org_id, "org-a");
     assert_eq!(tenant.workspace_id, "workspace-a");
@@ -1268,6 +1272,54 @@ async fn workflow_plan_apply_persists_automation_v2_with_planner_metadata() {
             .and_then(|row| row.get("plan_id"))
             .and_then(Value::as_str),
         Some(plan_id)
+    );
+    let mut replay_req = Request::builder()
+        .method("POST")
+        .uri("/workflow-plans/apply")
+        .header("x-tandem-org-id", "org-a")
+        .header("x-tandem-workspace-id", "workspace-a")
+        .header("x-tandem-actor-id", "user-a")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "plan_id": plan_id,
+                "creator_id": "control-panel",
+                "materialize_as_draft": true,
+                "idempotency_key": "workflow-apply-draft-1"
+            })
+            .to_string(),
+        ))
+        .expect("replay apply request");
+    replay_req
+        .extensions_mut()
+        .insert(verified_workflow_plan_context(
+            tandem_types::TenantContext::explicit("org-a", "workspace-a", None),
+            "user-a",
+        ));
+    let replay_resp = app
+        .clone()
+        .oneshot(replay_req)
+        .await
+        .expect("replay apply response");
+    assert_eq!(replay_resp.status(), StatusCode::OK);
+    let replay_body = to_bytes(replay_resp.into_body(), usize::MAX)
+        .await
+        .expect("replay apply body");
+    let replay_payload: Value = serde_json::from_slice(&replay_body).expect("replay apply json");
+    assert_eq!(
+        replay_payload
+            .pointer("/automation/automation_id")
+            .and_then(Value::as_str),
+        Some(automation_id)
+    );
+    assert_eq!(
+        state
+            .list_automations_v2()
+            .await
+            .into_iter()
+            .filter(|automation| automation.automation_id == automation_id)
+            .count(),
+        1
     );
     let dry_run_req = Request::builder()
         .method("POST")
