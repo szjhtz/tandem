@@ -366,5 +366,3 @@ async fn workflow_plan_apply_can_materialize_a_disabled_draft_with_planner_metad
         .iter()
         .any(|node| !node.input_refs.is_empty()));
 }
-
-#[tokio::test]

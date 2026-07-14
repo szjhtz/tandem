@@ -1049,6 +1049,7 @@ async fn workflow_plan_preview_rejects_invalid_llm_dependency_and_uses_fallback(
     );
 }
 
+#[tokio::test]
 #[serial_test::serial]
 async fn workflow_plan_preview_returns_overlap_analysis_from_prior_automation() {
     let state = test_state().await;
