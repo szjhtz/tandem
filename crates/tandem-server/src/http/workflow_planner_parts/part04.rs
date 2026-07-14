@@ -372,10 +372,10 @@ pub(super) async fn workflow_plan_apply(
             recovered_automation = Some(existing);
         }
     }
-    let stored = match recovered_automation {
-        Some(existing) => existing,
+    let (stored, inserted_by_this_attempt) = match recovered_automation {
+        Some(existing) => (existing, false),
         None => match state.put_automation_v2(automation).await {
-            Ok(stored) => stored,
+            Ok(stored) => (stored, true),
             Err(error) => {
                 if let (Some(key), Some(fingerprint)) = (
                     apply_idempotency_key.as_deref(),
@@ -400,7 +400,7 @@ pub(super) async fn workflow_plan_apply(
             }
         },
     };
-    append_workflow_plan_materialization_audit(
+    if let Err(audit_error) = append_workflow_plan_materialization_audit(
         &state,
         &tenant_context,
         &creator_id,
@@ -409,7 +409,74 @@ pub(super) async fn workflow_plan_apply(
         &stored.automation_id,
         &plan.plan_source,
     )
-    .await?;
+    .await
+    {
+        let release_error = if let (Some(key), Some(fingerprint)) = (
+            apply_idempotency_key.as_deref(),
+            apply_idempotency_fingerprint.as_deref(),
+        ) {
+            state
+                .release_reserved_idempotency_key(
+                    &tenant_context,
+                    "workflow_plan.apply",
+                    key,
+                    fingerprint,
+                )
+                .await
+                .err()
+        } else {
+            None
+        };
+        let rollback_error = if inserted_by_this_attempt {
+            state
+                .rollback_automation_v2_creation(&stored.automation_id)
+                .await
+                .err()
+        } else {
+            None
+        };
+        if inserted_by_this_attempt && rollback_error.is_none() && release_error.is_none() {
+            tracing::error!(
+                automation_id = %stored.automation_id,
+                error = ?audit_error,
+                "workflow plan materialization rolled back after protected audit failure"
+            );
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({
+                    "error": "Automation creation was rolled back because its required audit record could not be persisted",
+                    "code": "PROTECTED_AUDIT_PERSISTENCE_FAILED",
+                    "retryable": true,
+                    "operationApplied": false,
+                })),
+            ));
+        }
+        let operation_applied = !inserted_by_this_attempt || rollback_error.is_some();
+        tracing::error!(
+            automation_id = %stored.automation_id,
+            error = ?audit_error,
+            rollback_error = ?rollback_error,
+            idempotency_release_error = ?release_error,
+            inserted_by_this_attempt,
+            operation_applied,
+            "workflow plan materialization could not complete protected audit persistence"
+        );
+        return Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({
+                "error": if !inserted_by_this_attempt {
+                    "The automation already existed, but its required audit record could not be persisted"
+                } else if operation_applied {
+                    "The operation was applied, but its required audit record could not be persisted and rollback did not complete"
+                } else {
+                    "Automation creation was rolled back after its required audit record failed, but retry state could not be released"
+                },
+                "code": "PROTECTED_AUDIT_PERSISTENCE_FAILED",
+                "retryable": release_error.is_none(),
+                "operationApplied": operation_applied,
+            })),
+        ));
+    }
     if let Some(plan_id) = plan_id.as_deref() {
         if let Some(mut draft) = state.get_workflow_plan_draft(plan_id).await {
             draft.last_success_materialization = Some(approved_plan_success_memory);

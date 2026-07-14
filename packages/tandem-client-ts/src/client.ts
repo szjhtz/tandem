@@ -2947,6 +2947,8 @@ class WorkflowPlans {
     schedule?: JsonObject;
     planSource?: string;
     plan_source?: string;
+    progressId?: string;
+    progress_id?: string;
     allowedMcpServers?: string[];
     allowed_mcp_servers?: string[];
     workspaceRoot?: string;
@@ -2960,6 +2962,7 @@ class WorkflowPlans {
         prompt: options.prompt,
         schedule: options.schedule,
         plan_source: options.plan_source ?? options.planSource,
+        progress_id: options.progress_id ?? options.progressId,
         allowed_mcp_servers: options.allowed_mcp_servers ?? options.allowedMcpServers,
         workspace_root: options.workspace_root ?? options.workspaceRoot,
         operator_preferences: options.operator_preferences ?? options.operatorPreferences,
@@ -2977,6 +2980,8 @@ class WorkflowPlans {
     pack_builder_export?: WorkflowPlanPackBuilderExportRequest;
     overlapDecision?: string;
     overlap_decision?: string;
+    idempotencyKey?: string;
+    idempotency_key?: string;
   }): Promise<WorkflowPlanApplyResponse> {
     return this.req<WorkflowPlanApplyResponse>("/workflow-plans/apply", {
       method: "POST",
@@ -2986,6 +2991,7 @@ class WorkflowPlans {
         creator_id: options.creator_id ?? options.creatorId,
         pack_builder_export: options.pack_builder_export ?? options.packBuilderExport,
         overlap_decision: options.overlap_decision ?? options.overlapDecision,
+        idempotency_key: options.idempotency_key ?? options.idempotencyKey,
       }),
     });
   }
@@ -2995,6 +3001,8 @@ class WorkflowPlans {
     schedule?: JsonObject;
     planSource?: string;
     plan_source?: string;
+    progressId?: string;
+    progress_id?: string;
     allowedMcpServers?: string[];
     allowed_mcp_servers?: string[];
     workspaceRoot?: string;
@@ -3362,6 +3370,8 @@ class WorkflowPlannerSessions {
       schedule?: JsonObject;
       planSource?: string;
       plan_source?: string;
+      progressId?: string;
+      progress_id?: string;
       allowedMcpServers?: string[];
       allowed_mcp_servers?: string[];
       workspaceRoot?: string;
@@ -3379,6 +3389,7 @@ class WorkflowPlannerSessions {
           prompt: options.prompt,
           schedule: options.schedule,
           plan_source: options.plan_source ?? options.planSource,
+          progress_id: options.progress_id ?? options.progressId,
           allowed_mcp_servers: options.allowed_mcp_servers ?? options.allowedMcpServers,
           workspace_root: options.workspace_root ?? options.workspaceRoot,
           operator_preferences: options.operator_preferences ?? options.operatorPreferences,

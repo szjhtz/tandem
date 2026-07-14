@@ -366,3 +366,187 @@ async fn workflow_plan_apply_can_materialize_a_disabled_draft_with_planner_metad
         .iter()
         .any(|node| !node.input_refs.is_empty()));
 }
+
+#[tokio::test]
+async fn workflow_plan_apply_rolls_back_when_protected_audit_persistence_fails() {
+    let state = test_state().await;
+    tokio::fs::create_dir_all(&state.protected_audit_path)
+        .await
+        .expect("make protected audit path unwritable as a file");
+    crate::audit::reset_protected_audit_tail_for_test(&state.protected_audit_path).await;
+    let app = app_router(state.clone());
+    let plan = llm_plan_json(
+        "Audited workflow",
+        "Create a report only when the required audit can be persisted.",
+        manual_schedule_json(),
+        "/tmp/workspace",
+        vec![step_json(
+            "generate_report",
+            "report",
+            "Generate the report.",
+            &[],
+            "writer",
+            json!([]),
+            "report_markdown",
+        )],
+        None,
+    );
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/workflow-plans/apply")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "plan": plan,
+                        "creator_id": "control-panel",
+                        "idempotency_key": "audit-rollback-test",
+                    })
+                    .to_string(),
+                ))
+                .expect("apply request"),
+        )
+        .await
+        .expect("apply response");
+
+    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    let body = to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("error body");
+    let payload: Value = serde_json::from_slice(&body).expect("error json");
+    assert_eq!(
+        payload.get("code").and_then(Value::as_str),
+        Some("PROTECTED_AUDIT_PERSISTENCE_FAILED")
+    );
+    assert_eq!(
+        payload.get("operationApplied").and_then(Value::as_bool),
+        Some(false)
+    );
+    assert!(
+        state.list_automations_v2().await.is_empty(),
+        "an unaudited workflow materialization must be rolled back"
+    );
+    assert!(
+        state
+            .get_idempotency_key(
+                &tandem_types::TenantContext::local_implicit(),
+                "workflow_plan.apply",
+                "audit-rollback-test",
+            )
+            .await
+            .is_none(),
+        "a rolled-back apply must release its idempotency reservation"
+    );
+}
+
+#[tokio::test]
+async fn workflow_plan_apply_preserves_recovered_automation_when_audit_retry_fails() {
+    let state = test_state().await;
+    let app = app_router(state.clone());
+    let request_body = json!({
+        "plan": llm_plan_json(
+            "Recovered audited workflow",
+            "Preserve an existing materialization while retrying its audit.",
+            manual_schedule_json(),
+            "/tmp/workspace",
+            vec![step_json(
+                "generate_report",
+                "report",
+                "Generate the report.",
+                &[],
+                "writer",
+                json!([]),
+                "report_markdown",
+            )],
+            None,
+        ),
+        "creator_id": "control-panel",
+        "idempotency_key": "audit-recovery-test",
+    })
+    .to_string();
+
+    let initial_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/workflow-plans/apply")
+                .header("content-type", "application/json")
+                .body(Body::from(request_body.clone()))
+                .expect("initial apply request"),
+        )
+        .await
+        .expect("initial apply response");
+    assert_eq!(initial_response.status(), StatusCode::OK);
+    let initial_body = to_bytes(initial_response.into_body(), usize::MAX)
+        .await
+        .expect("initial apply body");
+    let initial_payload: Value = serde_json::from_slice(&initial_body).expect("initial apply json");
+    let automation_id = initial_payload
+        .pointer("/automation/automation_id")
+        .and_then(Value::as_str)
+        .expect("automation id")
+        .to_string();
+    assert!(state.get_automation_governance(&automation_id).await.is_some());
+
+    state.idempotency_keys.write().await.clear();
+    tokio::fs::remove_file(&state.protected_audit_path)
+        .await
+        .expect("remove working protected audit file");
+    tokio::fs::create_dir_all(&state.protected_audit_path)
+        .await
+        .expect("make protected audit path unwritable as a file");
+    crate::audit::reset_protected_audit_tail_for_test(&state.protected_audit_path).await;
+
+    let retry_response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/workflow-plans/apply")
+                .header("content-type", "application/json")
+                .body(Body::from(request_body))
+                .expect("retry apply request"),
+        )
+        .await
+        .expect("retry apply response");
+    assert_eq!(retry_response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    let retry_body = to_bytes(retry_response.into_body(), usize::MAX)
+        .await
+        .expect("retry error body");
+    let retry_payload: Value = serde_json::from_slice(&retry_body).expect("retry error json");
+    assert_eq!(
+        retry_payload.get("code").and_then(Value::as_str),
+        Some("PROTECTED_AUDIT_PERSISTENCE_FAILED")
+    );
+    assert_eq!(
+        retry_payload
+            .get("operationApplied")
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        retry_payload.get("retryable").and_then(Value::as_bool),
+        Some(true)
+    );
+    assert!(
+        state.get_automation_v2(&automation_id).await.is_some(),
+        "an existing recovered automation must not be rolled back by a retry"
+    );
+    assert!(
+        state.get_automation_governance(&automation_id).await.is_some(),
+        "an existing recovered automation must retain its governance record"
+    );
+    assert!(
+        state
+            .get_idempotency_key(
+                &tandem_types::TenantContext::local_implicit(),
+                "workflow_plan.apply",
+                "audit-recovery-test",
+            )
+            .await
+            .is_none(),
+        "the failed audit retry must release its idempotency reservation"
+    );
+}
