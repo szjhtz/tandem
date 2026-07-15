@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Frumu LTD
+// Licensed under the Business Source License 1.1
+
 use crate::capability_resolver::canonicalize_tool_name;
 use crate::http::AppState;
 use crate::{
@@ -19,6 +22,7 @@ use axum::{
 include!("incident_monitor_parts/part01.rs");
 include!("incident_monitor_parts/part05.rs");
 include!("incident_monitor_parts/part06.rs");
+include!("incident_monitor_parts/part17.rs");
 include!("incident_monitor_parts/part08.rs");
 include!("incident_monitor_parts/part07.rs");
 include!("incident_monitor_parts/part02.rs");
