@@ -379,6 +379,19 @@ impl ToolDispatchPolicy for AppStateToolDispatchPolicy {
                 "server tool `{dispatch_tool}` is denied by permission rule"
             )));
         }
+        let trusted_scope_allowed =
+            if self.trust_server_scope && !context.scope_allowlist.is_empty() {
+                let allowed_patterns = normalize_allowed_tools(context.scope_allowlist.clone());
+                tandem_core::any_policy_matches(&allowed_patterns, &dispatch_tool)
+            } else {
+                false
+            };
+        if matches!(permission_action, tandem_core::PermissionAction::Ask) && !trusted_scope_allowed
+        {
+            return Ok(ToolDispatchDecision::deny(format!(
+                "server tool `{dispatch_tool}` requires approval and cannot execute without a matching receipt"
+            )));
+        }
         let hook = crate::agent_teams::ServerToolPolicyHook::new(self.state.clone());
         let decision = hook
             .evaluate_tool(tandem_core::ToolPolicyContext {
@@ -400,22 +413,25 @@ impl ToolDispatchPolicy for AppStateToolDispatchPolicy {
                 args: context.args,
             })
             .await?;
+        if let Some(dispatch_decision) = decision.dispatch_decision.as_ref() {
+            if dispatch_decision.outcome != tandem_tools::ToolDispatchPolicyOutcome::Allowed {
+                return Ok(dispatch_decision.clone());
+            }
+        }
         if !decision.allowed {
             return Ok(ToolDispatchDecision {
                 outcome: tandem_tools::ToolDispatchPolicyOutcome::Denied,
                 reason: decision.reason,
                 policy_decision_id: decision.policy_decision_id,
+                approval_requirement: None,
             });
         }
-        if self.trust_server_scope && !context.scope_allowlist.is_empty() {
-            let allowed_patterns = normalize_allowed_tools(context.scope_allowlist.clone());
-            if tandem_core::any_policy_matches(&allowed_patterns, &dispatch_tool) {
-                return Ok(ToolDispatchDecision::allow_with_id(
-                    decision.policy_decision_id.unwrap_or_else(|| {
-                        format!("server_dispatch_scope:{}", context.source.kind)
-                    }),
-                ));
-            }
+        if trusted_scope_allowed {
+            return Ok(ToolDispatchDecision::allow_with_id(
+                decision
+                    .policy_decision_id
+                    .unwrap_or_else(|| format!("server_dispatch_scope:{}", context.source.kind)),
+            ));
         }
         Ok(match permission_action {
             tandem_core::PermissionAction::Allow => {

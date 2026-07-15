@@ -288,6 +288,22 @@ async fn action_gate_pending_retry_reuses_durable_request() {
     let second = evaluate_protected_action(&state).await;
     assert!(!first.allowed);
     assert!(!second.allowed);
+    for decision in [&first, &second] {
+        let dispatch = decision
+            .dispatch_decision
+            .as_ref()
+            .expect("pending action gate is a first-class dispatch outcome");
+        assert_eq!(
+            dispatch.outcome,
+            tandem_tools::ToolDispatchPolicyOutcome::ApprovalRequired
+        );
+        let requirement = dispatch
+            .approval_requirement
+            .as_ref()
+            .expect("structured action-gate approval metadata");
+        assert_eq!(requirement.policy_id, "approval_gate_matrix");
+        assert!(requirement.action_binding.starts_with("hmac-sha256:"));
+    }
 
     let approvals = state
         .list_approval_requests_for_tenant(
@@ -338,7 +354,7 @@ async fn action_gate_pending_retry_reuses_durable_request() {
         .context
         .pointer("/action_gate/action_hash")
         .and_then(Value::as_str)
-        .is_some());
+        .is_some_and(|binding| binding.starts_with("hmac-sha256:")));
 
     for decision in [first, second] {
         let decision_id = decision.policy_decision_id.expect("policy decision id");
@@ -576,6 +592,22 @@ async fn egress_preflight_creates_safe_customer_data_approval_request() {
             .await
             .expect("customer-data external send must require approval");
     assert!(!decision.allowed);
+    let requirement = decision
+        .dispatch_decision
+        .as_ref()
+        .expect("pending egress request is a first-class dispatch outcome")
+        .approval_requirement
+        .as_ref()
+        .expect("structured egress approval metadata");
+    assert!(requirement.action_binding.starts_with("hmac-sha256:"));
+    let dispatch_approval_id = requirement.approval_request_id.clone();
+    assert_eq!(
+        decision
+            .dispatch_decision
+            .as_ref()
+            .map(|dispatch| &dispatch.outcome),
+        Some(&tandem_tools::ToolDispatchPolicyOutcome::ApprovalRequired)
+    );
     let decision_id = decision.policy_decision_id.expect("policy decision id");
 
     let recorded = state
@@ -584,6 +616,7 @@ async fn egress_preflight_creates_safe_customer_data_approval_request() {
         .expect("recorded policy decision");
     assert_eq!(recorded.decision, PolicyDecisionEffect::ApprovalRequired);
     let approval_id = recorded.approval_id.clone().expect("approval id");
+    assert_eq!(dispatch_approval_id.as_deref(), Some(approval_id.as_str()));
     assert!(recorded.data_classes.contains(&DataClass::CustomerData));
     let preview = recorded.metadata["egress_preflight"]["safe_preview_markdown"]
         .as_str()
@@ -606,6 +639,9 @@ async fn egress_preflight_creates_safe_customer_data_approval_request() {
         approval.context["safe_preview_markdown"].as_str(),
         Some(preview)
     );
+    assert!(approval.context["action_hash"]
+        .as_str()
+        .is_some_and(|binding| binding.starts_with("hmac-sha256:")));
 
     let audit = tokio::fs::read_to_string(&state.protected_audit_path)
         .await
